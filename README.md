@@ -1,6 +1,9 @@
 # ComfyUI Mobile Frontend
 
-A dedicated mobile-first frontend for [ComfyUI](https://github.com/comfyanonymous/ComfyUI).
+An experimental dedicated mobile-first frontend for [ComfyUI](https://github.com/comfyanonymous/ComfyUI).
+
+> [!WARNING]
+> This project was almost entirely vibecoded with claude code, codex and gemini cli. It is still a work in progress, and currently doesn't support all custom nodes automatically. Don't be surprised if it breaks!
 
 This project operates as a ComfyUI Custom Node that serves a modern, responsive React application. It is designed to make monitoring and managing your ComfyUI workflows and queue easy and accessible from your phone or tablet.
 
