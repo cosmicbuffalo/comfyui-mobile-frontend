@@ -1,0 +1,280 @@
+@import "tailwindcss";
+
+/* Base styles */
+:root {
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  line-height: 1.5;
+  font-weight: 400;
+  color-scheme: light;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+.dark {
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background-color: #f3f4f6;
+  touch-action: pan-y;
+}
+
+.dark body {
+  background-color: #000000;
+}
+
+#root {
+  min-height: 100vh;
+}
+
+.dark .bg-white { background-color: #151a23; }
+.dark .bg-gray-50 { background-color: #111827; }
+.dark .bg-gray-100 { background-color: #0a0f18; }
+.dark .bg-blue-50 { background-color: #0b1d2b; }
+.dark .border-blue-100 { border-color: #0f2a3d; }
+.dark .text-blue-600 { color: #60a5fa; }
+.dark .bg-gray-200 { background-color: #1f2937; }
+.dark .text-gray-900 { color: #f9fafb; }
+.dark .text-gray-700 { color: #e5e7eb; }
+.dark .text-gray-600 { color: #d1d5db; }
+.dark .text-gray-500 { color: #9ca3af; }
+.dark .text-gray-400 { color: #9ca3af; }
+.dark .border-gray-200 { border-color: #1f2937; }
+.dark .border-gray-100 { border-color: #1f2937; }
+.dark input,
+.dark select,
+.dark textarea {
+  background-color: #0b1320;
+  border-color: #1b2432;
+  color: #e5e7eb;
+}
+.rs__control {
+  min-height: 0;
+  height: 48px;
+  border: 1px solid #d1d5db;
+  border-radius: 0.5rem;
+  background-color: #ffffff;
+  box-shadow: none;
+  cursor: pointer;
+}
+.rs__control--is-focused {
+  border-color: #f97316;
+  box-shadow: 0 0 0 1px #f97316;
+}
+.rs__control--is-disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+.rs__value-container {
+  padding: 0 0.75rem;
+}
+.rs__input-container {
+  margin: 0;
+  padding: 0;
+}
+.rs__input {
+  margin: 0;
+  padding: 0;
+  line-height: 1.5;
+}
+.rs__single-value {
+  color: #111827;
+  margin: 0;
+  line-height: 1.5;
+}
+.rs__placeholder {
+  color: #6b7280;
+  margin: 0;
+}
+.rs__menu {
+  z-index: 200;
+  margin-top: 0.25rem;
+  border-radius: 0.5rem;
+  background-color: #ffffff;
+  box-shadow: 0 10px 15px -3px rgba(0,0,0,0.1), 0 4px 6px -4px rgba(0,0,0,0.1);
+}
+.rs-scroll-target {
+  scroll-margin-top: calc(var(--top-bar-offset, 0px) + 12px);
+}
+.rs__menu-list {
+  padding: 0.25rem 0;
+}
+.rs__option {
+  font-size: 1rem;
+  padding: 0.5rem 0.75rem;
+}
+.rs__option--is-focused {
+  background-color: #f3f4f6;
+}
+.rs__option--is-selected {
+  background-color: #e5e7eb;
+  color: #111827;
+}
+.rs-error .rs__control {
+  border-color: #b91c1c;
+  box-shadow: 0 0 0 1px #b91c1c;
+}
+.rs-missing .rs__single-value {
+  color: #b91c1c;
+}
+.rs-has-bookmark .rs__value-container {
+  padding-right: 3.5rem;
+}
+.rs-no-bookmark .rs__value-container {
+  padding-right: 2.25rem;
+}
+.note-display {
+  background-color: #ffffff;
+  border-color: #d1d5db;
+  color: #1f2937;
+}
+.dark .note-display {
+  background-color: #0b1320;
+  border-color: #1b2432;
+  color: #e5e7eb;
+}
+.dark select.bg-white {
+  background-color: #0b1320;
+}
+.dark .rs__control {
+  background-color: #0b1320;
+  border-color: #1b2432;
+}
+.dark .rs__control--is-focused {
+  border-color: #f97316;
+  box-shadow: 0 0 0 1px #f97316;
+}
+.dark .rs__single-value {
+  color: #e5e7eb;
+}
+.dark .rs__placeholder {
+  color: #9ca3af;
+}
+.dark .rs__menu {
+  background-color: #0b1320;
+  box-shadow: 0 10px 15px -3px rgba(0,0,0,0.5), 0 4px 6px -4px rgba(0,0,0,0.4);
+}
+.dark .rs__option--is-focused {
+  background-color: #111827;
+}
+.dark .rs__option--is-selected {
+  background-color: #1f2937;
+  color: #e5e7eb;
+}
+.dark .rs-error .rs__control {
+  border-color: #7f1d1d;
+  box-shadow: 0 0 0 1px #7f1d1d;
+}
+.dark .rs-missing .rs__single-value {
+  color: #fca5a5;
+}
+.dark option {
+  background-color: #0b1320;
+  color: #e5e7eb;
+}
+.dark .shadow-lg { box-shadow: 0 10px 15px -3px rgba(0,0,0,0.5), 0 4px 6px -4px rgba(0,0,0,0.4); }
+.dark .shadow-md { box-shadow: 0 4px 6px -1px rgba(0,0,0,0.5), 0 2px 4px -2px rgba(0,0,0,0.4); }
+.dark .shadow-sm { box-shadow: 0 1px 2px 0 rgba(0,0,0,0.4); }
+.dark .bg-purple-100\/50 { background-color: rgba(88, 28, 135, 0.35); }
+.dark .bg-purple-200 { background-color: rgba(74, 26, 106, 0.6); }
+.dark .border-purple-300 { border-color: rgba(91, 42, 134, 0.6); }
+
+/* Error states - dark mode overrides */
+.dark .border-red-700 { border-color: #7f1d1d; }
+.dark .ring-red-700 { --tw-ring-color: #7f1d1d; }
+.dark .shadow-red-200 { --tw-shadow-color: rgba(127, 29, 29, 0.5); }
+.dark .bg-red-500 { background-color: #7f1d1d; }
+.dark .bg-red-50 { background-color: #1a0a0a; }
+.dark .border-red-300 { border-color: #450a0a; }
+.dark .border-red-200 { border-color: #450a0a; }
+.dark .text-red-200 { color: #fecaca; }
+.dark .text-red-700 { color: #fca5a5; }
+.dark .text-red-900 { color: #fee2e2; }
+
+/* Safe area handling for iOS */
+.safe-area-top {
+  padding-top: env(safe-area-inset-top, 0px);
+}
+
+.safe-area-bottom {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+/* Touch optimization */
+button, .touchable {
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Node highlight animation */
+@keyframes highlight-pulse {
+  0%, 100% {
+    box-shadow: 0 0 0 0 rgba(59, 130, 246, 0);
+  }
+  50% {
+    box-shadow: 0 0 0 8px rgba(59, 130, 246, 0.3);
+  }
+}
+
+.highlight-pulse {
+  animation: highlight-pulse 0.6s ease-in-out 2;
+}
+
+.scroll-container {
+  touch-action: pan-y;
+  -webkit-overflow-scrolling: touch;
+}
+
+.node-scroll-anchor {
+  scroll-margin-top: var(--top-bar-offset, 0px);
+}
+
+/* Type colors for connection buttons */
+.type-IMAGE { background-color: #a855f7; color: white; }
+.type-LATENT { background-color: #ec4899; color: white; }
+.type-MODEL { background-color: #f97316; color: white; }
+.type-CLIP { background-color: #eab308; color: black; }
+.type-VAE { background-color: #ef4444; color: white; }
+.type-CONDITIONING { background-color: #22c55e; color: white; }
+.type-INT { background-color: #3b82f6; color: white; }
+.type-FLOAT { background-color: #06b6d4; color: white; }
+.type-STRING { background-color: #8b5cf6; color: white; }
+.type-BOOLEAN { background-color: #6366f1; color: white; }
+.type-MASK { background-color: #64748b; color: white; }
+.type-default { background-color: #9ca3af; color: white; }
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+  width: 4px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #d1d5db;
+  border-radius: 2px;
+}
+
+/* Shared Input Styling */
+.comfy-input {
+  background-color: #ffffff;
+  border-color: #d1d5db;
+  color: #111827;
+  border-width: 1px;
+  border-style: solid;
+  border-radius: 0.5rem;
+}
+
+.dark .comfy-input {
+  background-color: #0b1320;
+  border-color: #1b2432;
+  color: #e5e7eb;
+}

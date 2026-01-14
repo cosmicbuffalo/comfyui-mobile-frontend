@@ -1,0 +1,296 @@
+import type { NodeTypes, QueueInfo, History, Workflow } from './types';
+import {
+  buildQueuePromptInputs,
+  getWorkflowWidgetIndexMap
+} from '@/utils/workflowInputs';
+
+export const API_BASE = '';
+
+function getOrCreateClientId(): string {
+  const storageKey = 'comfyui-mobile-client-id';
+  let id = localStorage.getItem(storageKey);
+  if (!id) {
+    id = 'mobile-' + Math.random().toString(36).substring(2, 15);
+    localStorage.setItem(storageKey, id);
+  }
+  return id;
+}
+
+export const clientId = getOrCreateClientId();
+
+export async function getNodeTypes(): Promise<NodeTypes> {
+  const response = await fetch(`${API_BASE}/api/object_info`);
+  if (!response.ok) throw new Error('Failed to fetch node types');
+  return response.json();
+}
+
+export async function getQueue(): Promise<QueueInfo> {
+  const response = await fetch(`${API_BASE}/api/queue`);
+  if (!response.ok) throw new Error('Failed to fetch queue');
+  return response.json();
+}
+
+export async function getHistory(maxItems?: number): Promise<History> {
+  const url = maxItems
+    ? `${API_BASE}/api/history?max_items=${maxItems}`
+    : `${API_BASE}/api/history`;
+  const response = await fetch(url);
+  if (!response.ok) throw new Error('Failed to fetch history');
+  return response.json();
+}
+
+// User workflows API
+export interface UserDataFile {
+  name: string;
+  path: string;
+  type: 'file' | 'directory';
+  size?: number;
+  modified?: number;
+}
+
+export async function listUserWorkflows(): Promise<UserDataFile[]> {
+  const response = await fetch(`${API_BASE}/api/v2/userdata?path=workflows`);
+  if (!response.ok) {
+    // Folder may not exist yet
+    if (response.status === 404) return [];
+    throw new Error('Failed to list user workflows');
+  }
+  const data = await response.json();
+  // Filter to only JSON files
+  return data.filter((item: UserDataFile) =>
+    item.type === 'file' && item.name.endsWith('.json')
+  );
+}
+
+// Helper to encode full path for userdata API (slashes must be encoded as %2F)
+function encodeUserDataPath(path: string): string {
+  return encodeURIComponent(path);
+}
+
+export async function loadUserWorkflow(filename: string): Promise<Workflow> {
+  const response = await fetch(`${API_BASE}/api/userdata/${encodeUserDataPath('workflows/' + filename)}`);
+  if (!response.ok) throw new Error('Failed to load workflow');
+  return response.json();
+}
+
+export async function saveUserWorkflow(filename: string, workflow: Workflow): Promise<void> {
+  const response = await fetch(`${API_BASE}/api/userdata/${encodeUserDataPath('workflows/' + filename)}?overwrite=true`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(workflow)
+  });
+  if (!response.ok) throw new Error('Failed to save workflow');
+}
+
+export async function deleteUserWorkflow(filename: string): Promise<void> {
+  const response = await fetch(`${API_BASE}/api/userdata/${encodeUserDataPath('workflows/' + filename)}`, {
+    method: 'DELETE'
+  });
+  if (!response.ok) throw new Error('Failed to delete workflow');
+}
+
+// Template workflows API
+export interface WorkflowTemplates {
+  [moduleName: string]: string[];
+}
+
+export async function getWorkflowTemplates(): Promise<WorkflowTemplates> {
+  const response = await fetch(`${API_BASE}/api/workflow_templates`);
+  if (!response.ok) throw new Error('Failed to fetch templates');
+  return response.json();
+}
+
+export async function loadTemplateWorkflow(moduleName: string, templateName: string): Promise<Workflow> {
+  const response = await fetch(
+    `${API_BASE}/api/workflow_templates/${encodeURIComponent(moduleName)}/${encodeURIComponent(templateName)}`
+  );
+  if (!response.ok) throw new Error('Failed to load template');
+  return response.json();
+}
+
+// Prompt execution
+function resolveClassType(nodeType: string, nodeTypes: NodeTypes): string | null {
+  if (nodeTypes[nodeType]) {
+    return nodeType;
+  }
+
+  const match = Object.entries(nodeTypes).find(
+    ([, def]) => def.display_name === nodeType || def.name === nodeType
+  );
+  if (match) {
+    return match[0];
+  }
+
+  return null;
+}
+
+
+export async function queuePrompt(
+  workflow: Workflow,
+  clientId: string,
+  nodeTypes: NodeTypes,
+  seedOverrides?: Record<number, number>
+): Promise<{ prompt_id: string; number: number }> {
+  const prompt: Record<string, unknown> = {};
+  const allowedNodeIds = new Set<number>();
+  const classTypeById = new Map<number, string>();
+
+  for (const node of workflow.nodes) {
+    const classType = resolveClassType(node.type, nodeTypes);
+    if (classType) {
+      allowedNodeIds.add(node.id);
+      classTypeById.set(node.id, classType);
+    }
+  }
+
+  for (const node of workflow.nodes) {
+    const classType = classTypeById.get(node.id);
+    if (!classType) {
+      continue;
+    }
+
+    const inputs = buildQueuePromptInputs(
+      workflow,
+      nodeTypes,
+      node,
+      classType,
+      allowedNodeIds,
+      getWorkflowWidgetIndexMap(workflow, node.id),
+      seedOverrides
+    );
+    prompt[String(node.id)] = {
+      class_type: classType,
+      inputs
+    };
+  }
+
+  const response = await fetch(`${API_BASE}/api/prompt`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      prompt,
+      client_id: clientId
+    })
+  });
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.error?.message || 'Failed to queue prompt');
+  }
+
+  return response.json();
+}
+
+export async function interruptExecution(): Promise<void> {
+  await fetch(`${API_BASE}/api/interrupt`, { method: 'POST' });
+}
+
+export async function clearQueue(): Promise<void> {
+  await fetch(`${API_BASE}/api/queue`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ clear: true })
+  });
+}
+
+export async function deleteQueueItem(promptId: string): Promise<void> {
+  await fetch(`${API_BASE}/api/queue`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ delete: [promptId] })
+  });
+}
+
+export async function uploadImageFile(
+  file: File,
+  options?: { type?: string; subfolder?: string; overwrite?: boolean }
+): Promise<{ name: string; subfolder: string; type: string }> {
+  const form = new FormData();
+  form.append('image', file);
+  if (options?.type) {
+    form.append('type', options.type);
+  }
+  if (options?.subfolder) {
+    form.append('subfolder', options.subfolder);
+  }
+  if (options?.overwrite !== undefined) {
+    form.append('overwrite', options.overwrite ? 'true' : 'false');
+  }
+
+  const response = await fetch(`${API_BASE}/upload/image`, {
+    method: 'POST',
+    body: form
+  });
+
+  if (!response.ok) {
+    throw new Error('Failed to upload image');
+  }
+
+  return response.json();
+}
+
+export async function deleteHistoryItem(promptId: string): Promise<void> {
+  await fetch(`${API_BASE}/api/history`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ delete: [promptId] })
+  });
+}
+
+export async function deleteHistoryItems(promptIds: string[]): Promise<void> {
+  if (promptIds.length === 0) return;
+  await fetch(`${API_BASE}/api/history`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ delete: promptIds })
+  });
+}
+
+export async function clearHistory(): Promise<void> {
+  await fetch(`${API_BASE}/api/history`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ clear: true })
+  });
+}
+
+export function getImageUrl(filename: string, subfolder: string, type: string): string {
+  return `${API_BASE}/view?filename=${encodeURIComponent(filename)}&subfolder=${encodeURIComponent(subfolder)}&type=${encodeURIComponent(type)}`;
+}
+
+export function connectWebSocket(
+  clientId: string,
+  onMessage: (msg: unknown) => void,
+  onOpen?: () => void,
+  onClose?: () => void,
+  onError?: (error: Event) => void
+): WebSocket {
+  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const wsUrl = `${protocol}//${window.location.host}/ws?clientId=${clientId}`;
+
+  const ws = new WebSocket(wsUrl);
+
+  ws.onopen = () => {
+    onOpen?.();
+  };
+
+  ws.onmessage = (event) => {
+    try {
+      const data = JSON.parse(event.data);
+      onMessage(data);
+    } catch (e) {
+      console.error('[WS] Failed to parse message:', e);
+    }
+  };
+
+  ws.onclose = () => {
+    onClose?.();
+  };
+
+  ws.onerror = (error) => {
+    console.error('[WS] Error:', error);
+    onError?.(error);
+  };
+
+  return ws;
+}
