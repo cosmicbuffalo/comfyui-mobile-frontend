@@ -14,7 +14,6 @@ interface UseSwipeNavigationOptions {
   isInputFocused: boolean;
   viewerOpen: boolean;
   menuOpen: boolean;
-  historyOpen: boolean;
 }
 
 export function useSwipeNavigation({
@@ -22,8 +21,7 @@ export function useSwipeNavigation({
   setQueuePanelOpen,
   isInputFocused,
   viewerOpen,
-  menuOpen,
-  historyOpen
+  menuOpen
 }: UseSwipeNavigationOptions) {
   const [swipeOffset, setSwipeOffset] = useState(0);
   const [isSwiping, setIsSwiping] = useState(false);
@@ -38,7 +36,7 @@ export function useSwipeNavigation({
 
   useEffect(() => {
     // Don't attach listeners when swipe is disabled or overlays are open
-    if (!swipeEnabled || isInputFocused || viewerOpen || menuOpen || historyOpen) return;
+    if (!swipeEnabled || isInputFocused || viewerOpen || menuOpen) return;
 
     const isEditableTarget = (target: EventTarget | null) => {
       if (!(target instanceof HTMLElement)) return false;
@@ -142,7 +140,6 @@ export function useSwipeNavigation({
     isInputFocused,
     viewerOpen,
     menuOpen,
-    historyOpen,
     queueOpen,
     setQueuePanelOpen,
     resetSwipeState

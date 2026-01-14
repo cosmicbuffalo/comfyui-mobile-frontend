@@ -4,7 +4,6 @@ import { NodeList } from './components/NodeList';
 import { BottomBar } from './components/BottomBar';
 import { HamburgerMenu } from './components/HamburgerMenu';
 import { QueuePanel } from './components/QueuePanel';
-import { HistoryPanel } from './components/HistoryPanel';
 import { ImageViewer } from './components/ImageViewer';
 import { useWebSocket } from './hooks/useWebSocket';
 import { useWorkflowStore, getInputWidgetDefinitions, getWidgetDefinitions } from './hooks/useWorkflow';
@@ -25,7 +24,6 @@ function App() {
   const [menuOpen, setMenuOpen] = useState(false);
   const queueOpen = useWorkflowStore((s) => s.queuePanelOpen);
   const setQueuePanelOpen = useWorkflowStore((s) => s.setQueuePanelOpen);
-  const [historyOpen, setHistoryOpen] = useState(false);
   const viewerOpen = useWorkflowStore((s) => s.viewerOpen);
   const viewerImages = useWorkflowStore((s) => s.viewerImages);
   const viewerIndex = useWorkflowStore((s) => s.viewerIndex);
@@ -50,8 +48,7 @@ function App() {
     setQueuePanelOpen,
     isInputFocused,
     viewerOpen,
-    menuOpen,
-    historyOpen
+    menuOpen
   });
   const setNodeTypes = useWorkflowStore((s) => s.setNodeTypes);
   const nodeTypes = useWorkflowStore((s) => s.nodeTypes);
@@ -325,7 +322,6 @@ function App() {
   useEffect(() => {
     if (!workflowLoadedAt) return;
     queueMicrotask(() => {
-      setHistoryOpen(false);
       setFollowQueue(false);
       setQueueMenuOpen(false);
       setWorkflowMenuOpen(false);
@@ -682,9 +678,6 @@ function App() {
         open={menuOpen}
         onClose={() => setMenuOpen(false)}
       />
-
-      {/* History panel */}
-      <HistoryPanel open={historyOpen} onClose={() => setHistoryOpen(false)} onImageClick={openViewer} />
 
       {clearHistoryConfirmOpen && (
         <div
