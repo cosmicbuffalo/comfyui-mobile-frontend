@@ -628,7 +628,7 @@ export function HamburgerMenu({
             </button>
 
             <a
-              href="#"
+              href="https://github.com/cosmicbuffalo/comfyui-mobile-frontend/blob/main/USER_GUIDE.md"
               target="_blank"
               rel="noopener noreferrer"
               className="w-full flex items-center gap-3 p-4 bg-white border border-gray-200
