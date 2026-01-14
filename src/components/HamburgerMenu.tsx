@@ -437,7 +437,7 @@ export function HamburgerMenu({
           <button
             onClick={handleLoadFromPaste}
             disabled={!pastedJson.trim()}
-            className="flex-1 py-3 bg-blue-500 text-white rounded-lg font-medium hover:bg-blue-600 
+            className="flex-1 py-3 bg-blue-500 text-white rounded-lg font-medium hover:bg-blue-600
                        disabled:opacity-50 disabled:cursor-not-allowed min-h-[48px]"
           >
             Load
@@ -606,7 +606,7 @@ export function HamburgerMenu({
         {menuSectionsOpen.info && (
           <div className="space-y-2 pb-4">
             <a
-              href="#"
+              href="https://github.com/cosmicbuffalo/comfyui-mobile-frontend"
               target="_blank"
               rel="noopener noreferrer"
               className="w-full flex items-center gap-3 p-4 bg-white border border-gray-200
