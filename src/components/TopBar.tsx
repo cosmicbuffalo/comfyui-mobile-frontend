@@ -1,18 +1,35 @@
-import { useCallback, useEffect, useRef } from 'react';
-import { useWorkflowStore, getInputWidgetDefinitions, getWidgetDefinitions } from '@/hooks/useWorkflow';
+import { useCallback, useEffect, useMemo, useRef } from 'react';
+import { useWorkflowStore } from '@/hooks/useWorkflow';
+import { useAppMenuStore } from '@/hooks/useAppMenu';
 import { useQueueStore } from '@/hooks/useQueue';
 import { useHistoryStore } from '@/hooks/useHistory';
+import { useOutputsStore } from '@/hooks/useOutputs';
 import { MenuIcon } from '@/components/icons';
+import { AppMenu } from './AppMenu';
+import { QueueTopBarControls } from './QueuePanel/QueueTopBarControls';
+import { OutputsTopBarControls } from './OutputsPanel/OutputsTopBarControls';
+import { WorkflowTopBarControls } from './WorkflowPanel/WorkflowTopBarControls';
 
 interface TopBarProps {
-  onMenuClick: () => void;
-  mode?: 'workflow' | 'queue';
-  rightSlot?: React.ReactNode;
+  mode?: 'workflow' | 'queue' | 'outputs';
 }
 
-export function TopBar({ onMenuClick, mode = 'workflow', rightSlot }: TopBarProps) {
+function getScrollSelectors(mode: TopBarProps['mode']): string[] {
+  switch (mode) {
+    case 'queue':
+      return ['[data-queue-list="true"]', '[data-node-list="true"]'];
+    case 'workflow':
+    case 'outputs':
+    default:
+      return ['[data-node-list="true"]', '[data-queue-list="true"]'];
+  }
+}
+
+export function TopBar({ mode = 'workflow' }: TopBarProps) {
   const barRef = useRef<HTMLDivElement>(null);
   const lastTapRef = useRef<number>(0);
+  const appMenuOpen = useAppMenuStore((s) => s.appMenuOpen);
+  const setAppMenuOpen = useAppMenuStore((s) => s.setAppMenuOpen);
 
   const handleTitleTap = useCallback(() => {
     const now = Date.now();
@@ -28,11 +45,20 @@ export function TopBar({ onMenuClick, mode = 'workflow', rightSlot }: TopBarProp
         }
         return;
       }
+      if (mode === 'outputs') {
+        const outputsContainer = document.querySelector<HTMLElement>('#outputs-content-container');
+        if (outputsContainer) {
+          outputsContainer.scrollTo({ top: 0, behavior: 'auto' });
+          if ('vibrate' in navigator) {
+            navigator.vibrate(10);
+          }
+        }
+        return;
+      }
+
       // Try to scroll the appropriate container based on mode
       // Also try the other container as fallback in case mode hasn't updated yet
-      const selectors = mode === 'queue'
-        ? ['[data-queue-list="true"]', '[data-node-list="true"]']
-        : ['[data-node-list="true"]', '[data-queue-list="true"]'];
+      const selectors = getScrollSelectors(mode);
 
       for (const selector of selectors) {
         const scrollContainer = document.querySelector<HTMLElement>(selector);
@@ -55,16 +81,43 @@ export function TopBar({ onMenuClick, mode = 'workflow', rightSlot }: TopBarProp
   const workflow = useWorkflowStore((s) => s.workflow);
   const originalWorkflow = useWorkflowStore((s) => s.originalWorkflow);
   const currentFilename = useWorkflowStore((s) => s.currentFilename);
-  const hideStaticNodes = useWorkflowStore((s) => s.hideStaticNodes);
-  const hideBypassedNodes = useWorkflowStore((s) => s.hideBypassedNodes);
   const manuallyHiddenNodes = useWorkflowStore((s) => s.manuallyHiddenNodes);
-  const nodeTypes = useWorkflowStore((s) => s.nodeTypes);
+  const hiddenSubgraphs = useWorkflowStore((s) => s.hiddenSubgraphs);
   const pending = useQueueStore((s) => s.pending);
   const history = useHistoryStore((s) => s.history);
+  const outputsSource = useOutputsStore((s) => s.source);
 
   // Check if dirty
   // We exclude non-persistent fields if any, but currently workflow object is pure JSON data
   const isDirty = workflow && originalWorkflow && JSON.stringify(workflow) !== JSON.stringify(originalWorkflow);
+
+  const nodeCountLabel = useMemo(() => {
+    if (!workflow) return '';
+    const totalNodes = workflow.nodes.length;
+    const manualHiddenCount = Object.keys(manuallyHiddenNodes).length;
+    const hasHiddenSubgraphs = Object.values(hiddenSubgraphs).some(Boolean);
+    if (manualHiddenCount === 0 && !hasHiddenSubgraphs) {
+      return `${totalNodes} nodes ${isDirty ? '[Unsaved]' : ''}`.trim();
+    }
+
+    const hiddenSubgraphNodeCount = hasHiddenSubgraphs
+      ? workflow.nodes.reduce((count, node) => {
+          const props = node.properties as Record<string, unknown> | undefined;
+          const origin = props?.['__mobile_origin'];
+          if (!origin || typeof origin !== 'object') return count;
+          const scope = (origin as { scope?: string }).scope;
+          if (scope !== 'subgraph') return count;
+          const subgraphId = (origin as { subgraphId?: string }).subgraphId;
+          if (subgraphId && hiddenSubgraphs[subgraphId]) {
+            return count + 1;
+          }
+          return count;
+        }, 0)
+      : 0;
+
+    const hiddenCount = manualHiddenCount + hiddenSubgraphNodeCount;
+    return `${totalNodes} nodes (${hiddenCount} hidden) ${isDirty ? '[Unsaved]' : ''}`.trim();
+  }, [workflow, manuallyHiddenNodes, hiddenSubgraphs, isDirty]);
 
   useEffect(() => {
     const el = barRef.current;
@@ -79,16 +132,44 @@ export function TopBar({ onMenuClick, mode = 'workflow', rightSlot }: TopBarProp
     return () => observer.disconnect();
   }, []);
 
+  const title = useMemo(() => {
+    switch (mode) {
+      case 'queue':
+        return 'Queue';
+      case 'outputs':
+        return outputsSource === 'output' ? 'Outputs' : 'Inputs';
+      case 'workflow':
+      default:
+        if (currentFilename) {
+          return currentFilename.replace('.json', '');
+        }
+        return workflow ? 'Untitled' : 'ComfyUI Mobile';
+    }
+  }, [mode, outputsSource, currentFilename, workflow]);
+
+  const rightControls = useMemo(() => {
+    switch (mode) {
+      case 'queue':
+        return <QueueTopBarControls />;
+      case 'outputs':
+        return <OutputsTopBarControls />;
+      case 'workflow':
+      default:
+        return <WorkflowTopBarControls />;
+    }
+  }, [mode]);
+
   return (
     <div
+      id="top-bar-root"
       ref={barRef}
-      className="fixed top-0 left-0 right-0 bg-white border-b border-gray-200 z-40 safe-area-top"
+      className="fixed top-0 left-0 right-0 bg-white border-b border-gray-200 z-[2000] safe-area-top"
       data-top-bar="true"
     >
-      <div className="flex items-center justify-between px-4 py-3">
+      <div id="top-bar-content" className="flex items-center justify-between px-4 py-3">
         {/* Menu button */}
         <button
-          onClick={onMenuClick}
+          onClick={() => setAppMenuOpen(true)}
           className="w-10 h-10 flex items-center justify-center rounded-lg
                      text-gray-700 hover:bg-gray-100"
         >
@@ -96,39 +177,18 @@ export function TopBar({ onMenuClick, mode = 'workflow', rightSlot }: TopBarProp
         </button>
 
         {/* Title - double tap to scroll to top */}
-        <div className="flex-1 text-center min-w-0 px-2 cursor-pointer" onClick={handleTitleTap}>
-          <h1 className="font-semibold text-gray-900 text-lg truncate flex items-center justify-center">
-            <span className="truncate">
-              {mode === 'queue'
-                ? 'Queue'
-                : currentFilename
-                  ? currentFilename.replace('.json', '')
-                  : (workflow ? 'Untitled' : 'ComfyUI Mobile')}
-            </span>
-            {mode === 'workflow' && isDirty && <span className="text-blue-500 ml-1 font-bold">*</span>}
+        <div id="top-bar-title-container" className="flex-1 text-center min-w-0 px-2 cursor-pointer" onClick={handleTitleTap}>
+          <h1 id="top-bar-title" className="font-semibold text-gray-900 text-lg truncate flex items-center justify-center">
+            <span className="truncate">{title}</span>
+            {mode === 'workflow' && isDirty && <span id="dirty-indicator" className="text-blue-500 ml-1 font-bold">*</span>}
           </h1>
           {mode === 'workflow' && workflow && (
-            <p className="text-xs text-gray-500">
-              {(() => {
-                const total = workflow.nodes.length;
-                if (!hideStaticNodes && !hideBypassedNodes && Object.keys(manuallyHiddenNodes).length === 0) {
-                  return `${total} nodes ${isDirty ? '[Unsaved]' : ''}`.trim();
-                }
-                const visibleCount = workflow.nodes.filter((node) => {
-                  if (manuallyHiddenNodes[node.id]) return false;
-                  if (hideBypassedNodes && node.mode === 4) return false;
-                  if (!hideStaticNodes) return true;
-                  const widgetDefs = getWidgetDefinitions(nodeTypes, node);
-                  const inputWidgetDefs = getInputWidgetDefinitions(nodeTypes, node);
-                  return widgetDefs.length > 0 || inputWidgetDefs.length > 0;
-                }).length;
-                const hiddenCount = total - visibleCount;
-                return `${total} nodes (${hiddenCount} hidden) ${isDirty ? '[Unsaved]' : ''}`.trim();
-              })()}
+            <p className="node-count-display text-xs text-gray-500">
+              {nodeCountLabel}
             </p>
           )}
           {mode === 'queue' && (
-            <p className="text-xs text-gray-500">
+            <p className="run-count-display text-xs text-gray-500">
               {history.length} {history.length === 1 ? 'run' : 'runs'}
               {pending.length > 0 && ` (${pending.length} pending)`}
             </p>
@@ -136,10 +196,11 @@ export function TopBar({ onMenuClick, mode = 'workflow', rightSlot }: TopBarProp
         </div>
 
         {/* Status indicators / menu slot */}
-        <div className="w-10 h-10 flex items-center justify-center">
-          {rightSlot ?? null}
+        <div id="top-bar-right-slot" className="w-10 h-10 flex items-center justify-center">
+          {rightControls}
         </div>
       </div>
+      <AppMenu open={appMenuOpen} onClose={() => setAppMenuOpen(false)} />
     </div>
   );
 }

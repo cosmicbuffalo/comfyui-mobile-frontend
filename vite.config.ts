@@ -13,18 +13,19 @@ export default defineConfig({
     sourcemap: true
   },
   server: {
+    host: true,
     port: 3000,
     proxy: {
       '/api': {
-        target: 'http://localhost:8188',
+        target: `http://${process.env.COMFY_HOST ?? 'localhost'}:8188`,
         changeOrigin: true
       },
       '/ws': {
-        target: 'ws://localhost:8188',
+        target: `ws://${process.env.COMFY_HOST ?? 'localhost'}:8188`,
         ws: true
       },
       '/view': {
-        target: 'http://localhost:8188',
+        target: `http://${process.env.COMFY_HOST ?? 'localhost'}:8188`,
         changeOrigin: true
       }
     }

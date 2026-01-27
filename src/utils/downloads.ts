@@ -1,5 +1,6 @@
 export async function downloadImage(
   src: string,
+  filename: string = 'image.png',
   onDownloaded?: (src: string) => void
 ) {
   try {
@@ -8,7 +9,7 @@ export async function downloadImage(
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = 'image.png';
+    link.download = filename;
     document.body.appendChild(link);
     link.click();
     link.remove();
@@ -24,6 +25,6 @@ export async function downloadBatch(
   onDownloaded?: (src: string) => void
 ) {
   for (const src of sources) {
-    await downloadImage(src, onDownloaded);
+    await downloadImage(src, 'image.png', onDownloaded);
   }
 }

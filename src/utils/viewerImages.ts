@@ -1,4 +1,4 @@
-import { getImageUrl } from '@/api/client';
+import { getImageUrl, type FileItem } from '@/api/client';
 import { extractMetadata } from '@/utils/metadata';
 import { getMediaType, type MediaType } from '@/utils/media';
 
@@ -9,6 +9,8 @@ export interface ViewerImage {
   metadata?: ReturnType<typeof extractMetadata>;
   durationSeconds?: number;
   success?: boolean;
+  filename?: string;
+  file?: FileItem;
 }
 
 export interface HistoryImageSource {
@@ -45,13 +47,23 @@ export function buildViewerImages(
     outputs.forEach((img, imageIndex) => {
       if (onlyOutput && img.type !== 'output') return;
       const altText = typeof alt === 'function' ? alt(imageIndex, itemIndex) : alt;
+      const filePath = img.subfolder ? `${img.subfolder}/${img.filename}` : img.filename;
+      const mediaType = getMediaType(img.filename);
+      const fileType = mediaType === 'video' ? 'video' : 'image';
       images.push({
         src: getImageUrl(img.filename, img.subfolder, img.type),
         alt: altText,
-        mediaType: getMediaType(img.filename),
+        mediaType,
         metadata,
         durationSeconds,
-        success
+        success,
+        filename: img.filename,
+        file: {
+          id: `${img.type}/${filePath}`,
+          name: img.filename,
+          type: fileType,
+          fullUrl: getImageUrl(img.filename, img.subfolder, img.type)
+        }
       });
     });
   });

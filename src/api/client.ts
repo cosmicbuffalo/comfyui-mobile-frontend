@@ -294,3 +294,170 @@ export function connectWebSocket(
 
   return ws;
 }
+
+export interface FileItem {
+  id: string;
+  name: string;
+  type: 'image' | 'video' | 'folder';
+  previewUrl?: string;
+  fullUrl?: string;
+  date?: number;
+  size?: number;
+}
+
+export type AssetSource = 'output' | 'input';
+export type SortMode = 'modified' | 'modified-reverse' | 'name' | 'name-reverse' | 'size' | 'size-reverse';
+
+// Mobile Files API - browse output/input directories
+interface MobileFileItem {
+  name: string;
+  path: string;
+  type: 'image' | 'video' | 'dir';
+  size?: number;
+  date: number;
+  folder?: string;
+  count?: number; // for directories
+}
+
+interface MobileFilesResponse {
+  files: MobileFileItem[];
+  total: number;
+  offset: number;
+  limit: number;
+}
+
+async function fetchMobileFiles(
+  path: string = '',
+  recursive: boolean = false,
+  source: AssetSource = 'output'
+): Promise<MobileFilesResponse> {
+  const params = new URLSearchParams();
+  if (path) params.set('path', path);
+  if (recursive) params.set('recursive', 'true');
+  if (source) params.set('source', source);
+
+  const response = await fetch(`${API_BASE}/mobile/api/files?${params}`);
+  if (!response.ok) throw new Error('Failed to fetch files');
+  return response.json();
+}
+
+export async function getUserImageFolders(): Promise<{ input: string[]; output: string[] }> {
+  // Fetch root directory to get top-level folders
+  const outputResult = await fetchMobileFiles('', false, 'output');
+  const inputResult = await fetchMobileFiles('', false, 'input');
+  const outputFolders = outputResult.files
+    .filter(f => f.type === 'dir')
+    .map(f => f.name);
+  const inputFolders = inputResult.files
+    .filter(f => f.type === 'dir')
+    .map(f => f.name);
+
+  return { input: inputFolders, output: outputFolders };
+}
+
+export async function getUserImages(
+  mode: AssetSource,
+  // Note: count, offset, sort params kept for API compatibility but not used by mobile backend
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  _count = 1000,
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  _offset = 0,
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  _sort: SortMode = 'modified',
+  includeSubfolders = false,
+  subfolder: string | null = null
+): Promise<FileItem[]> {
+  const result = await fetchMobileFiles(subfolder || '', includeSubfolders, mode);
+
+  // Convert mobile API response to FileItem array
+  return result.files.map(f => {
+    if (f.type === 'dir') {
+      return {
+        id: `${mode}/${f.path}`,
+        name: f.name,
+        type: 'folder' as const,
+        date: f.date,
+        size: f.size,
+      };
+    }
+
+    // For images/videos, construct preview and full URLs
+    const folder = f.folder || (f.path.includes('/') ? f.path.substring(0, f.path.lastIndexOf('/')) : '');
+    return {
+      id: `${mode}/${f.path}`,
+      name: f.name,
+      type: f.type as 'image' | 'video',
+      previewUrl: `${API_BASE}/mobile/api/thumbnail?filename=${encodeURIComponent(f.name)}&subfolder=${encodeURIComponent(folder)}&source=${mode}`,
+      fullUrl: `${API_BASE}/view?filename=${encodeURIComponent(f.name)}&type=${mode}&subfolder=${encodeURIComponent(folder)}`,
+      date: f.date,
+      size: f.size,
+    };
+  });
+}
+
+export async function deleteFile(path: string, source: AssetSource = 'output'): Promise<void> {
+  const response = await fetch(`${API_BASE}/mobile/api/files`, {
+    method: 'DELETE',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ path, source })
+  });
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.error || 'Failed to delete file');
+  }
+}
+
+export async function getFileWorkflow(path: string, source: AssetSource = 'output'): Promise<Workflow> {
+  const params = new URLSearchParams({ path, source });
+  const response = await fetch(`${API_BASE}/mobile/api/file-metadata?${params.toString()}`);
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({}));
+    throw new Error(error.error || 'Failed to load file metadata');
+  }
+  const data = await response.json();
+  if (!data.workflow) {
+    throw new Error('No workflow metadata found');
+  }
+  return data.workflow as Workflow;
+}
+
+export async function getImageMetadata(
+  path: string,
+  source: AssetSource = 'output'
+): Promise<{ prompt?: unknown; workflow?: unknown }> {
+  const params = new URLSearchParams({ path, source });
+  const response = await fetch(`${API_BASE}/mobile/api/image-metadata?${params.toString()}`);
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({}));
+    throw new Error(error.error || 'Failed to load image metadata');
+  }
+  return response.json();
+}
+
+export async function moveFiles(
+  paths: string[],
+  destination: string | null,
+  source: AssetSource = 'output'
+): Promise<void> {
+  const response = await fetch(`${API_BASE}/mobile/api/files/move`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sources: paths, destination: destination ?? '', source })
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({}));
+    throw new Error(error.error || 'Failed to move files');
+  }
+}
+
+export async function createFolder(path: string, source: AssetSource = 'output'): Promise<void> {
+  const response = await fetch(`${API_BASE}/mobile/api/files/mkdir`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ path, source })
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({}));
+    throw new Error(error.error || 'Failed to create folder');
+  }
+}

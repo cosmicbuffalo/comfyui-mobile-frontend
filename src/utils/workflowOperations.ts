@@ -1,0 +1,74 @@
+import { getFileWorkflow, type AssetSource, type FileItem } from '@/api/client';
+import type { NodeTypes, Workflow, WorkflowNode } from '@/api/types';
+import { getWidgetIndexForInput } from '@/hooks/useWorkflow';
+import type { WorkflowSource } from '@/hooks/useWorkflow';
+
+export type LoadWorkflowFn = (
+  workflow: Workflow,
+  filename?: string,
+  options?: { fresh?: boolean; source?: WorkflowSource }
+) => void;
+
+export function resolveFileSource(file: FileItem): AssetSource {
+  if (file.id.startsWith('input/')) return 'input';
+  return 'output';
+}
+
+export function resolveFilePath(file: FileItem, source?: AssetSource): string {
+  const effectiveSource = source ?? resolveFileSource(file);
+  const prefix = `${effectiveSource}/`;
+  return file.id.startsWith(prefix) ? file.id.slice(prefix.length) : file.id;
+}
+
+export function buildWorkflowFilename(filePath: string): string {
+  return `output-${filePath.replace(/[\\/]/g, '_')}.json`;
+}
+
+export async function loadWorkflowFromFile(params: {
+  file: FileItem;
+  source?: AssetSource;
+  loadWorkflow: LoadWorkflowFn;
+  onLoaded?: () => void;
+  onError?: (error: unknown) => void;
+}): Promise<void> {
+  const { file, source, loadWorkflow, onLoaded, onError } = params;
+  try {
+    const effectiveSource = source ?? resolveFileSource(file);
+    const filePath = resolveFilePath(file, effectiveSource);
+    const workflowData = await getFileWorkflow(filePath, effectiveSource);
+    loadWorkflow(workflowData, buildWorkflowFilename(filePath), { source: { type: 'other' } });
+    onLoaded?.();
+  } catch (err) {
+    onError?.(err);
+    throw err;
+  }
+}
+
+export function resolveInputWidget(params: {
+  workflow: Workflow | null;
+  nodeTypes: NodeTypes | null;
+  nodeId: number;
+}): { node: WorkflowNode; index: number; name: string } | null {
+  const { workflow, nodeTypes, nodeId } = params;
+  if (!workflow || !nodeTypes) return null;
+  const node = workflow.nodes.find((entry) => entry.id === nodeId);
+  if (!node) return null;
+  const inputNames = ['image', 'filename', 'file'];
+  for (const name of inputNames) {
+    const index = getWidgetIndexForInput(workflow, nodeTypes, node, name);
+    if (index !== null) {
+      return { node, index, name };
+    }
+  }
+  return null;
+}
+
+export function getNodeLabel(node: WorkflowNode, nodeTypes: NodeTypes | null): string {
+  const directTitle = (node as { title?: unknown }).title;
+  const nodeTitle =
+    typeof directTitle === 'string' && directTitle.trim()
+      ? directTitle.trim()
+      : null;
+  const typeDef = nodeTypes?.[node.type];
+  return nodeTitle || typeDef?.display_name || node.type;
+}

@@ -1,5 +1,7 @@
 @import "tailwindcss";
 
+@custom-variant dark (&:where(.dark, .dark *));
+
 /* Base styles */
 :root {
   font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
@@ -47,6 +49,11 @@ body {
 .dark .text-gray-400 { color: #9ca3af; }
 .dark .border-gray-200 { border-color: #1f2937; }
 .dark .border-gray-100 { border-color: #1f2937; }
+input,
+select,
+textarea {
+  color: #111827;
+}
 .dark input,
 .dark select,
 .dark textarea {
@@ -123,10 +130,10 @@ body {
 .rs-missing .rs__single-value {
   color: #b91c1c;
 }
-.rs-has-bookmark .rs__value-container {
+.rs-has-pin .rs__value-container {
   padding-right: 3.5rem;
 }
-.rs-no-bookmark .rs__value-container {
+.rs-no-pin .rs__value-container {
   padding-right: 2.25rem;
 }
 .note-display {

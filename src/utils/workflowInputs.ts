@@ -4,6 +4,24 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
 
+function getPrimitiveInlineValue(node: WorkflowNode): unknown {
+  const type = String(node.type || '');
+  if (!type.startsWith('Primitive') && node.type !== 'PrimitiveNode') {
+    return undefined;
+  }
+
+  if (Array.isArray(node.widgets_values)) {
+    return node.widgets_values[0];
+  }
+
+  if (isRecord(node.widgets_values)) {
+    const value = node.widgets_values.value;
+    return value !== undefined ? value : node.widgets_values[0];
+  }
+
+  return undefined;
+}
+
 export function getWidgetValue(
   node: WorkflowNode,
   name: string,
@@ -173,6 +191,23 @@ export function buildQueuePromptInputs(
         const sourceNodeId = link[1];
         if (allowedNodeIds.has(sourceNodeId)) {
           inputs[input.name] = [String(sourceNodeId), link[2]];
+        } else {
+          const sourceNode = workflow.nodes.find((n) => n.id === sourceNodeId);
+          if (sourceNode) {
+            const value = getPrimitiveInlineValue(sourceNode);
+            if (value !== undefined) {
+              inputs[input.name] = value;
+            } else {
+              console.warn(
+                `[workflowInputs] Missing source node for input '${input.name}' on node ${node.id} (${node.type}).`,
+                {
+                  sourceNodeId,
+                  sourceNodeType: sourceNode.type,
+                  sourceAllowed: false
+                }
+              );
+            }
+          }
         }
       }
     }
@@ -282,12 +317,20 @@ export function buildWorkflowPromptInputs(
         if (allowedNodeIds.has(resolved.nodeId)) {
           inputs[input.name] = [String(resolved.nodeId), resolved.slotIndex];
         } else {
-          // Handle PrimitiveNode - frontend-only node type that provides inline values
           const sourceNode = workflow.nodes.find((n) => n.id === resolved.nodeId);
-          if (sourceNode && sourceNode.type === 'PrimitiveNode') {
-            const value = Array.isArray(sourceNode.widgets_values) ? sourceNode.widgets_values[0] : undefined;
+          if (sourceNode) {
+            const value = getPrimitiveInlineValue(sourceNode);
             if (value !== undefined) {
               inputs[input.name] = value;
+            } else {
+              console.warn(
+                `[workflowInputs] Missing source node for input '${input.name}' on node ${node.id} (${node.type}).`,
+                {
+                  sourceNodeId: resolved.nodeId,
+                  sourceNodeType: sourceNode.type,
+                  sourceAllowed: false
+                }
+              );
             }
           }
         }

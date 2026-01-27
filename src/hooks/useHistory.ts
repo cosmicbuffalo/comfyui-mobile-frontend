@@ -2,8 +2,9 @@ import { create } from 'zustand';
 import * as api from '@/api/client';
 import type { HistoryOutputImage, Workflow } from '@/api/types';
 import { useWorkflowStore, getWorkflowSignature } from '@/hooks/useWorkflow';
+import { useQueueStore } from '@/hooks/useQueue';
 
-interface HistoryEntry {
+export interface HistoryEntry {
   prompt_id: string;
   timestamp: number;
   durationSeconds?: number;
@@ -40,13 +41,13 @@ export const useHistoryStore = create<HistoryState>((set, get) => ({
       // Add to top
       return { history: [entry, ...state.history] };
     });
-    const workflowStore = useWorkflowStore.getState();
-    if (workflowStore.queueItemExpanded[entry.prompt_id] === undefined) {
-      workflowStore.setQueueItemExpanded(entry.prompt_id, true);
+    const queueStore = useQueueStore.getState();
+    if (queueStore.queueItemExpanded[entry.prompt_id] === undefined) {
+      queueStore.setQueueItemExpanded(entry.prompt_id, true);
     }
     if (entry.workflow && entry.durationSeconds) {
       const signature = getWorkflowSignature(entry.workflow);
-      workflowStore.updateWorkflowDuration(signature, entry.durationSeconds * 1000);
+      useWorkflowStore.getState().updateWorkflowDuration(signature, entry.durationSeconds * 1000);
     }
   },
 
@@ -116,14 +117,14 @@ export const useHistoryStore = create<HistoryState>((set, get) => ({
       entries.sort((a, b) => b.timestamp - a.timestamp);
 
       set({ history: entries });
-      const workflowStore = useWorkflowStore.getState();
+      const queueStore = useQueueStore.getState();
       for (const entry of entries) {
-        if (workflowStore.queueItemExpanded[entry.prompt_id] === undefined) {
-          workflowStore.setQueueItemExpanded(entry.prompt_id, true);
+        if (queueStore.queueItemExpanded[entry.prompt_id] === undefined) {
+          queueStore.setQueueItemExpanded(entry.prompt_id, true);
         }
         if (entry.workflow && entry.durationSeconds) {
           const signature = getWorkflowSignature(entry.workflow);
-          workflowStore.updateWorkflowDuration(signature, entry.durationSeconds * 1000);
+          useWorkflowStore.getState().updateWorkflowDuration(signature, entry.durationSeconds * 1000);
         }
       }
     } catch (err) {

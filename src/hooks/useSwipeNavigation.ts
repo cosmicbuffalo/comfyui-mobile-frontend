@@ -4,29 +4,44 @@ interface SwipeState {
   startX: number;
   startY: number;
   currentX: number;
+  currentY: number;
   isHorizontal: boolean | null;
   isTracking: boolean;
 }
 
 interface UseSwipeNavigationOptions {
-  queueOpen: boolean;
-  setQueuePanelOpen: (open: boolean) => void;
-  isInputFocused: boolean;
-  viewerOpen: boolean;
-  menuOpen: boolean;
+  onSwipeLeft?: () => void;
+  onSwipeRight?: () => void;
+  onSwipeUp?: () => void;
+  onSwipeDown?: () => void;
+  enabled?: boolean;
+  threshold?: number;
+  preventScroll?: boolean;
+  deferResetOnSwipe?: boolean;
+  deferResetDurationMs?: number;
 }
 
 export function useSwipeNavigation({
-  queueOpen,
-  setQueuePanelOpen,
-  isInputFocused,
-  viewerOpen,
-  menuOpen
+  onSwipeLeft,
+  onSwipeRight,
+  onSwipeUp,
+  onSwipeDown,
+  enabled = true,
+  threshold = 50,
+  preventScroll = true,
+  deferResetOnSwipe = false,
+  deferResetDurationMs = 350
 }: UseSwipeNavigationOptions) {
   const [swipeOffset, setSwipeOffset] = useState(0);
   const [isSwiping, setIsSwiping] = useState(false);
-  const [swipeEnabled, setSwipeEnabled] = useState(true);
+  const [swipeEnabled, setLocalSwipeEnabled] = useState(enabled);
   const swipeRef = useRef<SwipeState | null>(null);
+  const resetTimerRef = useRef<number | null>(null);
+
+  // Update local state when prop changes
+  useEffect(() => {
+    setLocalSwipeEnabled(enabled);
+  }, [enabled]);
 
   const resetSwipeState = useCallback(() => {
     swipeRef.current = null;
@@ -34,9 +49,12 @@ export function useSwipeNavigation({
     setSwipeOffset(0);
   }, []);
 
+  const setSwipeEnabled = useCallback((value: boolean) => {
+    setLocalSwipeEnabled(value);
+  }, []);
+
   useEffect(() => {
-    // Don't attach listeners when swipe is disabled or overlays are open
-    if (!swipeEnabled || isInputFocused || viewerOpen || menuOpen) return;
+    if (!swipeEnabled) return;
 
     const isEditableTarget = (target: EventTarget | null) => {
       if (!(target instanceof HTMLElement)) return false;
@@ -49,11 +67,16 @@ export function useSwipeNavigation({
       if (isEditableTarget(e.target) || isEditableTarget(document.activeElement)) {
         return;
       }
+      if (resetTimerRef.current !== null) {
+        window.clearTimeout(resetTimerRef.current);
+        resetTimerRef.current = null;
+      }
       const touch = e.touches[0];
       swipeRef.current = {
         startX: touch.clientX,
         startY: touch.clientY,
         currentX: touch.clientX,
+        currentY: touch.clientY,
         isHorizontal: null,
         isTracking: true
       };
@@ -67,60 +90,94 @@ export function useSwipeNavigation({
       const dx = touch.clientX - swipe.startX;
       const dy = touch.clientY - swipe.startY;
 
-      // Determine direction on first significant movement
       if (swipe.isHorizontal === null) {
-        // Wait for more movement before deciding (20px instead of 10px)
         if (Math.abs(dx) > 20 || Math.abs(dy) > 20) {
-          // More lenient horizontal detection - just needs to be more horizontal than vertical
           const isHorizontal = Math.abs(dx) > Math.abs(dy);
+          swipe.isHorizontal = isHorizontal;
+          
           if (isHorizontal) {
-            // Check if swiping in valid direction
-            const isValidDirection = queueOpen ? dx > 0 : dx < 0;
-            if (isValidDirection) {
-              swipe.isHorizontal = true;
+            // Only start swiping if we have a handler for that direction
+            const hasHandler = dx > 0 ? !!onSwipeRight : !!onSwipeLeft;
+            if (hasHandler) {
               setIsSwiping(true);
             } else {
               swipe.isTracking = false;
             }
           } else {
-            // Vertical scroll, stop tracking
-            swipe.isTracking = false;
+            // Vertical movement
+            const hasHandler = dy > 0 ? !!onSwipeDown : !!onSwipeUp;
+            if (!hasHandler) {
+              swipe.isTracking = false;
+            }
           }
         }
         return;
       }
 
-      // We've determined it's a horizontal swipe
       if (swipe.isHorizontal) {
-        e.preventDefault();
-        swipe.currentX = touch.clientX;
-        const offset = touch.clientX - swipe.startX;
-        const maxOffset = window.innerWidth;
-        if (queueOpen) {
-          setSwipeOffset(Math.max(0, Math.min(maxOffset, offset)));
-        } else {
-          setSwipeOffset(Math.min(0, Math.max(-maxOffset, offset)));
+        if (preventScroll && e.cancelable) {
+          e.preventDefault();
         }
+        swipe.currentX = touch.clientX;
+        setSwipeOffset(touch.clientX - swipe.startX);
+      } else {
+        // We don't currently track vertical offset but we could
+        swipe.currentY = touch.clientY;
       }
     };
 
     const handleTouchEnd = () => {
       const swipe = swipeRef.current;
-      if (!swipe?.isTracking || swipe.isHorizontal !== true) {
+      if (!swipe?.isTracking) {
         resetSwipeState();
         return;
       }
 
       const dx = swipe.currentX - swipe.startX;
-      const threshold = window.innerWidth * 0.25;
+      const dy = swipe.currentY - swipe.startY;
+      const moveThreshold = threshold || window.innerWidth * 0.25;
 
-      if (queueOpen && dx > threshold) {
-        setQueuePanelOpen(false);
-      } else if (!queueOpen && dx < -threshold) {
-        setQueuePanelOpen(true);
+      let didSwipe = false;
+      if (swipe.isHorizontal === true) {
+        if (dx < -moveThreshold && onSwipeLeft) {
+          onSwipeLeft();
+          didSwipe = true;
+        } else if (dx > moveThreshold && onSwipeRight) {
+          onSwipeRight();
+          didSwipe = true;
+        }
+      } else if (swipe.isHorizontal === false) {
+        if (dy < -moveThreshold && onSwipeUp) {
+          onSwipeUp();
+          didSwipe = true;
+        } else if (dy > moveThreshold && onSwipeDown) {
+          onSwipeDown();
+          didSwipe = true;
+        }
       }
 
-      resetSwipeState();
+      // Delay resetSwipeState to allow panel state to update first
+      // This prevents a race condition where isSwiping becomes false
+      // before the panel open/close state has updated
+      if (didSwipe) {
+        if (deferResetOnSwipe) {
+          swipeRef.current = null;
+          setIsSwiping(false);
+          if (resetTimerRef.current !== null) {
+            window.clearTimeout(resetTimerRef.current);
+          }
+          resetTimerRef.current = window.setTimeout(() => {
+            resetSwipeState();
+            resetTimerRef.current = null;
+          }, deferResetDurationMs);
+        } else {
+          requestAnimationFrame(() => {
+            resetSwipeState();
+          });
+        }
+      } else {
+        resetSwipeState();
+      }
     };
 
     document.addEventListener('touchstart', handleTouchStart, { passive: true });
@@ -133,17 +190,13 @@ export function useSwipeNavigation({
       document.removeEventListener('touchmove', handleTouchMove);
       document.removeEventListener('touchend', handleTouchEnd);
       document.removeEventListener('touchcancel', handleTouchEnd);
+      if (resetTimerRef.current !== null) {
+        window.clearTimeout(resetTimerRef.current);
+        resetTimerRef.current = null;
+      }
       resetSwipeState();
     };
-  }, [
-    swipeEnabled,
-    isInputFocused,
-    viewerOpen,
-    menuOpen,
-    queueOpen,
-    setQueuePanelOpen,
-    resetSwipeState
-  ]);
+  }, [swipeEnabled, onSwipeLeft, onSwipeRight, onSwipeUp, onSwipeDown, threshold, preventScroll, deferResetOnSwipe, deferResetDurationMs, resetSwipeState]);
 
   return {
     swipeOffset,

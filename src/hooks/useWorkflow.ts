@@ -1,28 +1,71 @@
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
-import type { HistoryOutputImage, Workflow, WorkflowNode, NodeTypes, NodeTypeDefinition } from '@/api/types';
+import type { HistoryOutputImage, Workflow, WorkflowNode, WorkflowSubgraphDefinition, NodeTypes } from '@/api/types';
+import { useImageViewerStore } from '@/hooks/useImageViewer';
+import { useWorkflowErrorsStore, type NodeError } from '@/hooks/useWorkflowErrors';
 import * as api from '@/api/client';
 import { useQueueStore } from '@/hooks/useQueue';
+import { useNavigationStore } from '@/hooks/useNavigation';
+import { usePinnedWidgetStore } from '@/hooks/usePinnedWidget';
+import { useSeedStore } from '@/hooks/useSeed';
 import {
   buildWorkflowPromptInputs,
   getWorkflowWidgetIndexMap,
   getWidgetValue,
-  isWidgetInputType,
   normalizeWidgetValue
 } from '@/utils/workflowInputs';
+import { buildWorkflowCacheKey } from '@/utils/workflowCacheKey';
+import { expandWorkflowSubgraphs } from '@/utils/expandWorkflowSubgraphs';
+import {
+  type SeedMode,
+  SPECIAL_SEED_RANDOM,
+  SPECIAL_SEED_INCREMENT,
+  SPECIAL_SEED_DECREMENT,
+  DEFAULT_SPECIAL_SEED_RANGE,
+  isSpecialSeedValue,
+  getSpecialSeedMode,
+  getSpecialSeedValueForMode,
+  getWidgetIndexForInput,
+  findSeedWidgetIndex,
+  getSeedStep,
+  getSeedRandomBounds,
+  generateSeedFromNode,
+  resolveSpecialSeedToUse
+} from '@/utils/seedUtils';
+import {
+  getWidgetDefinitions,
+  getInputWidgetDefinitions
+} from '@/utils/widgetDefinitions';
+import { findConnectedNode } from '@/utils/nodeOrdering';
 
-type SeedMode = 'fixed' | 'randomize' | 'increment' | 'decrement';
+// Re-export utilities for external consumers
+export type { SeedMode };
+export {
+  SPECIAL_SEED_RANDOM,
+  SPECIAL_SEED_INCREMENT,
+  SPECIAL_SEED_DECREMENT,
+  DEFAULT_SPECIAL_SEED_RANGE,
+  isSpecialSeedValue,
+  getSpecialSeedMode,
+  getSpecialSeedValueForMode,
+  findSeedWidgetIndex,
+  getSeedStep,
+  getSeedRandomBounds,
+  generateSeedFromNode,
+  resolveSpecialSeedToUse,
+  getWidgetIndexForInput,
+  getWidgetDefinitions,
+  getInputWidgetDefinitions
+};
+
+// Internal type alias
+type SeedModeType = SeedMode;
 type SeedLastValues = Record<number, number | null>;
-type ThemeMode = 'dark' | 'light';
-
-// Bookmarked widget for quick access from viewer
-interface BookmarkedWidget {
-  nodeId: number;
-  widgetIndex: number;
-  widgetName: string;
-  widgetType: string;
-  options?: Record<string, unknown> | unknown[];
-}
+type MobileOrigin =
+  | { scope: 'root'; nodeId: number }
+  | { scope: 'subgraph'; subgraphId: string; nodeId: number };
+const MOBILE_ORIGIN_KEY = '__mobile_origin';
+const MOBILE_SUBGRAPH_GROUP_MAP_KEY = '__mobile_subgraph_group_map';
 
 // Per-node UI state that we want to preserve
 interface SavedNodeState {
@@ -35,6 +78,11 @@ interface SavedNodeState {
 interface SavedWorkflowState {
   nodes: Record<number, SavedNodeState>;
   seedModes: Record<number, SeedMode>;
+  collapsedGroups?: Record<number, boolean>;
+  hiddenGroups?: Record<number, boolean>;
+  collapsedSubgraphs?: Record<string, boolean>;
+  hiddenSubgraphs?: Record<string, boolean>;
+  bookmarkedNodeIds?: number[];
 }
 
 // Node output images from execution
@@ -51,27 +99,20 @@ export type WorkflowSource =
   | { type: 'template'; moduleName: string; templateName: string }
   | { type: 'other' };
 
-// Node-specific error from prompt validation
-export interface NodeError {
-  type: string;
-  message: string;
-  details: string;
-  inputName?: string; // The input/widget name if error is specific to one
-}
-
 interface WorkflowState {
   // Workflow source tracking for reload functionality
   workflowSource: WorkflowSource | null;
 
   // Workflow data
   workflow: Workflow | null;
+  embedWorkflow: Workflow | null;
   originalWorkflow: Workflow | null; // For dirty check
   currentFilename: string | null;
+  currentWorkflowKey: string | null;
   nodeTypes: NodeTypes | null;
   isLoading: boolean;
-  error: string | null;
 
-  // Per-workflow saved states (keyed by filename)
+  // Per-workflow saved states (keyed by deterministic workflow cache key)
   savedWorkflowStates: Record<string, SavedWorkflowState>;
 
   // Execution state
@@ -83,40 +124,28 @@ interface WorkflowState {
   currentNodeStartTime: number | null;
   nodeDurationStats: Record<string, { avgMs: number; count: number }>;
   workflowDurationStats: Record<string, { avgMs: number; count: number }>;
-  seedModes: Record<number, SeedMode>; // This should now also be stored in workflow widgets
 
   // Node output images (keyed by node ID)
   nodeOutputs: Record<string, NodeOutputImage[]>;
   // Prompt output images (keyed by prompt ID)
   promptOutputs: Record<string, HistoryOutputImage[]>;
-  theme: ThemeMode;
-  previewVisibility: Record<string, boolean>;
-  previewVisibilityDefault: boolean;
   runCount: number;
-  viewerOpen: boolean;
-  viewerImages: Array<{ src: string; alt?: string }>;
-  viewerIndex: number;
-  viewerScale: number;
-  viewerTranslate: { x: number; y: number };
+  followQueue: boolean;
   workflowLoadedAt: number;
-  queuePanelOpen: boolean;
-  queueItemExpanded: Record<string, boolean>;
-  queueItemUserToggled: Record<string, boolean>;
-  queueItemHideImages: Record<string, boolean>;
-  seedLastValues: SeedLastValues;
-  hideStaticNodes: boolean;
-  hideBypassedNodes: boolean;
-  showQueueMetadata: boolean;
   connectionHighlightModes: Record<number, 'off' | 'inputs' | 'outputs' | 'both'>;
+  connectionButtonsVisible: boolean;
   manuallyHiddenNodes: Record<number, boolean>;
+  searchQuery: string;
+  searchOpen: boolean;
 
-  // Bookmarked widget (per-workflow cache keyed by filename)
-  bookmarkedWidgets: Record<string, BookmarkedWidget>;
-  bookmarkedWidget: BookmarkedWidget | null; // Current workflow's bookmark (derived from cache)
-  bookmarkOverlayOpen: boolean;
+  // Group state
+  collapsedGroups: Record<number, boolean>;
+  hiddenGroups: Record<number, boolean>;
 
-  // Node-specific errors from prompt validation (keyed by node ID)
-  nodeErrors: Record<string, NodeError[]>;
+  // Subgraph state
+  collapsedSubgraphs: Record<string, boolean>;
+  hiddenSubgraphs: Record<string, boolean>;
+
 
   // Actions
   loadWorkflow: (workflow: Workflow, filename?: string, options?: { fresh?: boolean; source?: WorkflowSource }) => void;
@@ -124,172 +153,384 @@ interface WorkflowState {
   setSavedWorkflow: (workflow: Workflow, filename: string) => void;
   updateNodeWidget: (nodeId: number, widgetIndex: number, value: unknown, widgetName?: string) => void;
   updateNodeWidgets: (nodeId: number, updates: Record<number, unknown>) => void;
+  updateNodeTitle: (nodeId: number, title: string | null) => void;
   toggleBypass: (nodeId: number) => void;
   toggleNodeFold: (nodeId: number) => void;
   setNodeFold: (nodeId: number, collapsed: boolean) => void;
-  scrollToNode: (nodeId: number) => void;
+  scrollToNode: (nodeId: number, label?: string) => void;
   ensureNodeExpanded: (nodeId: number) => void;
   setNodeTypes: (types: NodeTypes) => void;
   setExecutionState: (executing: boolean, nodeId: string | null, promptId: string | null, progress: number) => void;
   queueWorkflow: (count: number) => Promise<void>;
-  setSeedMode: (nodeId: number, mode: SeedMode) => void;
   saveCurrentWorkflowState: () => void;
   setNodeOutput: (nodeId: string, images: NodeOutputImage[]) => void;
   clearNodeOutputs: () => void;
   addPromptOutputs: (promptId: string, images: HistoryOutputImage[]) => void;
   clearPromptOutputs: (promptId?: string) => void;
-  setTheme: (theme: ThemeMode) => void;
-  toggleTheme: () => void;
-  setPreviewVisibility: (promptId: string, visible: boolean) => void;
-  togglePreviewVisibility: (promptId: string) => void;
-  setPreviewVisibilityDefault: (visible: boolean) => void;
   setRunCount: (count: number) => void;
-  setViewerState: (next: Partial<Pick<WorkflowState, 'viewerOpen' | 'viewerImages' | 'viewerIndex' | 'viewerScale' | 'viewerTranslate'>>) => void;
-  setQueuePanelOpen: (open: boolean) => void;
-  setQueueItemExpanded: (promptId: string, expanded: boolean) => void;
-  setQueueItemUserToggled: (promptId: string, toggled: boolean) => void;
-  setQueueItemHideImages: (promptId: string, hidden: boolean) => void;
-  toggleQueueItemHideImages: (promptId: string) => void;
-  setHideStaticNodes: (hidden: boolean) => void;
-  toggleHideStaticNodes: () => void;
-  setHideBypassedNodes: (hidden: boolean) => void;
-  toggleHideBypassedNodes: () => void;
-  setShowQueueMetadata: (show: boolean) => void;
-  toggleShowQueueMetadata: () => void;
+  setFollowQueue: (followQueue: boolean) => void;
   cycleConnectionHighlight: (nodeId: number) => void;
   setConnectionHighlightMode: (nodeId: number, mode: 'off' | 'inputs' | 'outputs' | 'both') => void;
+  toggleConnectionButtonsVisible: () => void;
+  setConnectionButtonsVisible: (visible: boolean) => void;
   hideNode: (nodeId: number) => void;
+  setNodeHidden: (nodeId: number, hidden: boolean) => void;
+  revealNodeWithParents: (nodeId: number) => void;
   showAllHiddenNodes: () => void;
+  toggleGroupCollapse: (groupId: number) => void;
+  setGroupCollapsed: (groupId: number, collapsed: boolean) => void;
+  toggleGroupHidden: (groupId: number) => void;
+  setGroupHidden: (groupId: number, hidden: boolean) => void;
+  toggleSubgraphHidden: (subgraphId: string) => void;
+  setSubgraphHidden: (subgraphId: string, hidden: boolean) => void;
+  bypassAllInGroup: (groupId: number, bypass: boolean, subgraphId?: string | null) => void;
+  updateGroupTitle: (groupId: number, title: string, subgraphId?: string | null) => void;
+  updateSubgraphTitle: (subgraphId: string, title: string) => void;
+  showAllHiddenGroups: () => void;
+  toggleSubgraphCollapse: (subgraphId: string) => void;
+  setSubgraphCollapsed: (subgraphId: string, collapsed: boolean) => void;
+  setSearchQuery: (query: string) => void;
+  setSearchOpen: (open: boolean) => void;
   updateWorkflowDuration: (signature: string, durationMs: number) => void;
   clearWorkflowCache: () => void;
-  setError: (message: string | null) => void;
   applyControlAfterGenerate: () => void;
-  setBookmarkedWidget: (bookmark: BookmarkedWidget | null) => void;
-  setBookmarkOverlayOpen: (open: boolean) => void;
-  toggleBookmarkOverlay: () => void;
-  setNodeErrors: (errors: Record<string, NodeError[]>) => void;
-  clearNodeErrors: () => void;
 }
 
-export function getWidgetIndexForInput(
+function normalizeWorkflowNodes(nodes: WorkflowNode[]): WorkflowNode[] {
+  return nodes.map((node) => ({
+    ...node,
+    widgets_values: node.widgets_values ?? [],
+    inputs: node.inputs ?? [],
+    outputs: node.outputs ?? [],
+    flags: node.flags ?? {},
+    properties: node.properties ?? {},
+    mode: node.mode ?? 0,
+    order: node.order ?? 0
+  }));
+}
+
+function normalizeWorkflowForEmbed(workflow: Workflow): Workflow {
+  const cloned = JSON.parse(JSON.stringify(workflow)) as Workflow;
+  cloned.nodes = normalizeWorkflowNodes(cloned.nodes ?? []);
+  cloned.links = cloned.links ?? [];
+  cloned.groups = cloned.groups ?? [];
+  cloned.config = cloned.config ?? {};
+  if (cloned.definitions?.subgraphs) {
+    cloned.definitions.subgraphs = cloned.definitions.subgraphs.map((subgraph) => ({
+      ...subgraph,
+      nodes: normalizeWorkflowNodes(subgraph.nodes ?? []),
+      links: subgraph.links ?? []
+    }));
+  }
+  cloned.last_node_id = cloned.last_node_id ?? Math.max(0, ...cloned.nodes.map((n) => n.id));
+  cloned.last_link_id = cloned.last_link_id ?? 0;
+  cloned.version = cloned.version ?? 0.4;
+  return cloned;
+}
+
+function getMobileOrigin(node: WorkflowNode | undefined): MobileOrigin | null {
+  if (!node) return null;
+  const props = node.properties as Record<string, unknown> | undefined;
+  const origin = props?.[MOBILE_ORIGIN_KEY];
+  if (!origin || typeof origin !== 'object') return null;
+  const scope = (origin as { scope?: string }).scope;
+  if (scope === 'root') {
+    const nodeId = (origin as { nodeId?: number }).nodeId;
+    return typeof nodeId === 'number' ? { scope: 'root', nodeId } : null;
+  }
+  if (scope === 'subgraph') {
+    const nodeId = (origin as { nodeId?: number }).nodeId;
+    const subgraphId = (origin as { subgraphId?: string }).subgraphId;
+    if (typeof nodeId === 'number' && typeof subgraphId === 'string') {
+      return { scope: 'subgraph', subgraphId, nodeId };
+    }
+  }
+  return null;
+}
+
+function computeNodeGroupsFor(
+  nodes: WorkflowNode[],
+  groups: Workflow['groups']
+): Map<number, number> {
+  const nodeToGroup = new Map<number, number>();
+  if (!groups || groups.length === 0) return nodeToGroup;
+
+  const sortedGroups = [...groups].sort((a, b) => a.id - b.id);
+  for (const node of nodes) {
+    const [nodeX, nodeY] = node.pos;
+    const [nodeWidth, nodeHeight] = node.size;
+    const centerX = nodeX + nodeWidth / 2;
+    const centerY = nodeY + nodeHeight / 2;
+
+    for (const group of sortedGroups) {
+      const [groupX, groupY, groupWidth, groupHeight] = group.bounding;
+      if (
+        centerX >= groupX &&
+        centerX <= groupX + groupWidth &&
+        centerY >= groupY &&
+        centerY <= groupY + groupHeight
+      ) {
+        nodeToGroup.set(node.id, group.id);
+        break;
+      }
+    }
+  }
+
+  return nodeToGroup;
+}
+
+function collectDescendantSubgraphs(
+  startIds: Iterable<string>,
+  childMap: Map<string, Set<string>>
+): Set<string> {
+  const result = new Set<string>();
+  const stack = Array.from(startIds);
+  while (stack.length > 0) {
+    const current = stack.pop();
+    if (!current || result.has(current)) continue;
+    result.add(current);
+    const children = childMap.get(current);
+    if (children) {
+      for (const child of children) {
+        if (!result.has(child)) stack.push(child);
+      }
+    }
+  }
+  return result;
+}
+
+function buildSubgraphParentMap(
+  subgraphs: WorkflowSubgraphDefinition[]
+): Map<string, Array<{ parentId: string; nodeId: number }>> {
+  const subgraphIds = new Set(subgraphs.map((sg) => sg.id));
+  const map = new Map<string, Array<{ parentId: string; nodeId: number }>>();
+  for (const subgraph of subgraphs) {
+    for (const node of subgraph.nodes ?? []) {
+      if (!subgraphIds.has(node.type)) continue;
+      const entry = map.get(node.type) ?? [];
+      entry.push({ parentId: subgraph.id, nodeId: node.id });
+      map.set(node.type, entry);
+    }
+  }
+  return map;
+}
+
+function getGroupIdForNode(
+  targetNodeId: number,
+  nodes: WorkflowNode[],
+  groups: Workflow['groups']
+): number | null {
+  if (!groups || groups.length === 0) return null;
+  const nodeToGroup = computeNodeGroupsFor(nodes, groups);
+  return nodeToGroup.get(targetNodeId) ?? null;
+}
+
+export function collectBypassGroupTargetNodeIds(
   workflow: Workflow,
-  nodeTypes: NodeTypes | null,
+  groupId: number,
+  subgraphId: string | null = null
+): Set<number> {
+  const nodes = workflow.nodes ?? [];
+  const groups = workflow.groups ?? [];
+  const subgraphs = workflow.definitions?.subgraphs ?? [];
+
+  const subgraphById = new Map(subgraphs.map((sg) => [sg.id, sg]));
+  const subgraphIds = new Set(subgraphs.map((sg) => sg.id));
+  const nodesBySubgraph = new Map<string, WorkflowNode[]>();
+  const rootNodes: WorkflowNode[] = [];
+
+  for (const node of nodes) {
+    const origin = getMobileOrigin(node);
+    if (origin?.scope === 'subgraph') {
+      const bucket = nodesBySubgraph.get(origin.subgraphId);
+      if (bucket) {
+        bucket.push(node);
+      } else {
+        nodesBySubgraph.set(origin.subgraphId, [node]);
+      }
+    } else {
+      rootNodes.push(node);
+    }
+  }
+
+  const subgraphChildMap = new Map<string, Set<string>>();
+  for (const subgraph of subgraphs) {
+    const children = new Set<string>();
+    for (const node of subgraph.nodes ?? []) {
+      if (subgraphIds.has(node.type)) {
+        children.add(node.type);
+      }
+    }
+    if (children.size > 0) {
+      subgraphChildMap.set(subgraph.id, children);
+    }
+  }
+
+  const targetNodeIds = new Set<number>();
+
+  if (subgraphId) {
+    const subgraph = subgraphById.get(subgraphId);
+    if (!subgraph) return targetNodeIds;
+    const subgraphGroups = subgraph.groups ?? [];
+    const group = subgraphGroups.find((g) => g.id === groupId);
+    if (!group) return targetNodeIds;
+
+    const subgraphNodes = subgraph.nodes ?? [];
+    const nodeToGroup = computeNodeGroupsFor(subgraphNodes, subgraphGroups);
+    const nestedSubgraphIds = new Set<string>();
+    const directNodeOriginIds = new Set<number>();
+
+    for (const node of subgraphNodes) {
+      if (nodeToGroup.get(node.id) !== groupId) continue;
+      if (subgraphIds.has(node.type)) {
+        nestedSubgraphIds.add(node.type);
+      } else {
+        directNodeOriginIds.add(node.id);
+      }
+    }
+
+    const scopedNodes = nodesBySubgraph.get(subgraphId) ?? [];
+    for (const node of scopedNodes) {
+      const origin = getMobileOrigin(node);
+      if (origin?.scope !== 'subgraph') continue;
+      if (directNodeOriginIds.has(origin.nodeId)) {
+        targetNodeIds.add(node.id);
+      }
+    }
+
+    const descendantSubgraphs = collectDescendantSubgraphs(
+      nestedSubgraphIds,
+      subgraphChildMap
+    );
+    for (const nestedId of descendantSubgraphs) {
+      const nestedNodes = nodesBySubgraph.get(nestedId) ?? [];
+      for (const node of nestedNodes) {
+        targetNodeIds.add(node.id);
+      }
+    }
+  } else {
+    const group = groups.find((g) => g.id === groupId);
+    if (!group) return targetNodeIds;
+
+    const nodeToGroup = computeNodeGroupsFor(rootNodes, groups);
+    for (const node of rootNodes) {
+      if (nodeToGroup.get(node.id) === groupId) {
+        targetNodeIds.add(node.id);
+      }
+    }
+
+    const rawSubgraphGroupMap =
+      (workflow.extra as Record<string, unknown> | undefined)?.[
+        MOBILE_SUBGRAPH_GROUP_MAP_KEY
+      ];
+    const directSubgraphIds = new Set<string>();
+    if (rawSubgraphGroupMap && typeof rawSubgraphGroupMap === 'object') {
+      for (const [key, value] of Object.entries(
+        rawSubgraphGroupMap as Record<string, unknown>
+      )) {
+        if (value === groupId) {
+          directSubgraphIds.add(key);
+        }
+      }
+    }
+
+    const descendantSubgraphs = collectDescendantSubgraphs(
+      directSubgraphIds,
+      subgraphChildMap
+    );
+    for (const subgraphId of descendantSubgraphs) {
+      const subgraphNodes = nodesBySubgraph.get(subgraphId) ?? [];
+      for (const node of subgraphNodes) {
+        targetNodeIds.add(node.id);
+      }
+    }
+  }
+
+  return targetNodeIds;
+}
+
+function updateNodeWidgetValues(
   node: WorkflowNode,
-  inputName: string
-): number | null {
-  if (!nodeTypes) return null;
-
-  const widgetIndexMap = getWorkflowWidgetIndexMap(workflow, node.id);
-  const mappedIndex = widgetIndexMap?.[inputName];
-  if (mappedIndex !== undefined) {
-    return mappedIndex;
-  }
-
-  const typeDef = nodeTypes[node.type];
-  if (!typeDef?.input) return null;
-
-  const requiredOrder = typeDef.input_order?.required || Object.keys(typeDef.input.required || {});
-  const optionalOrder = typeDef.input_order?.optional || Object.keys(typeDef.input.optional || {});
-  const orderedInputs = [...requiredOrder, ...optionalOrder];
-  let widgetIndex = 0;
-
-  for (const name of orderedInputs) {
-    const inputDef = typeDef.input.required?.[name] || typeDef.input.optional?.[name];
-    if (!inputDef) continue;
-
-    const [typeOrOptions] = inputDef;
-    const inputEntry = node.inputs.find((i) => i.name === name);
-    const isConnected = inputEntry?.link != null;
-    const isWidgetToggle = Boolean(inputEntry?.widget) && !isConnected;
-    const hasSocket = Boolean(inputEntry);
-    const isWidgetType = isWidgetInputType(typeOrOptions) || isWidgetToggle || !hasSocket;
-    const isWidget = isWidgetType;
-
-    if (isWidget) {
-      if (name === inputName) {
-        return widgetIndex;
+  widgetIndex: number,
+  value: unknown,
+  widgetName?: string
+): WorkflowNode {
+  if (!Array.isArray(node.widgets_values)) {
+    const nextValues = { ...(node.widgets_values || {}) } as Record<string, unknown>;
+    if (widgetName) {
+      nextValues[widgetName] = value;
+      if (node.type === 'VHS_VideoCombine' && widgetName === 'save_image' && 'save_output' in nextValues) {
+        nextValues.save_output = value;
       }
-      widgetIndex += 1;
-
-      if (String(typeOrOptions) === 'INT' && (name === 'seed' || name === 'noise_seed')) {
-        widgetIndex += 1;
-      }
+    } else if (widgetIndex >= 0) {
+      nextValues[String(widgetIndex)] = value;
     }
+    return { ...node, widgets_values: nextValues };
   }
 
-  return null;
+  let newWidgetValues = [...node.widgets_values];
+  if (widgetIndex >= newWidgetValues.length) {
+    newWidgetValues.push(value);
+  } else {
+    newWidgetValues[widgetIndex] = value;
+  }
+
+  if (node.type === 'Power Lora Loader (rgthree)') {
+    newWidgetValues = newWidgetValues.filter((v) => v !== null);
+  }
+
+  return { ...node, widgets_values: newWidgetValues };
 }
 
-// Find seed widget index by looking for any INT input containing 'seed' in its name
-export function findSeedWidgetIndex(
-  workflow: Workflow,
-  nodeTypes: NodeTypes | null,
-  node: WorkflowNode
-): number | null {
-  // First try the standard names
-  const standardIndex = getWidgetIndexForInput(workflow, nodeTypes, node, 'seed') ??
-    getWidgetIndexForInput(workflow, nodeTypes, node, 'noise_seed');
-  if (standardIndex !== null) return standardIndex;
-
-  if (!nodeTypes) {
-    const hasSeedOutput = node.outputs?.some((output) =>
-      String(output.name || '').toLowerCase().includes('seed') &&
-      String(output.type || '').toUpperCase().includes('INT')
-    );
-    if (hasSeedOutput && Array.isArray(node.widgets_values) && node.widgets_values.length > 0) {
-      return 0;
-    }
-    return null;
+function updateNodeWidgetsValues(
+  node: WorkflowNode,
+  updates: Record<number, unknown>
+): WorkflowNode {
+  if (!Array.isArray(node.widgets_values)) {
+    return node;
   }
-  const typeDef = nodeTypes[node.type];
-  if (!typeDef?.input) {
-    const hasSeedOutput = node.outputs?.some((output) =>
-      String(output.name || '').toLowerCase().includes('seed') &&
-      String(output.type || '').toUpperCase().includes('INT')
-    );
-    if (hasSeedOutput && Array.isArray(node.widgets_values) && node.widgets_values.length > 0) {
-      return 0;
-    }
-    return null;
+  const newWidgetValues = [...node.widgets_values];
+  for (const [idxStr, value] of Object.entries(updates)) {
+    const idx = parseInt(idxStr, 10);
+    newWidgetValues[idx] = value;
   }
-
-  const widgetIndexMap = getWorkflowWidgetIndexMap(workflow, node.id);
-  const requiredOrder = typeDef.input_order?.required || Object.keys(typeDef.input.required || {});
-  const optionalOrder = typeDef.input_order?.optional || Object.keys(typeDef.input.optional || {});
-  const orderedInputs = [...requiredOrder, ...optionalOrder];
-  let widgetIndex = 0;
-
-  for (const name of orderedInputs) {
-    const inputDef = typeDef.input.required?.[name] || typeDef.input.optional?.[name];
-    if (!inputDef) continue;
-
-    const [typeOrOptions] = inputDef;
-    const inputEntry = node.inputs.find((i) => i.name === name);
-    const isConnected = inputEntry?.link != null;
-    const isWidgetToggle = Boolean(inputEntry?.widget) && !isConnected;
-    const hasSocket = Boolean(inputEntry);
-    const isWidgetType = isWidgetInputType(typeOrOptions) || isWidgetToggle || !hasSocket;
-
-    if (isWidgetType) {
-      const mappedIndex = widgetIndexMap?.[name];
-      const indexToUse = mappedIndex ?? widgetIndex;
-
-      // Check if this is an INT input with 'seed' in its name (case-insensitive)
-      if (String(typeOrOptions) === 'INT' && name.toLowerCase().includes('seed')) {
-        return indexToUse;
-      }
-
-      widgetIndex += 1;
-      if (String(typeOrOptions) === 'INT' && (name === 'seed' || name === 'noise_seed')) {
-        widgetIndex += 1;
-      }
-    }
-  }
-
-  return null;
+  return { ...node, widgets_values: newWidgetValues };
 }
 
-function inferSeedMode(workflow: Workflow, nodeTypes: NodeTypes, node: WorkflowNode): SeedMode {
+function updateEmbedWorkflowFromExpandedNode(
+  embedWorkflow: Workflow,
+  expandedNode: WorkflowNode
+): Workflow {
+  const origin = getMobileOrigin(expandedNode) ?? { scope: 'root', nodeId: expandedNode.id };
+
+  if (origin.scope === 'root') {
+    const nextNodes = embedWorkflow.nodes.map((node) =>
+      node.id === origin.nodeId ? { ...node, widgets_values: expandedNode.widgets_values ?? [] } : node
+    );
+    return { ...embedWorkflow, nodes: nextNodes };
+  }
+
+  const subgraphs = embedWorkflow.definitions?.subgraphs;
+  if (!subgraphs) return embedWorkflow;
+
+  const nextSubgraphs = subgraphs.map((subgraph) => {
+    if (subgraph.id !== origin.subgraphId) return subgraph;
+    const nextNodes = subgraph.nodes.map((node) =>
+      node.id === origin.nodeId ? { ...node, widgets_values: expandedNode.widgets_values ?? [] } : node
+    );
+    return { ...subgraph, nodes: nextNodes };
+  });
+
+  return {
+    ...embedWorkflow,
+    definitions: {
+      ...embedWorkflow.definitions,
+      subgraphs: nextSubgraphs
+    }
+  };
+}
+
+function inferSeedMode(workflow: Workflow, nodeTypes: NodeTypes, node: WorkflowNode): SeedModeType {
   const validModes = ['fixed', 'randomize', 'increment', 'decrement'];
   if (Array.isArray(node.widgets_values)) {
     const modeValue = node.widgets_values.find((value) =>
@@ -325,88 +566,6 @@ function inferSeedMode(workflow: Workflow, nodeTypes: NodeTypes, node: WorkflowN
   }
 
   return 'fixed';
-}
-
-export const SPECIAL_SEED_RANDOM = -1;
-export const SPECIAL_SEED_INCREMENT = -2;
-export const SPECIAL_SEED_DECREMENT = -3;
-export const DEFAULT_SPECIAL_SEED_RANGE = 1125899906842624;
-const SPECIAL_SEED_VALUES = new Set([
-  SPECIAL_SEED_RANDOM,
-  SPECIAL_SEED_INCREMENT,
-  SPECIAL_SEED_DECREMENT
-]);
-
-export function isSpecialSeedValue(value: number): boolean {
-  return SPECIAL_SEED_VALUES.has(value);
-}
-
-export function getSpecialSeedMode(value: number): SeedMode | null {
-  if (value === SPECIAL_SEED_RANDOM) return 'randomize';
-  if (value === SPECIAL_SEED_INCREMENT) return 'increment';
-  if (value === SPECIAL_SEED_DECREMENT) return 'decrement';
-  return null;
-}
-
-export function getSpecialSeedValueForMode(mode: SeedMode): number | null {
-  if (mode === 'randomize') return SPECIAL_SEED_RANDOM;
-  if (mode === 'increment') return SPECIAL_SEED_INCREMENT;
-  if (mode === 'decrement') return SPECIAL_SEED_DECREMENT;
-  return null;
-}
-
-export function getSeedStep(nodeTypes: NodeTypes, node: WorkflowNode): number {
-  const typeDef = nodeTypes[node.type];
-  if (!typeDef?.input) return 1;
-  const inputDef = typeDef.input.required?.seed || typeDef.input.optional?.seed;
-  const options = inputDef?.[1];
-  const step = typeof options?.step === 'number' ? options.step : 1;
-  return step > 0 ? step : 1;
-}
-
-export function getSeedRandomBounds(node: WorkflowNode): { min: number; max: number } {
-  const rawMin = Number(node.properties?.randomMin ?? 0);
-  const rawMax = Number(node.properties?.randomMax ?? DEFAULT_SPECIAL_SEED_RANGE);
-  const min = Number.isFinite(rawMin) ? Math.max(-DEFAULT_SPECIAL_SEED_RANGE, rawMin) : 0;
-  const max = Number.isFinite(rawMax) ? Math.min(DEFAULT_SPECIAL_SEED_RANGE, rawMax) : DEFAULT_SPECIAL_SEED_RANGE;
-  return min <= max ? { min, max } : { min: max, max: min };
-}
-
-export function generateSeedFromNode(nodeTypes: NodeTypes, node: WorkflowNode): number {
-  const step = getSeedStep(nodeTypes, node);
-  const { min, max } = getSeedRandomBounds(node);
-  const scaledStep = step > 0 ? step / 10 : 1;
-  const range = max - min;
-  let seed = min + Math.random() * range;
-  if (scaledStep > 0) {
-    seed = Math.round((seed - min) / scaledStep) * scaledStep + min;
-  }
-  if (seed > max) seed = max;
-  if (seed < min) seed = min;
-  if (SPECIAL_SEED_VALUES.has(seed)) {
-    seed = 0;
-  }
-  return seed;
-}
-
-export function resolveSpecialSeedToUse(
-  inputSeed: number,
-  lastSeed: number | null,
-  nodeTypes: NodeTypes,
-  node: WorkflowNode
-): number {
-  if (SPECIAL_SEED_VALUES.has(inputSeed)) {
-    if (typeof lastSeed === 'number' && !SPECIAL_SEED_VALUES.has(lastSeed)) {
-      if (inputSeed === SPECIAL_SEED_INCREMENT) {
-        return lastSeed + 1;
-      }
-      if (inputSeed === SPECIAL_SEED_DECREMENT) {
-        return lastSeed - 1;
-      }
-    }
-    return generateSeedFromNode(nodeTypes, node);
-  }
-  return Number.isFinite(inputSeed) ? inputSeed : 0;
 }
 
 function collectWorkflowLoadErrors(
@@ -469,14 +628,30 @@ function collectWorkflowLoadErrors(
 
 export const useWorkflowStore = create<WorkflowState>()(
   persist(
-    (set, get) => ({
+    (set, get) => {
+      const applyNodeErrors = (errors: Record<string, NodeError[]>) => {
+        const { manuallyHiddenNodes } = get();
+        const errorNodeIds = Object.keys(errors);
+        const nodesToUnhide = errorNodeIds.filter((id) => manuallyHiddenNodes[Number(id)]);
+        if (nodesToUnhide.length > 0) {
+          const newHiddenNodes = { ...manuallyHiddenNodes };
+          for (const id of nodesToUnhide) {
+            delete newHiddenNodes[Number(id)];
+          }
+          set({ manuallyHiddenNodes: newHiddenNodes });
+        }
+        useWorkflowErrorsStore.getState().setNodeErrors(errors);
+      };
+
+      return {
       workflowSource: null,
       workflow: null,
+      embedWorkflow: null,
       originalWorkflow: null,
       currentFilename: null,
+      currentWorkflowKey: null,
       nodeTypes: null,
       isLoading: false,
-      error: null,
       savedWorkflowStates: {},
       isExecuting: false,
       executingNodeId: null,
@@ -486,33 +661,20 @@ export const useWorkflowStore = create<WorkflowState>()(
       currentNodeStartTime: null,
       nodeDurationStats: {},
       workflowDurationStats: {},
-      seedModes: {},
       nodeOutputs: {},
       promptOutputs: {},
-      theme: 'dark',
-      previewVisibility: {},
-      previewVisibilityDefault: false,
       runCount: 1,
-      viewerOpen: false,
-      viewerImages: [],
-      viewerIndex: 0,
-      viewerScale: 1,
-      viewerTranslate: { x: 0, y: 0 },
+      followQueue: false,
       workflowLoadedAt: 0,
-      queuePanelOpen: false,
-      queueItemExpanded: {},
-      queueItemUserToggled: {},
-      queueItemHideImages: {},
-      seedLastValues: {},
-      hideStaticNodes: false,
-      hideBypassedNodes: false,
-      showQueueMetadata: false,
       connectionHighlightModes: {},
+      connectionButtonsVisible: true,
       manuallyHiddenNodes: {},
-      bookmarkedWidgets: {},
-      bookmarkedWidget: null,
-      bookmarkOverlayOpen: false,
-      nodeErrors: {},
+      searchQuery: '',
+      searchOpen: false,
+      collapsedGroups: {},
+      hiddenGroups: {},
+      collapsedSubgraphs: {},
+      hiddenSubgraphs: {},
 
       setNodeOutput: (nodeId, images) => {
         set((state) => ({
@@ -550,105 +712,16 @@ export const useWorkflowStore = create<WorkflowState>()(
         });
       },
 
-      setTheme: (theme) => {
-        set({ theme });
-      },
 
-      toggleTheme: () => {
-        set((state) => ({ theme: state.theme === 'dark' ? 'light' : 'dark' }));
-      },
-
-      setPreviewVisibility: (promptId, visible) => {
-        set((state) => ({
-          previewVisibility: { ...state.previewVisibility, [promptId]: visible }
-        }));
-      },
-
-      togglePreviewVisibility: (promptId) => {
-        set((state) => ({
-          previewVisibility: {
-            ...state.previewVisibility,
-            [promptId]: !state.previewVisibility[promptId]
-          }
-        }));
-      },
-
-      setPreviewVisibilityDefault: (visible) => {
-        set({ previewVisibilityDefault: visible });
-      },
 
       setRunCount: (count) => {
         set({ runCount: Math.max(1, Math.floor(count)) });
       },
 
-      setViewerState: (next) => {
-        set((state) => {
-          const candidate = { ...state, ...next };
-          const unchanged =
-            candidate.viewerOpen === state.viewerOpen &&
-            candidate.viewerIndex === state.viewerIndex &&
-            candidate.viewerScale === state.viewerScale &&
-            candidate.viewerTranslate.x === state.viewerTranslate.x &&
-            candidate.viewerTranslate.y === state.viewerTranslate.y &&
-            candidate.viewerImages === state.viewerImages;
-          return unchanged ? state : candidate;
-        });
+      setFollowQueue: (followQueue) => {
+        set({ followQueue });
       },
 
-      setQueuePanelOpen: (open) => {
-        set({ queuePanelOpen: open });
-      },
-
-      setQueueItemExpanded: (promptId, expanded) => {
-        set((state) => ({
-          queueItemExpanded: { ...state.queueItemExpanded, [promptId]: expanded }
-        }));
-      },
-
-      setQueueItemUserToggled: (promptId, toggled) => {
-        set((state) => ({
-          queueItemUserToggled: { ...state.queueItemUserToggled, [promptId]: toggled }
-        }));
-      },
-
-      setQueueItemHideImages: (promptId, hidden) => {
-        set((state) => ({
-          queueItemHideImages: { ...state.queueItemHideImages, [promptId]: hidden }
-        }));
-      },
-
-      toggleQueueItemHideImages: (promptId) => {
-        set((state) => ({
-          queueItemHideImages: {
-            ...state.queueItemHideImages,
-            [promptId]: !state.queueItemHideImages[promptId]
-          }
-        }));
-      },
-
-      setHideStaticNodes: (hidden) => {
-        set({ hideStaticNodes: hidden });
-      },
-
-      toggleHideStaticNodes: () => {
-        set((state) => ({ hideStaticNodes: !state.hideStaticNodes }));
-      },
-
-      setHideBypassedNodes: (hidden) => {
-        set({ hideBypassedNodes: hidden });
-      },
-
-      toggleHideBypassedNodes: () => {
-        set((state) => ({ hideBypassedNodes: !state.hideBypassedNodes }));
-      },
-
-      setShowQueueMetadata: (show) => {
-        set({ showQueueMetadata: show });
-      },
-
-      toggleShowQueueMetadata: () => {
-        set((state) => ({ showQueueMetadata: !state.showQueueMetadata }));
-      },
 
       cycleConnectionHighlight: (nodeId) => {
         set((state) => {
@@ -678,6 +751,14 @@ export const useWorkflowStore = create<WorkflowState>()(
         }));
       },
 
+      toggleConnectionButtonsVisible: () => {
+        set((state) => ({ connectionButtonsVisible: !state.connectionButtonsVisible }));
+      },
+
+      setConnectionButtonsVisible: (visible) => {
+        set({ connectionButtonsVisible: visible });
+      },
+
       hideNode: (nodeId) => {
         set((state) => ({
           manuallyHiddenNodes: {
@@ -687,12 +768,398 @@ export const useWorkflowStore = create<WorkflowState>()(
         }));
       },
 
+      setNodeHidden: (nodeId, hidden) => {
+        set((state) => {
+          const next = { ...state.manuallyHiddenNodes };
+          if (hidden) {
+            next[nodeId] = true;
+          } else {
+            delete next[nodeId];
+          }
+          return { manuallyHiddenNodes: next };
+        });
+      },
+
+      revealNodeWithParents: (nodeId) => {
+        const { workflow } = get();
+        if (!workflow) return;
+        const subgraphs = workflow.definitions?.subgraphs ?? [];
+        console.log('[revealNodeWithParents] start', {
+          nodeId,
+          rootNodeCount: workflow.nodes?.length ?? 0,
+          subgraphCount: subgraphs.length
+        });
+        let node = workflow.nodes.find((entry) => entry.id === nodeId);
+        if (!node) {
+          for (const subgraph of subgraphs) {
+            const found = subgraph.nodes?.find((entry) => entry.id === nodeId);
+            if (found) {
+              node = found;
+              break;
+            }
+          }
+        }
+        if (!node) {
+          console.log('[revealNodeWithParents] node not found', {
+            nodeId,
+            rootIds: workflow.nodes?.slice(0, 5).map((n) => n.id),
+            subgraphSummaries: subgraphs.map((sg) => ({
+              id: sg.id,
+              nodeCount: sg.nodes?.length ?? 0,
+              sampleIds: sg.nodes?.slice(0, 5).map((n) => n.id) ?? []
+            }))
+          });
+          return;
+        }
+
+        const subgraphById = new Map(subgraphs.map((sg) => [sg.id, sg]));
+        const parentMap = buildSubgraphParentMap(subgraphs);
+        const origin = getMobileOrigin(node);
+        const rootNodes = workflow.nodes.filter(
+          (entry) => getMobileOrigin(entry)?.scope !== 'subgraph'
+        );
+        const startingNodeId = origin?.scope === 'subgraph' ? origin.nodeId : node.id;
+        const collectParentIds = () => {
+          const parents = new Set<number>();
+          const stack = [startingNodeId];
+          if (origin?.scope === 'subgraph') {
+            const subgraph = subgraphById.get(origin.subgraphId);
+            const incoming = new Map<number, number[]>();
+            subgraph?.links?.forEach((link) => {
+              const list = incoming.get(link.target_id) ?? [];
+              list.push(link.origin_id);
+              incoming.set(link.target_id, list);
+            });
+            while (stack.length > 0) {
+              const current = stack.pop();
+              if (current === undefined) continue;
+              const parentList = incoming.get(current) ?? [];
+              parentList.forEach((parentId) => {
+                if (parents.has(parentId)) return;
+                parents.add(parentId);
+                stack.push(parentId);
+              });
+            }
+            return parents;
+          }
+          while (stack.length > 0) {
+            const current = stack.pop();
+            if (current === undefined) continue;
+            const currentNode = workflow.nodes.find((entry) => entry.id === current);
+            if (!currentNode) continue;
+            currentNode.inputs?.forEach((input, index) => {
+              if (input.link === null) return;
+              const connected = findConnectedNode(workflow, current, index);
+              if (!connected) return;
+              const parentId = connected.node.id;
+              if (parents.has(parentId)) return;
+              parents.add(parentId);
+              stack.push(parentId);
+            });
+          }
+          return parents;
+        };
+        const parentIds = collectParentIds();
+        console.log('[revealNodeWithParents] parents', {
+          nodeId,
+          parentCount: parentIds.size,
+          parents: Array.from(parentIds).slice(0, 20)
+        });
+        console.log('[revealNodeWithParents] found node', {
+          nodeId: node.id,
+          origin,
+          hasGroups: (workflow.groups?.length ?? 0) > 0,
+          hiddenNodeCount: Object.keys(get().manuallyHiddenNodes ?? {}).length
+        });
+
+        set((state) => {
+          const nextHiddenNodes = { ...state.manuallyHiddenNodes };
+          delete nextHiddenNodes[nodeId];
+          parentIds.forEach((parentId) => {
+            delete nextHiddenNodes[parentId];
+          });
+          const nextHiddenGroups = { ...state.hiddenGroups };
+          const nextHiddenSubgraphs = { ...state.hiddenSubgraphs };
+          const nextCollapsedGroups = { ...state.collapsedGroups };
+          const nextCollapsedSubgraphs = { ...state.collapsedSubgraphs };
+
+          const revealGroup = (groupId: number | null | undefined) => {
+            if (groupId === null || groupId === undefined) return;
+            delete nextHiddenGroups[groupId];
+            nextCollapsedGroups[groupId] = false;
+          };
+
+          const expandSubgraph = (subgraphId: string | null | undefined) => {
+            if (!subgraphId) return;
+            nextCollapsedSubgraphs[subgraphId] = false;
+            delete nextHiddenSubgraphs[subgraphId];
+          };
+
+          if (!origin || origin.scope === 'root') {
+            const groupId = getGroupIdForNode(node.id, rootNodes, workflow.groups ?? []);
+            console.log('[revealNodeWithParents] root origin', {
+              nodeId,
+              groupId
+            });
+            revealGroup(groupId);
+            parentIds.forEach((parentId) => {
+              const parentGroupId = getGroupIdForNode(parentId, rootNodes, workflow.groups ?? []);
+              revealGroup(parentGroupId);
+            });
+          } else {
+            expandSubgraph(origin.subgraphId);
+            const subgraph = subgraphById.get(origin.subgraphId);
+            if (subgraph) {
+              const groupId = getGroupIdForNode(
+                origin.nodeId,
+                subgraph.nodes ?? [],
+                subgraph.groups ?? []
+              );
+              console.log('[revealNodeWithParents] subgraph origin', {
+                nodeId,
+                subgraphId: origin.subgraphId,
+                groupId
+              });
+              revealGroup(groupId);
+            }
+
+            const rawSubgraphGroupMap =
+              (workflow.extra as Record<string, unknown> | undefined)?.[
+                MOBILE_SUBGRAPH_GROUP_MAP_KEY
+              ];
+            const rootGroupId =
+              rawSubgraphGroupMap && typeof rawSubgraphGroupMap === 'object'
+                ? (rawSubgraphGroupMap as Record<string, unknown>)[origin.subgraphId]
+                : undefined;
+            if (typeof rootGroupId === 'number') {
+              console.log('[revealNodeWithParents] root group mapping', {
+                subgraphId: origin.subgraphId,
+                rootGroupId
+              });
+              revealGroup(rootGroupId);
+            }
+
+            if (subgraph) {
+              parentIds.forEach((parentId) => {
+                const parentGroupId = getGroupIdForNode(
+                  parentId,
+                  subgraph.nodes ?? [],
+                  subgraph.groups ?? []
+                );
+                revealGroup(parentGroupId);
+              });
+            }
+
+            const stack = [origin.subgraphId];
+            const visited = new Set<string>();
+            while (stack.length > 0) {
+              const current = stack.pop();
+              if (!current || visited.has(current)) continue;
+              visited.add(current);
+              const parents = parentMap.get(current) ?? [];
+              console.log('[revealNodeWithParents] parent chain', {
+                current,
+                parentCount: parents.length
+              });
+              for (const parent of parents) {
+                expandSubgraph(parent.parentId);
+                const parentDef = subgraphById.get(parent.parentId);
+                if (parentDef) {
+                  const parentGroupId = getGroupIdForNode(
+                    parent.nodeId,
+                    parentDef.nodes ?? [],
+                    parentDef.groups ?? []
+                  );
+                  console.log('[revealNodeWithParents] parent expand', {
+                    parentId: parent.parentId,
+                    parentNodeId: parent.nodeId,
+                    parentGroupId
+                  });
+                  revealGroup(parentGroupId);
+                }
+                if (!visited.has(parent.parentId)) {
+                  stack.push(parent.parentId);
+                }
+              }
+            }
+          }
+
+          return {
+            manuallyHiddenNodes: nextHiddenNodes,
+            hiddenGroups: nextHiddenGroups,
+            hiddenSubgraphs: nextHiddenSubgraphs,
+            collapsedGroups: nextCollapsedGroups,
+            collapsedSubgraphs: nextCollapsedSubgraphs
+          };
+        });
+      },
+
       showAllHiddenNodes: () => {
         set({
-          hideStaticNodes: false,
-          hideBypassedNodes: false,
-          manuallyHiddenNodes: {}
+          manuallyHiddenNodes: {},
+          hiddenGroups: {},
+          hiddenSubgraphs: {}
         });
+      },
+
+      toggleGroupCollapse: (groupId) => {
+        set((state) => {
+          const isCollapsed = state.collapsedGroups[groupId] ?? true;
+          return {
+            collapsedGroups: {
+              ...state.collapsedGroups,
+              [groupId]: !isCollapsed
+            }
+          };
+        });
+      },
+
+      setGroupCollapsed: (groupId, collapsed) => {
+        set((state) => {
+          const next = { ...state.collapsedGroups };
+          if (collapsed) {
+            next[groupId] = true;
+          } else {
+            delete next[groupId];
+          }
+          return { collapsedGroups: next };
+        });
+      },
+
+      toggleGroupHidden: (groupId) => {
+        set((state) => ({
+          hiddenGroups: {
+            ...state.hiddenGroups,
+            [groupId]: !state.hiddenGroups[groupId]
+          }
+        }));
+      },
+
+      setGroupHidden: (groupId, hidden) => {
+        set((state) => {
+          const next = { ...state.hiddenGroups };
+          if (hidden) {
+            next[groupId] = true;
+          } else {
+            delete next[groupId];
+          }
+          return { hiddenGroups: next };
+        });
+      },
+
+      toggleSubgraphHidden: (subgraphId) => {
+        set((state) => ({
+          hiddenSubgraphs: {
+            ...state.hiddenSubgraphs,
+            [subgraphId]: !state.hiddenSubgraphs[subgraphId]
+          }
+        }));
+      },
+
+      setSubgraphHidden: (subgraphId, hidden) => {
+        set((state) => {
+          const next = { ...state.hiddenSubgraphs };
+          if (hidden) {
+            next[subgraphId] = true;
+          } else {
+            delete next[subgraphId];
+          }
+          return { hiddenSubgraphs: next };
+        });
+      },
+
+      updateGroupTitle: (groupId, title, subgraphId) => {
+        const { workflow } = get();
+        if (!workflow) return;
+        const nextTitle = title.trim();
+        if (subgraphId) {
+          const subgraphs = workflow.definitions?.subgraphs ?? [];
+          const nextSubgraphs = subgraphs.map((subgraph) => {
+            if (subgraph.id !== subgraphId) return subgraph;
+            const groups = subgraph.groups ?? [];
+            const nextGroups = groups.map((group) =>
+              group.id === groupId ? { ...group, title: nextTitle } : group
+            );
+            return { ...subgraph, groups: nextGroups };
+          });
+          useWorkflowErrorsStore.getState().setError(null);
+          set({
+            workflow: {
+              ...workflow,
+              definitions: { ...(workflow.definitions ?? {}), subgraphs: nextSubgraphs }
+            }
+          });
+          return;
+        }
+        const nextGroups = (workflow.groups ?? []).map((group) =>
+          group.id === groupId ? { ...group, title: nextTitle } : group
+        );
+        set({ workflow: { ...workflow, groups: nextGroups } });
+      },
+
+      updateSubgraphTitle: (subgraphId, title) => {
+        const { workflow } = get();
+        if (!workflow) return;
+        const nextTitle = title.trim();
+        const subgraphs = workflow.definitions?.subgraphs ?? [];
+        const nextSubgraphs = subgraphs.map((subgraph) =>
+          subgraph.id === subgraphId ? { ...subgraph, name: nextTitle } : subgraph
+        );
+        set({
+          workflow: {
+            ...workflow,
+            definitions: { ...(workflow.definitions ?? {}), subgraphs: nextSubgraphs }
+          }
+        });
+      },
+
+      bypassAllInGroup: (groupId, bypass, subgraphId = null) => {
+        const { workflow } = get();
+        if (!workflow) return;
+
+        const targetNodeIds = collectBypassGroupTargetNodeIds(
+          workflow,
+          groupId,
+          subgraphId
+        );
+        if (targetNodeIds.size === 0) return;
+
+        const mode = bypass ? 4 : 0;
+        const newNodes = (workflow.nodes ?? []).map((node) =>
+          targetNodeIds.has(node.id) ? { ...node, mode } : node
+        );
+
+        set({ workflow: { ...workflow, nodes: newNodes } });
+      },
+
+      showAllHiddenGroups: () => {
+        set({ hiddenGroups: {} });
+      },
+
+      toggleSubgraphCollapse: (subgraphId) => {
+        set((state) => ({
+          collapsedSubgraphs: {
+            ...state.collapsedSubgraphs,
+            [subgraphId]: !(state.collapsedSubgraphs[subgraphId] ?? true)
+          }
+        }));
+      },
+
+      setSubgraphCollapsed: (subgraphId, collapsed) => {
+        set((state) => ({
+          collapsedSubgraphs: {
+            ...state.collapsedSubgraphs,
+            [subgraphId]: collapsed
+          }
+        }));
+      },
+
+      setSearchQuery: (query) => {
+        set({ searchQuery: query });
+      },
+
+      setSearchOpen: (open) => {
+        set({ searchOpen: open });
       },
 
       updateWorkflowDuration: (signature, durationMs) => {
@@ -710,25 +1177,21 @@ export const useWorkflowStore = create<WorkflowState>()(
         });
       },
 
-      setError: (message) => {
-        set({ error: message });
-      },
-
       clearWorkflowCache: () => {
-        const { currentFilename, savedWorkflowStates, originalWorkflow, nodeTypes, bookmarkedWidgets } = get();
+        const { currentWorkflowKey, savedWorkflowStates, originalWorkflow, nodeTypes } = get();
         const nextSavedStates = { ...savedWorkflowStates };
-        const nextBookmarkedWidgets = { ...bookmarkedWidgets };
-        if (currentFilename) {
-          delete nextSavedStates[currentFilename];
-          delete nextBookmarkedWidgets[currentFilename];
+        if (currentWorkflowKey) {
+          delete nextSavedStates[currentWorkflowKey];
+          usePinnedWidgetStore.getState().clearPinnedWidgetForKey(currentWorkflowKey);
+        } else {
+          usePinnedWidgetStore.getState().clearCurrentPin();
         }
 
         if (!originalWorkflow) {
+          useSeedStore.getState().setSeedModes({});
+          useSeedStore.getState().setSeedLastValues({});
           set({
             savedWorkflowStates: nextSavedStates,
-            bookmarkedWidgets: nextBookmarkedWidgets,
-            bookmarkedWidget: null,
-            bookmarkOverlayOpen: false,
           });
           return;
         }
@@ -743,22 +1206,22 @@ export const useWorkflowStore = create<WorkflowState>()(
           }
         }
 
+        useSeedStore.getState().setSeedModes(seedModes);
+        useSeedStore.getState().setSeedLastValues({});
+        useWorkflowErrorsStore.getState().setError(null);
         set({
           workflow: JSON.parse(JSON.stringify(originalWorkflow)),
           savedWorkflowStates: nextSavedStates,
-          bookmarkedWidgets: nextBookmarkedWidgets,
-          bookmarkedWidget: null,
-          bookmarkOverlayOpen: false,
-          seedModes,
-          error: null,
           runCount: 1,
           workflowLoadedAt: Date.now(),
         });
       },
 
       saveCurrentWorkflowState: () => {
-        const { workflow, currentFilename, seedModes, savedWorkflowStates } = get();
-        if (!workflow || !currentFilename) return;
+        const { workflow, currentWorkflowKey, savedWorkflowStates, collapsedGroups, hiddenGroups, collapsedSubgraphs, hiddenSubgraphs } = get();
+        const seedModes = useSeedStore.getState().seedModes;
+        if (!workflow || !currentWorkflowKey) return;
+        const savedBookmarks = savedWorkflowStates[currentWorkflowKey]?.bookmarkedNodeIds ?? [];
 
         // Save current workflow's UI state
         const nodeStates: Record<number, SavedNodeState> = {};
@@ -773,52 +1236,46 @@ export const useWorkflowStore = create<WorkflowState>()(
         set({
           savedWorkflowStates: {
             ...savedWorkflowStates,
-            [currentFilename]: {
+            [currentWorkflowKey]: {
               nodes: nodeStates,
               seedModes: { ...seedModes },
+              collapsedGroups: { ...collapsedGroups },
+              hiddenGroups: { ...hiddenGroups },
+              collapsedSubgraphs: { ...collapsedSubgraphs },
+              hiddenSubgraphs: { ...hiddenSubgraphs },
+              bookmarkedNodeIds: [...savedBookmarks],
             },
           },
         });
       },
 
       loadWorkflow: (workflow, filename, options) => {
-        const { currentFilename, savedWorkflowStates, nodeTypes, bookmarkedWidgets } = get();
+        const { currentFilename, savedWorkflowStates, nodeTypes } = get();
         const fresh = options?.fresh ?? false;
         const source = options?.source ?? { type: 'other' as const };
+        const expandedWorkflow = expandWorkflowSubgraphs(workflow);
+        const normalizedEmbedWorkflow = normalizeWorkflowForEmbed(workflow);
 
         // Normalize workflow to ensure required fields exist
-        const normalizedNodes = workflow.nodes.map((node) => ({
-          ...node,
-          widgets_values: node.widgets_values ?? [],
-          inputs: node.inputs ?? [],
-          outputs: node.outputs ?? [],
-          flags: node.flags ?? {},
-          properties: node.properties ?? {},
-          mode: node.mode ?? 0,
-          order: node.order ?? 0,
-        }));
+        const normalizedNodes = normalizeWorkflowNodes(expandedWorkflow.nodes);
 
         const normalizedWorkflow: Workflow = {
-          ...workflow,
+          ...expandedWorkflow,
           nodes: normalizedNodes,
-          links: workflow.links ?? [],
-          groups: workflow.groups ?? [],
-          config: workflow.config ?? {},
-          last_node_id: workflow.last_node_id ?? Math.max(0, ...normalizedNodes.map(n => n.id)),
-          last_link_id: workflow.last_link_id ?? 0,
-          version: workflow.version ?? 0.4,
+          links: expandedWorkflow.links ?? [],
+          groups: expandedWorkflow.groups ?? [],
+          config: expandedWorkflow.config ?? {},
+          last_node_id: expandedWorkflow.last_node_id ?? Math.max(0, ...normalizedNodes.map(n => n.id)),
+          last_link_id: expandedWorkflow.last_link_id ?? 0,
+          version: expandedWorkflow.version ?? 0.4,
         };
-
-        // Restore bookmark from cache if valid
-        let restoredBookmark: BookmarkedWidget | null = null;
-        if (filename && bookmarkedWidgets[filename]) {
-          const cachedBookmark = bookmarkedWidgets[filename];
-          // Validate that the node still exists in the workflow
-          const nodeExists = normalizedWorkflow.nodes.some(n => n.id === cachedBookmark.nodeId);
-          if (nodeExists) {
-            restoredBookmark = cachedBookmark;
-          }
+        const workflowKey = buildWorkflowCacheKey(normalizedWorkflow, nodeTypes);
+        const pinnedStore = usePinnedWidgetStore.getState();
+        const legacyPin = filename ? pinnedStore.pinnedWidgets[filename] : undefined;
+        if (legacyPin && !pinnedStore.pinnedWidgets[workflowKey]) {
+          pinnedStore.setPinnedWidget(legacyPin, workflowKey);
         }
+        pinnedStore.restorePinnedWidgetForWorkflow(workflowKey, normalizedWorkflow);
 
         // Save current workflow state before switching
         if (currentFilename) {
@@ -826,9 +1283,9 @@ export const useWorkflowStore = create<WorkflowState>()(
         }
 
         // If loading fresh, clear any saved state for this workflow
-        if (fresh && filename && savedWorkflowStates[filename]) {
+        if (fresh && savedWorkflowStates[workflowKey]) {
           const newSavedStates = { ...savedWorkflowStates };
-          delete newSavedStates[filename];
+          delete newSavedStates[workflowKey];
           set({ savedWorkflowStates: newSavedStates });
         }
 
@@ -844,7 +1301,33 @@ export const useWorkflowStore = create<WorkflowState>()(
         }
 
         // Check if we have saved state for this workflow (skip if loading fresh)
-        const savedState = (!fresh && filename) ? savedWorkflowStates[filename] : null;
+        let savedState = (!fresh) ? savedWorkflowStates[workflowKey] : null;
+        if (!savedState && !fresh && filename && savedWorkflowStates[filename]) {
+          savedState = savedWorkflowStates[filename];
+          set({
+            savedWorkflowStates: {
+              ...savedWorkflowStates,
+              [workflowKey]: savedWorkflowStates[filename],
+            }
+          });
+        }
+
+        // Initialize all subgraphs as collapsed by default
+        const subgraphs = workflow.definitions?.subgraphs ?? [];
+        const defaultCollapsedSubgraphs: Record<string, boolean> = {};
+        for (const sg of subgraphs) {
+          defaultCollapsedSubgraphs[sg.id] = true;
+        }
+
+        const defaultCollapsedGroups: Record<number, boolean> = {};
+        for (const group of normalizedWorkflow.groups ?? []) {
+          defaultCollapsedGroups[group.id] = true;
+        }
+        for (const sg of subgraphs) {
+          for (const group of sg.groups ?? []) {
+            defaultCollapsedGroups[group.id] = true;
+          }
+        }
 
         let finalWorkflow = normalizedWorkflow;
 
@@ -864,43 +1347,67 @@ export const useWorkflowStore = create<WorkflowState>()(
 
           const restoredWorkflow = { ...normalizedWorkflow, nodes: restoredNodes };
           finalWorkflow = restoredWorkflow;
+          let syncedEmbedWorkflow = normalizedEmbedWorkflow;
+          if (syncedEmbedWorkflow) {
+            for (const node of restoredNodes) {
+              syncedEmbedWorkflow = updateEmbedWorkflowFromExpandedNode(syncedEmbedWorkflow, node);
+            }
+          }
 
           set({
             workflowSource: source,
             workflow: restoredWorkflow,
+            embedWorkflow: syncedEmbedWorkflow,
             originalWorkflow: JSON.parse(JSON.stringify(normalizedWorkflow)), // Keep original for dirty check
             currentFilename: filename || null,
-            seedModes: { ...seedModes, ...savedState.seedModes },
-            error: null,
+            currentWorkflowKey: workflowKey,
+            collapsedGroups: {
+              ...defaultCollapsedGroups,
+              ...(savedState.collapsedGroups ?? {})
+            },
+            hiddenGroups: savedState.hiddenGroups ?? {},
+            collapsedSubgraphs: { ...defaultCollapsedSubgraphs, ...(savedState.collapsedSubgraphs ?? {}) },
+            hiddenSubgraphs: savedState.hiddenSubgraphs ?? {},
             runCount: 1,
-            queuePanelOpen: false,
+            followQueue: false,
+            workflowLoadedAt: Date.now(),
+          });
+          useSeedStore.getState().setSeedModes({ ...seedModes, ...savedState.seedModes });
+          useSeedStore.getState().setSeedLastValues({});
+          useNavigationStore.getState().setCurrentPanel('workflow');
+          useImageViewerStore.getState().setViewerState({
             viewerOpen: false,
             viewerImages: [],
             viewerIndex: 0,
             viewerScale: 1,
             viewerTranslate: { x: 0, y: 0 },
-            workflowLoadedAt: Date.now(),
-            bookmarkedWidget: restoredBookmark,
-            bookmarkOverlayOpen: false,
           });
         } else {
+          useWorkflowErrorsStore.getState().setError(null);
           set({
             workflowSource: source,
             workflow: normalizedWorkflow,
+            embedWorkflow: normalizedEmbedWorkflow,
             originalWorkflow: JSON.parse(JSON.stringify(normalizedWorkflow)),
             currentFilename: filename || null,
-            seedModes,
-            error: null,
+            currentWorkflowKey: workflowKey,
+            collapsedGroups: defaultCollapsedGroups,
+            hiddenGroups: {},
+            collapsedSubgraphs: defaultCollapsedSubgraphs,
+            hiddenSubgraphs: {},
             runCount: 1,
-            queuePanelOpen: false,
+            followQueue: false,
+            workflowLoadedAt: Date.now(),
+          });
+          useSeedStore.getState().setSeedModes(seedModes);
+          useSeedStore.getState().setSeedLastValues({});
+          useNavigationStore.getState().setCurrentPanel('workflow');
+          useImageViewerStore.getState().setViewerState({
             viewerOpen: false,
             viewerImages: [],
             viewerIndex: 0,
             viewerScale: 1,
             viewerTranslate: { x: 0, y: 0 },
-            workflowLoadedAt: Date.now(),
-            bookmarkedWidget: restoredBookmark,
-            bookmarkOverlayOpen: false,
           });
         }
 
@@ -910,124 +1417,126 @@ export const useWorkflowStore = create<WorkflowState>()(
             .reduce((total, nodeErrs) => total + nodeErrs.length, 0);
 
           if (loadErrorCount > 0) {
-            get().setNodeErrors(loadErrors);
-            set({
-              error: `Workflow load error: ${loadErrorCount} input${loadErrorCount === 1 ? '' : 's'} reference missing options.`
-            });
+            applyNodeErrors(loadErrors);
+            useWorkflowErrorsStore
+              .getState()
+              .setError(`Workflow load error: ${loadErrorCount} input${loadErrorCount === 1 ? '' : 's'} reference missing options.`);
           } else {
-            get().clearNodeErrors();
+            useWorkflowErrorsStore.getState().clearNodeErrors();
           }
         }
       },
 
       unloadWorkflow: () => {
-        const { currentFilename, savedWorkflowStates } = get();
+        const { currentWorkflowKey, savedWorkflowStates } = get();
 
         // Clear saved state for this workflow
-        if (currentFilename) {
+        if (currentWorkflowKey) {
           const newSavedStates = { ...savedWorkflowStates };
-          delete newSavedStates[currentFilename];
+          delete newSavedStates[currentWorkflowKey];
           set({ savedWorkflowStates: newSavedStates });
         }
 
+        useWorkflowErrorsStore.getState().setError(null);
         set({
           workflowSource: null,
           workflow: null,
+          embedWorkflow: null,
           originalWorkflow: null,
           currentFilename: null,
-          seedModes: {},
-          error: null,
+          currentWorkflowKey: null,
+          collapsedGroups: {},
+          hiddenGroups: {},
+          collapsedSubgraphs: {},
+          hiddenSubgraphs: {},
           runCount: 1,
           nodeOutputs: {},
           promptOutputs: {},
-          queuePanelOpen: false,
+          followQueue: false,
+          workflowLoadedAt: Date.now(),
+          connectionHighlightModes: {},
+          manuallyHiddenNodes: {},
+        });
+        useSeedStore.getState().clearSeedState();
+        usePinnedWidgetStore.getState().clearCurrentPin();
+        useNavigationStore.getState().setCurrentPanel('workflow');
+        useImageViewerStore.getState().setViewerState({
           viewerOpen: false,
           viewerImages: [],
           viewerIndex: 0,
           viewerScale: 1,
           viewerTranslate: { x: 0, y: 0 },
-          workflowLoadedAt: Date.now(),
-          connectionHighlightModes: {},
-          manuallyHiddenNodes: {},
-          bookmarkedWidget: null,
-          bookmarkOverlayOpen: false,
         });
       },
 
       setSavedWorkflow: (workflow, filename) => {
+        useWorkflowErrorsStore.getState().setError(null);
+        const workflowKey = buildWorkflowCacheKey(workflow, get().nodeTypes);
         set({
           workflow,
+          embedWorkflow: normalizeWorkflowForEmbed(workflow),
           originalWorkflow: JSON.parse(JSON.stringify(workflow)),
           currentFilename: filename,
-          error: null
+          currentWorkflowKey: workflowKey,
         });
       },
 
       updateNodeWidget: (nodeId, widgetIndex, value, widgetName) => {
-        const { workflow } = get();
+        const { workflow, embedWorkflow } = get();
         if (!workflow) return;
 
         const newNodes = workflow.nodes.map((node) => {
           if (node.id === nodeId) {
-            if (!Array.isArray(node.widgets_values)) {
-              const nextValues = { ...(node.widgets_values || {}) } as Record<string, unknown>;
-              if (widgetName) {
-                nextValues[widgetName] = value;
-                if (node.type === 'VHS_VideoCombine' && widgetName === 'save_image' && 'save_output' in nextValues) {
-                  nextValues.save_output = value;
-                }
-              } else if (widgetIndex >= 0) {
-                nextValues[String(widgetIndex)] = value;
-              }
-              return { ...node, widgets_values: nextValues };
-            }
-
-            let newWidgetValues = [...node.widgets_values];
-
-            if (widgetIndex >= newWidgetValues.length) {
-              // Append
-              newWidgetValues.push(value);
-            } else {
-              // Update
-              newWidgetValues[widgetIndex] = value;
-            }
-
-            // Filter out nulls (used for deletion in Power Lora)
-            // But only for the specific node types that support dynamic widgets if we want to be safe,
-            // or just always filter nulls if ComfyUI widgets shouldn't be null anyway.
-            // rgthree nodes use null for "deleted" items in their dynamic lists.
-            if (node.type === 'Power Lora Loader (rgthree)') {
-              newWidgetValues = newWidgetValues.filter(v => v !== null);
-            }
-
-            return { ...node, widgets_values: newWidgetValues };
+            return updateNodeWidgetValues(node, widgetIndex, value, widgetName);
           }
           return node;
         });
 
-        set({ workflow: { ...workflow, nodes: newNodes } });
+        const updatedNode = newNodes.find((node) => node.id === nodeId);
+        const nextEmbedWorkflow = embedWorkflow && updatedNode
+          ? updateEmbedWorkflowFromExpandedNode(embedWorkflow, updatedNode)
+          : embedWorkflow;
+
+        set({ workflow: { ...workflow, nodes: newNodes }, embedWorkflow: nextEmbedWorkflow });
       },
 
       updateNodeWidgets: (nodeId, updates) => {
-        const { workflow } = get();
+        const { workflow, embedWorkflow } = get();
         if (!workflow) return;
 
         const newNodes = workflow.nodes.map((node) => {
           if (node.id === nodeId) {
-            if (!Array.isArray(node.widgets_values)) {
-              return node;
-            }
-            const newWidgetValues = [...node.widgets_values];
-            for (const [idxStr, value] of Object.entries(updates)) {
-              const idx = parseInt(idxStr, 10);
-              newWidgetValues[idx] = value;
-            }
-            return { ...node, widgets_values: newWidgetValues };
+            return updateNodeWidgetsValues(node, updates);
           }
           return node;
         });
 
-        set({ workflow: { ...workflow, nodes: newNodes } });
+        const updatedNode = newNodes.find((node) => node.id === nodeId);
+        const nextEmbedWorkflow = embedWorkflow && updatedNode
+          ? updateEmbedWorkflowFromExpandedNode(embedWorkflow, updatedNode)
+          : embedWorkflow;
+
+        set({ workflow: { ...workflow, nodes: newNodes }, embedWorkflow: nextEmbedWorkflow });
+      },
+
+      updateNodeTitle: (nodeId, title) => {
+        const { workflow } = get();
+        if (!workflow) return;
+        const normalized = title?.trim() ?? '';
+        const nextNodes = workflow.nodes.map((node) => {
+          if (node.id !== nodeId) return node;
+          const nextProps = { ...(node.properties ?? {}) } as Record<string, unknown>;
+          const nextNode = { ...node, properties: nextProps } as WorkflowNode & { title?: string };
+          if (normalized) {
+            nextNode.title = normalized;
+            nextProps.title = normalized;
+          } else {
+            delete nextNode.title;
+            delete nextProps.title;
+          }
+          return nextNode;
+        });
+        set({ workflow: { ...workflow, nodes: nextNodes } });
       },
 
       toggleBypass: (nodeId) => {
@@ -1054,9 +1563,9 @@ export const useWorkflowStore = create<WorkflowState>()(
           if (node.id === nodeId) {
             const currentFlags = node.flags || {};
             const collapsed = currentFlags.collapsed;
-            return { 
-              ...node, 
-              flags: { ...currentFlags, collapsed: !collapsed } 
+            return {
+              ...node,
+              flags: { ...currentFlags, collapsed: !collapsed }
             };
           }
           return node;
@@ -1097,15 +1606,48 @@ export const useWorkflowStore = create<WorkflowState>()(
         set({ workflow: { ...workflow, nodes: newNodes } });
       },
 
-      scrollToNode: (nodeId) => {
+      scrollToNode: (nodeId, label) => {
+        const { manuallyHiddenNodes } = get();
+        const { searchOpen, searchQuery, collapsedGroups, hiddenGroups, collapsedSubgraphs, hiddenSubgraphs } = get();
+        console.log('[scrollToNode] start', {
+          nodeId,
+          hidden: Boolean(manuallyHiddenNodes[nodeId]),
+          searchOpen,
+          searchQuery,
+          collapsedGroups: Object.keys(collapsedGroups ?? {}).length,
+          hiddenGroups: Object.keys(hiddenGroups ?? {}).length,
+          collapsedSubgraphs: Object.keys(collapsedSubgraphs ?? {}).length,
+          hiddenSubgraphs: Object.keys(hiddenSubgraphs ?? {}).length
+        });
+        if (manuallyHiddenNodes[nodeId]) {
+          get().setNodeHidden(nodeId, false);
+        }
         if (document.body.dataset.textareaFocus === 'true') {
           return;
         }
         get().ensureNodeExpanded(nodeId);
-        const anchor = document.getElementById(`node-anchor-${nodeId}`) ?? document.getElementById(`node-${nodeId}`);
-        const nodeEl = document.getElementById(`node-${nodeId}`);
-        if (anchor) {
+        const attemptScroll = (attemptsLeft: number, delayedAttemptsLeft: number) => {
+          const anchor = document.getElementById(`node-anchor-${nodeId}`) ?? document.getElementById(`node-${nodeId}`);
+          const nodeEl = document.getElementById(`node-card-${nodeId}`) ?? document.getElementById(`node-${nodeId}`);
+          if (!anchor || !nodeEl) {
+            console.log('[scrollToNode] missing elements', {
+              nodeId,
+              attemptsLeft,
+              hasAnchor: Boolean(anchor),
+              hasNode: Boolean(nodeEl)
+            });
+            if (attemptsLeft > 0) {
+              requestAnimationFrame(() => attemptScroll(attemptsLeft - 1, delayedAttemptsLeft));
+            } else if (delayedAttemptsLeft > 0) {
+              setTimeout(() => attemptScroll(10, delayedAttemptsLeft - 1), 200);
+            }
+            return;
+          }
           const container = anchor.closest<HTMLElement>('[data-node-list="true"]');
+          console.log('[scrollToNode] found elements', {
+            nodeId,
+            hasContainer: Boolean(container)
+          });
           if (container) {
             const anchorRect = anchor.getBoundingClientRect();
             const containerRect = container.getBoundingClientRect();
@@ -1115,9 +1657,8 @@ export const useWorkflowStore = create<WorkflowState>()(
           } else {
             anchor.scrollIntoView({ behavior: 'smooth', block: 'start' });
           }
-        }
-        if (nodeEl) {
-          const scrollContainer = anchor?.closest<HTMLElement>('[data-node-list="true"]') || window;
+
+          const scrollContainer = container || window;
           let scrollEndTimeout: ReturnType<typeof setTimeout> | null = null;
 
           const highlight = () => {
@@ -1125,6 +1666,10 @@ export const useWorkflowStore = create<WorkflowState>()(
             nodeEl.classList.add('highlight-pulse');
             setTimeout(() => nodeEl.classList.remove('highlight-pulse'), 1200);
             if ('vibrate' in navigator) navigator.vibrate(10);
+
+            if (label) {
+              window.dispatchEvent(new CustomEvent('node-show-label', { detail: { nodeId, label } }));
+            }
           };
 
           const handleScroll = () => {
@@ -1144,16 +1689,44 @@ export const useWorkflowStore = create<WorkflowState>()(
           };
 
           scrollContainer.addEventListener('scroll', handleScroll as EventListener, { passive: true });
-          // In case no scroll occurs, highlight shortly after.
           scrollEndTimeout = setTimeout(() => {
             cleanup();
             highlight();
           }, 200);
-        }
+        };
+
+        attemptScroll(10, 2);
       },
 
       setNodeTypes: (types) => {
         set({ nodeTypes: types });
+        const { workflow, currentWorkflowKey, currentFilename, savedWorkflowStates } = get();
+        if (!workflow) return;
+        const nextKey = buildWorkflowCacheKey(workflow, types);
+        if (currentWorkflowKey === nextKey) return;
+
+        const nextSavedStates = { ...savedWorkflowStates };
+        if (currentWorkflowKey && nextSavedStates[currentWorkflowKey] && !nextSavedStates[nextKey]) {
+          nextSavedStates[nextKey] = nextSavedStates[currentWorkflowKey];
+          delete nextSavedStates[currentWorkflowKey];
+        } else if (!currentWorkflowKey && currentFilename && nextSavedStates[currentFilename] && !nextSavedStates[nextKey]) {
+          nextSavedStates[nextKey] = nextSavedStates[currentFilename];
+        }
+
+        const pinnedStore = usePinnedWidgetStore.getState();
+        const legacyPin = currentFilename ? pinnedStore.pinnedWidgets[currentFilename] : undefined;
+        const existingPin = currentWorkflowKey ? pinnedStore.pinnedWidgets[currentWorkflowKey] : undefined;
+        if (legacyPin && !pinnedStore.pinnedWidgets[nextKey]) {
+          pinnedStore.setPinnedWidget(legacyPin, nextKey);
+        } else if (existingPin && !pinnedStore.pinnedWidgets[nextKey]) {
+          pinnedStore.setPinnedWidget(existingPin, nextKey);
+        }
+
+        set({
+          currentWorkflowKey: nextKey,
+          savedWorkflowStates: nextSavedStates
+        });
+        pinnedStore.restorePinnedWidgetForWorkflow(nextKey, workflow);
       },
 
       setExecutionState: (isExecuting, executingNodeId, executingPromptId, progress) => {
@@ -1231,16 +1804,23 @@ export const useWorkflowStore = create<WorkflowState>()(
       },
 
       queueWorkflow: async (count) => {
-        const { workflow, nodeTypes, seedModes, seedLastValues } = get();
+        const seedStore = useSeedStore.getState();
+        const seedModes = seedStore.seedModes;
+        const seedLastValues = seedStore.seedLastValues;
+        const { workflow, nodeTypes, embedWorkflow } = get();
         if (!workflow || !nodeTypes) {
-          set({ error: 'Node types are still loading. Try again in a moment.' });
+          useWorkflowErrorsStore
+            .getState()
+            .setError('Node types are still loading. Try again in a moment.');
           return;
         }
 
-        set({ isLoading: true, error: null });
+        useWorkflowErrorsStore.getState().setError(null);
+        set({ isLoading: true });
 
         try {
           let currentWorkflow = workflow;
+          let currentEmbedWorkflow = embedWorkflow;
           let nextSeedLastValues: SeedLastValues = { ...seedLastValues };
 
           for (let i = 0; i < count; i++) {
@@ -1311,7 +1891,15 @@ export const useWorkflowStore = create<WorkflowState>()(
 
             // Update current workflow with new seeds for this iteration
             currentWorkflow = { ...currentWorkflow, nodes: updatedNodes };
-            set({ workflow: currentWorkflow, seedLastValues: nextSeedLastValues });
+            if (currentEmbedWorkflow) {
+              let nextEmbedWorkflow = currentEmbedWorkflow;
+              for (const node of updatedNodes) {
+                nextEmbedWorkflow = updateEmbedWorkflowFromExpandedNode(nextEmbedWorkflow, node);
+              }
+              currentEmbedWorkflow = nextEmbedWorkflow;
+            }
+            seedStore.setSeedLastValues(nextSeedLastValues);
+            set({ workflow: currentWorkflow, embedWorkflow: currentEmbedWorkflow });
 
             const prompt: Record<string, unknown> = {};
             const allowedNodeIds = new Set<number>();
@@ -1356,7 +1944,7 @@ export const useWorkflowStore = create<WorkflowState>()(
                 body: JSON.stringify({
                   prompt,
                   client_id: api.clientId,
-                  extra_data: { extra_pnginfo: { workflow: currentWorkflow } }
+                  extra_data: { extra_pnginfo: { workflow: currentEmbedWorkflow ?? currentWorkflow } }
                 })
             });
 
@@ -1380,66 +1968,23 @@ export const useWorkflowStore = create<WorkflowState>()(
                 }
 
                 if (Object.keys(nodeErrors).length > 0) {
-                  get().setNodeErrors(nodeErrors);
+                  applyNodeErrors(nodeErrors);
                 }
 
                 throw new Error(errorData.error?.message || 'Failed to queue prompt');
             }
 
             // Clear any previous node errors on successful queue
-            get().clearNodeErrors();
+            useWorkflowErrorsStore.getState().clearNodeErrors();
           }
         } catch (err) {
-          set({ error: err instanceof Error ? err.message : 'Failed to queue workflow' });
+          useWorkflowErrorsStore
+            .getState()
+            .setError(err instanceof Error ? err.message : 'Failed to queue workflow');
         } finally {
           useQueueStore.getState().fetchQueue();
           set({ isLoading: false });
         }
-      },
-
-      setSeedMode: (nodeId, mode) => {
-        const { workflow, nodeTypes, seedModes, seedLastValues } = get();
-        let newWorkflow = workflow;
-
-        if (workflow && nodeTypes) {
-          const node = workflow.nodes.find((n) => n.id === nodeId);
-          if (node) {
-            const seedWidgetIndex = findSeedWidgetIndex(workflow, nodeTypes, node);
-            if (seedWidgetIndex !== null && Array.isArray(node.widgets_values)) {
-              const controlWidgetIndex = seedWidgetIndex + 1;
-              const newWidgetValues = [...node.widgets_values];
-              const hasControlWidget = typeof newWidgetValues[controlWidgetIndex] === 'string';
-
-              if (hasControlWidget) {
-                newWidgetValues[controlWidgetIndex] = mode;
-              } else {
-                const specialValue = getSpecialSeedValueForMode(mode);
-                if (specialValue !== null && mode !== 'fixed') {
-                  newWidgetValues[seedWidgetIndex] = specialValue;
-                } else if (mode === 'fixed') {
-                  const currentSeed = Number(newWidgetValues[seedWidgetIndex]);
-                  if (isSpecialSeedValue(currentSeed)) {
-                    const lastSeed = seedLastValues[nodeId];
-                    const fallbackSeed = typeof lastSeed === 'number'
-                      ? lastSeed
-                      : generateSeedFromNode(nodeTypes, node);
-                    newWidgetValues[seedWidgetIndex] = fallbackSeed;
-                  }
-                }
-              }
-
-              const newNodes = workflow.nodes.map((n) =>
-                n.id === nodeId ? { ...n, widgets_values: newWidgetValues } : n
-              );
-              newWorkflow = { ...workflow, nodes: newNodes };
-            }
-          }
-        }
-
-        set({
-          workflow: newWorkflow,
-          seedModes: { ...seedModes, [nodeId]: mode }
-        });
       },
 
       applyControlAfterGenerate: () => {
@@ -1500,82 +2045,25 @@ export const useWorkflowStore = create<WorkflowState>()(
         }
       },
 
-      setBookmarkedWidget: (bookmark) => {
-        const { currentFilename, bookmarkedWidgets } = get();
-        if (currentFilename && bookmark) {
-          // Save to cache keyed by workflow filename
-          set({
-            bookmarkedWidget: bookmark,
-            bookmarkedWidgets: { ...bookmarkedWidgets, [currentFilename]: bookmark }
-          });
-        } else if (currentFilename && !bookmark) {
-          // Remove from cache
-          const newCache = { ...bookmarkedWidgets };
-          delete newCache[currentFilename];
-          set({
-            bookmarkedWidget: null,
-            bookmarkedWidgets: newCache
-          });
-        } else {
-          // No filename - just set the current bookmark without caching
-          set({ bookmarkedWidget: bookmark });
-        }
-      },
-
-      setBookmarkOverlayOpen: (open) => {
-        set({ bookmarkOverlayOpen: open });
-      },
-
-      toggleBookmarkOverlay: () => {
-        set((state) => ({ bookmarkOverlayOpen: !state.bookmarkOverlayOpen }));
-      },
-
-      setNodeErrors: (errors) => {
-        const { manuallyHiddenNodes } = get();
-        // Unhide any errored nodes that are currently hidden
-        const errorNodeIds = Object.keys(errors);
-        const nodesToUnhide = errorNodeIds.filter((id) => manuallyHiddenNodes[Number(id)]);
-        if (nodesToUnhide.length > 0) {
-          const newHiddenNodes = { ...manuallyHiddenNodes };
-          for (const id of nodesToUnhide) {
-            delete newHiddenNodes[Number(id)];
-          }
-          set({ nodeErrors: errors, manuallyHiddenNodes: newHiddenNodes });
-        } else {
-          set({ nodeErrors: errors });
-        }
-      },
-
-      clearNodeErrors: () => {
-        set({ nodeErrors: {} });
-      }
-    }),
-    {
+    };
+  },
+  {
       name: 'workflow-storage',
       storage: createJSONStorage(() => localStorage),
       partialize: (state) => ({
         workflow: state.workflow,
+        embedWorkflow: state.embedWorkflow,
         originalWorkflow: state.originalWorkflow,
         currentFilename: state.currentFilename,
-        seedModes: state.seedModes,
+        currentWorkflowKey: state.currentWorkflowKey,
         savedWorkflowStates: state.savedWorkflowStates,
-        theme: state.theme,
-        previewVisibility: state.previewVisibility,
-        previewVisibilityDefault: state.previewVisibilityDefault,
         runCount: state.runCount,
-        // Note: viewerOpen, viewerImages, viewerIndex, viewerScale, viewerTranslate
-        // are intentionally NOT persisted to avoid broken state on reload
-        queuePanelOpen: state.queuePanelOpen,
-        queueItemExpanded: state.queueItemExpanded,
-        queueItemUserToggled: state.queueItemUserToggled,
-        queueItemHideImages: state.queueItemHideImages,
-        hideStaticNodes: state.hideStaticNodes,
-        hideBypassedNodes: state.hideBypassedNodes,
-        showQueueMetadata: state.showQueueMetadata,
         manuallyHiddenNodes: state.manuallyHiddenNodes,
-        bookmarkedWidgets: state.bookmarkedWidgets,
-        bookmarkedWidget: state.bookmarkedWidget,
-        nodeErrors: state.nodeErrors,
+        collapsedGroups: state.collapsedGroups,
+        hiddenGroups: state.hiddenGroups,
+        collapsedSubgraphs: state.collapsedSubgraphs,
+        hiddenSubgraphs: state.hiddenSubgraphs,
+        connectionButtonsVisible: state.connectionButtonsVisible,
         isExecuting: state.isExecuting,
         executingNodeId: state.executingNodeId,
         executingPromptId: state.executingPromptId,
@@ -1585,17 +2073,13 @@ export const useWorkflowStore = create<WorkflowState>()(
         nodeDurationStats: state.nodeDurationStats,
         workflowDurationStats: state.workflowDurationStats,
       }),
+      onRehydrateStorage: () => (state) => {
+        if (!state) return;
+        // Errors are managed by useWorkflowErrors.
+      },
     }
   )
 );
-
-export function getNodeTypeDefinition(
-  nodeTypes: NodeTypes | null,
-  nodeType: string
-): NodeTypeDefinition | null {
-  if (!nodeTypes) return null;
-  return nodeTypes[nodeType] || null;
-}
 
 export function getWorkflowSignature(workflow: Workflow): string {
   const nodes = [...workflow.nodes]
@@ -1611,234 +2095,4 @@ export function getWorkflowSignature(workflow: Workflow): string {
     nodes,
     links: workflow.links ?? []
   });
-}
-
-interface WidgetDefinition {
-  name: string;
-  type: string;
-  options?: Record<string, unknown> | unknown[];
-  value: unknown;
-  widgetIndex: number;
-  isCombo: boolean;
-  connected: boolean;
-  inputIndex: number;
-}
-
-function collectWidgetDefinitions(
-  nodeTypes: NodeTypes | null,
-  node: WorkflowNode
-): WidgetDefinition[] {
-  try {
-    // Handle PrimitiveNode specially - it's a frontend-only node type
-    if (node.type === 'PrimitiveNode') {
-      const outputType = node.outputs?.[0]?.type;
-      if (!outputType) return [];
-
-      const normalizedType = String(outputType).toUpperCase();
-      const value = Array.isArray(node.widgets_values) ? node.widgets_values[0] : undefined;
-
-      // Determine widget name from the output name or connected target
-      const outputName = node.outputs?.[0]?.name || 'value';
-
-      return [{
-        name: outputName,
-        type: normalizedType,
-        options: undefined,
-        value,
-        widgetIndex: 0,
-        isCombo: false,
-        connected: false,
-        inputIndex: -1
-      }];
-    }
-
-    // Handle Power Lora Loader (rgthree) specially
-    if (node.type === 'Power Lora Loader (rgthree)') {
-      const definitions: WidgetDefinition[] = [];
-      
-      const showSeparate = node.properties?.['Show Strengths'] === 'Separate Model & Clip';
-
-      // Try to get Lora options from the standard LoraLoader if available
-      let loraOptions: unknown[] = [];
-      if (nodeTypes) {
-        const standardLoraNode = getNodeTypeDefinition(nodeTypes, 'LoraLoader');
-        if (standardLoraNode?.input?.required?.['lora_name']) {
-           const [typeOrOptions] = standardLoraNode.input.required['lora_name'];
-           if (Array.isArray(typeOrOptions)) {
-             loraOptions = typeOrOptions;
-           }
-        }
-      }
-
-      if (Array.isArray(node.widgets_values)) {
-        const widgetValues = node.widgets_values;
-        const loraIndices: number[] = [];
-        widgetValues.forEach((value, index) => {
-          if (
-            typeof value === 'object' && 
-            value !== null &&
-            'lora' in value &&
-            'strength' in value
-          ) {
-            loraIndices.push(index);
-          }
-        });
-
-        if (loraIndices.length > 0) {
-          // Add Toggle All header
-          definitions.push({
-            name: 'Loras',
-            type: 'POWER_LORA_HEADER',
-            options: { loraIndices },
-            value: null,
-            widgetIndex: -1,
-            isCombo: false,
-            connected: false,
-            inputIndex: -1
-          });
-
-          loraIndices.forEach((index) => {
-            const value = widgetValues[index];
-            definitions.push({
-              name: 'Lora',
-              type: 'POWER_LORA',
-              options: { 
-                choices: loraOptions.length > 0 ? loraOptions : undefined,
-                showSeparate
-              },
-              value,
-              widgetIndex: index,
-              isCombo: false,
-              connected: false,
-              inputIndex: -1
-            });
-          });
-        }
-        
-        // Add the "Add Lora" button at the end
-        definitions.push({
-          name: 'Add Lora',
-          type: 'POWER_LORA_ADD',
-          options: undefined,
-          value: null,
-          widgetIndex: node.widgets_values.length,
-          isCombo: false,
-          connected: false,
-          inputIndex: -1
-        });
-      }
-      return definitions;
-    }
-
-    const typeDef = getNodeTypeDefinition(nodeTypes, node.type);
-    if (!typeDef?.input) {
-      const hasSeedOutput = node.outputs?.some((output) =>
-        String(output.name || '').toLowerCase().includes('seed') &&
-        String(output.type || '').toUpperCase().includes('INT')
-      );
-      if (hasSeedOutput && Array.isArray(node.widgets_values) && node.widgets_values.length > 0) {
-        return [{
-          name: 'seed',
-          type: 'INT',
-          options: undefined,
-          value: node.widgets_values[0],
-          widgetIndex: 0,
-          isCombo: false,
-          connected: false,
-          inputIndex: -1
-        }];
-      }
-      return [];
-    }
-
-    const requiredOrder = typeDef.input_order?.required || Object.keys(typeDef.input.required || {});
-    const optionalOrder = typeDef.input_order?.optional || Object.keys(typeDef.input.optional || {});
-    const definitions: WidgetDefinition[] = [];
-    let widgetIndex = 0;
-
-    const processInput = (name: string, input: [string | unknown[], Record<string, unknown>?]) => {
-      if (!input) return; // Defensive check
-      const [typeOrOptions, inputOptions] = input;
-      const inputIndex = node.inputs.findIndex((i) => i.name === name);
-      const inputEntry = inputIndex >= 0 ? node.inputs[inputIndex] : undefined;
-      const isConnected = inputEntry?.link != null;
-      const isWidgetToggle = Boolean(inputEntry?.widget) && !isConnected;
-      const hasSocket = Boolean(inputEntry);
-      const hasDefault = Object.prototype.hasOwnProperty.call(inputOptions ?? {}, 'default');
-      const isWidgetType = isWidgetInputType(typeOrOptions) || isWidgetToggle || !hasSocket || hasDefault;
-      const isCombo = Array.isArray(typeOrOptions);
-      const comboOptions = isCombo
-        ? { ...(inputOptions ?? {}), options: typeOrOptions }
-        : inputOptions;
-      if (isWidgetType) {
-        const value = getWidgetValue(node, name, widgetIndex);
-        definitions.push({
-          name,
-          type: isCombo ? 'COMBO' : String(typeOrOptions),
-          options: comboOptions,
-          value,
-          widgetIndex,
-          isCombo,
-          connected: Boolean(isConnected),
-          inputIndex
-        });
-      }
-
-      if (isWidgetType) {
-        widgetIndex += 1;
-        if (String(typeOrOptions) === 'INT' && (name === 'seed' || name === 'noise_seed')) {
-          widgetIndex += 1;
-        }
-      }
-    };
-
-    for (const name of requiredOrder) {
-      const input = typeDef.input.required?.[name];
-      if (input) processInput(name, input);
-    }
-
-    for (const name of optionalOrder) {
-      const input = typeDef.input.optional?.[name];
-      if (input) processInput(name, input);
-    }
-
-    return definitions;
-  } catch (e) {
-    console.error(`Error collecting widget definitions for node ${node.id} (${node.type}):`, e);
-    return []; // Return empty array on error to prevent crash
-  }
-}
-
-export function getWidgetDefinitions(
-  nodeTypes: NodeTypes | null,
-  node: WorkflowNode
-): Array<{ name: string; type: string; options?: Record<string, unknown>; value: unknown; widgetIndex: number; connected: boolean; inputIndex: number }> {
-  return collectWidgetDefinitions(nodeTypes, node)
-    .filter((def) => !def.isCombo)
-    .map((def) => ({
-      name: def.name,
-      type: def.type,
-      options: def.options as Record<string, unknown> | undefined,
-      value: def.value,
-      widgetIndex: def.widgetIndex,
-      connected: def.connected,
-      inputIndex: def.inputIndex
-    }));
-}
-
-export function getInputWidgetDefinitions(
-  nodeTypes: NodeTypes | null,
-  node: WorkflowNode
-): Array<{ name: string; type: string; value: unknown; options: Record<string, unknown> | unknown[]; widgetIndex: number; connected: boolean; inputIndex: number }> {
-  return collectWidgetDefinitions(nodeTypes, node)
-    .filter((def) => def.isCombo)
-    .map((def) => ({
-      name: def.name,
-      type: def.type,
-      value: def.value,
-      options: def.options as Record<string, unknown> | unknown[],
-      widgetIndex: def.widgetIndex,
-      connected: def.connected,
-      inputIndex: def.inputIndex
-    }));
 }

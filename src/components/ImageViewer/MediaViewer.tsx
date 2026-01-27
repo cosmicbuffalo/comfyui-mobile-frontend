@@ -1,0 +1,650 @@
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
+import { useTextareaFocus } from '@/hooks/useTextareaFocus';
+import { XMarkIcon } from '@/components/icons';
+import type { ViewerImage } from '@/utils/viewerImages';
+import { MediaViewerHeader } from './MediaViewerHeader';
+import { MediaViewerNavigation } from './MediaViewerNavigation';
+import { MediaViewerActions } from './MediaViewerActions';
+import { MediaViewerMetadata } from './MediaViewerMetadata';
+import { extractMetadata } from '@/utils/metadata';
+import { isVideoFilename } from '@/utils/media';
+import { getImageMetadata } from '@/api/client';
+
+interface MediaViewerProps {
+  open: boolean;
+  items: ViewerImage[];
+  index: number;
+  onIndexChange: (index: number) => void;
+  onClose: () => void;
+  onDelete?: (item: ViewerImage) => void;
+  onLoadWorkflow?: (item: ViewerImage) => void;
+  onLoadInWorkflow?: (item: ViewerImage) => void;
+  showMetadataToggle?: boolean;
+  showLoadingPlaceholder?: boolean;
+  loadingProgress?: number;
+  loadingLabel?: string;
+  initialScale?: number;
+  initialTranslate?: { x: number; y: number };
+  onTransformChange?: (scale: number, translate: { x: number; y: number }) => void;
+  zoomResetKey?: string | number | null;
+  overlayZIndex?: number;
+}
+
+const DEFAULT_TRANSLATE = { x: 0, y: 0 };
+
+export function MediaViewer({
+  open,
+  items,
+  index,
+  onIndexChange,
+  onClose,
+  onDelete,
+  onLoadWorkflow,
+  onLoadInWorkflow,
+  showMetadataToggle = false,
+  showLoadingPlaceholder = false,
+  loadingProgress = 0,
+  loadingLabel,
+  initialScale = 1,
+  initialTranslate = DEFAULT_TRANSLATE,
+  onTransformChange,
+  zoomResetKey,
+  overlayZIndex = 2100,
+}: MediaViewerProps) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const imageRef = useRef<HTMLImageElement>(null);
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const naturalSizeRef = useRef<{ width: number; height: number } | null>(null);
+  const [scale, setScale] = useState(1);
+  const [translate, setTranslate] = useState({ x: 0, y: 0 });
+  const [dragStart, setDragStart] = useState<{ x: number; y: number } | null>(null);
+  const [swipeStart, setSwipeStart] = useState<{ x: number; y: number; time: number } | null>(null);
+  const [pinchStart, setPinchStart] = useState<{
+    distance: number;
+    scale: number;
+    centerX: number;
+    centerY: number;
+    imagePoint?: { x: number; y: number };
+  } | null>(null);
+  const lastTapRef = useRef<{ time: number; x: number; y: number } | null>(null);
+  const [baseSize, setBaseSize] = useState<{ width: number; height: number } | null>(null);
+  const [containerSize, setContainerSize] = useState<{ width: number; height: number } | null>(null);
+  const [isIdle, setIsIdle] = useState(false);
+  const [showMetadata, setShowMetadata] = useState(false);
+  const idleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const targetZoomModeRef = useRef<'fit' | 'cover'>('fit');
+  const [metadataById, setMetadataById] = useState<Record<string, ReturnType<typeof extractMetadata> | null>>({});
+  const [metadataLoading, setMetadataLoading] = useState<Record<string, boolean>>({});
+  const [videoError, setVideoError] = useState(false);
+  const { isInputFocused } = useTextareaFocus();
+
+  const currentItem = index >= 0 ? (items[index] ?? items[0] ?? null) : null;
+  const fallbackName = currentItem?.filename ?? currentItem?.file?.name ?? currentItem?.alt ?? currentItem?.src ?? '';
+  const isVideo = Boolean(
+    currentItem?.mediaType === 'video' ||
+    currentItem?.file?.type === 'video' ||
+    (fallbackName && isVideoFilename(fallbackName))
+  );
+  const fileId = currentItem?.file?.id ?? null;
+  const fetchedMetadata = fileId ? metadataById[fileId] : undefined;
+  const metadata = currentItem?.metadata ?? (fetchedMetadata === undefined ? undefined : fetchedMetadata);
+  const durationLabel = formatDuration(currentItem?.durationSeconds);
+  const displayName = currentItem?.filename || currentItem?.alt || 'Output';
+  const showMetadataOverlay = showMetadata && !isIdle;
+  const canToggleMetadata = showMetadataToggle;
+  const chromeZ = overlayZIndex + 10;
+  const metadataIsLoading = fileId ? Boolean(metadataLoading[fileId]) : false;
+
+  const resetIdleTimer = useCallback(() => {
+    setIsIdle(false);
+    if (idleTimerRef.current) {
+      clearTimeout(idleTimerRef.current);
+    }
+    idleTimerRef.current = setTimeout(() => {
+      setIsIdle(true);
+    }, 3000);
+  }, []);
+
+  const handleToggleMetadata = useCallback(() => {
+    resetIdleTimer();
+    setShowMetadata((prev) => !prev);
+  }, [resetIdleTimer]);
+
+  const handleDeleteClick = useCallback(() => {
+    if (!currentItem || !onDelete) return;
+    resetIdleTimer();
+    onDelete(currentItem);
+  }, [currentItem, onDelete, resetIdleTimer]);
+
+  const handleLoadWorkflowClick = useCallback(() => {
+    if (!currentItem || !onLoadWorkflow) return;
+    resetIdleTimer();
+    onLoadWorkflow(currentItem);
+  }, [currentItem, onLoadWorkflow, resetIdleTimer]);
+
+  const handleLoadInWorkflowClick = useCallback(() => {
+    if (!currentItem || !onLoadInWorkflow) return;
+    resetIdleTimer();
+    onLoadInWorkflow(currentItem);
+  }, [currentItem, onLoadInWorkflow, resetIdleTimer]);
+
+  useEffect(() => {
+    if (open) {
+      queueMicrotask(resetIdleTimer);
+    } else if (idleTimerRef.current) {
+      clearTimeout(idleTimerRef.current);
+    }
+
+    return () => {
+      if (idleTimerRef.current) {
+        clearTimeout(idleTimerRef.current);
+      }
+    };
+  }, [open, resetIdleTimer]);
+
+  /* eslint-disable react-hooks/set-state-in-effect */
+  useLayoutEffect(() => {
+    if (!open) return;
+    setScale(initialScale);
+    setTranslate(initialTranslate);
+    setDragStart(null);
+    setSwipeStart(null);
+    setPinchStart(null);
+    lastTapRef.current = null;
+    targetZoomModeRef.current = 'fit';
+  }, [open, index, initialScale, initialTranslate]);
+  /* eslint-enable react-hooks/set-state-in-effect */
+
+  /* eslint-disable react-hooks/set-state-in-effect */
+  useEffect(() => {
+    naturalSizeRef.current = null;
+    setBaseSize(null);
+    setVideoError(false);
+  }, [currentItem?.src]);
+  /* eslint-enable react-hooks/set-state-in-effect */
+
+  useEffect(() => {
+    if (!open) return;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      document.body.style.overflow = '';
+    };
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    if (!onTransformChange) return;
+    onTransformChange(scale, translate);
+  }, [open, scale, translate, onTransformChange]);
+
+  useEffect(() => {
+    if (!open) return;
+    const handleKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') onClose();
+    };
+    document.addEventListener('keydown', handleKey);
+    return () => document.removeEventListener('keydown', handleKey);
+  }, [open, onClose]);
+
+  /* eslint-disable react-hooks/set-state-in-effect */
+  useEffect(() => {
+    if (!open || !showMetadataToggle) return;
+    if (!currentItem?.file) return;
+    if (currentItem.metadata) return;
+    if (!fileId) return;
+    if (metadata !== undefined || metadataIsLoading) return;
+
+    const source = fileId.startsWith('input/') ? 'input' : 'output';
+    const path = fileId.startsWith(`${source}/`) ? fileId.slice(source.length + 1) : fileId;
+    setMetadataLoading((prev) => ({ ...prev, [fileId]: true }));
+    getImageMetadata(path, source)
+      .then((data) => {
+        const parsed = data?.prompt ? extractMetadata(data.prompt) : null;
+        const next = parsed && Object.keys(parsed).length > 0 ? parsed : null;
+        setMetadataById((prev) => ({ ...prev, [fileId]: next }));
+      })
+      .catch(() => {
+        setMetadataById((prev) => ({ ...prev, [fileId]: null }));
+      })
+      .finally(() => {
+        setMetadataLoading((prev) => ({ ...prev, [fileId]: false }));
+      });
+  }, [open, showMetadataToggle, currentItem, fileId, metadata, metadataIsLoading]);
+  /* eslint-enable react-hooks/set-state-in-effect */
+
+  const fitHeightScale = useMemo(() => {
+    if (!baseSize || !containerSize) return null;
+    return containerSize.height / baseSize.height;
+  }, [baseSize, containerSize]);
+
+  const fitScale = useMemo(() => {
+    if (fitHeightScale === null) return 1;
+    return Math.min(1, fitHeightScale);
+  }, [fitHeightScale]);
+
+  const coverScale = useMemo(() => {
+    if (fitHeightScale === null) return 1;
+    return Math.max(1, fitHeightScale);
+  }, [fitHeightScale]);
+
+  const getBaseOffset = (nextScale = scale, baseOverride: { width: number; height: number } | null = baseSize) => {
+    if (!baseOverride || !containerSize) return { x: 0, y: 0 };
+    const scaledWidth = baseOverride.width * nextScale;
+    const scaledHeight = baseOverride.height * nextScale;
+    return {
+      x: scaledWidth < containerSize.width ? (containerSize.width - scaledWidth) / 2 : 0,
+      y: scaledHeight < containerSize.height ? (containerSize.height - scaledHeight) / 2 : 0,
+    };
+  };
+
+  const clampTranslate = useCallback((next: { x: number; y: number }, nextScale = scale) => {
+    if (!baseSize || !containerSize) return next;
+    const containerWidth = containerSize.width;
+    const containerHeight = containerSize.height;
+    const scaledWidth = baseSize.width * nextScale;
+    const scaledHeight = baseSize.height * nextScale;
+
+    const clampedX = scaledWidth <= containerWidth
+      ? 0
+      : Math.max(containerWidth - scaledWidth, Math.min(0, next.x));
+    const clampedY = scaledHeight <= containerHeight
+      ? 0
+      : Math.max(containerHeight - scaledHeight, Math.min(0, next.y));
+    return { x: clampedX, y: clampedY };
+  }, [baseSize, containerSize, scale]);
+
+  const applyZoomMode = useCallback((mode: 'fit' | 'cover') => {
+    let targetScale = fitScale;
+    switch (mode) {
+      case 'cover':
+        targetScale = coverScale;
+        break;
+      case 'fit':
+      default:
+        targetScale = fitScale;
+        break;
+    }
+    targetZoomModeRef.current = mode;
+    setScale(targetScale);
+    if (!baseSize || !containerSize) {
+      setTranslate({ x: 0, y: 0 });
+    } else {
+      const scaledWidth = baseSize.width * targetScale;
+      const scaledHeight = baseSize.height * targetScale;
+      const centered = {
+        x: (containerSize.width - scaledWidth) / 2,
+        y: (containerSize.height - scaledHeight) / 2,
+      };
+      setTranslate(clampTranslate(centered, targetScale));
+    }
+  }, [baseSize, clampTranslate, containerSize, coverScale, fitScale]);
+
+  const handleImageLoad = (event: React.SyntheticEvent<HTMLImageElement>) => {
+    const img = event.currentTarget;
+    naturalSizeRef.current = { width: img.naturalWidth, height: img.naturalHeight };
+    const container = containerRef.current;
+    if (!container || img.naturalWidth === 0) return;
+    const containerWidth = container.clientWidth;
+    const containerHeight = container.clientHeight;
+    const ratio = containerWidth / img.naturalWidth;
+    setBaseSize({ width: containerWidth, height: img.naturalHeight * ratio });
+    setContainerSize({ width: containerWidth, height: containerHeight });
+  };
+
+  useEffect(() => {
+    if (isVideo) return;
+    if (!open) return;
+    const img = imageRef.current;
+    const container = containerRef.current;
+    if (!img || !container) return;
+
+    const updateSizes = () => {
+      const natural = naturalSizeRef.current;
+      const containerWidth = container.clientWidth;
+      const containerHeight = container.clientHeight;
+      setContainerSize({ width: containerWidth, height: containerHeight });
+      if (!natural || natural.width === 0) return;
+      const ratio = containerWidth / natural.width;
+      const height = natural.height * ratio;
+      setBaseSize({ width: containerWidth, height });
+      setTranslate((prev) => clampTranslate(prev));
+    };
+
+    updateSizes();
+    const observer = new ResizeObserver(updateSizes);
+    observer.observe(container);
+    return () => observer.disconnect();
+  }, [open, currentItem?.src, clampTranslate, isVideo]);
+
+  useEffect(() => {
+    if (isVideo) return;
+    if (!open || !baseSize || !containerSize) return;
+    applyZoomMode(targetZoomModeRef.current);
+  }, [open, currentItem?.src, baseSize, containerSize, fitScale, coverScale, applyZoomMode, isVideo]);
+
+  useEffect(() => {
+    if (!open) return;
+    if (zoomResetKey === undefined) return;
+    applyZoomMode(targetZoomModeRef.current);
+  }, [open, zoomResetKey, applyZoomMode]);
+
+  const prev = () => {
+    resetIdleTimer();
+    if (index > 0) {
+      onIndexChange(index - 1);
+    }
+  };
+
+  const next = () => {
+    resetIdleTimer();
+    if (index < items.length - 1) {
+      onIndexChange(index + 1);
+    }
+  };
+
+  const handlePointerDown = (event: React.PointerEvent) => {
+    if (isVideo) {
+      const videoEl = videoRef.current;
+      if (videoEl && event.target === videoEl) {
+        const rect = videoEl.getBoundingClientRect();
+        if (event.clientY > rect.bottom - 60) {
+          return;
+        }
+      }
+    }
+    (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
+
+    const pointers = getActivePointers(containerRef.current);
+    pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+
+    if (pointers.size === 1) {
+      setSwipeStart({ x: event.clientX, y: event.clientY, time: Date.now() });
+      if (!isVideo) {
+        setDragStart({ x: event.clientX - translate.x, y: event.clientY - translate.y });
+      }
+    } else if (pointers.size === 2 && !isVideo) {
+      const [a, b] = Array.from(pointers.values());
+      const distance = Math.hypot(b.x - a.x, b.y - a.y);
+      const centerX = (a.x + b.x) / 2;
+      const centerY = (a.y + b.y) / 2;
+      const rect = containerRef.current?.getBoundingClientRect();
+      const baseOffset = getBaseOffset(scale);
+      const imagePoint = rect
+        ? {
+            x: (centerX - rect.left - baseOffset.x - translate.x) / scale,
+            y: (centerY - rect.top - baseOffset.y - translate.y) / scale,
+          }
+        : undefined;
+      setPinchStart({ distance, scale, centerX, centerY, imagePoint });
+    }
+  };
+
+  const handlePointerMove = (event: React.PointerEvent) => {
+    const pointers = getActivePointers(containerRef.current);
+    if (!pointers.has(event.pointerId)) return;
+    pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+
+    if (pointers.size === 2 && pinchStart && !isVideo) {
+      const [a, b] = Array.from(pointers.values());
+      const nextDistance = Math.hypot(b.x - a.x, b.y - a.y);
+      const minScale = fitScale;
+      const nextScale = Math.max(minScale, Math.min(5, pinchStart.scale * (nextDistance / pinchStart.distance)));
+      setScale(nextScale);
+      const rect = containerRef.current?.getBoundingClientRect();
+      const centerX = (a.x + b.x) / 2;
+      const centerY = (a.y + b.y) / 2;
+      if (rect && pinchStart.imagePoint) {
+        const nextBaseOffset = getBaseOffset(nextScale);
+        const nextTranslate = {
+          x: centerX - rect.left - nextBaseOffset.x - pinchStart.imagePoint.x * nextScale,
+          y: centerY - rect.top - nextBaseOffset.y - pinchStart.imagePoint.y * nextScale,
+        };
+        setTranslate(clampTranslate(nextTranslate, nextScale));
+      } else {
+        setTranslate((prevTranslate) => clampTranslate(prevTranslate, nextScale));
+      }
+      return;
+    }
+
+    if (pointers.size === 1 && !isVideo) {
+      const canPan = scale > 1 || (baseSize && containerRef.current && baseSize.height * scale > containerRef.current.clientHeight + 1);
+      if (canPan && dragStart) {
+        setTranslate(clampTranslate({ x: event.clientX - dragStart.x, y: event.clientY - dragStart.y }));
+      }
+    }
+  };
+
+  const handlePointerUp = (event: React.PointerEvent) => {
+    const pointers = getActivePointers(containerRef.current);
+    pointers.delete(event.pointerId);
+
+    if (pointers.size < 2) {
+      setPinchStart(null);
+    }
+
+    if (pointers.size === 0) {
+      const now = Date.now();
+      const lastTap = lastTapRef.current;
+      const dxTap = lastTap ? event.clientX - lastTap.x : 0;
+      const dyTap = lastTap ? event.clientY - lastTap.y : 0;
+      const isDoubleTap = Boolean(
+        lastTap &&
+        now - lastTap.time < 300 &&
+        Math.hypot(dxTap, dyTap) < 24
+      );
+
+      if (!isVideo && isDoubleTap) {
+        lastTapRef.current = null;
+        const currentMode = targetZoomModeRef.current;
+        applyZoomMode(currentMode === 'fit' ? 'cover' : 'fit');
+        resetIdleTimer();
+      } else {
+        lastTapRef.current = { time: now, x: event.clientX, y: event.clientY };
+        if (!isInputFocused && swipeStart) {
+          const dx = event.clientX - swipeStart.x;
+          const dy = event.clientY - swipeStart.y;
+          const durationMs = Date.now() - swipeStart.time;
+          const absX = Math.abs(dx);
+          const absY = Math.abs(dy);
+          const isFitOrCover = Math.abs(scale - fitScale) < 0.05 || Math.abs(scale - coverScale) < 0.05;
+          const isTap = durationMs < 250 && absX < 10 && absY < 10;
+          if (durationMs <= 350 && absX > 60 && absX > absY && isFitOrCover) {
+            if (dx < 0) {
+              if (index < items.length - 1) {
+                onIndexChange(index + 1);
+              }
+            } else if (dx > 0 && index > 0) {
+              onIndexChange(index - 1);
+            }
+          } else if (isTap) {
+            resetIdleTimer();
+          }
+        }
+      }
+    }
+
+    if (pointers.size === 0) {
+      setDragStart(null);
+    }
+  };
+
+  const handleWheel = (event: React.WheelEvent) => {
+    if (isVideo) return;
+    if (!event.ctrlKey) return;
+    event.preventDefault();
+    const delta = -event.deltaY * 0.005;
+    const nextScale = Math.max(fitScale, Math.min(5, scale + delta));
+    setScale(nextScale);
+    setTranslate((prevTranslate) => clampTranslate(prevTranslate, nextScale));
+  };
+
+  if (!open) return null;
+
+  if (!currentItem && !showLoadingPlaceholder) {
+    return createPortal(
+      <div
+        className="fixed inset-0 z-[2000] bg-black flex flex-col items-center justify-center text-white"
+        role="dialog"
+        aria-modal="true"
+      >
+        <button
+          className="absolute top-4 right-4 z-[2010] w-10 h-10 rounded-full bg-black/60 text-white text-xl flex items-center justify-center"
+          onClick={onClose}
+          aria-label="Close viewer"
+        >
+          ×
+        </button>
+        <p className="text-gray-400 mb-2">No images to display</p>
+        <p className="text-gray-500 text-sm">images: {items.length}, index: {index}</p>
+      </div>,
+      document.body
+    );
+  }
+
+  return createPortal(
+    <div
+      id="media-viewer-overlay"
+      className="fixed inset-0 bg-black"
+      style={{ zIndex: overlayZIndex }}
+      onWheel={handleWheel}
+    >
+      <div
+        ref={containerRef}
+        className={`absolute inset-x-0 top-0 overflow-hidden ${isVideo ? '' : 'touch-none'}`}
+        style={{ overscrollBehavior: 'contain', height: 'calc(100vh - var(--bottom-bar-offset, 0px))', zIndex: 1 }}
+        onPointerDown={handlePointerDown}
+        onPointerMove={handlePointerMove}
+        onPointerUp={handlePointerUp}
+        onPointerCancel={handlePointerUp}
+      >
+        {showLoadingPlaceholder ? (
+          <div className="absolute inset-0 flex flex-col items-center justify-center text-white">
+            <div className="w-12 h-12 border-4 border-gray-600 border-t-white rounded-full animate-spin" />
+            <div className="mt-4 w-48 h-2 rounded-full bg-gray-700 overflow-hidden">
+              <div
+                className="h-full bg-white transition-all duration-300"
+                style={{ width: `${Math.min(100, Math.max(0, loadingProgress))}%` }}
+              />
+            </div>
+            <div className="mt-2 text-sm text-gray-300">
+              {loadingLabel ?? `${Math.min(100, Math.max(0, loadingProgress))}%`}
+            </div>
+          </div>
+        ) : currentItem && (
+          <>
+            {isVideo ? (
+              <>
+                <video
+                  ref={videoRef}
+                  src={currentItem.src}
+                  controls
+                  autoPlay
+                  loop
+                  muted
+                  playsInline
+                  className="w-full h-full object-contain select-none"
+                  onDragStart={(event) => event.preventDefault()}
+                  onError={() => setVideoError(true)}
+                />
+                {videoError && (
+                  <div className="absolute inset-0 flex items-center justify-center text-white text-sm bg-black/60">
+                    Unable to play this video.
+                  </div>
+                )}
+              </>
+            ) : (
+              <img
+                ref={imageRef}
+                src={currentItem.src}
+                alt={currentItem.alt || 'Generation'}
+                className="w-full h-auto block select-none relative"
+                draggable={false}
+                onLoad={handleImageLoad}
+                style={{
+                  transform: `translate3d(${getBaseOffset(scale).x + translate.x}px, ${getBaseOffset(scale).y + translate.y}px, 0) scale(${scale})`,
+                  transformOrigin: 'top left',
+                  willChange: 'transform',
+                  backfaceVisibility: 'hidden',
+                  WebkitBackfaceVisibility: 'hidden',
+                  transition: (pinchStart || dragStart) ? 'none' : 'transform 0.05s linear',
+                }}
+              />
+            )}
+          </>
+        )}
+      </div>
+
+      <button
+        onClick={onClose}
+        className={`absolute top-3 right-3 w-9 h-9 rounded-full flex items-center justify-center transition-colors ${
+          isIdle ? 'bg-transparent text-white' : 'bg-black/60 text-white'
+        }`}
+        style={{ zIndex: chromeZ }}
+        aria-label="Close viewer"
+      >
+        <XMarkIcon className="w-6 h-6" />
+      </button>
+
+      <div
+        className={`absolute inset-0 pointer-events-none transition-opacity duration-300 ${
+          isIdle ? 'opacity-0' : 'opacity-100'
+        }`}
+        style={{ zIndex: chromeZ }}
+      >
+        {currentItem && (
+          <>
+            <MediaViewerHeader
+              index={index}
+              total={items.length}
+              displayName={displayName}
+            />
+            <MediaViewerNavigation
+              index={index}
+              total={items.length}
+              onPrev={prev}
+              onNext={next}
+            />
+            <MediaViewerActions
+              isVideo={isVideo}
+              onDelete={onDelete}
+              onLoadWorkflow={onLoadWorkflow}
+              onLoadInWorkflow={onLoadInWorkflow}
+              showMetadataToggle={showMetadataToggle}
+              canToggleMetadata={canToggleMetadata}
+              onDeleteClick={handleDeleteClick}
+              onLoadWorkflowClick={handleLoadWorkflowClick}
+              onLoadInWorkflowClick={handleLoadInWorkflowClick}
+              onToggleMetadata={handleToggleMetadata}
+            />
+            <MediaViewerMetadata
+              isVideo={isVideo}
+              showMetadataToggle={showMetadataToggle}
+              showMetadataOverlay={showMetadataOverlay}
+              metadataIsLoading={metadataIsLoading}
+              metadata={metadata}
+              durationLabel={durationLabel}
+            />
+          </>
+        )}
+      </div>
+    </div>,
+    document.body
+  );
+}
+
+function getActivePointers(element: HTMLDivElement | null): Map<number, { x: number; y: number }> {
+  const anyElement = element as unknown as { __activePointers?: Map<number, { x: number; y: number }> } | null;
+  if (!anyElement) return new Map();
+  if (!anyElement.__activePointers) {
+    anyElement.__activePointers = new Map();
+  }
+  return anyElement.__activePointers;
+}
+
+function formatDuration(seconds?: number): string {
+  const safeSeconds = seconds === undefined || Number.isNaN(seconds) ? 0 : seconds;
+  if (safeSeconds === 0) return '';
+  if (safeSeconds < 10) return `${safeSeconds.toFixed(1)}s`;
+  return `${Math.round(safeSeconds)}s`;
+}

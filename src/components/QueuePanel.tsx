@@ -3,31 +3,32 @@ import { useShallow } from 'zustand/shallow';
 import { useQueueStore } from '@/hooks/useQueue';
 import { useHistoryStore } from '@/hooks/useHistory';
 import { useWorkflowStore } from '@/hooks/useWorkflow';
+import { useNavigationStore } from '@/hooks/useNavigation';
 import { useOverallProgress } from '@/hooks/useOverallProgress';
 import type { Workflow } from '@/api/types';
 import { buildViewerImages } from '@/utils/viewerImages';
-import type { QueueItemData, UnifiedItem, ViewerImage } from './queue/types';
-import { QueueImageMenu } from './queue/QueueImageMenu';
-import { QueueToast } from './queue/QueueToast';
-import { getBatchSources } from './queue/queueUtils';
+import type { QueueItemData, UnifiedItem, ViewerImage } from './QueuePanel/types';
+import { QueueImageMenu } from './QueuePanel/QueueImageMenu';
+import { QueueToast } from './QueuePanel/QueueToast';
+import { getBatchSources } from './QueuePanel/queueUtils';
 import { downloadBatch, downloadImage } from '@/utils/downloads';
 import { copyTextToClipboard } from '@/utils/clipboard';
-import { QueueList } from './queue/QueueList';
+import { QueueList } from './QueuePanel/QueueList';
 import { useQueueMenuDismiss } from '@/hooks/useQueueMenuDismiss';
 
 interface QueuePanelProps {
-  open: boolean;
+  visible: boolean;
   onImageClick?: (images: Array<ViewerImage>, index: number, enableFollowQueue?: boolean) => void;
 }
 
-export function QueuePanel({ open, onImageClick }: QueuePanelProps) {
+export function QueuePanel({ visible, onImageClick }: QueuePanelProps) {
   const running = useQueueStore((s) => s.running);
   const pending = useQueueStore((s) => s.pending);
   const fetchQueue = useQueueStore((s) => s.fetchQueue);
   const deleteQueueItem = useQueueStore((s) => s.deleteItem);
   const interrupt = useQueueStore((s) => s.interrupt);
   const loadWorkflow = useWorkflowStore((s) => s.loadWorkflow);
-  const setQueuePanelOpen = useWorkflowStore((s) => s.setQueuePanelOpen);
+  const setCurrentPanel = useNavigationStore((s) => s.setCurrentPanel);
   const workflow = useWorkflowStore((s) => s.workflow);
   const nodeTypes = useWorkflowStore((s) => s.nodeTypes);
   const executingNodeId = useWorkflowStore((s) => s.executingNodeId);
@@ -66,6 +67,7 @@ export function QueuePanel({ open, onImageClick }: QueuePanelProps) {
     workflow?: Workflow;
     promptId?: string;
     hasVideoOutputs?: boolean;
+    hasImageOutputs?: boolean;
   } | null>(null);
   const [downloaded, setDownloaded] = useState<Record<string, boolean>>({});
   const [toastMessage, setToastMessage] = useState<string | null>(null);
@@ -77,7 +79,7 @@ export function QueuePanel({ open, onImageClick }: QueuePanelProps) {
   const hasMountedRef = useRef(false);
 
   useEffect(() => {
-    if (open) {
+    if (visible) {
       if (!wasOpenRef.current) {
         if (hasMountedRef.current) {
           if (listRef.current) {
@@ -89,17 +91,17 @@ export function QueuePanel({ open, onImageClick }: QueuePanelProps) {
         setHasLoadedOnce(true);
       });
     }
-    wasOpenRef.current = open;
+    wasOpenRef.current = visible;
     if (!hasMountedRef.current) {
       hasMountedRef.current = true;
     }
-  }, [open, fetchQueue, fetchHistory]);
+  }, [visible, fetchQueue, fetchHistory]);
 
   useEffect(() => {
-    if (!isExecuting && open) {
+    if (!isExecuting && visible) {
       fetchHistory();
     }
-  }, [isExecuting, open, fetchHistory]);
+  }, [isExecuting, visible, fetchHistory]);
 
   // Queue view is embedded; no modal scroll locking.
 
@@ -114,7 +116,7 @@ export function QueuePanel({ open, onImageClick }: QueuePanelProps) {
   };
 
   const handleDownload = async (src: string) => {
-    await downloadImage(src, (downloadedSrc) => {
+    await downloadImage(src, 'image.png', (downloadedSrc) => {
       setDownloaded((prev) => ({ ...prev, [downloadedSrc]: true }));
     });
   };
@@ -182,15 +184,15 @@ export function QueuePanel({ open, onImageClick }: QueuePanelProps) {
   }, [unifiedList]);
 
   useEffect(() => {
-    if (!open) return;
+    if (!visible) return;
     totalCountRef.current = unifiedList.length;
     queueMicrotask(() => {
       setVisibleCount((prev) => Math.max(prev, initialVisibleCount));
     });
-  }, [open, unifiedList.length, initialVisibleCount]);
+  }, [visible, unifiedList.length, initialVisibleCount]);
 
   useEffect(() => {
-    if (!open) return;
+    if (!visible) return;
     const el = listRef.current;
     if (!el) return;
     if (visibleCount >= unifiedList.length) return;
@@ -199,74 +201,92 @@ export function QueuePanel({ open, onImageClick }: QueuePanelProps) {
         setVisibleCount((prev) => Math.min(unifiedList.length, prev + 10));
       });
     }
-  }, [open, visibleCount, unifiedList.length]);
+  }, [visible, visibleCount, unifiedList.length]);
 
-  if (!open) return null;
+  const handleDeleteItem = (item: UnifiedItem) => {
+    if (item.status === 'pending') deleteQueueItem(item.id);
+    if (item.status === 'done') deleteHistoryItem(item.id);
+  };
+
+  const handleOpenMenu = (payload: { top: number; right: number; imageSrc: string; workflow?: Workflow; promptId?: string; hasVideoOutputs?: boolean; hasImageOutputs?: boolean }) => {
+    const { top, right, imageSrc, workflow, promptId, hasVideoOutputs, hasImageOutputs } = payload;
+    setMenuState({
+      open: true,
+      top,
+      right,
+      imageSrc,
+      workflow,
+      promptId,
+      hasVideoOutputs,
+      hasImageOutputs
+    });
+  };
+
+  const handleListScroll = () => {
+    const el = listRef.current;
+    if (!el) return;
+    const remaining = el.scrollHeight - el.scrollTop - el.clientHeight;
+    if (remaining < 400) {
+      setVisibleCount((prev) => Math.min(totalCountRef.current, prev + 10));
+    }
+  };
+
+  const handleMenuLoadWorkflow = (workflow: Workflow, promptId: string) => {
+    loadWorkflow(
+      workflow,
+      `history-${promptId}.json`,
+      { source: { type: 'history', promptId } }
+    );
+    setCurrentPanel('workflow');
+  };
+
+  const handleBatchDownload = async (sources: string[]) => {
+    await downloadBatch(sources, (downloadedSrc) => {
+      setDownloaded((prev) => ({ ...prev, [downloadedSrc]: true }));
+    });
+  };
 
   return (
-    <div className="flex flex-col bg-gray-100 min-h-full">
-      <QueueList
-        listRef={listRef}
-        unifiedList={unifiedList}
-        visibleCount={visibleCount}
-        hasLoadedOnce={hasLoadedOnce}
-        effectiveExecutingId={effectiveExecutingId}
-        progress={progress}
-        overallProgress={overallProgress}
-        executingNodeLabel={executingNodeLabel}
-        onDeleteItem={(item) => {
-          if (item.status === 'pending') deleteQueueItem(item.id);
-          if (item.status === 'done') deleteHistoryItem(item.id);
-        }}
-        onStop={interrupt}
-        onImageClick={onImageClick}
-        viewerImages={viewerImages}
-        promptOutputs={promptOutputs}
-        onOpenMenu={({ top, right, imageSrc, workflow, promptId, hasVideoOutputs }) => {
-          setMenuState({
-            open: true,
-            top,
-            right,
-            imageSrc,
-            workflow,
-            promptId,
-            hasVideoOutputs
-          });
-        }}
-        downloaded={downloaded}
-        firstDoneItemId={firstDoneItemId}
-        onScroll={() => {
-          const el = listRef.current;
-          if (!el) return;
-          const remaining = el.scrollHeight - el.scrollTop - el.clientHeight;
-          if (remaining < 400) {
-            setVisibleCount((prev) => Math.min(totalCountRef.current, prev + 10));
-          }
-        }}
-      />
+    <div
+      id="queue-panel-wrapper"
+      className="absolute inset-x-0 top-[60px] bottom-0"
+      style={{ display: visible ? 'block' : 'none' }}
+    >
+      <div className="flex flex-col bg-gray-100 min-h-full">
+        <QueueList
+          listRef={listRef}
+          unifiedList={unifiedList}
+          visibleCount={visibleCount}
+          hasLoadedOnce={hasLoadedOnce}
+          effectiveExecutingId={effectiveExecutingId}
+          progress={progress}
+          overallProgress={overallProgress}
+          executingNodeLabel={executingNodeLabel}
+          onDeleteItem={handleDeleteItem}
+          onStop={interrupt}
+          onImageClick={onImageClick}
+          viewerImages={viewerImages}
+          promptOutputs={promptOutputs}
+          onOpenMenu={handleOpenMenu}
+          downloaded={downloaded}
+          firstDoneItemId={firstDoneItemId}
+          onScroll={handleListScroll}
+        />
 
-      <QueueImageMenu
-        menuState={menuState}
-        unifiedList={unifiedList}
-        onClose={() => setMenuState(null)}
-        onLoadWorkflow={(workflow, promptId) => {
-          loadWorkflow(
-            workflow,
-            `history-${promptId}.json`,
-            { source: { type: 'history', promptId } }
-          );
-          setQueuePanelOpen(false);
-        }}
-        onCopyWorkflow={handleCopyWorkflow}
-        onDownload={(src) => handleDownload(src)}
-        onBatchDownload={(sources) => downloadBatch(sources, (downloadedSrc) => {
-          setDownloaded((prev) => ({ ...prev, [downloadedSrc]: true }));
-        })}
-        onDeleteHistory={(promptId) => deleteHistoryItem(promptId)}
-        getBatchSources={getBatchSources}
-      />
+        <QueueImageMenu
+          menuState={menuState}
+          unifiedList={unifiedList}
+          onClose={() => setMenuState(null)}
+          onLoadWorkflow={handleMenuLoadWorkflow}
+          onCopyWorkflow={handleCopyWorkflow}
+          onDownload={(src) => handleDownload(src)}
+          onBatchDownload={handleBatchDownload}
+          onDeleteHistory={(promptId) => deleteHistoryItem(promptId)}
+          getBatchSources={getBatchSources}
+        />
 
-      <QueueToast message={toastMessage} />
+        <QueueToast message={toastMessage} />
+      </div>
     </div>
   );
 }

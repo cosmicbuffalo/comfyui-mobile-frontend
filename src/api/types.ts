@@ -37,6 +37,56 @@ export interface WorkflowNode {
 // Link format: [link_id, source_node, source_slot, target_node, target_slot, type]
 export type WorkflowLink = [number, number, number, number, number, string];
 
+export interface WorkflowGroup {
+  id: number;
+  title: string;
+  bounding: [number, number, number, number]; // [x, y, width, height]
+  color: string;
+  font_size?: number;
+  flags?: Record<string, unknown>;
+}
+
+export interface WorkflowSubgraphLink {
+  id: number;
+  origin_id: number;
+  origin_slot: number;
+  target_id: number;
+  target_slot: number;
+  type: string;
+}
+
+export interface WorkflowSubgraphDefinition {
+  id: string;
+  name?: string;
+  version?: number;
+  state?: Record<string, unknown>;
+  revision?: number;
+  config?: Record<string, unknown>;
+  inputNode?: Record<string, unknown>;
+  outputNode?: Record<string, unknown>;
+  inputs?: Array<{
+    id?: string;
+    name?: string;
+    type?: string;
+    linkIds?: number[];
+    label?: string;
+    pos?: [number, number];
+  }>;
+  outputs?: Array<{
+    id?: string;
+    name?: string;
+    type?: string;
+    linkIds?: number[];
+    label?: string;
+    pos?: [number, number];
+  }>;
+  widgets?: unknown[];
+  nodes: WorkflowNode[];
+  groups?: WorkflowGroup[];
+  links: WorkflowSubgraphLink[];
+  extra?: Record<string, unknown>;
+}
+
 export interface Workflow {
   id?: string;
   revision?: number;
@@ -44,8 +94,11 @@ export interface Workflow {
   last_link_id: number;
   nodes: WorkflowNode[];
   links: WorkflowLink[];
-  groups: unknown[];
+  groups: WorkflowGroup[];
   config: Record<string, unknown>;
+  definitions?: {
+    subgraphs?: WorkflowSubgraphDefinition[];
+  };
   widget_idx_map?: Record<string, Record<string, number>>;
   extra?: Record<string, unknown>;
   version: number;
