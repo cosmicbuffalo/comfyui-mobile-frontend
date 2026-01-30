@@ -92,6 +92,9 @@ http://<your-comfyui-ip>:8188/mobile
 
 *Note: Replace `<your-comfyui-ip>` with the actual IP address of your computer if accessing from a mobile device on the same network. The build output is served from `dist/` at `/mobile` (or `/mobile/index.html`).*
 
+> [!IMPORTANT]
+> Don't forget to add the `--listen` flag to your ComfyUI startup command to make your ComfyUI instance [accessible to other devices on your LAN](https://github.com/Comfy-Org/ComfyUI/blob/master/comfy/cli_args.py#L38)
+
 ## Development
 
 If you want to contribute or modify the frontend, you'll need Node.js installed.
