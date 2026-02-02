@@ -58,9 +58,12 @@ export function MediaViewer({
   const naturalSizeRef = useRef<{ width: number; height: number } | null>(null);
   const [scale, setScale] = useState(1);
   const [translate, setTranslate] = useState({ x: 0, y: 0 });
-  const [dragStart, setDragStart] = useState<{ x: number; y: number } | null>(null);
-  const [swipeStart, setSwipeStart] = useState<{ x: number; y: number; time: number } | null>(null);
-  const [pinchStart, setPinchStart] = useState<{
+  const scaleRef = useRef(1);
+  const translateRef = useRef({ x: 0, y: 0 });
+
+  const dragRef = useRef<{ x: number; y: number } | null>(null);
+  const swipeRef = useRef<{ x: number; y: number; time: number } | null>(null);
+  const pinchRef = useRef<{
     distance: number;
     scale: number;
     centerX: number;
@@ -148,9 +151,12 @@ export function MediaViewer({
     if (!open) return;
     setScale(initialScale);
     setTranslate(initialTranslate);
-    setDragStart(null);
-    setSwipeStart(null);
-    setPinchStart(null);
+    scaleRef.current = initialScale;
+    translateRef.current = initialTranslate;
+
+    dragRef.current = null;
+    swipeRef.current = null;
+    pinchRef.current = null;
     lastTapRef.current = null;
     targetZoomModeRef.current = 'fit';
   }, [open, index, initialScale, initialTranslate]);
@@ -254,6 +260,8 @@ export function MediaViewer({
     return { x: clampedX, y: clampedY };
   }, [baseSize, containerSize, scale]);
 
+  const clampTranslateRef = useRef(clampTranslate);
+
   const applyZoomMode = useCallback((mode: 'fit' | 'cover') => {
     let targetScale = fitScale;
     switch (mode) {
@@ -266,8 +274,10 @@ export function MediaViewer({
         break;
     }
     targetZoomModeRef.current = mode;
+    scaleRef.current = targetScale;
     setScale(targetScale);
     if (!baseSize || !containerSize) {
+      translateRef.current = { x: 0, y: 0 };
       setTranslate({ x: 0, y: 0 });
     } else {
       const scaledWidth = baseSize.width * targetScale;
@@ -276,9 +286,21 @@ export function MediaViewer({
         x: (containerSize.width - scaledWidth) / 2,
         y: (containerSize.height - scaledHeight) / 2,
       };
-      setTranslate(clampTranslate(centered, targetScale));
+      const clamped = clampTranslate(centered, targetScale);
+      translateRef.current = clamped;
+      setTranslate(clamped);
     }
   }, [baseSize, clampTranslate, containerSize, coverScale, fitScale]);
+
+  const applyZoomModeRef = useRef(applyZoomMode);
+
+  useEffect(() => {
+    clampTranslateRef.current = clampTranslate;
+  }, [clampTranslate]);
+
+  useEffect(() => {
+    applyZoomModeRef.current = applyZoomMode;
+  }, [applyZoomMode]);
 
   const handleImageLoad = (event: React.SyntheticEvent<HTMLImageElement>) => {
     const img = event.currentTarget;
@@ -308,26 +330,28 @@ export function MediaViewer({
       const ratio = containerWidth / natural.width;
       const height = natural.height * ratio;
       setBaseSize({ width: containerWidth, height });
-      setTranslate((prev) => clampTranslate(prev));
+      const clamped = clampTranslateRef.current(translateRef.current);
+      translateRef.current = clamped;
+      setTranslate(clamped);
     };
 
     updateSizes();
     const observer = new ResizeObserver(updateSizes);
     observer.observe(container);
     return () => observer.disconnect();
-  }, [open, currentItem?.src, clampTranslate, isVideo]);
+  }, [open, currentItem?.src, isVideo]);
 
   useEffect(() => {
     if (isVideo) return;
     if (!open || !baseSize || !containerSize) return;
-    applyZoomMode(targetZoomModeRef.current);
-  }, [open, currentItem?.src, baseSize, containerSize, fitScale, coverScale, applyZoomMode, isVideo]);
+    applyZoomModeRef.current(targetZoomModeRef.current);
+  }, [open, currentItem?.src, baseSize, containerSize, isVideo]);
 
   useEffect(() => {
     if (!open) return;
     if (zoomResetKey === undefined) return;
-    applyZoomMode(targetZoomModeRef.current);
-  }, [open, zoomResetKey, applyZoomMode]);
+    applyZoomModeRef.current(targetZoomModeRef.current);
+  }, [open, zoomResetKey]);
 
   const prev = () => {
     resetIdleTimer();
@@ -341,6 +365,15 @@ export function MediaViewer({
     if (index < items.length - 1) {
       onIndexChange(index + 1);
     }
+  };
+
+  const applyTransformToDOM = () => {
+    const img = imageRef.current;
+    if (!img) return;
+    const s = scaleRef.current;
+    const t = translateRef.current;
+    const offset = getBaseOffset(s);
+    img.style.transform = `translate3d(${offset.x + t.x}px, ${offset.y + t.y}px, 0) scale(${s})`;
   };
 
   const handlePointerDown = (event: React.PointerEvent) => {
@@ -359,9 +392,12 @@ export function MediaViewer({
     pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
 
     if (pointers.size === 1) {
-      setSwipeStart({ x: event.clientX, y: event.clientY, time: Date.now() });
+      swipeRef.current = { x: event.clientX, y: event.clientY, time: Date.now() };
       if (!isVideo) {
-        setDragStart({ x: event.clientX - translate.x, y: event.clientY - translate.y });
+        dragRef.current = { x: event.clientX - translateRef.current.x, y: event.clientY - translateRef.current.y };
+
+        const img = imageRef.current;
+        if (img) img.style.transition = 'none';
       }
     } else if (pointers.size === 2 && !isVideo) {
       const [a, b] = Array.from(pointers.values());
@@ -369,14 +405,16 @@ export function MediaViewer({
       const centerX = (a.x + b.x) / 2;
       const centerY = (a.y + b.y) / 2;
       const rect = containerRef.current?.getBoundingClientRect();
-      const baseOffset = getBaseOffset(scale);
+      const s = scaleRef.current;
+      const t = translateRef.current;
+      const baseOffset = getBaseOffset(s);
       const imagePoint = rect
         ? {
-            x: (centerX - rect.left - baseOffset.x - translate.x) / scale,
-            y: (centerY - rect.top - baseOffset.y - translate.y) / scale,
+            x: (centerX - rect.left - baseOffset.x - t.x) / s,
+            y: (centerY - rect.top - baseOffset.y - t.y) / s,
           }
         : undefined;
-      setPinchStart({ distance, scale, centerX, centerY, imagePoint });
+      pinchRef.current = { distance, scale: s, centerX, centerY, imagePoint };
     }
   };
 
@@ -385,32 +423,36 @@ export function MediaViewer({
     if (!pointers.has(event.pointerId)) return;
     pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
 
-    if (pointers.size === 2 && pinchStart && !isVideo) {
+    if (pointers.size === 2 && pinchRef.current && !isVideo) {
+      const pinch = pinchRef.current;
       const [a, b] = Array.from(pointers.values());
       const nextDistance = Math.hypot(b.x - a.x, b.y - a.y);
       const minScale = fitScale;
-      const nextScale = Math.max(minScale, Math.min(5, pinchStart.scale * (nextDistance / pinchStart.distance)));
-      setScale(nextScale);
+      const nextScale = Math.max(minScale, Math.min(5, pinch.scale * (nextDistance / pinch.distance)));
+      scaleRef.current = nextScale;
       const rect = containerRef.current?.getBoundingClientRect();
       const centerX = (a.x + b.x) / 2;
       const centerY = (a.y + b.y) / 2;
-      if (rect && pinchStart.imagePoint) {
+      if (rect && pinch.imagePoint) {
         const nextBaseOffset = getBaseOffset(nextScale);
         const nextTranslate = {
-          x: centerX - rect.left - nextBaseOffset.x - pinchStart.imagePoint.x * nextScale,
-          y: centerY - rect.top - nextBaseOffset.y - pinchStart.imagePoint.y * nextScale,
+          x: centerX - rect.left - nextBaseOffset.x - pinch.imagePoint.x * nextScale,
+          y: centerY - rect.top - nextBaseOffset.y - pinch.imagePoint.y * nextScale,
         };
-        setTranslate(clampTranslate(nextTranslate, nextScale));
+        translateRef.current = clampTranslate(nextTranslate, nextScale);
       } else {
-        setTranslate((prevTranslate) => clampTranslate(prevTranslate, nextScale));
+        translateRef.current = clampTranslate(translateRef.current, nextScale);
       }
+      applyTransformToDOM();
       return;
     }
 
     if (pointers.size === 1 && !isVideo) {
-      const canPan = scale > 1 || (baseSize && containerRef.current && baseSize.height * scale > containerRef.current.clientHeight + 1);
-      if (canPan && dragStart) {
-        setTranslate(clampTranslate({ x: event.clientX - dragStart.x, y: event.clientY - dragStart.y }));
+      const s = scaleRef.current;
+      const canPan = s > 1 || (baseSize && containerRef.current && baseSize.height * s > containerRef.current.clientHeight + 1);
+      if (canPan && dragRef.current) {
+        translateRef.current = clampTranslate({ x: event.clientX - dragRef.current.x, y: event.clientY - dragRef.current.y }, s);
+        applyTransformToDOM();
       }
     }
   };
@@ -420,10 +462,20 @@ export function MediaViewer({
     pointers.delete(event.pointerId);
 
     if (pointers.size < 2) {
-      setPinchStart(null);
+      if (pointers.size === 1 && pinchRef.current) {
+        // Transitioning from pinch to single-finger drag — update drag offset
+        const [remaining] = Array.from(pointers.values());
+        dragRef.current = { x: remaining.x - translateRef.current.x, y: remaining.y - translateRef.current.y };
+      }
+      pinchRef.current = null;
     }
 
     if (pointers.size === 0) {
+      // Restore CSS transition before state updates so double-tap animates
+  
+      const img = imageRef.current;
+      if (img) img.style.transition = 'transform 0.05s linear';
+
       const now = Date.now();
       const lastTap = lastTapRef.current;
       const dxTap = lastTap ? event.clientX - lastTap.x : 0;
@@ -441,13 +493,15 @@ export function MediaViewer({
         resetIdleTimer();
       } else {
         lastTapRef.current = { time: now, x: event.clientX, y: event.clientY };
-        if (!isInputFocused && swipeStart) {
-          const dx = event.clientX - swipeStart.x;
-          const dy = event.clientY - swipeStart.y;
-          const durationMs = Date.now() - swipeStart.time;
+        const swipe = swipeRef.current;
+        if (!isInputFocused && swipe) {
+          const dx = event.clientX - swipe.x;
+          const dy = event.clientY - swipe.y;
+          const durationMs = Date.now() - swipe.time;
           const absX = Math.abs(dx);
           const absY = Math.abs(dy);
-          const isFitOrCover = Math.abs(scale - fitScale) < 0.05 || Math.abs(scale - coverScale) < 0.05;
+          const s = scaleRef.current;
+          const isFitOrCover = Math.abs(s - fitScale) < 0.05 || Math.abs(s - coverScale) < 0.05;
           const isTap = durationMs < 250 && absX < 10 && absY < 10;
           if (durationMs <= 350 && absX > 60 && absX > absY && isFitOrCover) {
             if (dx < 0) {
@@ -461,11 +515,12 @@ export function MediaViewer({
             resetIdleTimer();
           }
         }
+        // Sync gesture state to React for rendering
+        setScale(scaleRef.current);
+        setTranslate(translateRef.current);
       }
-    }
 
-    if (pointers.size === 0) {
-      setDragStart(null);
+      dragRef.current = null;
     }
   };
 
@@ -474,9 +529,12 @@ export function MediaViewer({
     if (!event.ctrlKey) return;
     event.preventDefault();
     const delta = -event.deltaY * 0.005;
-    const nextScale = Math.max(fitScale, Math.min(5, scale + delta));
+    const nextScale = Math.max(fitScale, Math.min(5, scaleRef.current + delta));
+    scaleRef.current = nextScale;
     setScale(nextScale);
-    setTranslate((prevTranslate) => clampTranslate(prevTranslate, nextScale));
+    const nextTranslate = clampTranslate(translateRef.current, nextScale);
+    translateRef.current = nextTranslate;
+    setTranslate(nextTranslate);
   };
 
   if (!open) return null;
@@ -567,7 +625,6 @@ export function MediaViewer({
                   willChange: 'transform',
                   backfaceVisibility: 'hidden',
                   WebkitBackfaceVisibility: 'hidden',
-                  transition: (pinchStart || dragStart) ? 'none' : 'transform 0.05s linear',
                 }}
               />
             )}
