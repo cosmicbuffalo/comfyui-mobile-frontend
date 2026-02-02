@@ -38,11 +38,14 @@ export function FullscreenWidgetModal({
       {/* Modal Content */}
       <div
         className="w-full h-full flex flex-col"
-        style={{ paddingTop: 'calc(var(--top-bar-offset, 0px) + env(safe-area-inset-top, 0px))' }}
+        style={{
+          paddingTop: 'calc(var(--top-bar-offset, 0px) + env(safe-area-inset-top, 0px))',
+          paddingBottom: 'var(--bottom-bar-offset, 0px)'
+        }}
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header/Input Area - Below top bar */}
-        <div className="bg-white dark:bg-[#151a23] p-4 border-b border-gray-200 dark:border-gray-800 shadow-sm relative z-50">
+        <div className="bg-white dark:bg-[#151a23] p-4 border-b border-gray-200 dark:border-gray-800 shadow-sm relative z-50 min-h-0 overflow-y-auto">
           <div className="flex justify-between items-start mb-2">
             <span className="font-semibold text-gray-700 dark:text-gray-200 truncate pr-4 pt-1 flex-1">{title}</span>
             <div className="flex items-center gap-2">

@@ -14,7 +14,7 @@ export function DeleteConfirmationModal({
   return (
     <div
       id="viewer-delete-confirm-overlay"
-      className="fixed inset-0 z-[2100] bg-black/50 flex items-center justify-center p-4"
+      className="fixed inset-0 z-[2200] bg-black/50 flex items-center justify-center p-4"
       onClick={onCancel}
       role="dialog"
       aria-modal="true"

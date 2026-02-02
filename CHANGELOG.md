@@ -1,6 +1,13 @@
 # Changelog
 
-## 2.0.0 - Pre-release
+## 2.0.1 - 2026-02-02
+
+### Fixed
+
+- Fix delete and load workflow confirmation modals appearing behind the image viewer
+- Fix widget edit modal content being hidden behind the bottom bar when text is long; content area is now scrollable
+
+## 2.0.0 - 2026-01-27
 
 ### Added
 
