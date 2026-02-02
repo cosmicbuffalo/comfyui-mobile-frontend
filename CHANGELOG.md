@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.0.2 - 2026-02-02
+
+### Fixed
+
+- Fix pinch-to-zoom and panning being janky and unresponsive in the image viewer
+- Fix pinned widget edit modal appearing behind the image viewer
+
 ## 2.0.1 - 2026-02-02
 
 ### Fixed

@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { CloseIcon } from '@/components/icons';
+import { useImageViewerStore } from '@/hooks/useImageViewer';
 
 interface FullscreenWidgetModalProps {
   isOpen: boolean;
@@ -17,6 +18,8 @@ export function FullscreenWidgetModal({
   children,
   headerActions
 }: FullscreenWidgetModalProps) {
+  const viewerOpen = useImageViewerStore((s) => s.viewerOpen);
+
   // Lock body scroll when modal is open
   useEffect(() => {
     if (isOpen) {
@@ -32,14 +35,14 @@ export function FullscreenWidgetModal({
 
   return createPortal(
     <div
-      className="fixed inset-0 z-[1500] bg-gray-400/40 dark:bg-black/50 backdrop-blur-sm safe-area-top"
+      className="fixed inset-0 z-[2300] bg-gray-400/40 dark:bg-black/50 backdrop-blur-sm safe-area-top"
       onClick={onClose}
     >
       {/* Modal Content */}
       <div
         className="w-full h-full flex flex-col"
         style={{
-          paddingTop: 'calc(var(--top-bar-offset, 0px) + env(safe-area-inset-top, 0px))',
+          paddingTop: viewerOpen ? 'env(safe-area-inset-top, 0px)' : 'calc(var(--top-bar-offset, 0px) + env(safe-area-inset-top, 0px))',
           paddingBottom: 'var(--bottom-bar-offset, 0px)'
         }}
         onClick={(e) => e.stopPropagation()}
