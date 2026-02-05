@@ -23,6 +23,8 @@ import {
   getWorkflowWidgetIndexMap,
   getWidgetValue,
   normalizeWidgetValue,
+  resolveComboOption,
+  resolveSource,
 } from "@/utils/workflowInputs";
 import { buildWorkflowCacheKey } from "@/utils/workflowCacheKey";
 import { expandWorkflowSubgraphs } from "@/utils/expandWorkflowSubgraphs";
@@ -46,6 +48,26 @@ import {
   getWidgetDefinitions,
   getInputWidgetDefinitions,
 } from "@/utils/widgetDefinitions";
+import {
+  applyLoraValuesToText,
+  extractLoraList,
+  findLoraListIndex,
+  isLoraChainProviderNodeType,
+  isLoraCyclerNodeType,
+  isLoraDirectProviderNodeType,
+  isLoraLoaderNodeType,
+  isLoraManagerNodeType,
+  mergeLoras,
+} from "@/utils/loraManager";
+import {
+  buildTriggerWordListFromMessage,
+  extractTriggerWordList,
+  extractTriggerWordListLoose,
+  extractTriggerWordMessage,
+  findTriggerWordListIndex,
+  findTriggerWordMessageIndex,
+  isTriggerWordToggleNodeType,
+} from "@/utils/triggerWordToggle";
 import { findConnectedNode, orderNodesForMobile } from "@/utils/nodeOrdering";
 import { areTypesCompatible } from "@/utils/connectionUtils";
 import {
@@ -724,6 +746,11 @@ interface WorkflowState {
     updates: Record<number, unknown>,
   ) => void;
   updateNodeTitle: (stableKey: StableKey, title: string | null) => void;
+  applyLoraCodeUpdate: (payload: Record<string, unknown>) => void;
+  applyTriggerWordUpdate: (payload: Record<string, unknown>) => void;
+  applyWidgetUpdate: (payload: Record<string, unknown>) => void;
+  syncTriggerWordsForNode: (nodeId: number) => void;
+  registerLoraManagerNodes: () => Promise<void>;
   toggleBypass: (stableKey: StableKey) => void;
   scrollToNode: (stableKey: StableKey, label?: string) => void;
   setNodeTypes: (types: NodeTypes) => void;
@@ -884,6 +911,32 @@ function getMobileOrigin(node: WorkflowNode | undefined): MobileOrigin | null {
   return null;
 }
 
+function resolveNodeTypeKey(nodeTypes: NodeTypes | null, nodeType: string): string | null {
+  if (!nodeTypes) return null;
+  if (nodeTypes[nodeType]) return nodeType;
+  const match = Object.entries(nodeTypes).find(
+    ([, def]) => def.display_name === nodeType || def.name === nodeType
+  );
+  return match ? match[0] : null;
+}
+
+function matchesNodeReference(
+  node: WorkflowNode,
+  nodeId: number,
+  graphId: string | null
+): boolean {
+  const normalizedGraphId = graphId ?? 'root';
+  const origin = getMobileOrigin(node);
+  if (origin?.scope === 'subgraph') {
+    return normalizedGraphId !== 'root' &&
+      origin.subgraphId === normalizedGraphId &&
+      origin.nodeId === nodeId;
+  }
+  if (origin?.scope === 'root') {
+    return normalizedGraphId === 'root' && origin.nodeId === nodeId;
+  }
+  return normalizedGraphId === 'root' && node.id === nodeId;
+}
 function getNodePointerFromWorkflowNode(node: WorkflowNode): string {
   const origin = getMobileOrigin(node);
   return makeLocationPointer({
@@ -1501,16 +1554,19 @@ function collectWorkflowLoadErrors(
       const rawValue = getWidgetValue(node, name, widgetIndex);
       if (rawValue === undefined || rawValue === null) continue;
 
+      const resolved = resolveComboOption(rawValue, typeOrOptions);
       const normalized = normalizeWidgetValue(rawValue, typeOrOptions, {
         comboIndexToValue: true,
       });
       const normalizedString = String(normalized);
       const normalizedBase =
         normalizedString.split(/[\\/]/).pop() ?? normalizedString;
-      const hasMatch = typeOrOptions.some((opt) => {
-        const optString = String(opt);
-        return optString === normalizedString || optString === normalizedBase;
-      });
+      const hasMatch =
+        resolved !== undefined ||
+        typeOrOptions.some((opt) => {
+          const optString = String(opt);
+          return optString === normalizedString || optString === normalizedBase;
+        });
 
       if (!hasMatch) {
         const nodeId = String(node.id);
@@ -1530,6 +1586,61 @@ function collectWorkflowLoadErrors(
   return errors;
 }
 
+function normalizeWorkflowComboValues(
+  workflow: Workflow,
+  nodeTypes: NodeTypes
+): { workflow: Workflow; changed: boolean } {
+  let changed = false;
+
+  const nodes = workflow.nodes.map((node) => {
+    if (!Array.isArray(node.widgets_values)) return node;
+    const typeDef = nodeTypes[node.type];
+    if (!typeDef?.input) return node;
+
+    const requiredOrder = typeDef.input_order?.required || Object.keys(typeDef.input.required || {});
+    const optionalOrder = typeDef.input_order?.optional || Object.keys(typeDef.input.optional || {});
+    const orderedInputs = [...requiredOrder, ...optionalOrder];
+    let nextValues: unknown[] | null = null;
+
+    for (const name of orderedInputs) {
+      const inputDef = typeDef.input.required?.[name] || typeDef.input.optional?.[name];
+      if (!inputDef) continue;
+      const [typeOrOptions] = inputDef;
+      if (!Array.isArray(typeOrOptions) || typeOrOptions.length === 0) continue;
+
+      const inputEntry = node.inputs.find((input) => input.name === name);
+      if (inputEntry?.link != null) continue;
+
+      const widgetIndex = getWidgetIndexForInput(workflow, nodeTypes, node, name);
+      if (widgetIndex === null) continue;
+      if (widgetIndex < 0 || widgetIndex >= node.widgets_values.length) continue;
+
+      const rawValue = getWidgetValue(node, name, widgetIndex);
+      if (rawValue === undefined || rawValue === null) continue;
+
+      const resolved = resolveComboOption(rawValue, typeOrOptions);
+      if (resolved === undefined || resolved === rawValue) continue;
+
+      if (!nextValues) {
+        nextValues = [...node.widgets_values];
+      }
+      nextValues[widgetIndex] = resolved;
+      changed = true;
+    }
+
+    if (!nextValues) return node;
+    return { ...node, widgets_values: nextValues };
+  });
+
+  if (!changed) {
+    return { workflow, changed: false };
+  }
+
+  return {
+    workflow: { ...workflow, nodes },
+    changed: true
+  };
+}
 export const useWorkflowStore = create<WorkflowState>()(
   persist(
     (set, get) => {
@@ -2913,8 +3024,12 @@ export const useWorkflowStore = create<WorkflowState>()(
             ...normalizedWorkflow,
             nodes: restoredNodes,
           };
+          const normalizedResult = nodeTypes
+            ? normalizeWorkflowComboValues(restoredWorkflow, nodeTypes)
+            : { workflow: restoredWorkflow, changed: false };
+          finalWorkflow = normalizedResult.workflow;
           const normalizedHiddenNodes = normalizeManuallyHiddenNodeKeys(
-            restoredWorkflow,
+            finalWorkflow,
             get().hiddenItems,
           );
           const rawCollapsedItems = {
@@ -2924,7 +3039,7 @@ export const useWorkflowStore = create<WorkflowState>()(
             ...(savedState.hiddenItems ?? {}),
           };
           const restoredLayout = buildLayoutForWorkflow(
-            restoredWorkflow,
+            finalWorkflow,
             normalizedHiddenNodes,
           );
           const reconciled = reconcileStableRegistry(
@@ -2963,7 +3078,7 @@ export const useWorkflowStore = create<WorkflowState>()(
           );
           const defaultCollapsedItems: Record<string, boolean> = {};
           const restoredWorkflowWithStableKeys = annotateWorkflowWithStableKeys(
-            restoredWorkflow,
+            finalWorkflow,
             reconciled.layoutToStable,
           );
           finalWorkflow = restoredWorkflowWithStableKeys;
@@ -3030,11 +3145,6 @@ export const useWorkflowStore = create<WorkflowState>()(
             get().stableKeyByPointer,
             get().pointerByStableKey,
           );
-          const normalizedWorkflowWithStableKeys =
-            annotateWorkflowWithStableKeys(
-              normalizedWorkflow,
-              reconciled.layoutToStable,
-            );
           const normalizedHiddenNodesStable = stableRecordFromLayoutRecord(
             normalizedHiddenNodes,
             reconciled.layoutToStable,
@@ -3048,10 +3158,28 @@ export const useWorkflowStore = create<WorkflowState>()(
               )
             : {};
           useWorkflowErrorsStore.getState().setError(null);
+          const normalizedResult = nodeTypes
+            ? normalizeWorkflowComboValues(normalizedWorkflow, nodeTypes)
+            : { workflow: normalizedWorkflow, changed: false };
+          finalWorkflow = normalizedResult.workflow;
+          const normalizedWorkflowWithStableKeys =
+            annotateWorkflowWithStableKeys(
+              finalWorkflow,
+              reconciled.layoutToStable,
+            );
+          let syncedEmbedWorkflow = normalizedEmbedWorkflow;
+          if (syncedEmbedWorkflow) {
+            for (const node of normalizedWorkflowWithStableKeys.nodes) {
+              syncedEmbedWorkflow = updateEmbedWorkflowFromExpandedNode(
+                syncedEmbedWorkflow,
+                node,
+              );
+            }
+          }
           set({
             workflowSource: source,
             workflow: normalizedWorkflowWithStableKeys,
-            embedWorkflow: normalizedEmbedWorkflow,
+            embedWorkflow: syncedEmbedWorkflow,
             originalWorkflow: JSON.parse(
               JSON.stringify(normalizedWorkflowWithStableKeys),
             ),
@@ -3180,6 +3308,591 @@ export const useWorkflowStore = create<WorkflowState>()(
           pointerByStableKey: reconciled.stableToLayout,
         });
       };
+
+      const getStableKeyForNode = (node: WorkflowNode): StableKey | null => {
+        if (typeof node.stableKey === "string" && node.stableKey) {
+          return node.stableKey;
+        }
+        const pointer = getNodePointerFromWorkflowNode(node);
+        return toStableKey(pointer, get().stableKeyByPointer);
+      };
+
+      const applyLoraCodeUpdate: WorkflowState["applyLoraCodeUpdate"] = (
+        payload,
+      ) => {
+        const { workflow, nodeTypes } = get();
+        if (!workflow) return;
+
+        const rawNodeId = payload.node_id ?? payload.id;
+        const graphId = typeof payload.graph_id === "string" ? payload.graph_id : null;
+        const loraCode = typeof payload.lora_code === "string" ? payload.lora_code : "";
+        const mode = payload.mode === "replace" ? "replace" : "append";
+
+        if (!loraCode) return;
+
+        const numericId =
+          typeof rawNodeId === "string"
+            ? Number(rawNodeId)
+            : typeof rawNodeId === "number"
+              ? rawNodeId
+              : null;
+        const isBroadcast = numericId === -1;
+        if (!isBroadcast && numericId === null) return;
+
+        const targets = workflow.nodes.filter((node) => {
+          if (isBroadcast) {
+            return isLoraManagerNodeType(node.type);
+          }
+          return matchesNodeReference(node, numericId as number, graphId);
+        });
+
+        targets.forEach((node) => {
+          const textIndex = nodeTypes
+            ? getWidgetIndexForInput(workflow, nodeTypes, node, "text")
+            : null;
+          const listIndex = findLoraListIndex(node, textIndex);
+          if (textIndex === null && listIndex === null) return;
+
+          const widgetValues = Array.isArray(node.widgets_values)
+            ? node.widgets_values
+            : [];
+          const currentText =
+            textIndex !== null ? String(widgetValues[textIndex] ?? "") : "";
+          const nextText =
+            mode === "replace"
+              ? loraCode
+              : currentText.trim()
+                ? `${currentText.trim()} ${loraCode}`
+                : loraCode;
+          const currentList =
+            listIndex !== null && Array.isArray(widgetValues[listIndex])
+              ? widgetValues[listIndex]
+              : [];
+          const mergedList = mergeLoras(
+            nextText,
+            currentList as Array<{ name: string; strength: number | string }>,
+          );
+
+          const updates: Record<number, unknown> = {};
+          if (textIndex !== null) updates[textIndex] = nextText;
+          if (listIndex !== null) updates[listIndex] = mergedList;
+          if (Object.keys(updates).length > 0) {
+            const stableKey = getStableKeyForNode(node);
+            if (!stableKey) return;
+            get().updateNodeWidgets(stableKey, updates);
+            get().syncTriggerWordsForNode(node.id);
+          }
+        });
+      };
+
+      const applyTriggerWordUpdate: WorkflowState["applyTriggerWordUpdate"] = (
+        payload,
+      ) => {
+        const { workflow, nodeTypes } = get();
+        if (!workflow || !nodeTypes) return;
+
+        const rawNodeId = payload.node_id ?? payload.id;
+        const graphId = typeof payload.graph_id === "string" ? payload.graph_id : null;
+        if (typeof payload.message !== "string") return;
+        const message = payload.message;
+
+        const numericId =
+          typeof rawNodeId === "string"
+            ? Number(rawNodeId)
+            : typeof rawNodeId === "number"
+              ? rawNodeId
+              : null;
+        if (numericId === null) return;
+
+        const targets = workflow.nodes.filter((node) =>
+          matchesNodeReference(node, numericId, graphId),
+        );
+
+        targets.forEach((node) => {
+          if (!isTriggerWordToggleNodeType(node.type)) return;
+          if (!Array.isArray(node.widgets_values)) return;
+
+          const groupModeIndex = getWidgetIndexForInput(
+            workflow,
+            nodeTypes,
+            node,
+            "group_mode",
+          );
+          const defaultActiveIndex = getWidgetIndexForInput(
+            workflow,
+            nodeTypes,
+            node,
+            "default_active",
+          );
+          const allowStrengthIndex = getWidgetIndexForInput(
+            workflow,
+            nodeTypes,
+            node,
+            "allow_strength_adjustment",
+          );
+          const groupMode =
+            groupModeIndex !== null
+              ? Boolean(node.widgets_values[groupModeIndex])
+              : true;
+          const defaultActive =
+            defaultActiveIndex !== null
+              ? Boolean(node.widgets_values[defaultActiveIndex])
+              : true;
+          const allowStrength =
+            allowStrengthIndex !== null
+              ? Boolean(node.widgets_values[allowStrengthIndex])
+              : false;
+
+          const listIndex = findTriggerWordListIndex(node);
+          if (listIndex === null) return;
+
+          const currentList =
+            extractTriggerWordList(node.widgets_values[listIndex]) ??
+            extractTriggerWordListLoose(node.widgets_values[listIndex]) ??
+            [];
+          const nextList = buildTriggerWordListFromMessage(message, {
+            groupMode,
+            defaultActive,
+            allowStrengthAdjustment: allowStrength,
+            existingList: currentList,
+          });
+
+          const updates: Record<number, unknown> = { [listIndex]: nextList };
+          const messageIndex = findTriggerWordMessageIndex(node, listIndex);
+          if (messageIndex !== null) {
+            const currentMessage = extractTriggerWordMessage(
+              node.widgets_values[messageIndex],
+            );
+            if (currentMessage !== message) {
+              updates[messageIndex] = message;
+            }
+          }
+
+          const stableKey = getStableKeyForNode(node);
+          if (!stableKey) return;
+          get().updateNodeWidgets(stableKey, updates);
+        });
+      };
+
+      const applyWidgetUpdate: WorkflowState["applyWidgetUpdate"] = (payload) => {
+        const { workflow, nodeTypes } = get();
+        if (!workflow) return;
+
+        const rawNodeId = payload.node_id ?? payload.id;
+        const graphId = typeof payload.graph_id === "string" ? payload.graph_id : null;
+        const widgetName =
+          typeof payload.widget_name === "string" ? payload.widget_name : "";
+        const rawValue = payload.value;
+
+        if (!widgetName) return;
+
+        const numericId =
+          typeof rawNodeId === "string"
+            ? Number(rawNodeId)
+            : typeof rawNodeId === "number"
+              ? rawNodeId
+              : null;
+        if (numericId === null) return;
+
+        const targets = workflow.nodes.filter((node) =>
+          matchesNodeReference(node, numericId, graphId),
+        );
+
+        targets.forEach((node) => {
+          const stableKey = getStableKeyForNode(node);
+          if (!stableKey) return;
+
+          const resolveWidgetIndex = (name: string): number | null => {
+            let index: number | null = null;
+            if (nodeTypes) {
+              index = getWidgetIndexForInput(workflow, nodeTypes, node, name);
+            }
+            if (index === null) {
+              const map = getWorkflowWidgetIndexMap(workflow, node.id);
+              const mapped = map?.[name];
+              index = mapped !== undefined ? mapped : null;
+            }
+            if (index === null && name === "loras") {
+              index = findLoraListIndex(node);
+            }
+            return index;
+          };
+
+          let nextValue = rawValue;
+          if (nodeTypes) {
+            const typeDef = nodeTypes[node.type];
+            const inputDef =
+              typeDef?.input?.required?.[widgetName] ||
+              typeDef?.input?.optional?.[widgetName];
+            const typeOrOptions = inputDef?.[0];
+            if (Array.isArray(typeOrOptions)) {
+              const resolved = resolveComboOption(rawValue, typeOrOptions);
+              if (resolved !== undefined) {
+                nextValue = resolved;
+              }
+            }
+          }
+
+          if (!Array.isArray(node.widgets_values)) {
+            get().updateNodeWidget(stableKey, 0, nextValue, widgetName);
+            return;
+          }
+
+          const index = resolveWidgetIndex(widgetName);
+          const isLoraManagerNode = isLoraManagerNodeType(node.type);
+
+          if (
+            isLoraManagerNode &&
+            widgetName === "text" &&
+            typeof nextValue === "string"
+          ) {
+            const listIndex = findLoraListIndex(node, index);
+            if (listIndex !== null) {
+              const currentList = Array.isArray(node.widgets_values[listIndex])
+                ? node.widgets_values[listIndex]
+                : [];
+              const mergedList = mergeLoras(
+                nextValue,
+                currentList as Array<{ name: string; strength: number | string }>,
+              );
+              const updates: Record<number, unknown> = {};
+              if (index !== null) updates[index] = nextValue;
+              updates[listIndex] = mergedList;
+              get().updateNodeWidgets(stableKey, updates);
+              get().syncTriggerWordsForNode(node.id);
+              return;
+            }
+          }
+
+          if (isLoraManagerNode && widgetName === "loras") {
+            const listIndex = index;
+            const listValue =
+              extractLoraList(nextValue) ??
+              (Array.isArray(nextValue) ? nextValue : null);
+            const textIndex = resolveWidgetIndex("text");
+            const updates: Record<number, unknown> = {};
+
+            if (listIndex !== null) {
+              updates[listIndex] = nextValue;
+            }
+
+            if (textIndex !== null && listValue) {
+              const currentText =
+                typeof node.widgets_values[textIndex] === "string"
+                  ? (node.widgets_values[textIndex] as string)
+                  : "";
+              updates[textIndex] = applyLoraValuesToText(
+                currentText,
+                listValue as Array<{ name: string; strength: number | string }>,
+              );
+            }
+
+            if (Object.keys(updates).length > 0) {
+              get().updateNodeWidgets(stableKey, updates);
+              get().syncTriggerWordsForNode(node.id);
+              return;
+            }
+          }
+
+          if (index !== null) {
+            get().updateNodeWidget(stableKey, index, nextValue, widgetName);
+            if (
+              isLoraManagerNode &&
+              (widgetName === "cycler_config" || widgetName === "randomizer_config")
+            ) {
+              get().syncTriggerWordsForNode(node.id);
+            }
+          }
+        });
+      };
+
+      const syncTriggerWordsForNode: WorkflowState["syncTriggerWordsForNode"] = (
+        nodeId,
+      ) => {
+        const { workflow, nodeTypes } = get();
+        if (!workflow) return;
+
+        const sourceNode = workflow.nodes.find((node) => node.id === nodeId);
+        if (!sourceNode) return;
+
+        const isLoader = isLoraLoaderNodeType(sourceNode.type);
+        const isChainProvider = isLoraChainProviderNodeType(sourceNode.type);
+        const isDirectProvider = isLoraDirectProviderNodeType(sourceNode.type);
+
+        if (!isLoader && !isChainProvider && !isDirectProvider) return;
+
+        const nodesById = new Map(workflow.nodes.map((node) => [node.id, node]));
+        const linkMap = new Map(workflow.links.map((link) => [link[0], link]));
+        const isRecord = (value: unknown): value is Record<string, unknown> =>
+          Boolean(value) && typeof value === "object" && !Array.isArray(value);
+
+        const isNodeActive = (node: WorkflowNode): boolean =>
+          node.mode === undefined || node.mode === 0 || node.mode === 3;
+
+        const getNodeReference = (node: WorkflowNode): api.TriggerWordTargetReference => {
+          const origin = getMobileOrigin(node);
+          return {
+            node_id: origin?.nodeId ?? node.id,
+            graph_id: origin?.scope === "subgraph" ? origin.subgraphId : "root",
+          };
+        };
+
+        const getConnectedTriggerToggleNodes = (node: WorkflowNode): WorkflowNode[] => {
+          const connected: WorkflowNode[] = [];
+          for (const output of node.outputs ?? []) {
+            const links = output.links ?? [];
+            for (const linkId of links) {
+              const link = linkMap.get(linkId);
+              if (!link) continue;
+              const targetNode = nodesById.get(link[3]);
+              if (targetNode && isTriggerWordToggleNodeType(targetNode.type)) {
+                connected.push(targetNode);
+              }
+            }
+          }
+          return connected;
+        };
+
+        const updateConnectedTriggerWords = (
+          node: WorkflowNode,
+          loraNames: Set<string>,
+        ) => {
+          const connectedNodes = getConnectedTriggerToggleNodes(node);
+          if (connectedNodes.length === 0) return;
+
+          const references: api.TriggerWordTargetReference[] = [];
+          const seen = new Set<string>();
+          for (const target of connectedNodes) {
+            const ref = getNodeReference(target);
+            const key = `${ref.graph_id}:${ref.node_id}`;
+            if (seen.has(key)) continue;
+            seen.add(key);
+            references.push(ref);
+          }
+
+          if (references.length === 0) return;
+
+          void api.requestTriggerWords(Array.from(loraNames), references).catch(
+            (error) => {
+              console.warn("[LoraManager] Failed to request trigger words:", error);
+            },
+          );
+        };
+
+        const getActiveLorasFromNode = (node: WorkflowNode): Set<string> => {
+          const names = new Set<string>();
+
+          if (isLoraCyclerNodeType(node.type)) {
+            if (!Array.isArray(node.widgets_values)) return names;
+            const widgetValues = node.widgets_values;
+            let config: unknown = null;
+            if (nodeTypes) {
+              const configIndex = getWidgetIndexForInput(
+                workflow,
+                nodeTypes,
+                node,
+                "cycler_config",
+              );
+              if (configIndex !== null) {
+                config = widgetValues[configIndex];
+              }
+            }
+            if (!config) {
+              config = widgetValues.find(
+                (value) =>
+                  isRecord(value) &&
+                  (typeof value.current_lora_filename === "string" ||
+                    typeof value.current_lora_name === "string"),
+              );
+            }
+            if (isRecord(config)) {
+              const name =
+                typeof config.current_lora_filename === "string"
+                  ? config.current_lora_filename
+                  : typeof config.current_lora_name === "string"
+                    ? config.current_lora_name
+                    : "";
+              if (name) names.add(name);
+            }
+            return names;
+          }
+
+          if (!Array.isArray(node.widgets_values)) return names;
+          const textIndex = nodeTypes
+            ? getWidgetIndexForInput(workflow, nodeTypes, node, "text")
+            : null;
+          const listIndex = findLoraListIndex(node, textIndex);
+          if (listIndex === null) return names;
+          const rawList = node.widgets_values[listIndex];
+          const list =
+            extractLoraList(rawList) ??
+            (Array.isArray(rawList)
+              ? (rawList as Array<{ name?: string; active?: boolean }>)
+              : null);
+          if (!list) return names;
+          list.forEach((entry) => {
+            if (!entry || typeof entry.name !== "string") return;
+            if (entry.active === false) return;
+            names.add(entry.name);
+          });
+          return names;
+        };
+
+        const getConnectedInputStackers = (node: WorkflowNode): WorkflowNode[] => {
+          const connected: WorkflowNode[] = [];
+          for (const input of node.inputs ?? []) {
+            if (input.name !== "lora_stack" || input.link == null) continue;
+            const resolved = resolveSource(workflow, input.link);
+            if (!resolved) continue;
+            const source = nodesById.get(resolved.nodeId);
+            if (source && isLoraChainProviderNodeType(source.type)) {
+              connected.push(source);
+            }
+          }
+          return connected;
+        };
+
+        const collectActiveLorasFromChain = (
+          node: WorkflowNode,
+          visited = new Set<number>(),
+        ): Set<string> => {
+          if (visited.has(node.id)) return new Set<string>();
+          visited.add(node.id);
+
+          const names = new Set<string>();
+          if (isNodeActive(node)) {
+            const localNames = getActiveLorasFromNode(node);
+            localNames.forEach((name) => names.add(name));
+          }
+
+          const stackers = getConnectedInputStackers(node);
+          for (const stacker of stackers) {
+            const stackerNames = collectActiveLorasFromChain(stacker, visited);
+            stackerNames.forEach((name) => names.add(name));
+          }
+
+          return names;
+        };
+
+        const updateDownstreamLoaders = (
+          startNode: WorkflowNode,
+          visited = new Set<number>(),
+        ) => {
+          if (visited.has(startNode.id)) return;
+          visited.add(startNode.id);
+
+          for (const output of startNode.outputs ?? []) {
+            const links = output.links ?? [];
+            for (const linkId of links) {
+              const link = linkMap.get(linkId);
+              if (!link) continue;
+              const targetNode = nodesById.get(link[3]);
+              if (!targetNode) continue;
+
+              if (isLoraLoaderNodeType(targetNode.type)) {
+                const names = collectActiveLorasFromChain(targetNode);
+                updateConnectedTriggerWords(targetNode, names);
+                continue;
+              }
+
+              if (isLoraChainProviderNodeType(targetNode.type)) {
+                updateDownstreamLoaders(targetNode, visited);
+                continue;
+              }
+
+              if (targetNode.type === "Reroute" || targetNode.mode === 4) {
+                updateDownstreamLoaders(targetNode, visited);
+              }
+            }
+          }
+        };
+
+        if (isLoader) {
+          const names = collectActiveLorasFromChain(sourceNode);
+          updateConnectedTriggerWords(sourceNode, names);
+          return;
+        }
+
+        if (isChainProvider) {
+          const names = isNodeActive(sourceNode)
+            ? getActiveLorasFromNode(sourceNode)
+            : new Set<string>();
+          updateConnectedTriggerWords(sourceNode, names);
+          updateDownstreamLoaders(sourceNode);
+          return;
+        }
+
+        if (isDirectProvider) {
+          const names = isNodeActive(sourceNode)
+            ? getActiveLorasFromNode(sourceNode)
+            : new Set<string>();
+          updateConnectedTriggerWords(sourceNode, names);
+        }
+      };
+
+      const registerLoraManagerNodes: WorkflowState["registerLoraManagerNodes"] =
+        async () => {
+          const { workflow, nodeTypes } = get();
+          if (!workflow) return;
+
+          const targetWidgetNames = new Set(["ckpt_name", "unet_name"]);
+          const nodesToRegister: api.LoraManagerRegistryNode[] = [];
+
+          workflow.nodes.forEach((node) => {
+            const origin = getMobileOrigin(node);
+            const nodeId = origin?.nodeId ?? node.id;
+            const graphId = origin?.scope === "subgraph" ? origin.subgraphId : "root";
+            const supportsLora = isLoraManagerNodeType(node.type);
+            const resolvedType = resolveNodeTypeKey(nodeTypes, node.type);
+            const typeDef = resolvedType ? nodeTypes?.[resolvedType] : null;
+
+            const widgetNames = new Set<string>();
+            const requiredInputs = typeDef?.input?.required ?? {};
+            const optionalInputs = typeDef?.input?.optional ?? {};
+            Object.keys(requiredInputs).forEach((name) => widgetNames.add(name));
+            Object.keys(optionalInputs).forEach((name) => widgetNames.add(name));
+            if (supportsLora) {
+              widgetNames.add("loras");
+            }
+
+            const hasTargetWidget = Array.from(widgetNames).some((name) =>
+              targetWidgetNames.has(name),
+            );
+            if (!supportsLora && !hasTargetWidget) return;
+
+            const directTitle = (node as { title?: unknown }).title;
+            const titleFromProps = (node.properties as Record<string, unknown> | undefined)
+              ?.title;
+            const title =
+              typeof directTitle === "string" && directTitle.trim()
+                ? directTitle.trim()
+                : typeof titleFromProps === "string" && titleFromProps.trim()
+                  ? titleFromProps.trim()
+                  : node.type;
+
+            nodesToRegister.push({
+              node_id: nodeId,
+              graph_id: graphId,
+              graph_name: null,
+              bgcolor: node.bgcolor ?? node.color ?? null,
+              title,
+              type: node.type,
+              comfy_class: node.type,
+              capabilities: {
+                supports_lora: supportsLora,
+                widget_names: Array.from(widgetNames),
+              },
+            });
+          });
+
+          if (nodesToRegister.length === 0) return;
+
+          try {
+            await api.registerLoraManagerNodes(nodesToRegister);
+          } catch (error) {
+            console.warn("[LoraManager] Failed to register nodes:", error);
+          }
+        };
 
       const setNodeTypes: WorkflowState["setNodeTypes"] = (types) => {
         set({ nodeTypes: types });
@@ -4371,6 +5084,11 @@ export const useWorkflowStore = create<WorkflowState>()(
         clearPromptOutputs,
         queueWorkflow,
         applyControlAfterGenerate,
+        applyLoraCodeUpdate,
+        applyTriggerWordUpdate,
+        applyWidgetUpdate,
+        syncTriggerWordsForNode,
+        registerLoraManagerNodes,
 
         // bottom bar button related
         setRunCount,

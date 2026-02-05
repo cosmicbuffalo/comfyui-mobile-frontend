@@ -10,6 +10,25 @@ import {
   useWorkflowStore
 } from '@/hooks/useWorkflow';
 import { useSeedStore } from '@/hooks/useSeed';
+import {
+  applyLoraValuesToText,
+  createDefaultLoraEntry,
+  extractLoraList,
+  findLoraListIndex,
+  isLoraManagerNodeType,
+  mergeLoras,
+  normalizeLoraEntry
+} from '@/utils/loraManager';
+import {
+  buildTriggerWordListFromMessage,
+  extractTriggerWordList,
+  extractTriggerWordListLoose,
+  extractTriggerWordMessage,
+  findTriggerWordListIndex,
+  findTriggerWordMessageIndex,
+  isTriggerWordToggleNodeType,
+  normalizeTriggerWordEntry
+} from '@/utils/triggerWordToggle';
 import { themeColors } from '@/theme/colors';
 import { cssColorToHex, hexToHsl, normalizeColorTokens, normalizeHexColor } from '@/utils/colorUtils';
 
@@ -60,10 +79,13 @@ export function NodeCardParameters({
   const widgetValues = Array.isArray(node.widgets_values) ? node.widgets_values : [];
   const nodeTypes = useWorkflowStore((state) => state.nodeTypes);
   const workflow = useWorkflowStore((state) => state.workflow);
+  const syncTriggerWordsForNode = useWorkflowStore((state) => state.syncTriggerWordsForNode);
   const bypassAllInContainer = useWorkflowStore((state) => state.bypassAllInContainer);
   const storedSeedMode = useSeedStore((state) => state.seedModes[node.id]);
   const lastSeedValue = useSeedStore((state) => state.seedLastValues[node.id] ?? null);
   const isFastGroupsBypasser = node.type === 'Fast Groups Bypasser (rgthree)';
+  const isLoraManagerNode = isLoraManagerNodeType(node.type);
+  const isTriggerWordToggleNode = isTriggerWordToggleNodeType(node.type);
   const seedWidgetIndex = !isKSampler && workflowExists && nodeTypesExists
     ? findSeedWidgetIndex()
     : null;
@@ -279,11 +301,236 @@ export function NodeCardParameters({
     setSeedMode(node.id, 'fixed');
   };
 
+  const updateLoraManagerList = (listIndex: number, nextList: unknown[]) => {
+    const updates: Record<number, unknown> = { [listIndex]: nextList };
+    if (workflow && nodeTypes) {
+      const textIndex = getWidgetIndexForInput('text');
+      if (textIndex !== null && Array.isArray(node.widgets_values)) {
+        const currentText = node.widgets_values[textIndex];
+        const nextText = applyLoraValuesToText(
+          typeof currentText === 'string' ? currentText : '',
+          nextList as Array<{ name: string; strength: number | string; clipStrength?: number | string; active?: boolean; expanded?: boolean }>
+        );
+        updates[textIndex] = nextText;
+      }
+    }
+    onUpdateNodeWidgets(updates);
+    syncTriggerWordsForNode(node.id);
+  };
+
+  const getCurrentLoraList = (listIndex: number) => {
+    if (!Array.isArray(node.widgets_values)) return [];
+    const rawValue = node.widgets_values[listIndex];
+    return extractLoraList(rawValue) ?? [];
+  };
+
+  const updateTriggerWordList = (
+    listIndex: number,
+    nextList: unknown[],
+    extraUpdates?: Record<number, unknown>
+  ) => {
+    const updates: Record<number, unknown> = {
+      [listIndex]: nextList,
+      ...(extraUpdates ?? {})
+    };
+    onUpdateNodeWidgets(updates);
+  };
+
+  const getCurrentTriggerWordList = (listIndex: number) => {
+    if (!Array.isArray(node.widgets_values)) return [];
+    const rawValue = node.widgets_values[listIndex];
+    return extractTriggerWordList(rawValue) ?? extractTriggerWordListLoose(rawValue) ?? [];
+  };
+
+  const getTriggerWordMessage = (listIndex: number) => {
+    if (!Array.isArray(node.widgets_values)) return '';
+    const messageIndex = findTriggerWordMessageIndex(node, listIndex);
+    if (messageIndex === null) return '';
+    const rawValue = node.widgets_values[messageIndex];
+    return extractTriggerWordMessage(rawValue) ?? '';
+  };
+
+  const getTriggerWordSettings = () => {
+    const groupModeIndex = getWidgetIndexForInput('group_mode');
+    const defaultActiveIndex = getWidgetIndexForInput('default_active');
+    const allowStrengthIndex = getWidgetIndexForInput('allow_strength_adjustment');
+    const groupMode = groupModeIndex !== null
+      ? Boolean(widgetValues[groupModeIndex])
+      : true;
+    const defaultActive = defaultActiveIndex !== null
+      ? Boolean(widgetValues[defaultActiveIndex])
+      : true;
+    const allowStrengthAdjustment = allowStrengthIndex !== null
+      ? Boolean(widgetValues[allowStrengthIndex])
+      : false;
+    return {
+      groupMode,
+      defaultActive,
+      allowStrengthAdjustment
+    };
+  };
+
   const handleInputWidgetChange = (inputWidget: WidgetDescriptor) => (newValue: unknown) => {
     onUpdateNodeWidget(inputWidget.widgetIndex, newValue, inputWidget.name);
   };
 
+  const canPinWidget = (widgetType: string, widgetName: string) => {
+    if (widgetType.startsWith('LM_LORA')) return false;
+    if (widgetType.startsWith('TW_')) return false;
+    if (isLoraManagerNode && widgetName === 'text') return false;
+    return true;
+  };
+
   const handleWidgetChange = (widget: WidgetDescriptor) => (newValue: unknown) => {
+    if (widget.type === 'TW_WORD') {
+      const listIndex = widget.widgetIndex;
+      const entryIndex = (widget.options as { entryIndex?: number } | undefined)?.entryIndex;
+      if (entryIndex == null) return;
+      const currentList = getCurrentTriggerWordList(listIndex);
+      if (!currentList[entryIndex]) return;
+      if (typeof newValue === 'object' && newValue) {
+        const settings = getTriggerWordSettings();
+        const nextList = [...currentList];
+        nextList[entryIndex] = normalizeTriggerWordEntry(
+          {
+            ...nextList[entryIndex],
+            ...(newValue as Record<string, unknown>)
+          } as { text: string; active: boolean; strength?: number | string | null },
+          {
+            defaultActive: settings.defaultActive,
+            allowStrengthAdjustment: settings.allowStrengthAdjustment
+          }
+        );
+        updateTriggerWordList(listIndex, nextList);
+      }
+      return;
+    }
+
+    if (isTriggerWordToggleNode && widget.name === 'default_active' && typeof newValue === 'boolean') {
+      const listIndex = findTriggerWordListIndex(node);
+      if (listIndex !== null) {
+        const currentList = getCurrentTriggerWordList(listIndex);
+        const nextList = currentList.map((entry) => ({
+          ...entry,
+          active: newValue
+        }));
+        updateTriggerWordList(listIndex, nextList, {
+          [widget.widgetIndex]: newValue
+        });
+        return;
+      }
+    }
+
+    if (isTriggerWordToggleNode && widget.name === 'group_mode' && typeof newValue === 'boolean') {
+      const listIndex = findTriggerWordListIndex(node);
+      if (listIndex !== null) {
+        const currentList = getCurrentTriggerWordList(listIndex);
+        const settings = getTriggerWordSettings();
+        const message = getTriggerWordMessage(listIndex);
+        const nextList = message
+          ? buildTriggerWordListFromMessage(message, {
+              groupMode: newValue,
+              defaultActive: settings.defaultActive,
+              allowStrengthAdjustment: settings.allowStrengthAdjustment,
+              existingList: currentList
+            })
+          : currentList.map((entry) =>
+              normalizeTriggerWordEntry(entry, {
+                defaultActive: settings.defaultActive,
+                allowStrengthAdjustment: settings.allowStrengthAdjustment
+              })
+            );
+        updateTriggerWordList(listIndex, nextList, {
+          [widget.widgetIndex]: newValue
+        });
+        return;
+      }
+    }
+
+    if (isTriggerWordToggleNode && widget.name === 'allow_strength_adjustment' && typeof newValue === 'boolean') {
+      const listIndex = findTriggerWordListIndex(node);
+      if (listIndex !== null) {
+        const currentList = getCurrentTriggerWordList(listIndex);
+        const settings = getTriggerWordSettings();
+        const message = getTriggerWordMessage(listIndex);
+        const nextList = message
+          ? buildTriggerWordListFromMessage(message, {
+              groupMode: settings.groupMode,
+              defaultActive: settings.defaultActive,
+              allowStrengthAdjustment: newValue,
+              existingList: currentList
+            })
+          : currentList.map((entry) =>
+              normalizeTriggerWordEntry(entry, {
+                defaultActive: settings.defaultActive,
+                allowStrengthAdjustment: newValue
+              })
+            );
+        updateTriggerWordList(listIndex, nextList, {
+          [widget.widgetIndex]: newValue
+        });
+        return;
+      }
+    }
+
+    if (widget.type === 'LM_LORA_HEADER' && typeof newValue === 'boolean') {
+      const listIndex = widget.widgetIndex;
+      const currentList = getCurrentLoraList(listIndex);
+      if (currentList.length === 0) return;
+      const nextList = currentList.map((entry) => ({
+        ...entry,
+        active: newValue
+      }));
+      updateLoraManagerList(listIndex, nextList);
+      return;
+    }
+
+    if (widget.type === 'LM_LORA') {
+      const listIndex = widget.widgetIndex;
+      const entryIndex = (widget.options as { entryIndex?: number } | undefined)?.entryIndex;
+      if (entryIndex == null) return;
+      const currentList = getCurrentLoraList(listIndex);
+      if (!currentList[entryIndex]) return;
+      if (newValue === null) {
+        const nextList = currentList.filter((_, idx) => idx !== entryIndex);
+        updateLoraManagerList(listIndex, nextList);
+        return;
+      }
+      if (typeof newValue === 'object' && newValue) {
+        const nextList = [...currentList];
+        nextList[entryIndex] = normalizeLoraEntry({
+          ...nextList[entryIndex],
+          ...(newValue as Record<string, unknown>)
+        } as { name: string; strength: number | string });
+        updateLoraManagerList(listIndex, nextList);
+      }
+      return;
+    }
+
+    if (widget.type === 'LM_LORA_ADD') {
+      const listIndex = widget.widgetIndex;
+      const currentList = getCurrentLoraList(listIndex);
+      const entry = typeof newValue === 'object' && newValue
+        ? normalizeLoraEntry(newValue as { name: string; strength: number | string })
+        : createDefaultLoraEntry((widget.options as { choices?: unknown[] } | undefined)?.choices);
+      updateLoraManagerList(listIndex, [...currentList, entry]);
+      return;
+    }
+
+    if (isLoraManagerNode && widget.name === 'text' && typeof newValue === 'string') {
+      const listIndex = findLoraListIndex(node, widget.widgetIndex);
+      if (listIndex !== null) {
+        const currentList = getCurrentLoraList(listIndex);
+        const merged = mergeLoras(newValue, currentList);
+        onUpdateNodeWidgets({
+          [widget.widgetIndex]: newValue,
+          [listIndex]: merged
+        });
+        syncTriggerWordsForNode(node.id);
+        return;
+      }
+    }
+
     if (widget.type === 'POWER_LORA_HEADER' && typeof newValue === 'boolean') {
       const { loraIndices } = (widget.options || {}) as { loraIndices: number[] };
       if (loraIndices) {
@@ -300,6 +547,19 @@ export function NodeCardParameters({
     } else {
       onUpdateNodeWidget(widget.widgetIndex, newValue, widget.name);
     }
+  };
+
+  const getWidgetKey = (widget: WidgetDescriptor, prefix: string) => {
+    const options = widget.options;
+    let entryIndex: number | null = null;
+    if (options && typeof options === 'object' && !Array.isArray(options)) {
+      const rawEntry = (options as { entryIndex?: unknown }).entryIndex;
+      if (typeof rawEntry === 'number' && Number.isFinite(rawEntry)) {
+        entryIndex = rawEntry;
+      }
+    }
+    const keySuffix = entryIndex !== null ? entryIndex : widget.name || widget.type;
+    return `${prefix}-${widget.widgetIndex}-${widget.type}-${keySuffix}`;
   };
 
   if (!showParameters && fastGroupToggles.length === 0) return null;
@@ -477,7 +737,7 @@ export function NodeCardParameters({
             );
           })()}
           {inputWidgetsToRender.map((inputWidget) => (
-            <div key={`input-widget-${inputWidget.name}`} className={isBypassed ? 'opacity-80' : ''}>
+            <div key={getWidgetKey(inputWidget, 'input-widget')} className={isBypassed ? 'opacity-80' : ''}>
               <WidgetControl
                 name={inputWidget.name}
                 type={inputWidget.type}
@@ -485,14 +745,14 @@ export function NodeCardParameters({
                 options={inputWidget.options}
                 onChange={handleInputWidgetChange(inputWidget)}
                 disabled={isBypassed}
-                isPinned={isWidgetPinned(inputWidget.widgetIndex)}
-                onTogglePin={() => toggleWidgetPin(inputWidget.widgetIndex, inputWidget.name, inputWidget.type, inputWidget.options)}
+                isPinned={canPinWidget(inputWidget.type, inputWidget.name) ? isWidgetPinned(inputWidget.widgetIndex) : false}
+                onTogglePin={canPinWidget(inputWidget.type, inputWidget.name) ? () => toggleWidgetPin(inputWidget.widgetIndex, inputWidget.name, inputWidget.type, inputWidget.options) : undefined}
                 hasError={errorInputNames.has(inputWidget.name)}
               />
             </div>
           ))}
           {widgetsToRender.map((widget) => (
-            <div key={`widget-${widget.widgetIndex}`} className={isBypassed ? 'opacity-80' : ''}>
+            <div key={getWidgetKey(widget, 'widget')} className={isBypassed ? 'opacity-80' : ''}>
               <WidgetControl
                 name={widget.name}
                 type={widget.type}
@@ -500,8 +760,8 @@ export function NodeCardParameters({
                 options={widget.options}
                 onChange={handleWidgetChange(widget)}
                 disabled={isBypassed}
-                isPinned={isWidgetPinned(widget.widgetIndex)}
-                onTogglePin={() => toggleWidgetPin(widget.widgetIndex, widget.name, widget.type, widget.options)}
+                isPinned={canPinWidget(widget.type, widget.name) ? isWidgetPinned(widget.widgetIndex) : false}
+                onTogglePin={canPinWidget(widget.type, widget.name) ? () => toggleWidgetPin(widget.widgetIndex, widget.name, widget.type, widget.options) : undefined}
                 hasError={errorInputNames.has(widget.name)}
               />
             </div>

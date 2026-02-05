@@ -19,6 +19,10 @@ export function useWebSocket() {
     addPromptOutputs: useWorkflowStore.getState().addPromptOutputs,
     clearPromptOutputs: useWorkflowStore.getState().clearPromptOutputs,
     applyControlAfterGenerate: useWorkflowStore.getState().applyControlAfterGenerate,
+    applyLoraCodeUpdate: useWorkflowStore.getState().applyLoraCodeUpdate,
+    applyTriggerWordUpdate: useWorkflowStore.getState().applyTriggerWordUpdate,
+    applyWidgetUpdate: useWorkflowStore.getState().applyWidgetUpdate,
+    registerLoraManagerNodes: useWorkflowStore.getState().registerLoraManagerNodes,
     updateFromStatus: useQueueStore.getState().updateFromStatus,
     fetchQueue: useQueueStore.getState().fetchQueue,
     addHistoryEntry: useHistoryStore.getState().addHistoryEntry,
@@ -34,6 +38,10 @@ export function useWebSocket() {
       addPromptOutputs: useWorkflowStore.getState().addPromptOutputs,
       clearPromptOutputs: useWorkflowStore.getState().clearPromptOutputs,
       applyControlAfterGenerate: useWorkflowStore.getState().applyControlAfterGenerate,
+      applyLoraCodeUpdate: useWorkflowStore.getState().applyLoraCodeUpdate,
+      applyTriggerWordUpdate: useWorkflowStore.getState().applyTriggerWordUpdate,
+      applyWidgetUpdate: useWorkflowStore.getState().applyWidgetUpdate,
+      registerLoraManagerNodes: useWorkflowStore.getState().registerLoraManagerNodes,
       updateFromStatus: useQueueStore.getState().updateFromStatus,
       fetchQueue: useQueueStore.getState().fetchQueue,
       addHistoryEntry: useHistoryStore.getState().addHistoryEntry,
@@ -58,7 +66,20 @@ export function useWebSocket() {
     };
 
     const handleMessage = (data: unknown) => {
-      const { setExecutionState, setNodeOutput, addPromptOutputs, clearPromptOutputs, updateFromStatus, fetchQueue, addHistoryEntry, fetchHistory } = storeActionsRef.current;
+      const {
+        setExecutionState,
+        setNodeOutput,
+        addPromptOutputs,
+        clearPromptOutputs,
+        updateFromStatus,
+        fetchQueue,
+        addHistoryEntry,
+        fetchHistory,
+        applyLoraCodeUpdate,
+        applyTriggerWordUpdate,
+        applyWidgetUpdate,
+        registerLoraManagerNodes
+      } = storeActionsRef.current;
       const msg = data as WSMessage;
 
       switch (msg.type) {
@@ -160,6 +181,26 @@ export function useWebSocket() {
 
         case 'execution_cached': {
           // Node was cached, no need to run
+          break;
+        }
+
+        case 'lora_code_update': {
+          applyLoraCodeUpdate?.(msg.data);
+          break;
+        }
+
+        case 'trigger_word_update': {
+          applyTriggerWordUpdate?.(msg.data);
+          break;
+        }
+
+        case 'lm_widget_update': {
+          applyWidgetUpdate?.(msg.data);
+          break;
+        }
+
+        case 'lora_registry_refresh': {
+          registerLoraManagerNodes?.();
           break;
         }
       }
