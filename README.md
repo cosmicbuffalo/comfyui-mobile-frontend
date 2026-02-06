@@ -134,7 +134,7 @@ So this mobile frontend is my attempt at improving upon the user experience of C
     <tr>
       <td><img src="https://github.com/cosmicbuffalo/comfyui-mobile-frontend/blob/main/images/image_viewer.png?raw=true" width="300px"/></td>
       <td><img src="https://github.com/cosmicbuffalo/comfyui-mobile-frontend/blob/main/images/image_viewer_2.png?raw=true" width="300px"/></td>
-      <td><img src="https://github.com/user-attachments/assets/f3373269-b168-459d-8586-70b812e6b59c" width="300px"/></td>
+      <td><img src="https://github.com/cosmicbuffalo/comfyui-mobile-frontend/blob/main/images/image_viewer_3.png?raw=true" width="300px"/></td>
     </tr>
   </tbody>
 </table>
