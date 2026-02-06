@@ -142,7 +142,7 @@ So this mobile frontend is my attempt at improving upon the user experience of C
 ## Installation
 
 
-This project is installed as a standard ComfyUI Custom Node. Search for it in the ComfuUI-Manager by name (ensure author is `cosmicbuffalo` or follow the steps below for a manual installation:
+This project is installed as a standard ComfyUI Custom Node. Search for it in the ComfyUI-Manager by name (ensure author is `cosmicbuffalo`) or follow the steps below for a manual installation:
 
 1.  Navigate to your ComfyUI `custom_nodes` directory:
     ```bash
