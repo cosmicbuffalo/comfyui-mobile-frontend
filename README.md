@@ -67,10 +67,82 @@ So this mobile frontend is my attempt at improving upon the user experience of C
   - [ ] Parental controls
   - [ ] Keyword/whitelist/blacklist based rule management
 
+## Screenshots
+
+### Workflow Panel
+<table>
+  <thead>
+    <tr>
+      <th>Output Previews</th>
+      <th>Bookmarks + Pins</th>
+      <th>Workflow Menu (Light Mode)</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><img src="https://github.com/cosmicbuffalo/comfyui-mobile-frontend/blob/main/images/workflow_panel.png?raw=true" width="300px"/></td>
+      <td><img src="https://github.com/cosmicbuffalo/comfyui-mobile-frontend/blob/main/images/workflow_panel_2.png?raw=true" width="300px"/></td>
+      <td><img src="https://github.com/cosmicbuffalo/comfyui-mobile-frontend/blob/main/images/workflow_panel_3_light.png?raw=true" width="300px"/></td>
+    </tr>
+  </tbody>
+</table>
+
+### Queue Panel
+<table>
+  <thead>
+    <tr>
+      <th>Queue Item Menu</th>
+      <th>Queue Menu</th>
+      <th>Pinned Widget Editor</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><img src="https://github.com/cosmicbuffalo/comfyui-mobile-frontend/blob/main/images/queue_panel.png?raw=true" width="300px"/></td>
+      <td><img src="https://github.com/cosmicbuffalo/comfyui-mobile-frontend/blob/main/images/queue_panel_2.png?raw=true" width="300px"/></td>
+      <td><img src="https://github.com/cosmicbuffalo/comfyui-mobile-frontend/blob/main/images/pinned_widget.png?raw=true" width="300px"/></td>
+    </tr>
+  </tbody>
+</table>
+
+### Outputs Panel
+<table>
+  <thead>
+    <tr>
+      <th>List View</th>
+      <th>Outputs Menu (Grid View)</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><img src="https://github.com/cosmicbuffalo/comfyui-mobile-frontend/blob/main/images/outputs_panel.png?raw=true" width="300px"/></td>
+      <td><img src="https://github.com/cosmicbuffalo/comfyui-mobile-frontend/blob/main/images/outputs_panel_2.png?raw=true" width="300px"/></td>
+    </tr>
+  </tbody>
+</table>
+
+### Image Viewer
+<table>
+  <thead>
+    <tr>
+      <th>Full Screen View</th>
+      <th>Overlay buttons</th>
+      <th>Button Modals (w/Metadata)</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><img src="https://github.com/cosmicbuffalo/comfyui-mobile-frontend/blob/main/images/image_viewer.png?raw=true" width="300px"/></td>
+      <td><img src="https://github.com/cosmicbuffalo/comfyui-mobile-frontend/blob/main/images/image_viewer_2.png?raw=true" width="300px"/></td>
+      <td><img src="https://github.com/user-attachments/assets/f3373269-b168-459d-8586-70b812e6b59c" width="300px"/></td>
+    </tr>
+  </tbody>
+</table>
 
 ## Installation
 
-This project is installed as a standard ComfyUI Custom Node.
+
+This project is installed as a standard ComfyUI Custom Node. Search for it in the ComfuUI-Manager by name (ensure author is `cosmicbuffalo` or follow the steps below for a manual installation:
 
 1.  Navigate to your ComfyUI `custom_nodes` directory:
     ```bash
