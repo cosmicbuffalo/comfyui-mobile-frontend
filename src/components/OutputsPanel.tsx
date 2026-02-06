@@ -606,6 +606,12 @@ export function OutputsPanel({ visible }: { visible: boolean }) {
     setMenuTarget(null);
   };
 
+  const closeMoveModal = () => {
+    setMovePickerOpen(false);
+    setMoveItemIds([]);
+    setMoveOriginPath(null);
+  };
+
   const submitMove = async () => {
     if (moveItemIds.length === 0) return;
     try {
@@ -621,8 +627,7 @@ export function OutputsPanel({ visible }: { visible: boolean }) {
       console.error('Failed to move selected files:', err);
       window.alert('Failed to move selected files.');
     } finally {
-      setMovePickerOpen(false);
-      setMoveItemIds([]);
+      closeMoveModal();
     }
   };
 
@@ -1038,7 +1043,7 @@ export function OutputsPanel({ visible }: { visible: boolean }) {
          <div
            id="outputs-move-picker-overlay"
            className="fixed inset-0 z-[1850] bg-black/50 flex items-center justify-center p-4"
-           onClick={() => setMovePickerOpen(false)}
+           onClick={closeMoveModal}
            role="dialog"
            aria-modal="true"
          >
@@ -1097,7 +1102,7 @@ export function OutputsPanel({ visible }: { visible: boolean }) {
              <div className="px-4 py-3 border-t border-gray-100 flex justify-end gap-2">
                <button
                  className="px-3 py-2 text-sm font-medium text-gray-600 hover:bg-gray-100 rounded-lg"
-                 onClick={() => setMovePickerOpen(false)}
+                 onClick={closeMoveModal}
                >
                  Cancel
                </button>
