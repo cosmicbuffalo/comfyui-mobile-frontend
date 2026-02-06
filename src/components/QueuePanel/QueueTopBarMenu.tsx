@@ -2,7 +2,7 @@ import type { RefObject } from 'react';
 import { useMemo } from 'react';
 import { useQueueStore } from '@/hooks/useQueue';
 import { useHistoryStore } from '@/hooks/useHistory';
-import { CancelCircleIcon, CaretDownIcon, CaretRightIcon, EllipsisVerticalIcon, EyeIcon, EyeOffIcon, InfoIcon, MoveIcon, TrashIcon } from '@/components/icons';
+import { CancelCircleIcon, CaretDownIcon, CaretRightIcon, EllipsisVerticalIcon, EyeIcon, EyeOffIcon, InfoIcon, ArrowRightIcon, TrashIcon } from '@/components/icons';
 
 interface QueueTopBarMenuProps {
   open: boolean;
@@ -139,7 +139,7 @@ export function QueueTopBarMenu({
             className="w-full flex items-center gap-2 text-left px-3 py-2 text-sm hover:bg-gray-50"
             onClick={handleGoToWorkflowClick}
           >
-            <MoveIcon className="w-3 h-3 text-gray-500 rotate-180" />
+            <ArrowRightIcon className="w-3 h-3 text-gray-500 rotate-180" />
             Go to workflow
           </button>
           {hasPending && (

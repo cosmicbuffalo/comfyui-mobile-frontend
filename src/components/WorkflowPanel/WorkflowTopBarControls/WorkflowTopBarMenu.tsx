@@ -4,7 +4,7 @@ import { useWorkflowStore, getInputWidgetDefinitions, getWidgetDefinitions } fro
 import { useBookmarksStore } from '@/hooks/useBookmarks';
 import { useHistoryStore } from '@/hooks/useHistory';
 import { loadTemplateWorkflow, loadUserWorkflow } from '@/api/client';
-import { CaretDownIcon, CaretRightIcon, EllipsisVerticalIcon, EyeIcon, EyeOffIcon, LogoutIcon, MoveIcon, ReloadIcon, SearchIcon, TrashIcon } from '@/components/icons';
+import { CaretDownIcon, CaretRightIcon, EllipsisVerticalIcon, EyeIcon, EyeOffIcon, LogoutIcon, ArrowRightIcon, ReloadIcon, SearchIcon, TrashIcon } from '@/components/icons';
 
 interface WorkflowTopBarMenuProps {
   open: boolean;
@@ -262,14 +262,14 @@ export function WorkflowTopBarMenu({
             className="w-full flex items-center gap-2 text-left px-3 py-2 text-sm hover:bg-gray-50"
             onClick={handleGoToQueueClick}
           >
-            <MoveIcon className="w-3 h-3 text-gray-500" />
+            <ArrowRightIcon className="w-3 h-3 text-gray-500" />
             Go to queue
           </button>
           <button
             className="w-full flex items-center gap-2 text-left px-3 py-2 text-sm hover:bg-gray-50"
             onClick={handleGoToOutputsClick}
           >
-            <MoveIcon className="w-3 h-3 text-gray-500 rotate-180" />
+            <ArrowRightIcon className="w-3 h-3 text-gray-500 rotate-180" />
             Go to outputs
           </button>
           {!searchOpen && (

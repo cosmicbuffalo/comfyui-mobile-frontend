@@ -9,7 +9,7 @@ export { InboxIcon } from './InboxIcon';
 export { EllipsisVerticalIcon } from './EllipsisVerticalIcon';
 export { CaretRightIcon } from './CaretRightIcon';
 export { CaretDownIcon } from './CaretDownIcon';
-export { MoveIcon } from './MoveIcon';
+export { ArrowRightIcon } from './ArrowRightIcon';
 export { EditIcon } from './EditIcon';
 export { XMarkIcon } from './XMarkIcon';
 export { CheckIcon } from './CheckIcon';

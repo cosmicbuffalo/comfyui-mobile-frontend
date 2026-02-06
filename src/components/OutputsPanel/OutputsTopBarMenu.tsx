@@ -1,6 +1,6 @@
 import type { RefObject } from 'react';
 import { useOutputsStore } from '@/hooks/useOutputs';
-import { CheckIcon, DiceIcon, DocumentLinesIcon, EllipsisVerticalIcon, EyeIcon, EyeOffIcon, FolderIcon, MoveIcon, ReloadIcon } from '@/components/icons';
+import { CheckIcon, DiceIcon, DocumentLinesIcon, EllipsisVerticalIcon, EyeIcon, EyeOffIcon, FolderIcon, ArrowRightIcon, ReloadIcon } from '@/components/icons';
 
 interface OutputsTopBarMenuProps {
   open: boolean;
@@ -85,7 +85,7 @@ export function OutputsTopBarMenu({
             className="w-full flex items-center gap-2 text-left px-3 py-2 text-sm hover:bg-gray-50"
             onClick={handleGoToWorkflowClick}
           >
-            <MoveIcon className="w-3 h-3 text-gray-500" />
+            <ArrowRightIcon className="w-3 h-3 text-gray-500" />
             Go to workflow
           </button>
           <button
