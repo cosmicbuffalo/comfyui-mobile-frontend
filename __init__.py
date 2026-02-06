@@ -8,6 +8,11 @@ import json
 import time
 from PIL import Image, ImageOps
 import io
+from importlib import import_module as _import_module
+import sys as _sys
+_sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+_file_utils = _import_module('file_utils')
+list_files = _file_utils.list_files
 
 # Define the path to the built frontend files
 EXTENSION_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -28,6 +33,7 @@ def setup_mobile_route():
             base_dir = folder_paths.get_input_directory() if source == 'input' else folder_paths.get_output_directory()
             subpath = query.get('path', '')
             recursive = query.get('recursive', 'false').lower() == 'true'
+            show_hidden = query.get('showHidden', 'false').lower() == 'true'
             search = query.get('search', '').lower()
             prompt_search = query.get('prompt', '').lower()
             start_date = query.get('startDate') # ms timestamp
@@ -43,94 +49,30 @@ def setup_mobile_route():
             if not os.path.exists(target_path):
                 return web.json_response({"error": "Path not found"}, status=404)
 
-            results = []
-            
-            # Helper to check prompt in file
-            def match_prompt(full_path):
-                if not prompt_search: return True
-                try:
-                    ext = os.path.splitext(full_path)[1].lower()
-                    if ext == '.png':
-                        img = Image.open(full_path)
-                        metadata = img.info
-                        prompt_str = metadata.get('prompt', '')
-                        # prompt_str might be JSON
-                        return prompt_search in prompt_str.lower()
-                    return False
-                except:
-                    return False
+            results = list_files(
+                base_dir, target_path,
+                recursive=recursive or bool(prompt_search),
+                show_hidden=show_hidden,
+                search=search,
+                start_date=start_date,
+                end_date=end_date
+            )
 
-            # Helper to process a file
-            def process_file(root, filename):
-                full_path = os.path.join(root, filename)
-                stat = os.stat(full_path)
-                mtime_ms = int(stat.st_mtime * 1000)
+            # Additional prompt search filter (requires reading image metadata)
+            if prompt_search:
+                def match_prompt(full_path):
+                    try:
+                        ext = os.path.splitext(full_path)[1].lower()
+                        if ext == '.png':
+                            img = Image.open(full_path)
+                            metadata = img.info
+                            prompt_str = metadata.get('prompt', '')
+                            return prompt_search in prompt_str.lower()
+                        return False
+                    except:
+                        return False
 
-                # Date filter
-                if start_date and mtime_ms < int(start_date): return None
-                if end_date and mtime_ms > int(end_date): return None
-
-                # Name search filter
-                if search and search not in filename.lower():
-                    return None
-                
-                # Prompt search filter
-                if prompt_search and not match_prompt(full_path):
-                    return None
-                    
-                rel_path = os.path.relpath(full_path, base_dir)
-                
-                # Determine type
-                ext = os.path.splitext(filename)[1].lower()
-                kind = 'image' if ext in ['.png', '.jpg', '.jpeg', '.webp', '.gif'] else \
-                       'video' if ext in ['.mp4', '.mov', '.webm', '.mkv'] else 'unknown'
-                
-                if kind == 'unknown': return None
-
-                return {
-                    "name": filename,
-                    "path": rel_path,
-                    "type": kind,
-                    "size": stat.st_size,
-                    "date": mtime_ms,
-                    "folder": os.path.relpath(root, base_dir) if root != base_dir else ""
-                }
-
-            is_flattened = recursive or search or prompt_search or start_date or end_date
-
-            if is_flattened:
-                for root, dirs, files in os.walk(target_path):
-                    for name in files:
-                        if name.startswith('.'): continue
-                        item = process_file(root, name)
-                        if item: results.append(item)
-            else:
-                # Non-recursive: list dirs and files in current path
-                for name in os.listdir(target_path):
-                    if name.startswith('.'): continue
-                    full_path = os.path.join(target_path, name)
-                    if os.path.isdir(full_path):
-                        count = 0
-                        for _, _, files in os.walk(full_path):
-                            count += len([f for f in files if not f.startswith('.')])
-                            
-                        results.append({
-                            "name": name,
-                            "type": "dir",
-                            "path": os.path.relpath(full_path, base_dir),
-                            "count": count,
-                            "date": int(os.stat(full_path).st_mtime * 1000)
-                        })
-                    else:
-                        item = process_file(target_path, name)
-                        if item: results.append(item)
-
-            # Sort results: Dirs first, then name alphabetical
-            def sort_key(item):
-                is_dir = 0 if item['type'] == 'dir' else 1
-                return (is_dir, item['name'].lower())
-            
-            results.sort(key=sort_key)
+                results = [r for r in results if match_prompt(os.path.join(base_dir, r['path']))]
             
             total = len(results)
             if limit > 0:

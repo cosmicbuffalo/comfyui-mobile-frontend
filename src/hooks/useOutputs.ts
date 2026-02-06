@@ -121,7 +121,8 @@ export const useOutputsStore = create<OutputsState>()(
 
       fetchFolders: async () => {
         try {
-          const result = await api.getUserImageFolders();
+          const { showHidden } = get();
+          const result = await api.getUserImageFolders(showHidden);
           const { source } = get();
           set({ folders: source === 'output' ? result.output : result.input });
         } catch (err) {
@@ -130,7 +131,7 @@ export const useOutputsStore = create<OutputsState>()(
       },
 
       fetchFiles: async () => {
-        const { source, currentFolder, sort } = get();
+        const { source, currentFolder, sort, showHidden } = get();
         set({ isLoading: true, error: null });
 
         try {
@@ -140,7 +141,8 @@ export const useOutputsStore = create<OutputsState>()(
             0,     // offset
             sort.mode,
             false, // includeSubfolders
-            currentFolder
+            currentFolder,
+            showHidden
           );
           set({ files, isLoading: false });
         } catch (err) {
@@ -163,6 +165,8 @@ export const useOutputsStore = create<OutputsState>()(
 
       toggleShowHidden: () => {
         set((s) => ({ showHidden: !s.showHidden }));
+        get().fetchFolders();
+        get().fetchFiles();
       },
 
       toggleFavorite: (id) => {

@@ -329,22 +329,24 @@ interface MobileFilesResponse {
 async function fetchMobileFiles(
   path: string = '',
   recursive: boolean = false,
-  source: AssetSource = 'output'
+  source: AssetSource = 'output',
+  showHidden?: boolean
 ): Promise<MobileFilesResponse> {
   const params = new URLSearchParams();
   if (path) params.set('path', path);
   if (recursive) params.set('recursive', 'true');
   if (source) params.set('source', source);
+  if (showHidden) params.set('showHidden', 'true');
 
   const response = await fetch(`${API_BASE}/mobile/api/files?${params}`);
   if (!response.ok) throw new Error('Failed to fetch files');
   return response.json();
 }
 
-export async function getUserImageFolders(): Promise<{ input: string[]; output: string[] }> {
+export async function getUserImageFolders(showHidden?: boolean): Promise<{ input: string[]; output: string[] }> {
   // Fetch root directory to get top-level folders
-  const outputResult = await fetchMobileFiles('', false, 'output');
-  const inputResult = await fetchMobileFiles('', false, 'input');
+  const outputResult = await fetchMobileFiles('', false, 'output', showHidden);
+  const inputResult = await fetchMobileFiles('', false, 'input', showHidden);
   const outputFolders = outputResult.files
     .filter(f => f.type === 'dir')
     .map(f => f.name);
@@ -365,9 +367,10 @@ export async function getUserImages(
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   _sort: SortMode = 'modified',
   includeSubfolders = false,
-  subfolder: string | null = null
+  subfolder: string | null = null,
+  showHidden?: boolean
 ): Promise<FileItem[]> {
-  const result = await fetchMobileFiles(subfolder || '', includeSubfolders, mode);
+  const result = await fetchMobileFiles(subfolder || '', includeSubfolders, mode, showHidden);
 
   // Convert mobile API response to FileItem array
   return result.files.map(f => {
