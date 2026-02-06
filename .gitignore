@@ -22,3 +22,4 @@ dist-ssr
 *.sln
 *.sw?
 __pycache__
+*.zip
