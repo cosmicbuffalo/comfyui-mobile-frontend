@@ -121,8 +121,9 @@ export const useOutputsStore = create<OutputsState>()(
 
       fetchFolders: async () => {
         try {
-          const { source, showHidden } = get();
+          const { showHidden } = get();
           const result = await api.getUserImageFolders(showHidden);
+          const { source } = get();
           set({ folders: source === 'output' ? result.output : result.input });
         } catch (err) {
           console.error('Failed to fetch folders:', err);

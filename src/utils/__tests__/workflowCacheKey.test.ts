@@ -93,9 +93,6 @@ describe('buildWorkflowCacheKey', () => {
         category: '',
         output_node: false,
         output_tooltips: [],
-        deprecated: false,
-        experimental: false,
-        is_missing: false,
       },
       KSampler: {
         input: {
@@ -114,9 +111,6 @@ describe('buildWorkflowCacheKey', () => {
         category: '',
         output_node: false,
         output_tooltips: [],
-        deprecated: false,
-        experimental: false,
-        is_missing: false,
       },
     };
 
