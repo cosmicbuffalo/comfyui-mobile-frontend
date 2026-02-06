@@ -28,6 +28,7 @@ def setup_mobile_route():
             base_dir = folder_paths.get_input_directory() if source == 'input' else folder_paths.get_output_directory()
             subpath = query.get('path', '')
             recursive = query.get('recursive', 'false').lower() == 'true'
+            show_hidden = query.get('showHidden', 'false').lower() == 'true'
             search = query.get('search', '').lower()
             prompt_search = query.get('prompt', '').lower()
             start_date = query.get('startDate') # ms timestamp
@@ -101,18 +102,18 @@ def setup_mobile_route():
             if is_flattened:
                 for root, dirs, files in os.walk(target_path):
                     for name in files:
-                        if name.startswith('.'): continue
+                        if not show_hidden and name.startswith('.'): continue
                         item = process_file(root, name)
                         if item: results.append(item)
             else:
                 # Non-recursive: list dirs and files in current path
                 for name in os.listdir(target_path):
-                    if name.startswith('.'): continue
+                    if not show_hidden and name.startswith('.'): continue
                     full_path = os.path.join(target_path, name)
                     if os.path.isdir(full_path):
                         count = 0
                         for _, _, files in os.walk(full_path):
-                            count += len([f for f in files if not f.startswith('.')])
+                            count += len([f for f in files if show_hidden or not f.startswith('.')])
                             
                         results.append({
                             "name": name,
