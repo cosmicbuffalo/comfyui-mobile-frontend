@@ -1,6 +1,7 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { NodeTypes, Workflow, WorkflowInput, WorkflowNode } from '@/api/types';
 import { useWorkflowStore, getWidgetDefinitions, getInputWidgetDefinitions, getWidgetIndexForInput, findSeedWidgetIndex } from '@/hooks/useWorkflow';
+import { isLoraManagerNodeType } from '@/utils/loraManager';
 import { useSeedStore } from '@/hooks/useSeed';
 import { useBookmarksStore } from '@/hooks/useBookmarks';
 import { usePinnedWidgetStore } from '@/hooks/usePinnedWidget';
@@ -143,6 +144,7 @@ export const NodeCard = memo(function NodeCard({ node, isExecuting, isConnection
   }, [node]);
   const displayName: string = nodeTitle || typeDef?.display_name || node.type;
   const isKSampler = node.type === 'KSampler';
+  const isLoraManagerNode = isLoraManagerNodeType(node.type);
   const isBypassed = node.mode === 4;
   const isCollapsed = Boolean(node.flags?.collapsed);
   const isLoadImageNode = /LoadImage/i.test(node.type);
@@ -266,14 +268,22 @@ export const NodeCard = memo(function NodeCard({ node, isExecuting, isConnection
   // Collect all pinnable widgets for the pin submenu
   const pinnableWidgets = useMemo(() => {
     const items: Array<{ widgetIndex: number; name: string; type: string; options?: Record<string, unknown> | unknown[] }> = [];
+    const isPinEligible = (widgetType: string, widgetName: string) => {
+      if (widgetType.startsWith('LM_LORA')) return false;
+      if (widgetType.startsWith('TW_')) return false;
+      if (isLoraManagerNode && widgetName === 'text') return false;
+      return true;
+    };
     visibleInputWidgets.forEach((w) => {
+      if (!isPinEligible(w.type, w.name)) return;
       items.push({ widgetIndex: w.widgetIndex, name: w.name, type: w.type, options: w.options });
     });
     visibleWidgets.forEach((w) => {
+      if (!isPinEligible(w.type, w.name)) return;
       items.push({ widgetIndex: w.widgetIndex, name: w.name, type: w.type, options: w.options });
     });
     return items;
-  }, [visibleInputWidgets, visibleWidgets]);
+  }, [visibleInputWidgets, visibleWidgets, isLoraManagerNode]);
 
   // Filter inputs to only show those that are actual connections (connected or connectable without widget values)
   const isWidgetInput = useCallback((input: WorkflowInput) => {
@@ -285,7 +295,7 @@ export const NodeCard = memo(function NodeCard({ node, isExecuting, isConnection
     if (Array.isArray(typeOrOptions)) return true;
     const normalized = String(typeOrOptions).toUpperCase();
     const hasDefault = Object.prototype.hasOwnProperty.call(options ?? {}, 'default');
-    return ['INT', 'FLOAT', 'BOOLEAN', 'STRING'].includes(normalized) || hasDefault;
+    return ['INT', 'FLOAT', 'BOOLEAN', 'STRING', 'AUTOCOMPLETE_TEXT_LORAS'].includes(normalized) || hasDefault;
   }, [typeDef]);
 
   const connectionInputs = useMemo(() => {
