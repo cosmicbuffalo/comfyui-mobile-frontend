@@ -34,6 +34,7 @@ interface OutputsState {
   selectedIds: string[];
   selectionActionOpen: boolean;
   filterModalOpen: boolean;
+  newFolderModalOpen: boolean;
   outputsViewerOpen: boolean;
 
   // Actions
@@ -55,6 +56,7 @@ interface OutputsState {
   clearSelection: () => void;
   setSelectionActionOpen: (open: boolean) => void;
   setFilterModalOpen: (open: boolean) => void;
+  setNewFolderModalOpen: (open: boolean) => void;
   setOutputsViewerOpen: (open: boolean) => void;
   addFavorites: (ids: string[]) => void;
   removeFavorites: (ids: string[]) => void;
@@ -86,6 +88,7 @@ export const useOutputsStore = create<OutputsState>()(
       selectedIds: [],
       selectionActionOpen: false,
       filterModalOpen: false,
+      newFolderModalOpen: false,
       outputsViewerOpen: false,
 
       setSource: (source) => {
@@ -214,6 +217,10 @@ export const useOutputsStore = create<OutputsState>()(
 
       setFilterModalOpen: (open) => {
         set({ filterModalOpen: open });
+      },
+
+      setNewFolderModalOpen: (open) => {
+        set({ newFolderModalOpen: open });
       },
 
       setOutputsViewerOpen: (open) => {

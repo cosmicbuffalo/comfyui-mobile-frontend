@@ -1,6 +1,6 @@
 import type { IconProps } from './types';
 
-export function MoveIcon(props: IconProps) {
+export function ArrowRightIcon(props: IconProps) {
   return (
     <svg viewBox="0 0 20 20" aria-hidden="true" {...props}>
       <g transform="translate(-164 -6319)" fill="currentColor">
