@@ -64,10 +64,10 @@ function FileCard({
   /* eslint-enable react-hooks/set-state-in-effect */
 
   const handleClick = () => {
-    if (isFolder) {
-      onNavigateFolder(file.name);
-    } else if (selectionMode) {
+    if (selectionMode) {
       onToggleSelection(file.id);
+    } else if (isFolder) {
+      onNavigateFolder(file.name);
     } else {
       onOpen(file);
     }
@@ -84,12 +84,12 @@ function FileCard({
         className={`file-card-list-item flex items-center gap-3 p-2 hover:bg-gray-50 border-b border-gray-100 last:border-0 ${isSelected ? 'bg-blue-50' : ''}`}
         onClick={handleClick}
       >
-        {selectionMode && !isFolder && (
+        {selectionMode && (
           <div className={`selection-checkbox w-5 h-5 rounded border flex items-center justify-center flex-shrink-0 ${isSelected ? 'bg-blue-600 border-blue-600 text-white' : 'border-gray-300 bg-white'}`}>
              {isSelected && <CheckIcon className="w-3.5 h-3.5" />}
           </div>
         )}
-        <div className="file-preview-container w-10 h-10 flex-shrink-0 flex items-center justify-center bg-gray-100 rounded text-gray-500 overflow-hidden relative">
+        <div className={`file-preview-container w-10 h-10 flex-shrink-0 flex items-center justify-center rounded text-gray-500 overflow-hidden relative ${isFolder ? '' : 'bg-gray-100'}`}>
            {isFolder ? (
              <FolderIcon className="w-6 h-6 text-amber-500" />
            ) : file.previewUrl && !previewError ? (
@@ -153,7 +153,7 @@ function FileCard({
           </div>
         )}
 
-        {selectionMode && !isFolder ? (
+        {selectionMode ? (
           <div className="selection-badge-container absolute top-2 left-2">
             <div className={`selection-badge w-6 h-6 rounded-full border-2 flex items-center justify-center shadow-sm ${isSelected ? 'bg-blue-600 border-blue-600 text-white' : 'border-white bg-black/20'}`}>
               {isSelected && <CheckIcon className="w-4 h-4" />}
@@ -192,6 +192,8 @@ export function OutputsPanel({ visible }: { visible: boolean }) {
   const setSelectionActionOpen = useOutputsStore((s) => s.setSelectionActionOpen);
   const filterModalOpen = useOutputsStore((s) => s.filterModalOpen);
   const setFilterModalOpen = useOutputsStore((s) => s.setFilterModalOpen);
+  const newFolderModalOpen = useOutputsStore((s) => s.newFolderModalOpen);
+  const setNewFolderModalOpen = useOutputsStore((s) => s.setNewFolderModalOpen);
   const setOutputsViewerOpen = useOutputsStore((s) => s.setOutputsViewerOpen);
   const addFavorites = useOutputsStore((s) => s.addFavorites);
   const removeFavorites = useOutputsStore((s) => s.removeFavorites);
@@ -217,6 +219,9 @@ export function OutputsPanel({ visible }: { visible: boolean }) {
   const [moveFolders, setMoveFolders] = useState<FileItem[]>([]);
   const [moveLoading, setMoveLoading] = useState(false);
   const [newFolderName, setNewFolderName] = useState('');
+  const [moveItemIds, setMoveItemIds] = useState<string[]>([]);
+  const [moveOriginPath, setMoveOriginPath] = useState<string | null>(null);
+  const [createFolderName, setCreateFolderName] = useState('');
   const [viewerOpen, setViewerOpen] = useState(false);
   const [viewerImages, setViewerImages] = useState<ViewerImage[]>([]);
   const [viewerIndex, setViewerIndex] = useState(0);
@@ -455,7 +460,6 @@ export function OutputsPanel({ visible }: { visible: boolean }) {
 
   const handleSelectSingle = () => {
     if (!menuTarget) return;
-    if (menuTarget.file.type === 'folder') return;
     if (!selectionMode) {
       toggleSelectionMode();
     }
@@ -587,22 +591,38 @@ export function OutputsPanel({ visible }: { visible: boolean }) {
   const handleMoveSelection = () => {
     if (selectedIds.length === 0) return;
     setSelectionActionOpen(false);
+    setMoveItemIds([...selectedIds]);
+    setMoveOriginPath(currentFolder);
     setMovePath(currentFolder);
     setMovePickerOpen(true);
   };
 
+  const handleMoveSingle = () => {
+    if (!menuTarget) return;
+    setMoveItemIds([menuTarget.file.id]);
+    setMoveOriginPath(currentFolder);
+    setMovePath(currentFolder);
+    setMovePickerOpen(true);
+    setMenuTarget(null);
+  };
+
   const submitMove = async () => {
-    if (selectedIds.length === 0) return;
+    if (moveItemIds.length === 0) return;
     try {
       const prefix = `${source}/`;
-      const paths = selectedIds.map((id) => (id.startsWith(prefix) ? id.slice(prefix.length) : id));
+      const paths = moveItemIds.map((id) => (id.startsWith(prefix) ? id.slice(prefix.length) : id));
       await moveFiles(paths, movePath, source);
       refresh();
+      if (selectionMode) {
+        clearSelection();
+        toggleSelectionMode();
+      }
     } catch (err) {
       console.error('Failed to move selected files:', err);
       window.alert('Failed to move selected files.');
     } finally {
       setMovePickerOpen(false);
+      setMoveItemIds([]);
     }
   };
 
@@ -621,6 +641,21 @@ export function OutputsPanel({ visible }: { visible: boolean }) {
       window.alert('Failed to create folder.');
     } finally {
       setMoveLoading(false);
+    }
+  };
+
+  const handleCreateNewFolder = async () => {
+    const name = createFolderName.trim();
+    if (!name) return;
+    const path = currentFolder ? `${currentFolder}/${name}` : name;
+    try {
+      await createFolder(path, source);
+      setCreateFolderName('');
+      setNewFolderModalOpen(false);
+      refresh();
+    } catch (err) {
+      console.error('Failed to create folder:', err);
+      window.alert('Failed to create folder.');
     }
   };
 
@@ -910,15 +945,20 @@ export function OutputsPanel({ visible }: { visible: boolean }) {
                 {favorites.includes(menuTarget.file.id) ? <BookmarkIconSvg className="w-4 h-4" /> : <BookmarkOutlineIcon className="w-4 h-4" />}
                 {favorites.includes(menuTarget.file.id) ? 'Unfavorite' : 'Favorite'}
               </button>
-              {menuTarget.file.type !== 'folder' && (
-                <button
-                  className="w-full text-left px-4 py-2 text-sm hover:bg-gray-50 flex items-center gap-2"
-                  onClick={handleSelectSingle}
-                >
-                  <CheckIcon className="w-4 h-4 text-gray-500" />
-                  Select
-                </button>
-              )}
+              <button
+                className="w-full text-left px-4 py-2 text-sm hover:bg-gray-50 flex items-center gap-2"
+                onClick={handleSelectSingle}
+              >
+                <CheckIcon className="w-4 h-4 text-gray-500" />
+                Select
+              </button>
+              <button
+                className="w-full text-left px-4 py-2 text-sm hover:bg-gray-50 flex items-center gap-2"
+                onClick={handleMoveSingle}
+              >
+                <FolderIcon className="w-4 h-4 text-gray-500" />
+                Move
+              </button>
               {menuTarget.file.type === 'image' && (
                 <button
                   className="w-full text-left px-4 py-2 text-sm hover:bg-gray-50 flex items-center gap-2"
@@ -1008,13 +1048,15 @@ export function OutputsPanel({ visible }: { visible: boolean }) {
              onClick={(event) => event.stopPropagation()}
            >
              <div className="px-4 py-3 text-sm font-semibold text-gray-700 border-b border-gray-100">
-               Move to {movePath ? movePath : 'root'}
+               {movePath !== moveOriginPath
+                 ? <>Move to <FolderIcon className="w-4 h-4 text-amber-500 inline" /> {movePath || 'root'}</>
+                 : 'Move to...'}
              </div>
              <div className="max-h-[50vh] overflow-y-auto">
                {moveLoading && (
                  <div className="px-4 py-3 text-sm text-gray-400">Loading folders...</div>
                )}
-               {!moveLoading && movePath && movePath.includes('/') && (
+               {!moveLoading && movePath && (
                  <button
                    className="w-full text-left px-4 py-3 text-sm hover:bg-gray-50 flex items-center gap-2"
                    onClick={handleMoveBack}
@@ -1022,10 +1064,10 @@ export function OutputsPanel({ visible }: { visible: boolean }) {
                    <span className="text-gray-500">..</span>
                  </button>
                )}
-               {!moveLoading && moveFolders.length === 0 && (
+               {!moveLoading && moveFolders.filter((f) => !moveItemIds.includes(f.id)).length === 0 && (
                  <div className="px-4 py-3 text-sm text-gray-400">No folders</div>
                )}
-               {!moveLoading && moveFolders.map((folder) => (
+               {!moveLoading && moveFolders.filter((f) => !moveItemIds.includes(f.id)).map((folder) => (
                  <button
                    key={folder.id}
                    className="w-full text-left px-4 py-3 text-sm hover:bg-gray-50 flex items-center gap-2"
@@ -1060,8 +1102,9 @@ export function OutputsPanel({ visible }: { visible: boolean }) {
                  Cancel
                </button>
                <button
-                 className="px-3 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-lg"
+                 className={`px-3 py-2 text-sm font-medium rounded-lg ${movePath !== moveOriginPath ? 'text-white bg-blue-600 hover:bg-blue-700' : 'text-gray-400 bg-gray-200 cursor-not-allowed'}`}
                  onClick={submitMove}
+                 disabled={movePath === moveOriginPath}
                >
                  Submit
                </button>
@@ -1134,6 +1177,49 @@ export function OutputsPanel({ visible }: { visible: boolean }) {
                 onClick={confirmDeleteSelection}
               >
                 Delete
+              </button>
+            </div>
+          </div>
+        </div>
+       )}
+       {newFolderModalOpen && (
+        <div
+          id="outputs-new-folder-overlay"
+          className="fixed inset-0 z-[1850] bg-black/50 flex items-center justify-center p-4"
+          onClick={() => { setNewFolderModalOpen(false); setCreateFolderName(''); }}
+          role="dialog"
+          aria-modal="true"
+        >
+          <div
+            id="outputs-new-folder-modal"
+            className="w-full max-w-sm bg-white border border-gray-200 rounded-xl shadow-lg p-4"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="text-gray-900 text-base font-semibold">New folder</div>
+            <div className="text-gray-600 text-sm mt-1">
+              Create a new folder in {currentFolder ? <><FolderIcon className="w-3.5 h-3.5 text-amber-500 inline" /> {currentFolder}</> : 'root'}
+            </div>
+            <input
+              value={createFolderName}
+              onChange={(event) => setCreateFolderName(event.target.value)}
+              onKeyDown={(event) => { if (event.key === 'Enter') handleCreateNewFolder(); }}
+              placeholder="Folder name"
+              className="mt-3 w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
+              autoFocus
+            />
+            <div className="mt-4 flex justify-end gap-2">
+              <button
+                className="px-3 py-2 rounded-lg text-sm font-medium text-gray-600 hover:bg-gray-100"
+                onClick={() => { setNewFolderModalOpen(false); setCreateFolderName(''); }}
+              >
+                Cancel
+              </button>
+              <button
+                className={`px-3 py-2 rounded-lg text-sm font-medium ${createFolderName.trim() ? 'text-white bg-blue-600 hover:bg-blue-700' : 'text-gray-400 bg-gray-200 cursor-not-allowed'}`}
+                onClick={handleCreateNewFolder}
+                disabled={!createFolderName.trim()}
+              >
+                Create
               </button>
             </div>
           </div>
