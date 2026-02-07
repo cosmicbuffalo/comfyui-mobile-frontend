@@ -29,13 +29,13 @@ export const useWorkflowErrorsStore = create<WorkflowErrorsState>()(
       errorCycleIndex: 0,
       errorsDismissed: false,
       setError: (message) => {
-        set({ error: message });
+        set({ error: message, errorsDismissed: false });
       },
       setNodeErrors: (errors) => {
         set({ nodeErrors: errors, errorCycleIndex: 0, errorsDismissed: false });
       },
       clearNodeErrors: () => {
-        set({ nodeErrors: {}, errorCycleIndex: 0, errorsDismissed: false });
+        set({ error: null, nodeErrors: {}, errorCycleIndex: 0, errorsDismissed: false });
       },
       clearNodeError: (nodeId) => {
         set((state) => {
