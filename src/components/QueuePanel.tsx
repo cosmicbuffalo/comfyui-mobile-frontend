@@ -249,7 +249,7 @@ export function QueuePanel({ visible, onImageClick }: QueuePanelProps) {
   return (
     <div
       id="queue-panel-wrapper"
-      className="absolute inset-x-0 top-[60px] bottom-0"
+      className="absolute inset-x-0 top-[69px] bottom-0"
       style={{ display: visible ? 'block' : 'none' }}
     >
       <div className="flex flex-col bg-gray-100 min-h-full">

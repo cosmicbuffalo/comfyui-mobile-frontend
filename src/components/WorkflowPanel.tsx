@@ -639,8 +639,23 @@ export function WorkflowPanel({
     if (parentRef.current) {
       parentRef.current.scrollTo({ top: 0, behavior: "auto" });
     }
-    requestAnimationFrame(() => searchInputRef.current?.focus());
-  }, [searchOpen]);
+    requestAnimationFrame(() => {
+      searchInputRef.current?.focus();
+      const wrapper = wrapperRef.current;
+      const bar = bookmarkBarRef.current;
+      const searchEl = searchInputRef.current?.closest(".node-search-bar");
+      if (!wrapper || !bar || !searchEl) return;
+      const wrapperRect = wrapper.getBoundingClientRect();
+      const searchRect = searchEl.getBoundingClientRect();
+      const barRect = bar.getBoundingClientRect();
+      const searchBottom = searchRect.bottom - wrapperRect.top;
+      const barTop = barRect.top - wrapperRect.top;
+      const gap = 8;
+      if (barTop < searchBottom + gap) {
+        setBookmarkBarPosition({ top: searchBottom + gap });
+      }
+    });
+  }, [searchOpen, setBookmarkBarPosition]);
 
   useEffect(() => {
     setBookmarkRepositioningActive(isBookmarkRepositioning);
@@ -907,19 +922,19 @@ export function WorkflowPanel({
     content = (
       <div id="node-list-shell" className="h-full flex flex-col">
         {searchOpen && (
-          <div className="node-search-bar px-1 pt-3">
-            <div className="flex items-center gap-2 bg-white border border-gray-200 rounded-xl px-3 py-2 shadow-sm">
+          <div className="node-search-bar bg-gray-100 px-4 py-2">
+            <div className="relative">
               <input
                 ref={searchInputRef}
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 placeholder="Search nodes..."
-                className="comfy-input p-3 flex-1 text-sm text-gray-900 outline-none placeholder:text-gray-400"
+                className="comfy-input w-full rounded-lg border border-gray-300 px-3 py-2 pr-9 text-sm text-gray-900 outline-none placeholder:text-gray-400 focus:border-gray-400 focus:ring-1 focus:ring-gray-400"
               />
               <button
                 type="button"
                 onClick={handleClearSearch}
-                className="w-8 h-8 flex items-center justify-center text-gray-400 hover:text-gray-600"
+                className="absolute right-1.5 top-1/2 -translate-y-1/2 w-6 h-6 flex items-center justify-center text-gray-400 hover:text-gray-600"
                 aria-label="Clear search"
               >
                 <XMarkIcon className="w-4 h-4" />
@@ -977,7 +992,7 @@ export function WorkflowPanel({
     <div
       id="node-list-wrapper"
       ref={wrapperRef}
-      className="absolute inset-x-0 top-[60px] bottom-0 bg-gray-100"
+      className="absolute inset-x-0 top-[69px] bottom-0 bg-gray-100"
       style={{ display: visible ? "block" : "none" }}
     >
       {content}
