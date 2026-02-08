@@ -1,5 +1,5 @@
 import type { RefObject } from 'react';
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { useWorkflowStore, getInputWidgetDefinitions, getWidgetDefinitions } from '@/hooks/useWorkflow';
 import { useBookmarksStore } from '@/hooks/useBookmarks';
 import { useHistoryStore } from '@/hooks/useHistory';
@@ -132,6 +132,8 @@ export function WorkflowTopBarMenu({
     return Object.values(hiddenSubgraphs).some(Boolean);
   }, [manuallyHiddenCount, hiddenGroups, hiddenSubgraphs]);
 
+  const [visibilityModalOpen, setVisibilityModalOpen] = useState(false);
+
   const closeMenu = () => {
     onClose();
   };
@@ -152,11 +154,6 @@ export function WorkflowTopBarMenu({
     closeMenu();
   };
 
-  const handleToggleConnectionsClick = () => {
-    toggleConnectionButtonsVisible();
-    closeMenu();
-  };
-
   const handleFoldAllClick = () => {
     allWorkflowNodeIds.forEach((id) => setNodeFold(id, true));
     allGroupIds.forEach((id) => setGroupCollapsed(id, true));
@@ -168,25 +165,6 @@ export function WorkflowTopBarMenu({
     allWorkflowNodeIds.forEach((id) => setNodeFold(id, false));
     allGroupIds.forEach((id) => setGroupCollapsed(id, false));
     allSubgraphIds.forEach((id) => setSubgraphCollapsed(id, false));
-    closeMenu();
-  };
-
-  const handleHideStaticClick = () => {
-    staticNodeIds.forEach((id) => setNodeHidden(id, true));
-    closeMenu();
-  };
-
-  const handleToggleBypassedClick = () => {
-    if (hiddenBypassedCount > 0) {
-      bypassedNodeIds.forEach((id) => setNodeHidden(id, false));
-    } else {
-      bypassedNodeIds.forEach((id) => setNodeHidden(id, true));
-    }
-    closeMenu();
-  };
-
-  const handleShowAllHiddenClick = () => {
-    showAllHiddenNodes();
     closeMenu();
   };
 
@@ -283,14 +261,10 @@ export function WorkflowTopBarMenu({
           )}
           <button
             className="w-full flex items-center gap-2 text-left px-3 py-2 text-sm hover:bg-gray-50"
-            onClick={handleToggleConnectionsClick}
+            onClick={() => { setVisibilityModalOpen(true); closeMenu(); }}
           >
-            {connectionButtonsVisible ? (
-              <EyeOffIcon className="w-4 h-4 text-gray-500" />
-            ) : (
-              <EyeIcon className="w-4 h-4 text-gray-500" />
-            )}
-            {connectionButtonsVisible ? 'Hide connection buttons' : 'Show connection buttons'}
+            <EyeIcon className="w-4 h-4 text-gray-500" />
+            Hide / Show
           </button>
           {hasUnfoldedVisibleItem && (
             <button
@@ -308,37 +282,6 @@ export function WorkflowTopBarMenu({
             >
               <CaretDownIcon className="w-6 h-6 -ml-1 text-gray-500" />
               Unfold all
-            </button>
-          )}
-          {staticNodeCount > 0 && hiddenStaticCount < staticNodeCount && (
-            <button
-              className="w-full flex items-center gap-2 text-left px-3 py-2 text-sm hover:bg-gray-50"
-              onClick={handleHideStaticClick}
-            >
-              <EyeOffIcon className="w-4 h-4 text-gray-500" />
-              Hide static nodes ({staticNodeCount})
-            </button>
-          )}
-          {bypassedNodeCount > 0 && (
-            <button
-              className="w-full flex items-center gap-2 text-left px-3 py-2 text-sm hover:bg-gray-50"
-              onClick={handleToggleBypassedClick}
-            >
-              {hiddenBypassedCount > 0 ? (
-                <EyeIcon className="w-4 h-4 text-gray-500" />
-              ) : (
-                <EyeOffIcon className="w-4 h-4 text-gray-500" />
-              )}
-              {hiddenBypassedCount > 0 ? 'Show bypassed nodes' : 'Hide bypassed nodes'} ({bypassedNodeCount})
-            </button>
-          )}
-          {showAllHiddenNodesButton && (
-            <button
-              className="w-full flex items-center gap-2 text-left px-3 py-2 text-sm hover:bg-gray-50"
-              onClick={handleShowAllHiddenClick}
-            >
-              <EyeIcon className="w-4 h-4 text-gray-500" />
-              Show all hidden nodes
             </button>
           )}
           {bookmarkedNodeIds.length > 0 && (
@@ -404,6 +347,95 @@ export function WorkflowTopBarMenu({
             <TrashIcon className="w-4 h-4" />
             Clear all cache
           </button>
+        </div>
+      )}
+      {visibilityModalOpen && (
+        <div
+          className="fixed inset-0 z-[2150] bg-black/50 flex items-center justify-center p-4"
+          onClick={() => setVisibilityModalOpen(false)}
+          role="dialog"
+          aria-modal="true"
+        >
+          <div
+            className="w-full max-w-sm bg-white border border-gray-200 rounded-xl shadow-lg overflow-hidden"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="px-4 py-3 text-sm font-semibold text-gray-700 border-b border-gray-100">
+              Hide / Show
+            </div>
+            <div className="max-h-[50vh] overflow-y-auto">
+              {staticNodeCount > 0 && (
+                <button
+                  className="w-full flex items-center gap-2 text-left px-4 py-3 text-sm hover:bg-gray-50"
+                  onClick={() => {
+                    if (hiddenStaticCount < staticNodeCount) {
+                      staticNodeIds.forEach((id) => setNodeHidden(id, true));
+                    } else {
+                      staticNodeIds.forEach((id) => setNodeHidden(id, false));
+                    }
+                  }}
+                >
+                  {hiddenStaticCount < staticNodeCount ? (
+                    <EyeOffIcon className="w-4 h-4 text-gray-500" />
+                  ) : (
+                    <EyeIcon className="w-4 h-4 text-gray-500" />
+                  )}
+                  {hiddenStaticCount < staticNodeCount
+                    ? `Hide static nodes (${staticNodeCount})`
+                    : `Show static nodes (${staticNodeCount})`}
+                </button>
+              )}
+              {bypassedNodeCount > 0 && (
+                <button
+                  className="w-full flex items-center gap-2 text-left px-4 py-3 text-sm hover:bg-gray-50"
+                  onClick={() => {
+                    if (hiddenBypassedCount > 0) {
+                      bypassedNodeIds.forEach((id) => setNodeHidden(id, false));
+                    } else {
+                      bypassedNodeIds.forEach((id) => setNodeHidden(id, true));
+                    }
+                  }}
+                >
+                  {hiddenBypassedCount > 0 ? (
+                    <EyeIcon className="w-4 h-4 text-gray-500" />
+                  ) : (
+                    <EyeOffIcon className="w-4 h-4 text-gray-500" />
+                  )}
+                  {hiddenBypassedCount > 0
+                    ? `Show bypassed nodes (${bypassedNodeCount})`
+                    : `Hide bypassed nodes (${bypassedNodeCount})`}
+                </button>
+              )}
+              <button
+                className="w-full flex items-center gap-2 text-left px-4 py-3 text-sm hover:bg-gray-50"
+                onClick={toggleConnectionButtonsVisible}
+              >
+                {connectionButtonsVisible ? (
+                  <EyeOffIcon className="w-4 h-4 text-gray-500" />
+                ) : (
+                  <EyeIcon className="w-4 h-4 text-gray-500" />
+                )}
+                {connectionButtonsVisible ? 'Hide connection buttons' : 'Show connection buttons'}
+              </button>
+              {showAllHiddenNodesButton && (
+                <button
+                  className="w-full flex items-center gap-2 text-left px-4 py-3 text-sm hover:bg-gray-50"
+                  onClick={showAllHiddenNodes}
+                >
+                  <EyeIcon className="w-4 h-4 text-gray-500" />
+                  Show all hidden nodes
+                </button>
+              )}
+            </div>
+            <div className="px-4 py-3 border-t border-gray-100 flex justify-end">
+              <button
+                className="px-3 py-2 text-sm font-medium text-gray-600 hover:bg-gray-100 rounded-lg"
+                onClick={() => setVisibilityModalOpen(false)}
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>
