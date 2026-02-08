@@ -171,7 +171,7 @@ function App() {
       <main
         id="main-content"
         ref={mainRef}
-        className="pt-[60px] pb-[80px] min-h-screen relative"
+        className="pt-[69px] pb-[80px] min-h-screen relative"
       >
         <>
           <OutputsPanel visible={currentPanel === 'outputs'} />

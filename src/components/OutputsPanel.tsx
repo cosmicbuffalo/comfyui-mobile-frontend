@@ -782,7 +782,7 @@ export function OutputsPanel({ visible }: { visible: boolean }) {
   return (
     <div
       id="outputs-panel-wrapper"
-      className="absolute inset-x-0 top-[60px] bottom-0"
+      className="absolute inset-x-0 top-[69px] bottom-0"
       style={{ display: visible ? 'block' : 'none' }}
     >
       <div id="outputs-panel-root" className="h-full bg-white flex flex-col pt-[4px] pb-[80px]">
