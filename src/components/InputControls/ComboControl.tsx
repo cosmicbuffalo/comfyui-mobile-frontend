@@ -5,7 +5,8 @@ import type { OptionProps } from "react-select";
 import { FullscreenWidgetModal } from "../modals/FullscreenWidgetModal";
 import { PinButton } from "./PinButton";
 import { ChevronDownIcon, PlusIcon } from "@/components/icons";
-import { getImageUrl, uploadImageFile } from "@/api/client";
+import { getImageUrl, getNodeTypes, uploadImageFile } from "@/api/client";
+import { useWorkflowStore } from "@/hooks/useWorkflow";
 import { useThemeStore } from "@/hooks/useTheme";
 import { useCoarsePointer } from "@/hooks/useCoarsePointer";
 
@@ -42,6 +43,7 @@ export function ComboControl({
 }: ComboControlProps) {
   type SelectOption = { value: string; label: string; isMissing?: boolean };
 
+  const setNodeTypes = useWorkflowStore((s) => s.setNodeTypes);
   const theme = useThemeStore((s) => s.theme);
   const isDark = theme === "dark";
   const [internalModalOpen, setInternalModalOpen] = useState(false);
@@ -196,6 +198,12 @@ export function ComboControl({
       setUploadedChoices((prev) =>
         prev.includes(nextValue) ? prev : [...prev, nextValue],
       );
+      try {
+        const freshTypes = await getNodeTypes();
+        setNodeTypes(freshTypes);
+      } catch {
+        // Non-critical: combo options may be stale but the value is still set
+      }
       onChange(nextValue);
     } catch (err) {
       console.error("Failed to upload image:", err);
