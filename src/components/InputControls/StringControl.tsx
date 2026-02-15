@@ -3,6 +3,8 @@ import { TextareaActions } from './TextareaActions';
 import { FullscreenWidgetModal } from '../modals/FullscreenWidgetModal';
 import { PinButton } from './PinButton';
 import { useCoarsePointer } from '@/hooks/useCoarsePointer';
+import { useThemeStore } from '@/hooks/useTheme';
+import { themeColors } from '@/theme/colors';
 
 interface StringControlProps {
   containerClass: string;
@@ -15,7 +17,6 @@ interface StringControlProps {
   hasPin: boolean;
   isPinned?: boolean;
   onTogglePin?: () => void;
-  maxHeight?: string;
   hasError?: boolean;
   forceModalOpen?: boolean;
   onModalClose?: () => void;
@@ -32,7 +33,6 @@ export function StringControl({
   hasPin,
   isPinned = false,
   onTogglePin,
-  maxHeight,
   hasError = false,
   forceModalOpen = false,
   onModalClose
@@ -51,6 +51,8 @@ export function StringControl({
 
   const [internalModalOpen, setInternalModalOpen] = useState(false);
   const showModal = forceModalOpen || internalModalOpen;
+  const theme = useThemeStore((s) => s.theme);
+  const isDark = theme === 'dark';
 
   const isCoarsePointer = useCoarsePointer();
   const useModalFlow = forceModalOpen || isCoarsePointer;
@@ -95,7 +97,10 @@ export function StringControl({
               className={`relative w-full p-3 comfy-input min-h-[100px] text-base group cursor-text ${disabled ? 'opacity-60 cursor-not-allowed' : ''} ${hasPin ? 'pr-10' : ''} ${hasError ? 'border-red-700 ring-1 ring-red-700' : ''}`}
               onClick={() => !disabled && setInternalModalOpen(true)}
             >
-              <div className="whitespace-pre-wrap break-words text-gray-900 dark:text-[#e5e7eb]">
+              <div
+                className="whitespace-pre-wrap break-words text-gray-900"
+                style={isDark ? { color: themeColors.text.onDark } : undefined}
+              >
                 {valueString || <span className="text-gray-400 dark:text-gray-500">{placeholder}</span>}
               </div>
               {hasPin && (
@@ -118,7 +123,10 @@ export function StringControl({
               className={`relative w-full p-3 comfy-input text-base min-h-[46px] flex items-center cursor-text ${disabled ? 'opacity-60 cursor-not-allowed' : ''} ${hasPin ? 'pr-16' : 'pr-6'} ${hasError ? 'border-red-700 ring-1 ring-red-700' : ''}`}
               onClick={() => !disabled && setInternalModalOpen(true)}
             >
-              <div className="truncate min-w-0 flex-1 text-gray-900 dark:text-[#e5e7eb]">
+              <div
+                className="truncate min-w-0 flex-1 text-gray-900"
+                style={isDark ? { color: themeColors.text.onDark } : undefined}
+              >
                 {valueString || <span className="text-gray-400 dark:text-gray-500">{placeholder}</span>}
               </div>
               {hasPin && (
@@ -196,11 +204,8 @@ export function StringControl({
             value={valueString}
             onChange={handleTextareaChange}
             placeholder={placeholder}
-            className={`w-full p-3 comfy-input min-h-[100px] text-base resize-none ${maxHeight ? 'overflow-auto' : 'overflow-hidden'} ${disabled ? 'opacity-60 cursor-not-allowed' : ''} ${hasPin ? 'pr-10' : ''} ${hasError ? 'border-red-700 ring-1 ring-red-700' : ''}`}
-            style={{
-              overflowAnchor: 'none',
-              ...(maxHeight ? { maxHeight } : {})
-            }}
+            className={`w-full p-3 comfy-input min-h-[100px] text-base resize-none overflow-hidden ${disabled ? 'opacity-60 cursor-not-allowed' : ''} ${hasPin ? 'pr-10' : ''} ${hasError ? 'border-red-700 ring-1 ring-red-700' : ''}`} // TODO - determine if overflow should be hidden or auto here
+            style={{ overflowAnchor: 'none' }}
             disabled={disabled}
           />
           {hasPin && (
