@@ -44,6 +44,19 @@ export function useWebSocket() {
   const lastPromptIdRef = useRef<string | null>(null);
 
   useEffect(() => {
+    const resolveStableNodeKey = (rawNodeId: number | string | null | undefined): string | null => {
+      if (rawNodeId == null) return null;
+      const numericNodeId = Number(rawNodeId);
+      if (!Number.isFinite(numericNodeId)) return null;
+      const workflowState = useWorkflowStore.getState();
+      const workflow = workflowState.workflow;
+      if (!workflow) return null;
+      const candidates = workflow.nodes.filter((node) => node.id === numericNodeId);
+      if (candidates.length === 0) return null;
+      const preferred = candidates.find((node) => node.stableKey) ?? candidates[0];
+      return preferred?.stableKey ?? null;
+    };
+
     const handleMessage = (data: unknown) => {
       const { setExecutionState, setNodeOutput, addPromptOutputs, clearPromptOutputs, updateFromStatus, fetchQueue, addHistoryEntry, fetchHistory } = storeActionsRef.current;
       const msg = data as WSMessage;
@@ -64,7 +77,7 @@ export function useWebSocket() {
           const progressMsg = msg as WSProgressMessage;
           const { value, max, node, prompt_id } = progressMsg.data;
           const progress = Math.round((value / max) * 100);
-          setExecutionState(true, node || null, prompt_id || null, progress);
+          setExecutionState(true, resolveStableNodeKey(node), prompt_id || null, progress);
           break;
         }
 
@@ -107,7 +120,7 @@ export function useWebSocket() {
             }
 
             // Execution started/is continuing for a node
-            setExecutionState(true, nodeId, promptId || null, 0);
+            setExecutionState(true, resolveStableNodeKey(nodeId), promptId || null, 0);
             // Sync queue if we don't see this prompt_id as running yet
             const queueStore = useQueueStore.getState();
             if (promptId && !queueStore.running.some(r => r.prompt_id === promptId)) {
@@ -129,7 +142,10 @@ export function useWebSocket() {
              addPromptOutputs(prompt_id, output.images);
 
              // Store for node display
-             setNodeOutput(node, output.images);
+             const stableKey = resolveStableNodeKey(node);
+             if (stableKey) {
+               setNodeOutput(stableKey, output.images);
+             }
           }
           break;
         }

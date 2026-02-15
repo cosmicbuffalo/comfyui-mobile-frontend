@@ -68,20 +68,22 @@ export function BottomStatusOverlay() {
   const handleErrorClick = () => {
     if (!workflow) return;
     if (!hasNodeErrors) return;
-    const errorNodeIds = workflow.nodes
-      .filter((node) => nodeErrors[String(node.id)]?.length)
-      .map((node) => node.id);
-    if (errorNodeIds.length === 0) return;
+    const errorNodes = workflow.nodes.filter((node) => nodeErrors[String(node.id)]?.length);
+    if (errorNodes.length === 0) return;
 
-    const nextIndex = errorCycleIndex % errorNodeIds.length;
-    const closestId = errorNodeIds[nextIndex];
+    const nextIndex = errorCycleIndex % errorNodes.length;
+    const closestNode = errorNodes[nextIndex];
+    if (!closestNode) return;
+    const closestId = closestNode.id;
+    const stableKey = closestNode.stableKey;
+    if (!stableKey) return;
     const label = `Error #${nextIndex + 1}`;
-    revealNodeWithParents(closestId);
-    setErrorCycleIndex((nextIndex + 1) % errorNodeIds.length);
+    revealNodeWithParents(stableKey);
+    setErrorCycleIndex((nextIndex + 1) % errorNodes.length);
 
     window.dispatchEvent(new CustomEvent('workflow-label-error-node', { detail: { nodeId: closestId, label } }));
     window.dispatchEvent(new CustomEvent('workflow-scroll-to-node', { detail: { nodeId: closestId, label } }));
-    scrollToNode(closestId, label);
+    scrollToNode(stableKey, label);
   };
 
   const handleErrorKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
