@@ -1,8 +1,9 @@
 import { createPortal } from 'react-dom';
 import type { Workflow } from '@/api/types';
 import type { UnifiedItem } from './types';
-import { CopyIcon, DownloadIcon, EyeIcon, EyeOffIcon, TrashIcon, WorkflowLoadIcon } from '@/components/icons';
+import { CopyIcon, DownloadIcon, EyeIcon, EyeOffIcon, TrashIcon, WorkflowIcon } from '@/components/icons';
 import { useQueueStore } from '@/hooks/useQueue';
+import { ContextMenuBuilder } from '@/components/menus/ContextMenuBuilder';
 
 interface QueueImageMenuProps {
   menuState: {
@@ -81,56 +82,51 @@ export function QueueImageMenu({
   return createPortal(
     <div
       id="queue-image-menu"
-      className="fixed z-[1200] bg-white border border-gray-200 rounded-lg shadow-lg overflow-hidden w-44"
+      className="fixed z-[1200] w-44"
       style={{ top: menuState.top, right: menuState.right }}
     >
-      <button
-        className={`flex items-center gap-2 w-full text-left px-3 py-2 text-sm hover:bg-gray-50 ${
-          !menuState.workflow ? 'opacity-50 cursor-not-allowed' : ''
-        }`}
-        onClick={handleLoadWorkflowClick}
-        disabled={!menuState.workflow}
-      >
-        <WorkflowLoadIcon className="w-4 h-4 text-gray-500" />
-        Load workflow
-      </button>
-      <button
-        className={`flex items-center gap-2 w-full text-left px-3 py-2 text-sm hover:bg-gray-50 ${
-          !menuState.workflow ? 'opacity-50 cursor-not-allowed' : ''
-        }`}
-        onClick={handleCopyWorkflowClick}
-        disabled={!menuState.workflow}
-      >
-        <CopyIcon className="w-4 h-4 text-gray-500" />
-        Copy workflow
-      </button>
-      <button
-        className="flex items-center gap-2 w-full text-left px-3 py-2 text-sm hover:bg-gray-50"
-        onClick={handleDownloadClick}
-      >
-        <DownloadIcon className="w-4 h-4 text-gray-500" />
-        {menuState.promptId && getBatchSources(menuState.promptId, unifiedList).length > 1 ? 'Download batch' : 'Download'}
-      </button>
-      {menuState.hasVideoOutputs && menuState.hasImageOutputs && menuState.promptId && (
-        <button
-          className="flex items-center gap-2 w-full text-left px-3 py-2 text-sm hover:bg-gray-50"
-          onClick={handleToggleHideImagesClick}
-        >
-          {queueItemHideImages ? (
-            <EyeIcon className="w-4 h-4 text-gray-500" />
-          ) : (
-            <EyeOffIcon className="w-4 h-4 text-gray-500" />
-          )}
-          {queueItemHideImages ? 'Show images' : 'Hide images'}
-        </button>
-      )}
-      <button
-        className="flex items-center gap-2 w-full text-left px-3 py-2 text-sm text-red-600 hover:bg-red-50"
-        onClick={handleDeleteClick}
-      >
-        <TrashIcon className="w-4 h-4" />
-        Delete
-      </button>
+      <ContextMenuBuilder
+        items={[
+          {
+            key: 'load-workflow',
+            label: 'Load workflow',
+            icon: <WorkflowIcon className="w-4 h-4" />,
+            onClick: handleLoadWorkflowClick,
+            disabled: !menuState.workflow
+          },
+          {
+            key: 'copy-workflow',
+            label: 'Copy workflow',
+            icon: <CopyIcon className="w-4 h-4" />,
+            onClick: handleCopyWorkflowClick,
+            disabled: !menuState.workflow
+          },
+          {
+            key: 'download',
+            label: menuState.promptId && getBatchSources(menuState.promptId, unifiedList).length > 1
+              ? 'Download batch'
+              : 'Download',
+            icon: <DownloadIcon className="w-4 h-4" />,
+            onClick: handleDownloadClick
+          },
+          {
+            key: 'toggle-images',
+            label: queueItemHideImages ? 'Show images' : 'Hide images',
+            icon: queueItemHideImages
+              ? <EyeIcon className="w-4 h-4" />
+              : <EyeOffIcon className="w-4 h-4" />,
+            onClick: handleToggleHideImagesClick,
+            hidden: !(menuState.hasVideoOutputs && menuState.hasImageOutputs && menuState.promptId)
+          },
+          {
+            key: 'delete',
+            label: 'Delete',
+            icon: <TrashIcon className="w-4 h-4" />,
+            onClick: handleDeleteClick,
+            color: 'danger'
+          }
+        ]}
+      />
     </div>,
     document.body
   );

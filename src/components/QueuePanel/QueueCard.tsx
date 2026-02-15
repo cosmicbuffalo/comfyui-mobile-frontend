@@ -3,10 +3,11 @@ import { getImageUrl } from '@/api/client';
 import type { Workflow } from '@/api/types';
 import { useQueueStore } from '@/hooks/useQueue';
 import { extractMetadata } from '@/utils/metadata';
-import { CaretDownIcon, CaretRightIcon, CheckIcon, CloudDownloadIcon, EllipsisVerticalIcon, HourglassIcon, XMarkIcon, XSmallIcon } from '@/components/icons';
+import { CaretDownIcon, CaretRightIcon, CheckIcon, CloudDownloadIcon, HourglassIcon, XMarkIcon, XSmallIcon } from '@/components/icons';
 import type { HistoryOutputImage } from '@/api/types';
 import { isHistoryEntryData, type UnifiedItem, type ViewerImage } from './types';
 import { getMediaType, isVideoFilename } from '@/utils/media';
+import { ContextMenuButton } from '@/components/buttons/ContextMenuButton';
 
 interface QueueCardProps {
   item: UnifiedItem;
@@ -242,13 +243,12 @@ export function QueueCard({
               Stop
             </button>
           ) : isDone ? (
-            <button
-              className="w-7 h-7 flex items-center justify-center text-gray-700 hover:text-gray-900 bg-transparent hover:bg-transparent"
+            <ContextMenuButton
               onClick={handleOpenMenuClick}
-              aria-label="Image options"
-            >
-              <EllipsisVerticalIcon className="w-4 h-4 -rotate-90" />
-            </button>
+              ariaLabel="Image options"
+              buttonSize={7}
+              iconSize={4}
+            />
           ) : (
             <button
               onClick={handleDeleteClick}
