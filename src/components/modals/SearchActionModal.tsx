@@ -28,7 +28,7 @@ export function SearchActionModal({
   backLabel = 'Back',
   children,
   footer,
-  zIndex = 2100,
+  zIndex = 2200,
 }: SearchActionModalProps) {
   if (!isOpen) return null;
 

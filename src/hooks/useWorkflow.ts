@@ -147,7 +147,7 @@ function collectLayoutObjectKeys(layout: MobileLayout): string[] {
         keys.push(ref.stableKey);
         if (visitedGroups.has(ref.stableKey)) continue;
         visitedGroups.add(ref.stableKey);
-        visit(layout.groups[ref.stableKey] ?? [], ref.subgraphId);
+        visit(layout.groups[ref.stableKey] ?? [], currentSubgraphId);
         continue;
       }
       if (ref.type === "subgraph") {
@@ -359,19 +359,19 @@ function collectGroupStableKeys(
   subgraphId: string | null = null,
 ): string[] {
   const keys = new Set<string>();
-  const visit = (refs: ItemRef[]) => {
+  const visit = (refs: ItemRef[], currentSubgraphId: string | null) => {
     for (const ref of refs) {
       if (ref.type === "group") {
-        if (ref.id === groupId && ref.subgraphId === subgraphId) {
+        if (ref.id === groupId && currentSubgraphId === subgraphId) {
           keys.add(ref.stableKey);
         }
-        visit(layout.groups[ref.stableKey] ?? []);
+        visit(layout.groups[ref.stableKey] ?? [], currentSubgraphId);
       } else if (ref.type === "subgraph") {
-        visit(layout.subgraphs[ref.id] ?? []);
+        visit(layout.subgraphs[ref.id] ?? [], ref.id);
       }
     }
   };
-  visit(layout.root);
+  visit(layout.root, null);
   return [...keys];
 }
 
@@ -507,22 +507,11 @@ function findGroupSubgraphIdByStableKey(
   layout: MobileLayout,
   groupStableKey: string,
 ): string | null {
-  const visit = (refs: ItemRef[]): string | null => {
-    for (const ref of refs) {
-      if (ref.type === "group") {
-        if (ref.stableKey === groupStableKey) {
-          return ref.subgraphId ?? null;
-        }
-        const nested = visit(layout.groups[ref.stableKey] ?? []);
-        if (nested !== null) return nested;
-      } else if (ref.type === "subgraph") {
-        const nested = visit(layout.subgraphs[ref.id] ?? []);
-        if (nested !== null) return nested;
-      }
-    }
-    return null;
-  };
-  return visit(layout.root);
+  const parent = layout.groupParents?.[groupStableKey];
+  if (!parent) return null;
+  if (parent.scope === "subgraph") return parent.subgraphId;
+  if (parent.scope === "root") return null;
+  return findGroupSubgraphIdByStableKey(layout, parent.groupKey);
 }
 
 function stableRecordFromLayoutRecord(

@@ -200,20 +200,20 @@ export function WorkflowPanel({
           return;
         }
         if (ref.type === "group") {
-          const stableKey = stableKeyByPointer[ref.stableKey];
+          const stableKey = ref.stableKey;
           if (stableKey) {
             byStableKey.set(stableKey, {
               stableKey,
               type: "group",
               groupId: ref.id,
-              subgraphId: ref.subgraphId ?? null,
+              subgraphId: currentSubgraphId,
               groupKey: ref.stableKey,
               text: `G${ref.id}`,
             });
           }
           if (visitedGroups.has(ref.stableKey)) return;
           visitedGroups.add(ref.stableKey);
-          visit(mobileLayout.groups[ref.stableKey] ?? [], ref.subgraphId ?? null);
+          visit(mobileLayout.groups[ref.stableKey] ?? [], currentSubgraphId);
           return;
         }
         if (ref.type === "subgraph") {
@@ -234,7 +234,7 @@ export function WorkflowPanel({
     };
     visit(mobileLayout.root, null);
     return byStableKey;
-  }, [mobileLayout, stableKeyByPointer, stableNodeKeyById, stableSubgraphKeyById]);
+  }, [mobileLayout, stableNodeKeyById, stableSubgraphKeyById]);
 
   const bookmarkEntries = useMemo<BookmarkEntry[]>(
     () =>
@@ -251,7 +251,7 @@ export function WorkflowPanel({
           return (stableNodeKeyById.get(ref.id) ?? null) === stableKey;
         }
         if (ref.type === "group") {
-          return stableKeyByPointer[ref.stableKey] === stableKey;
+          return ref.stableKey === stableKey;
         }
         if (ref.type === "subgraph") {
           return (stableSubgraphKeyById.get(ref.id) ?? null) === stableKey;
@@ -264,7 +264,7 @@ export function WorkflowPanel({
         subgraphIds: path.subgraphIds,
       };
     },
-    [mobileLayout, stableKeyByPointer, stableNodeKeyById, stableSubgraphKeyById],
+    [mobileLayout, stableNodeKeyById, stableSubgraphKeyById],
   );
 
   const jumpToBookmarkedNode = useCallback(

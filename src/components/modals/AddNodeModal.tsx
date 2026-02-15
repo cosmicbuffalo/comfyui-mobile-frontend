@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { useWorkflowStore } from '@/hooks/useWorkflow';
 import { prettyPackName } from '@/utils/search';
-import { searchAndSortNodeTypes } from '@/utils/nodeTypeSearch';
+import { resolveNodeTypeDisplayName, searchAndSortNodeTypes } from '@/utils/nodeTypeSearch';
 import { NodeTypeSearchResult } from './NodeTypeSearchResult';
 import { SearchActionModal } from './SearchActionModal';
 import { SearchEmptyState } from './SearchEmptyState';
@@ -25,7 +25,7 @@ export function AddNodeModal({ isOpen, onClose, addInGroupId = null, addInSubgra
     return Object.entries(nodeTypes).map(([name, def], index) => ({
       index,
       name,
-      displayName: String(def.display_name ?? def.name ?? name ?? ''),
+      displayName: resolveNodeTypeDisplayName(def, name),
       pack: prettyPackName(String(def.python_module ?? def.category?.split('/')[0] ?? 'Core')),
       category: String(def.category ?? 'Other'),
       description: String(def.description ?? '')

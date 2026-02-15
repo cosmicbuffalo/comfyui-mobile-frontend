@@ -35,7 +35,7 @@ import {
 import { ContainerItemCard } from "@/components/RepositionOverlay/ContainerItemCard";
 import { HiddenBlockItem } from "@/components/RepositionOverlay/HiddenBlockItem";
 import { NodeItemCard } from "@/components/RepositionOverlay/NodeItemCard";
-import { RepositionOverlayActions } from "@/components/RepositionOverlay/Actions";
+import { FullscreenModalActions } from "@/components/modals/FullscreenModalActions";
 import { RepositionOverlayTopBar } from "@/components/RepositionOverlay/TopBar";
 import { RepositionScrollContainer } from "@/components/RepositionOverlay/RepositionScrollContainer";
 import { themeColors } from "@/theme/colors";
@@ -52,9 +52,38 @@ interface RepositionOverlayProps {
   onCancel: () => void;
 }
 
-function targetToDataKey(target: RepositionTarget): string {
+function findGroupStableKeyInLayout(
+  layout: MobileLayout,
+  groupId: number,
+  subgraphId: string | null
+): string | null {
+  const visit = (refs: ItemRef[], currentSubgraphId: string | null): string | null => {
+    for (const ref of refs) {
+      if (ref.type === "group") {
+        if (ref.id === groupId && currentSubgraphId === subgraphId) {
+          return ref.stableKey;
+        }
+        const nested = visit(layout.groups[ref.stableKey] ?? [], currentSubgraphId);
+        if (nested) return nested;
+        continue;
+      }
+      if (ref.type === "subgraph") {
+        const nested = visit(layout.subgraphs[ref.id] ?? [], ref.id);
+        if (nested) return nested;
+      }
+    }
+    return null;
+  };
+  return visit(layout.root, null);
+}
+
+function targetToDataKey(target: RepositionTarget, layout?: MobileLayout): string {
   if (target.type === "node") return `node-${target.id}`;
   if (target.type === "group") {
+    const stableGroupKey = layout
+      ? findGroupStableKeyInLayout(layout, target.id, target.subgraphId ?? null)
+      : null;
+    if (stableGroupKey) return `group-${stableGroupKey}`;
     return `group-${makeLocationPointer({
       type: "group",
       groupId: target.id,
@@ -287,15 +316,14 @@ export function RepositionOverlay({
     () => {
       const next = { ...(workflowCollapsedItems ?? {}) };
       if (initialTarget.type === "group") {
-        next[
-          toStableStateKey(
-            makeLocationPointer({
-              type: "group",
-              groupId: initialTarget.id,
-              subgraphId: initialTarget.subgraphId ?? null,
-            }),
-          )
-        ] = true;
+        const groupStableKey = findGroupStableKeyInLayout(
+          mobileLayout,
+          initialTarget.id,
+          initialTarget.subgraphId ?? null
+        );
+        if (groupStableKey) {
+          next[groupStableKey] = true;
+        }
       }
       if (initialTarget.type === "subgraph") {
         next[
@@ -311,26 +339,39 @@ export function RepositionOverlay({
     useState<string | null>(null);
   const [dragVisual, setDragVisual] = useState<DragVisualState | null>(null);
 
-  const targetDataKey = targetToDataKey(currentTarget);
+  const targetDataKey = useMemo(
+    () => targetToDataKey(currentTarget, workingLayout),
+    [currentTarget, workingLayout]
+  );
   const connectionHighlightEnabled =
     connectionHighlightTargetKey === targetDataKey;
 
   const targetAncestors = useMemo(() => {
-    const targetRef: ItemRef =
+    const targetRef: ItemRef | null =
       currentTarget.type === "node"
         ? { type: "node", id: currentTarget.id }
         : currentTarget.type === "group"
-          ? {
-              type: "group",
-              id: currentTarget.id,
-              subgraphId: currentTarget.subgraphId ?? null,
-              stableKey: makeLocationPointer({
-                type: "group",
-                groupId: currentTarget.id,
+          ? (() => {
+              const stableKey = findGroupStableKeyInLayout(
+                workingLayout,
+                currentTarget.id,
+                currentTarget.subgraphId ?? null
+              );
+              if (!stableKey) return null;
+              return {
+                type: "group" as const,
+                id: currentTarget.id,
                 subgraphId: currentTarget.subgraphId ?? null,
-              }),
-            }
+                stableKey,
+              };
+            })()
           : { type: "subgraph", id: currentTarget.id };
+    if (!targetRef) {
+      return {
+        groupIds: new Set<string>(),
+        subgraphIds: new Set<string>(),
+      };
+    }
 
     const itemEquals = (a: ItemRef, b: ItemRef): boolean => {
       if (a.type !== b.type) return false;
@@ -476,29 +517,29 @@ export function RepositionOverlay({
     const map = new Map<string, { id: number; subgraphId: string | null }>();
     const visitedGroups = new Set<string>();
     const visitedSubgraphs = new Set<string>();
-    const visit = (refs: ItemRef[]) => {
+    const visit = (refs: ItemRef[], currentSubgraphId: string | null) => {
       for (const ref of refs) {
         if (ref.type === "group") {
-          map.set(ref.stableKey, { id: ref.id, subgraphId: ref.subgraphId ?? null });
+          map.set(ref.stableKey, { id: ref.id, subgraphId: currentSubgraphId });
           if (visitedGroups.has(ref.stableKey)) continue;
           visitedGroups.add(ref.stableKey);
-          visit(workingLayout.groups[ref.stableKey] ?? []);
+          visit(workingLayout.groups[ref.stableKey] ?? [], currentSubgraphId);
           continue;
         }
         if (ref.type === "subgraph") {
           if (visitedSubgraphs.has(ref.id)) continue;
           visitedSubgraphs.add(ref.id);
-          visit(workingLayout.subgraphs[ref.id] ?? []);
+          visit(workingLayout.subgraphs[ref.id] ?? [], ref.id);
         }
       }
     };
-    visit(workingLayout.root);
+    visit(workingLayout.root, null);
     return map;
   }, [workingLayout]);
 
   // Initial scroll + highlight
   useEffect(() => {
-    const key = targetToDataKey(currentTarget);
+    const key = targetToDataKey(currentTarget, workingLayout);
     let frameId: number | null = null;
     if (suppressNextTargetScrollRef.current) {
       suppressNextTargetScrollRef.current = false;
@@ -549,7 +590,7 @@ export function RepositionOverlay({
         window.clearTimeout(highlightTimeoutRef.current);
       }
     };
-  }, [currentTarget, initialViewportAnchor]);
+  }, [currentTarget, initialViewportAnchor, workingLayout]);
 
   /** Parse a data key into a RepositionTarget. */
   const dataKeyToTarget = useCallback(
@@ -611,17 +652,15 @@ export function RepositionOverlay({
       if (dragKey !== targetDataKey) {
         const target = parsed.target;
         if (target.type === "group") {
-          const groupId = target.id;
-          const subgraphId = target.subgraphId ?? null;
+          const groupStableKey = findGroupStableKeyInLayout(
+            workingLayout,
+            target.id,
+            target.subgraphId ?? null
+          );
+          if (!groupStableKey) return;
           setCollapsedItems((prev) => ({
             ...prev,
-            [toStableStateKey(
-              makeLocationPointer({
-                type: "group",
-                groupId,
-                subgraphId,
-              }),
-            )]: true,
+            [groupStableKey]: true,
           }));
         } else if (target.type === "subgraph") {
           const subgraphId = target.id;
@@ -713,7 +752,7 @@ export function RepositionOverlay({
         if (pending.targetRef.type === "group" && pending.targetRef.stableKey === groupKey)
           continue;
         if (pending.disallowedGroupKeys.has(groupKey)) continue;
-        if (collapsedItems[toStableStateKey(groupKey)] ?? false) continue;
+        if (collapsedItems[groupKey] ?? false) continue;
         const groupDataKey = `group-${groupKey}`;
         const groupEl = container.querySelector(
           `[data-reposition-item="${groupDataKey}"]`,
@@ -989,7 +1028,7 @@ export function RepositionOverlay({
             : null;
       const hoverIsCollapsed =
         hoverContainer.scope === "group"
-          ? (collapsedItems[toStableStateKey(hoverContainer.groupKey)] ?? false)
+          ? (collapsedItems[hoverContainer.groupKey] ?? false)
           : hoverContainer.scope === "subgraph"
             ? (collapsedItems[
                 toStableStateKey(
@@ -1013,7 +1052,7 @@ export function RepositionOverlay({
             if (current.scope === "group") {
               setCollapsedItems((prev) => ({
                 ...prev,
-                [toStableStateKey(current.groupKey)]: false,
+                [current.groupKey]: false,
               }));
             } else if (current.scope === "subgraph") {
               setCollapsedItems((prev) => ({
@@ -1206,7 +1245,7 @@ export function RepositionOverlay({
   const handleDone = () => {
     const finalTarget = lastMovedTargetRef.current ?? currentTarget;
     const targetEl = scrollContainerRef.current?.querySelector<HTMLElement>(
-      `[data-reposition-item="${targetToDataKey(finalTarget)}"]`,
+      `[data-reposition-item="${targetToDataKey(finalTarget, workingLayout)}"]`,
     );
     const viewportAnchor = targetEl
       ? { viewportTop: targetEl.getBoundingClientRect().top }
@@ -1216,9 +1255,8 @@ export function RepositionOverlay({
 
   const toggleGroupCollapse = (groupKey: string) => {
     setCollapsedItems((prev) => {
-      const stableKey = toStableStateKey(groupKey);
-      const current = prev[stableKey] ?? false;
-      return { ...prev, [stableKey]: !current };
+      const current = prev[groupKey] ?? false;
+      return { ...prev, [groupKey]: !current };
     });
   };
 
@@ -1383,14 +1421,15 @@ export function RepositionOverlay({
       }
 
       if (ref.type === "group") {
+        const groupRef = groupRefByStableKey.get(ref.stableKey);
         const group =
-          ref.subgraphId == null
+          groupRef?.subgraphId == null
             ? groupMap.rootMap.get(ref.id)
-            : groupMap.bySubgraph.get(ref.subgraphId)?.get(ref.id);
+            : groupMap.bySubgraph.get(groupRef.subgraphId)?.get(ref.id);
         if (!group) return null;
         const dataKey = `group-${ref.stableKey}`;
         const isTarget = dataKey === targetDataKey;
-        const isCollapsed = collapsedItems[toStableStateKey(ref.stableKey)] ?? false;
+        const isCollapsed = collapsedItems[ref.stableKey] ?? false;
         const isAncestorOfTarget = targetAncestors.groupIds.has(ref.stableKey);
         const canToggleCollapse = !isTarget && !isAncestorOfTarget;
         const bgColor = hexToRgba(group.color, 0.15);
@@ -1565,7 +1604,23 @@ export function RepositionOverlay({
         <div data-reposition-footer="root" className="h-10" />
       </RepositionScrollContainer>
 
-      <RepositionOverlayActions onCancel={onCancel} onDone={handleDone} />
+      <FullscreenModalActions
+        zIndex={2301}
+        actions={[
+          {
+            key: "cancel",
+            label: "Cancel",
+            onClick: onCancel,
+            variant: "secondary"
+          },
+          {
+            key: "done",
+            label: "Done",
+            onClick: handleDone,
+            variant: "primary"
+          }
+        ]}
+      />
     </div>,
     document.body,
   );

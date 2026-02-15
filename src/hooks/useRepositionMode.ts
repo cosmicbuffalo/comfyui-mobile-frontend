@@ -1,6 +1,6 @@
 import { useCallback, useState } from 'react';
 import { useWorkflowStore } from '@/hooks/useWorkflow';
-import { makeLocationPointer, type MobileLayout } from '@/utils/mobileLayout';
+import type { ItemRef, MobileLayout } from '@/utils/mobileLayout';
 
 export type RepositionTarget =
   | { type: 'node'; id: number }
@@ -26,6 +26,7 @@ export interface UseRepositionModeReturn {
 
 export function useRepositionMode(): UseRepositionModeReturn {
   const setMobileLayout = useWorkflowStore((s) => s.setMobileLayout);
+  const mobileLayout = useWorkflowStore((s) => s.mobileLayout);
   const prepareRepositionScrollTarget = useWorkflowStore(
     (s) => s.prepareRepositionScrollTarget,
   );
@@ -35,16 +36,37 @@ export function useRepositionMode(): UseRepositionModeReturn {
   const [initialViewportAnchor, setInitialViewportAnchor] =
     useState<RepositionViewportAnchor | null>(null);
 
+  const resolveGroupLayoutKey = useCallback(
+    (groupId: number, subgraphId: string | null): string | null => {
+      const visit = (refs: ItemRef[], currentSubgraphId: string | null): string | null => {
+        for (const ref of refs) {
+          if (ref.type === 'group') {
+            if (ref.id === groupId && currentSubgraphId === subgraphId) {
+              return ref.stableKey;
+            }
+            const nested = visit(mobileLayout.groups[ref.stableKey] ?? [], currentSubgraphId);
+            if (nested) return nested;
+            continue;
+          }
+          if (ref.type === 'subgraph') {
+            const nested = visit(mobileLayout.subgraphs[ref.id] ?? [], ref.id);
+            if (nested) return nested;
+          }
+        }
+        return null;
+      };
+      return visit(mobileLayout.root, null);
+    },
+    [mobileLayout]
+  );
+
   const openOverlay = useCallback((target: RepositionTarget) => {
     let selector: string;
     if (target.type === 'node') {
       selector = `[data-reposition-item="node-${target.id}"]`;
     } else if (target.type === 'group') {
-      const groupKey = makeLocationPointer({
-        type: 'group',
-        groupId: target.id,
-        subgraphId: target.subgraphId ?? null
-      });
+      const groupKey = resolveGroupLayoutKey(target.id, target.subgraphId ?? null);
+      if (!groupKey) return;
       selector = `[data-reposition-item="group-${groupKey}"]`;
     } else {
       selector = `[data-reposition-item="subgraph-${target.id}"]`;
@@ -55,7 +77,7 @@ export function useRepositionMode(): UseRepositionModeReturn {
     );
     setInitialTarget(target);
     setOverlayOpen(true);
-  }, []);
+  }, [resolveGroupLayoutKey]);
 
   const commitAndClose = useCallback((
     newLayout: MobileLayout,
@@ -77,11 +99,8 @@ export function useRepositionMode(): UseRepositionModeReturn {
         if (scrollTarget.type === 'node') {
           selector = `[data-reposition-item="node-${scrollTarget.id}"]`;
         } else if (scrollTarget.type === 'group') {
-          const groupKey = makeLocationPointer({
-            type: 'group',
-            groupId: scrollTarget.id,
-            subgraphId: scrollTarget.subgraphId ?? null
-          });
+          const groupKey = resolveGroupLayoutKey(scrollTarget.id, scrollTarget.subgraphId ?? null);
+          if (!groupKey) return;
           selector = `[data-reposition-item="group-${groupKey}"]`;
         } else {
           selector = `[data-reposition-item="subgraph-${scrollTarget.id}"]`;
@@ -106,7 +125,7 @@ export function useRepositionMode(): UseRepositionModeReturn {
         }
       });
     });
-  }, [prepareRepositionScrollTarget, setMobileLayout]);
+  }, [prepareRepositionScrollTarget, resolveGroupLayoutKey, setMobileLayout]);
 
   const cancelOverlay = useCallback(() => {
     setOverlayOpen(false);

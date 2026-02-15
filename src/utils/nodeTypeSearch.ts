@@ -12,6 +12,28 @@ interface NodeTypeSearchFields {
   pack?: string;
 }
 
+function normalizeNodeTypeText(value: unknown): string | null {
+  if (value == null) return null;
+  const text = String(value).trim();
+  if (!text) return null;
+  const lowered = text.toLowerCase();
+  if (lowered === 'null' || lowered === 'undefined') return null;
+  return text;
+}
+
+// Match Comfy frontend fallback behavior: display_name -> name -> class/type key.
+export function resolveNodeTypeDisplayName(
+  def: { display_name?: unknown; name?: unknown } | null | undefined,
+  classType: string
+): string {
+  return (
+    normalizeNodeTypeText(def?.display_name) ??
+    normalizeNodeTypeText(def?.name) ??
+    normalizeNodeTypeText(classType) ??
+    classType
+  );
+}
+
 export function searchAndSortNodeTypes<T>(
   items: T[],
   query: string,

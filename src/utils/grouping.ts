@@ -161,7 +161,7 @@ export function buildNestedList(
     return state[stableKey] ?? fallback;
   };
   const groupStateKey = (subgraphId: string | null, groupId: number): string =>
-    makeLocationPointer({ type: 'group', groupId, subgraphId });
+    subgraphId == null ? `legacy-group-root-${groupId}` : `legacy-group-${subgraphId}-${groupId}`;
 
   const groups = workflow.groups ?? [];
   const subgraphs = workflow.definitions?.subgraphs ?? [];
@@ -543,7 +543,7 @@ export function buildNestedListFromLayout(
         visitedGroups.add(ref.stableKey);
         count += countNodesInRefs(
           layout.groups[ref.stableKey] ?? [],
-          ref.subgraphId,
+          currentSubgraphId,
           visitedGroups,
           visitedSubgraphs
         );
@@ -609,8 +609,8 @@ export function buildNestedListFromLayout(
         if (visitedGroups.has(ref.stableKey)) continue;
 
         let group: WorkflowGroup | undefined;
-        if (ref.subgraphId) {
-          group = subgraphGroupBySubgraph.get(ref.subgraphId)?.get(ref.id);
+        if (parentSubgraphId) {
+          group = subgraphGroupBySubgraph.get(parentSubgraphId)?.get(ref.id);
         }
         group ??= rootGroupById.get(ref.id);
         if (!group) {
@@ -629,16 +629,16 @@ export function buildNestedListFromLayout(
         visitedGroups.add(ref.stableKey);
         const children = isCollapsed
           ? []
-          : buildItems(childRefs, ref.id, ref.subgraphId, visitedGroups, visitedSubgraphs);
+          : buildItems(childRefs, ref.id, parentSubgraphId, visitedGroups, visitedSubgraphs);
         visitedGroups.delete(ref.stableKey);
 
         items.push({
           type: 'group',
           group,
           stableKey: ref.stableKey,
-          nodeCount: countNodesInRefs(childRefs, ref.subgraphId),
+          nodeCount: countNodesInRefs(childRefs, parentSubgraphId),
           isCollapsed,
-          subgraphId: ref.subgraphId,
+          subgraphId: parentSubgraphId,
           children
         });
         continue;

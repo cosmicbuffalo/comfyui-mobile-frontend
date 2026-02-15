@@ -82,7 +82,7 @@ export function collectLayoutHiddenState(
         options,
         {
           parentHidden: groupHidden,
-          parentSubgraphId: ref.subgraphId,
+          parentSubgraphId,
           visitedGroups,
           visitedSubgraphs,
           hiddenNodeKeys,

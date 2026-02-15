@@ -1,4 +1,5 @@
 import type { PointerEvent as ReactPointerEvent, RefObject } from 'react';
+import { PlusIcon } from '@/components/icons';
 
 interface ConnectionRowProps {
   direction: 'input' | 'output';
@@ -38,6 +39,7 @@ export function ConnectionRow({
   const isInput = direction === 'input';
   const isDisabled = isInput ? (!hasConnection && !isEmptyRequiredInput) : false;
   const isInactiveOutput = !isInput && !hasConnection;
+  const plusIconClass = sizeClass.includes('w-7') ? 'w-3 h-3' : 'w-3.5 h-3.5';
 
   return (
     <>
@@ -67,23 +69,24 @@ export function ConnectionRow({
         ref={buttonRef}
         className={`
           flex items-center justify-center rounded-full font-medium box-border
-          ${isInput ? 'border-2' : ''}
+          border-2
           ${sizeClass} flex-shrink-0
           transition-opacity
           ${typeClass}
           ${isInput && isEmptyRequiredInput ? 'opacity-100 cursor-pointer border-red-500' : 'border-transparent'}
+          ${!isInput && isInactiveOutput ? 'border-dashed border-gray-400/70' : ''}
           ${isDisabled ? 'opacity-40 cursor-not-allowed' : ''}
-          ${!isDisabled && isInactiveOutput ? 'opacity-40 cursor-pointer active:scale-95' : ''}
+          ${!isDisabled && isInactiveOutput ? 'opacity-50 cursor-pointer active:scale-95' : ''}
           ${!isDisabled && !isInactiveOutput ? 'opacity-100 cursor-pointer active:scale-95' : ''}
         `}
       >
         {isInput ? (
           <>
             {hasConnection && <span className={arrowClass}>←</span>}
-            {isEmptyRequiredInput && !hasConnection && <span className={arrowClass}>+</span>}
+            {!hasConnection && <PlusIcon className={plusIconClass} />}
           </>
         ) : (
-          hasConnection && <span className={arrowClass}>→</span>
+          hasConnection ? <span className={arrowClass}>→</span> : <PlusIcon className={plusIconClass} />
         )}
       </button>
 

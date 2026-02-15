@@ -42,15 +42,16 @@ export function NodeCardConnections({
               Inputs
             </div>
             <div className="flex flex-col gap-1.5">
-              {inputs.map((input) => {
-                const originalIdx = allInputs.findIndex((item) => item.name === input.name);
+              {inputs.map((input, visibleIdx) => {
+                const originalIdx = allInputs.indexOf(input);
+                const slotIndex = originalIdx >= 0 ? originalIdx : visibleIdx;
                 return (
                   <ConnectionButton
-                    key={`input-${input.name}`}
+                    key={`input-${slotIndex}`}
                     slot={input}
                     nodeId={nodeId}
                     direction="input"
-                    slotIndex={originalIdx}
+                    slotIndex={slotIndex}
                     isRequired={requiredInputNames.has(input.name)}
                   />
                 );
@@ -67,15 +68,16 @@ export function NodeCardConnections({
               Outputs
             </div>
             <div className="flex flex-col gap-1.5 w-full items-end">
-              {outputs.map((output) => {
-                const originalIdx = allOutputs.findIndex((item) => item.name === output.name);
+              {outputs.map((output, visibleIdx) => {
+                const originalIdx = allOutputs.indexOf(output);
+                const slotIndex = originalIdx >= 0 ? originalIdx : visibleIdx;
                 return (
                   <ConnectionButton
-                    key={`output-${originalIdx}`}
+                    key={`output-${slotIndex}`}
                     slot={output}
                     nodeId={nodeId}
                     direction="output"
-                    slotIndex={originalIdx}
+                    slotIndex={slotIndex}
                   />
                 );
               })}

@@ -199,6 +199,11 @@ export const ConnectionButton = memo(function ConnectionButton({
       longPressTriggeredRef.current = false;
       return;
     }
+    // Empty output: open connection modal on single click.
+    if (direction === 'output' && !hasConnection) {
+      setConnectionModalOpen(true);
+      return;
+    }
     // Empty required input: open connection modal
     if (isEmptyRequiredInput) {
       setConnectionModalOpen(true);

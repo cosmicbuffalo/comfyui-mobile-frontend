@@ -3,6 +3,7 @@ import { useWorkflowStore } from '@/hooks/useWorkflow';
 import {
   findCompatibleSourceNodes,
   findCompatibleNodeTypesForInput,
+  findCompatibleNodeTypesForOutput,
   findCompatibleTargetNodesForOutput
 } from '@/utils/connectionUtils';
 import { CheckIcon, PlusIcon } from '@/components/icons';
@@ -13,12 +14,13 @@ import {
   normalizeSearchText,
   prettyPackName
 } from '@/utils/search';
-import { searchAndSortNodeTypes } from '@/utils/nodeTypeSearch';
+import { resolveNodeTypeDisplayName, searchAndSortNodeTypes } from '@/utils/nodeTypeSearch';
 import { ConnectionSearchResult } from './ConnectionModal/SearchResult';
 import { SearchActionModal } from './SearchActionModal';
 import { NodeTypeSearchResult } from './NodeTypeSearchResult';
 import { SearchEmptyState } from './SearchEmptyState';
 import { Dialog } from './Dialog';
+import { FullscreenModalActions } from './FullscreenModalActions';
 
 interface ConnectionModalBaseProps {
   isOpen: boolean;
@@ -56,6 +58,14 @@ interface OutputCandidate {
   score: number;
 }
 
+interface OutputNodeCandidate {
+  nodeId: number;
+  displayName: string;
+  pack: string;
+  score: number;
+  inputs: OutputCandidate[];
+}
+
 function makeOutputSelectionKey(nodeId: number, inputIndex: number): string {
   return `${nodeId}:${inputIndex}`;
 }
@@ -74,6 +84,7 @@ export function ConnectionModal(props: ConnectionModalProps) {
   const nodeTypes = useWorkflowStore((s) => s.nodeTypes);
   const connectNodes = useWorkflowStore((s) => s.connectNodes);
   const disconnectInput = useWorkflowStore((s) => s.disconnectInput);
+  const addNode = useWorkflowStore((s) => s.addNode);
   const addNodeAndConnect = useWorkflowStore((s) => s.addNodeAndConnect);
   const scrollToNode = useWorkflowStore((s) => s.scrollToNode);
 
@@ -91,6 +102,8 @@ export function ConnectionModal(props: ConnectionModalProps) {
     return selected;
   });
   const [showOverwriteConfirm, setShowOverwriteConfirm] = useState(false);
+  const [multiInputPickerNodeId, setMultiInputPickerNodeId] = useState<number | null>(null);
+  const [multiInputPickerSelection, setMultiInputPickerSelection] = useState<Set<string>>(new Set());
 
   const currentNodeStableKey = useMemo(() => {
     if (!workflow) return null;
@@ -99,8 +112,9 @@ export function ConnectionModal(props: ConnectionModalProps) {
   }, [nodeId, workflow]);
 
   const getStableKeyForNodeId = (targetNodeId: number): string | null => {
-    if (!workflow) return null;
-    const node = workflow.nodes.find((entry) => entry.id === targetNodeId);
+    const latestWorkflow = useWorkflowStore.getState().workflow;
+    if (!latestWorkflow) return null;
+    const node = latestWorkflow.nodes.find((entry) => entry.id === targetNodeId);
     return node?.stableKey ?? null;
   };
 
@@ -142,14 +156,22 @@ export function ConnectionModal(props: ConnectionModalProps) {
     return findCompatibleNodeTypesForInput(nodeTypes, props.inputType).map((item, index) => ({ ...item, index }));
   }, [mode, nodeTypes, props]);
 
+  const compatibleOutputTypes = useMemo(() => {
+    if (mode !== 'output' || !nodeTypes) return [];
+    return findCompatibleNodeTypesForOutput(nodeTypes, props.outputType).map((item, index) => ({ ...item, index }));
+  }, [mode, nodeTypes, props]);
+
   const filteredTypes = useMemo(() => {
     if (mode !== 'input') return [];
     return searchAndSortNodeTypes(
       compatibleTypes,
       searchQuery,
       (item) => {
-        const displayName = String(item.def.display_name ?? item.def.name ?? item.typeName ?? '');
-        const typeName = String(item.def.name ?? item.typeName ?? '');
+        const displayName = resolveNodeTypeDisplayName(item.def, item.typeName);
+        const typeName = resolveNodeTypeDisplayName(
+          { display_name: item.def.name, name: item.typeName },
+          item.typeName
+        );
         const pack = prettyPackName(item.def.python_module || (item.def.category?.split('/')[0] || 'Core'));
         return {
           displayName,
@@ -161,6 +183,29 @@ export function ConnectionModal(props: ConnectionModalProps) {
       (item) => item.index
     );
   }, [mode, compatibleTypes, searchQuery]);
+
+  const filteredOutputTypes = useMemo(() => {
+    if (mode !== 'output') return [];
+    return searchAndSortNodeTypes(
+      compatibleOutputTypes,
+      searchQuery,
+      (item) => {
+        const displayName = resolveNodeTypeDisplayName(item.def, item.typeName);
+        const typeName = resolveNodeTypeDisplayName(
+          { display_name: item.def.name, name: item.typeName },
+          item.typeName
+        );
+        const pack = prettyPackName(item.def.python_module || (item.def.category?.split('/')[0] || 'Core'));
+        return {
+          displayName,
+          typeName,
+          category: String(item.def.category ?? ''),
+          pack
+        };
+      },
+      (item) => item.index
+    );
+  }, [mode, compatibleOutputTypes, searchQuery]);
 
   const outputCandidates = useMemo<OutputCandidate[]>(() => {
     if (mode !== 'output' || !workflow || !nodeTypes) return [];
@@ -250,6 +295,27 @@ export function ConnectionModal(props: ConnectionModalProps) {
     return map;
   }, [outputCandidates]);
 
+  const outputNodeCandidates = useMemo<OutputNodeCandidate[]>(() => {
+    if (mode !== 'output') return [];
+    const byNode = new Map<number, OutputNodeCandidate>();
+    for (const candidate of outputCandidates) {
+      const existing = byNode.get(candidate.nodeId);
+      if (existing) {
+        existing.inputs.push(candidate);
+        if (candidate.score > existing.score) existing.score = candidate.score;
+        continue;
+      }
+      byNode.set(candidate.nodeId, {
+        nodeId: candidate.nodeId,
+        displayName: candidate.displayName,
+        pack: candidate.pack,
+        score: candidate.score,
+        inputs: [candidate]
+      });
+    }
+    return Array.from(byNode.values()).sort((a, b) => b.score - a.score || a.nodeId - b.nodeId);
+  }, [mode, outputCandidates]);
+
   const outputSelectionHasChanges = useMemo(() => {
     if (mode !== 'output') return false;
     return !areKeySetsEqual(selectedOutputTargetKeys, initialOutputSelection);
@@ -295,6 +361,36 @@ export function ConnectionModal(props: ConnectionModalProps) {
     }
   };
 
+  const handleAddNewNodeFromOutput = (
+    typeName: string,
+    suggestedInputIndex: number,
+    suggestedInputType: string
+  ) => {
+    if (mode !== 'output') return;
+    if (!currentNodeStableKey) return;
+
+    const newNodeId = addNode(typeName, {
+      nearNodeStableKey: currentNodeStableKey,
+    });
+    if (newNodeId === null) return;
+
+    const newStableKey = getStableKeyForNodeId(newNodeId);
+    if (!newStableKey) return;
+
+    const latestWorkflow = useWorkflowStore.getState().workflow;
+    const newNode = latestWorkflow?.nodes.find((node) => node.id === newNodeId);
+    if (!newNode || !currentNodeStableKey) return;
+
+    const compatibleInputIndex = newNode.inputs.findIndex((input) => input.type.toUpperCase() === suggestedInputType.toUpperCase());
+    const inputIndex = compatibleInputIndex >= 0 ? compatibleInputIndex : suggestedInputIndex;
+    const inputType = newNode.inputs[inputIndex]?.type;
+    if (inputType == null) return;
+
+    connectNodes(currentNodeStableKey, props.outputIndex, newStableKey, inputIndex, inputType);
+    onClose();
+    scrollToNode(newStableKey);
+  };
+
   const toggleOutputTargetSelection = (nodeIdToToggle: number, inputIndexToToggle: number) => {
     const key = makeOutputSelectionKey(nodeIdToToggle, inputIndexToToggle);
     setSelectedOutputTargetKeys((prev) => {
@@ -306,6 +402,66 @@ export function ConnectionModal(props: ConnectionModalProps) {
       }
       return next;
     });
+  };
+
+  const openMultiInputPicker = (nodeCandidate: OutputNodeCandidate) => {
+    const initialSelection = new Set<string>();
+    for (const candidate of nodeCandidate.inputs) {
+      const key = makeOutputSelectionKey(candidate.nodeId, candidate.inputIndex);
+      if (selectedOutputTargetKeys.has(key)) {
+        initialSelection.add(key);
+      }
+    }
+    setMultiInputPickerNodeId(nodeCandidate.nodeId);
+    setMultiInputPickerSelection(initialSelection);
+  };
+
+  const closeMultiInputPicker = () => {
+    setMultiInputPickerNodeId(null);
+    setMultiInputPickerSelection(new Set());
+  };
+
+  const toggleMultiInputPickerSelection = (selectionKey: string) => {
+    setMultiInputPickerSelection((prev) => {
+      const next = new Set(prev);
+      if (next.has(selectionKey)) {
+        next.delete(selectionKey);
+      } else {
+        next.add(selectionKey);
+      }
+      return next;
+    });
+  };
+
+  const applyMultiInputPickerSelection = () => {
+    if (multiInputPickerNodeId == null) return;
+    const nodeCandidate = outputNodeCandidates.find((candidate) => candidate.nodeId === multiInputPickerNodeId);
+    if (!nodeCandidate) {
+      closeMultiInputPicker();
+      return;
+    }
+    const nodeKeys = nodeCandidate.inputs.map((input) => makeOutputSelectionKey(input.nodeId, input.inputIndex));
+    setSelectedOutputTargetKeys((prev) => {
+      const next = new Set(prev);
+      for (const key of nodeKeys) {
+        next.delete(key);
+      }
+      for (const key of multiInputPickerSelection) {
+        next.add(key);
+      }
+      return next;
+    });
+    closeMultiInputPicker();
+  };
+
+  const handleOutputNodeClick = (nodeCandidate: OutputNodeCandidate) => {
+    if (nodeCandidate.inputs.length > 1) {
+      openMultiInputPicker(nodeCandidate);
+      return;
+    }
+    const onlyInput = nodeCandidate.inputs[0];
+    if (!onlyInput) return;
+    toggleOutputTargetSelection(onlyInput.nodeId, onlyInput.inputIndex);
   };
 
   const applyOutputSelection = () => {
@@ -340,10 +496,10 @@ export function ConnectionModal(props: ConnectionModalProps) {
 
   const modalTitle = mode === 'input'
     ? (currentAction === 'pick' ? `Connect ${props.inputName}` : 'Add new node')
-    : `Connect ${props.outputName}`;
+    : (currentAction === 'pick' ? `Connect ${props.outputName}` : 'Add new node');
   const searchPlaceholder = mode === 'input'
     ? (currentAction === 'pick' ? 'Search existing nodes...' : 'Search node types...')
-    : 'Search target nodes...';
+    : (currentAction === 'pick' ? 'Search target nodes...' : 'Search node types...');
 
   const renderInputPickContent = () => {
     if (mode !== 'input') return null;
@@ -382,13 +538,13 @@ export function ConnectionModal(props: ConnectionModalProps) {
 
         <button
           type="button"
-          className="w-full text-left rounded-xl bg-blue-50 px-4 py-3 flex items-center gap-3 hover:bg-blue-100 active:scale-[0.998] transition"
+          className="w-full text-left rounded-xl border-2 border-gray-700 bg-white px-4 py-3 flex items-center gap-3 hover:bg-gray-100 active:scale-[0.998] transition shadow-sm"
           onClick={() => { setCurrentAction('addNew'); setSearchQuery(''); }}
         >
-          <div className="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center flex-shrink-0">
-            <PlusIcon className="w-4 h-4 text-blue-600" />
+          <div className="w-8 h-8 rounded-full bg-gray-800 flex items-center justify-center flex-shrink-0">
+            <PlusIcon className="w-4 h-4 text-white" />
           </div>
-          <span className="text-sm font-semibold text-blue-700">Add new node...</span>
+          <span className="text-sm font-semibold text-gray-900">Add new node...</span>
         </button>
 
         {inputProps.currentlyConnectedNodeId !== null && (
@@ -419,7 +575,7 @@ export function ConnectionModal(props: ConnectionModalProps) {
           return (
             <NodeTypeSearchResult
               key={typeName}
-              title={String(def.display_name)}
+              title={resolveNodeTypeDisplayName(def, typeName)}
               subtitle={pack || 'Core'}
               outputType={outputType}
               outputName={String(outputName)}
@@ -438,47 +594,47 @@ export function ConnectionModal(props: ConnectionModalProps) {
     const outputProps = props;
     return (
       <div className="px-3 pt-3 pb-20 flex flex-col gap-2">
-        {outputCandidates.map((candidate) => {
-          const key = makeOutputSelectionKey(candidate.nodeId, candidate.inputIndex);
-          const isSelected = selectedOutputTargetKeys.has(key);
+        {outputNodeCandidates.map((nodeCandidate) => {
+          const selectedCount = nodeCandidate.inputs.filter((candidate) =>
+            selectedOutputTargetKeys.has(makeOutputSelectionKey(candidate.nodeId, candidate.inputIndex))
+          ).length;
+          const isSelected = selectedCount > 0;
+          const hasExistingLink = nodeCandidate.inputs.some((candidate) => candidate.hasExistingLink);
+          const hasConnectedFromThisOutput = nodeCandidate.inputs.some((candidate) => candidate.currentlyConnectedFromThisOutput);
+          const subtitle = nodeCandidate.inputs.length > 1
+            ? `${nodeCandidate.inputs.length} compatible inputs`
+            : `${outputProps.outputName} -> ${nodeCandidate.inputs[0]?.inputName ?? 'Input'}`;
           return (
             <button
-              key={key}
+              key={`output-node-${nodeCandidate.nodeId}`}
               type="button"
               className={`w-full text-left rounded-xl border px-4 py-3 shadow-sm transition ${
                 isSelected
                   ? 'border-blue-300 bg-blue-50'
                   : 'border-gray-200 bg-white hover:border-gray-300 active:scale-[0.998]'
               }`}
-              onClick={() => toggleOutputTargetSelection(candidate.nodeId, candidate.inputIndex)}
+              onClick={() => handleOutputNodeClick(nodeCandidate)}
             >
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0 flex-1">
                   <div className="text-sm font-semibold text-gray-900 flex items-center gap-2 min-w-0">
                     <span className="truncate">
-                      {candidate.displayName} <span className="text-gray-400">#{candidate.nodeId}</span>
+                      {nodeCandidate.displayName} <span className="text-gray-400">#{nodeCandidate.nodeId}</span>
                     </span>
-                    {candidate.currentlyConnectedFromThisOutput && (
+                    {hasConnectedFromThisOutput && (
                       <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 text-[10px] font-medium shrink-0">
                         <CheckIcon className="w-3 h-3" />
                         Connected
                       </span>
                     )}
-                    {candidate.hasExistingLink && (
+                    {hasExistingLink && (
                       <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 text-[10px] font-medium shrink-0">
                         Already linked
                       </span>
                     )}
                   </div>
-                  <div className="text-xs text-gray-500 truncate mt-0.5">{candidate.pack || 'Core'}</div>
-                  <div className="text-xs text-gray-700 mt-1 truncate">
-                    {outputProps.outputName} {'->'} {candidate.inputName}
-                  </div>
-                  {candidate.hasExistingLink && candidate.existingSourceLabel && (
-                    <div className="text-xs text-amber-700 mt-1 truncate">
-                      Currently from {candidate.existingSourceLabel}
-                    </div>
-                  )}
+                  <div className="text-xs text-gray-500 truncate mt-0.5">{nodeCandidate.pack || 'Core'}</div>
+                  <div className="text-xs text-gray-700 mt-1 truncate">{subtitle}</div>
                 </div>
                 <div className={`w-5 h-5 rounded border flex items-center justify-center ${isSelected ? 'bg-blue-600 border-blue-600' : 'bg-white border-gray-300'}`}>
                   {isSelected && <CheckIcon className="w-3 h-3 text-white" />}
@@ -488,9 +644,47 @@ export function ConnectionModal(props: ConnectionModalProps) {
           );
         })}
 
-        {outputCandidates.length === 0 && (
+        {outputNodeCandidates.length === 0 && (
           <SearchEmptyState query={searchQuery} message="No matching target nodes found" />
         )}
+
+        <button
+          type="button"
+          className="w-full text-left rounded-xl border-2 border-gray-700 bg-white px-4 py-3 flex items-center gap-3 hover:bg-gray-100 active:scale-[0.998] transition shadow-sm"
+          onClick={() => { setCurrentAction('addNew'); setSearchQuery(''); }}
+        >
+          <div className="w-8 h-8 rounded-full bg-gray-800 flex items-center justify-center flex-shrink-0">
+            <PlusIcon className="w-4 h-4 text-white" />
+          </div>
+          <span className="text-sm font-semibold text-gray-900">Add new node...</span>
+        </button>
+      </div>
+    );
+  };
+
+  const renderOutputAddNewContent = () => {
+    if (mode !== 'output') return null;
+    const outputProps = props;
+    return (
+      <div className="px-3 pt-3 pb-20 flex flex-col gap-2">
+        {filteredOutputTypes.length === 0 && (
+          <SearchEmptyState query={searchQuery} message="No matching node types found" />
+        )}
+        {filteredOutputTypes.map(({ typeName, def, inputIndex, inputType, inputName }) => {
+          const pack = prettyPackName(String(def.python_module ?? def.category?.split('/')[0] ?? 'Core'));
+          return (
+            <NodeTypeSearchResult
+              key={typeName}
+              title={resolveNodeTypeDisplayName(def, typeName)}
+              subtitle={pack || 'Core'}
+              outputType={outputProps.outputType}
+              outputName={outputProps.outputName}
+              inputName={String(inputName)}
+              titleClassName="text-sm font-medium text-gray-900 truncate"
+              onSelect={() => handleAddNewNodeFromOutput(typeName, inputIndex, inputType)}
+            />
+          );
+        })}
       </div>
     );
   };
@@ -503,26 +697,30 @@ export function ConnectionModal(props: ConnectionModalProps) {
       searchQuery={searchQuery}
       onSearchQueryChange={setSearchQuery}
       searchPlaceholder={searchPlaceholder}
-      onBack={mode === 'input' && currentAction === 'addNew' ? () => { setCurrentAction('pick'); setSearchQuery(''); } : undefined}
-      footer={mode === 'output' ? (
-        <div className="flex-shrink-0 h-12 bg-white border-t border-gray-200 flex items-center justify-end gap-2 px-3">
-          <button
-            type="button"
-            className="px-3 py-1.5 rounded-lg text-sm text-gray-700 border border-gray-300 hover:bg-gray-50"
-            onClick={onClose}
-          >
-            Cancel
-          </button>
-          <button
-            type="button"
-            className="px-3 py-1.5 rounded-lg text-sm text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
-            onClick={handleSubmitOutput}
-            disabled={!outputSelectionHasChanges}
-          >
-            Apply
-          </button>
-        </div>
-      ) : undefined}
+      onBack={currentAction === 'addNew' ? () => { setCurrentAction('pick'); setSearchQuery(''); } : undefined}
+      footer={(
+        <FullscreenModalActions
+          zIndex={2201}
+          actions={[
+            {
+              key: 'cancel',
+              label: 'Cancel',
+              onClick: onClose,
+              variant: 'secondary'
+            },
+            ...(mode === 'output'
+              && currentAction === 'pick'
+              ? [{
+                  key: 'apply',
+                  label: 'Apply',
+                  onClick: handleSubmitOutput,
+                  variant: 'primary' as const,
+                  disabled: !outputSelectionHasChanges
+                }]
+              : [])
+          ]}
+        />
+      )}
     >
       <div className="flex-1 overflow-auto bg-white">
         {mode === 'input' ? (
@@ -531,10 +729,74 @@ export function ConnectionModal(props: ConnectionModalProps) {
           ) : (
             renderInputAddNewContent()
           )
-        ) : (
+        ) : currentAction === 'pick' ? (
           renderOutputSelectionContent()
+        ) : (
+          renderOutputAddNewContent()
         )}
       </div>
+
+      {mode === 'output' && multiInputPickerNodeId != null && (
+        <div
+          className="fixed inset-0 z-[2250] bg-black/40 flex items-center justify-center p-4"
+          onClick={closeMultiInputPicker}
+          role="dialog"
+          aria-modal="true"
+        >
+          <div
+            className="w-full max-w-sm bg-white border border-gray-200 rounded-xl shadow-lg overflow-hidden"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="px-4 py-3 text-sm font-semibold text-gray-700 border-b border-gray-100">
+              Select compatible inputs
+            </div>
+            <div className="max-h-[45vh] overflow-y-auto">
+              {outputNodeCandidates
+                .find((candidate) => candidate.nodeId === multiInputPickerNodeId)
+                ?.inputs.map((candidate) => {
+                  const key = makeOutputSelectionKey(candidate.nodeId, candidate.inputIndex);
+                  const selected = multiInputPickerSelection.has(key);
+                  return (
+                    <button
+                      key={`input-picker-${key}`}
+                      type="button"
+                      className={`w-full flex items-center justify-between gap-3 text-left px-4 py-3 text-sm ${
+                        selected ? 'bg-blue-50' : 'hover:bg-gray-50'
+                      }`}
+                      onClick={() => toggleMultiInputPickerSelection(key)}
+                    >
+                      <span className="min-w-0">
+                        <span className="block text-gray-900 truncate">{candidate.inputName}</span>
+                        <span className="block text-xs text-gray-500 truncate">{candidate.inputType}</span>
+                      </span>
+                      <span className={`w-5 h-5 rounded border flex items-center justify-center shrink-0 ${
+                        selected ? 'bg-blue-600 border-blue-600' : 'bg-white border-gray-300'
+                      }`}>
+                        {selected ? <CheckIcon className="w-3 h-3 text-white" /> : null}
+                      </span>
+                    </button>
+                  );
+                })}
+            </div>
+            <div className="px-3 py-3 border-t border-gray-100 flex justify-end gap-2">
+              <button
+                type="button"
+                className="px-3 py-2 rounded-lg text-sm font-medium text-gray-600 hover:bg-gray-100"
+                onClick={closeMultiInputPicker}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="px-3 py-2 rounded-lg text-sm font-medium text-white bg-blue-600 hover:bg-blue-700"
+                onClick={applyMultiInputPickerSelection}
+              >
+                Apply
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {mode === 'output' && showOverwriteConfirm && (
         <Dialog

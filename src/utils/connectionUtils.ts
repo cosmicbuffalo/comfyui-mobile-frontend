@@ -98,9 +98,70 @@ export function findCompatibleNodeTypesForInput(
   return results;
 }
 
+function getConnectableInputSlots(
+  def: NodeTypeDefinition
+): Array<{ inputIndex: number; inputName: string; inputType: string }> {
+  const requiredInputs = def.input?.required ?? {};
+  const optionalInputs = def.input?.optional ?? {};
+  const requiredOrder = def.input_order?.required ?? Object.keys(requiredInputs);
+  const optionalOrder = def.input_order?.optional ?? Object.keys(optionalInputs);
+  const slots: Array<{ inputIndex: number; inputName: string; inputType: string }> = [];
+
+  const appendSlot = (name: string, value: unknown) => {
+    if (!Array.isArray(value) || value.length === 0) return;
+    const [typeOrOptions] = value;
+    // Ignore widget-only inputs to match addNode input construction.
+    if (Array.isArray(typeOrOptions)) return;
+    const normalized = String(typeOrOptions).toUpperCase();
+    if (["INT", "FLOAT", "BOOLEAN", "STRING"].includes(normalized)) return;
+    slots.push({
+      inputIndex: slots.length,
+      inputName: name,
+      inputType: String(typeOrOptions)
+    });
+  };
+
+  for (const name of requiredOrder) {
+    appendSlot(name, requiredInputs[name]);
+  }
+  for (const name of optionalOrder) {
+    appendSlot(name, optionalInputs[name]);
+  }
+
+  return slots;
+}
+
+/**
+ * Find node types from object_info that can consume a compatible input.
+ */
+export function findCompatibleNodeTypesForOutput(
+  nodeTypes: NodeTypes,
+  outputType: string
+): Array<{ typeName: string; def: NodeTypeDefinition; inputIndex: number; inputName: string; inputType: string }> {
+  const results: Array<{ typeName: string; def: NodeTypeDefinition; inputIndex: number; inputName: string; inputType: string }> = [];
+
+  for (const [typeName, def] of Object.entries(nodeTypes)) {
+    const connectableInputs = getConnectableInputSlots(def);
+    for (const input of connectableInputs) {
+      if (areTypesCompatibleStrict(outputType, input.inputType)) {
+        results.push({
+          typeName,
+          def,
+          inputIndex: input.inputIndex,
+          inputName: input.inputName,
+          inputType: input.inputType
+        });
+        break; // Only include first compatible input per type
+      }
+    }
+  }
+
+  return results;
+}
+
 /**
  * Find compatible target node inputs for a given source output slot.
- * Returns at most one compatible input per node (first match).
+ * Returns all compatible inputs per node.
  */
 export function findCompatibleTargetNodesForOutput(
   workflow: Workflow,
@@ -120,7 +181,6 @@ export function findCompatibleTargetNodesForOutput(
       const input = node.inputs[i];
       if (areTypesCompatibleStrict(output.type, input.type)) {
         results.push({ node, inputIndex: i });
-        break;
       }
     }
   }

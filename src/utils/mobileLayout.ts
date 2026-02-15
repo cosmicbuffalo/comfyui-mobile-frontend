@@ -12,9 +12,15 @@ export type ItemRef =
 export interface MobileLayout {
   root: ItemRef[];
   groups: Record<string, ItemRef[]>;
+  groupParents?: Record<string, GroupParentRef>;
   subgraphs: Record<string, ItemRef[]>;
   hiddenBlocks: Record<string, number[]>; // blockId -> nodeIds
 }
+
+export type GroupParentRef =
+  | { scope: 'root' }
+  | { scope: 'group'; groupKey: string }
+  | { scope: 'subgraph'; subgraphId: string };
 
 export type LocationPointer =
   | { type: 'node'; nodeId: number; subgraphId: string | null }
@@ -25,6 +31,7 @@ export function createEmptyMobileLayout(): MobileLayout {
   return {
     root: [],
     groups: {},
+    groupParents: {},
     subgraphs: {},
     hiddenBlocks: {}
   };
@@ -260,7 +267,7 @@ export function buildDefaultLayout(
     const sgRootItems: ItemRef[] = [];
     const groupKey = (groupId: number) =>
       sgGroupKeyById.get(groupId) ??
-      makeLocationPointer({ type: 'group', groupId, subgraphId: sg.id });
+      `legacy-group-${sg.id}-${groupId}`;
     const emitGroupChain = (groupId: number) => {
       const chain: number[] = [];
       const seen = new Set<number>();
@@ -281,10 +288,12 @@ export function buildDefaultLayout(
         const ref: ItemRef = { type: 'group', id, subgraphId: sg.id, stableKey };
         if (parentId == null) {
           sgRootItems.push(ref);
+          layout.groupParents![stableKey] = { scope: 'subgraph', subgraphId: sg.id };
         } else {
           const parentStableKey = groupKey(parentId);
           layout.groups[parentStableKey] ??= [];
           layout.groups[parentStableKey].push(ref);
+          layout.groupParents![stableKey] = { scope: 'group', groupKey: parentStableKey };
         }
         sgEmittedGroups.add(id);
       }
@@ -322,7 +331,7 @@ export function buildDefaultLayout(
     const rootGroupById = new Map(groups.map((group) => [group.id, group]));
   const rootGroupKey = (groupId: number) =>
     rootGroupKeyById.get(groupId) ??
-    makeLocationPointer({ type: 'group', groupId, subgraphId: null });
+    `legacy-group-root-${groupId}`;
   const emitRootGroupChain = (groupId: number) => {
     const chain: number[] = [];
     const seen = new Set<number>();
@@ -343,10 +352,12 @@ export function buildDefaultLayout(
       const ref: ItemRef = { type: 'group', id, subgraphId: null, stableKey };
       if (parentId == null) {
         rootItems.push(ref);
+        layout.groupParents![stableKey] = { scope: 'root' };
       } else {
         const parentStableKey = rootGroupKey(parentId);
         layout.groups[parentStableKey] ??= [];
         layout.groups[parentStableKey].push(ref);
+        layout.groupParents![stableKey] = { scope: 'group', groupKey: parentStableKey };
       }
       rootEmittedGroups.add(id);
     }
@@ -401,17 +412,32 @@ export function migrateFlatToLayout(
 ): MobileLayout {
   const groups = workflow.groups ?? [];
   const subgraphs = workflow.definitions?.subgraphs ?? [];
+  const makeLegacyGroupStableKey = (groupId: number, subgraphId: string | null): string =>
+    subgraphId == null ? `legacy-group-root-${groupId}` : `legacy-group-${subgraphId}-${groupId}`;
+  const resolveGroupStableKey = (groupId: number, subgraphId: string | null): string => {
+    if (subgraphId == null) {
+      const rootGroup = groups.find((group) => group.id === groupId);
+      return rootGroup?.stableKey ?? makeLegacyGroupStableKey(groupId, null);
+    }
+    const subgraph = subgraphs.find((sg) => sg.id === subgraphId);
+    const scopedGroup = subgraph?.groups?.find((group) => group.id === groupId);
+    return scopedGroup?.stableKey ?? makeLegacyGroupStableKey(groupId, subgraphId);
+  };
 
   const layout: MobileLayout = createEmptyMobileLayout();
 
   // Initialize containers
   for (const g of groups) {
-    layout.groups[makeLocationPointer({ type: 'group', groupId: g.id, subgraphId: null })] = [];
+    const stableKey = g.stableKey ?? makeLegacyGroupStableKey(g.id, null);
+    layout.groups[stableKey] = [];
+    layout.groupParents![stableKey] = { scope: 'root' };
   }
   for (const sg of subgraphs) {
     layout.subgraphs[sg.id] = [];
     for (const g of (sg.groups ?? [])) {
-      layout.groups[makeLocationPointer({ type: 'group', groupId: g.id, subgraphId: sg.id })] = [];
+      const stableKey = g.stableKey ?? makeLegacyGroupStableKey(g.id, sg.id);
+      layout.groups[stableKey] = [];
+      layout.groupParents![stableKey] = { scope: 'subgraph', subgraphId: sg.id };
     }
   }
 
@@ -459,10 +485,9 @@ export function migrateFlatToLayout(
     const groupId = nodeToGroup.get(nodeId);
     if (groupId !== undefined) {
       if (!emittedGroups.has(groupId)) {
-        const groupKey = makeLocationPointer({ type: 'group', groupId, subgraphId: null });
-        const group = groups.find((g) => g.id === groupId);
-        const stableKey = group?.stableKey ?? groupKey;
+        const stableKey = resolveGroupStableKey(groupId, null);
         layout.root.push({ type: 'group', id: groupId, subgraphId: null, stableKey });
+        layout.groupParents![stableKey] = { scope: 'root' };
         emittedGroups.add(groupId);
         // Add all group nodes in order
         const groupNodeIds = mobileNodeOrder.filter(
@@ -532,6 +557,7 @@ export function removeNodeFromLayout(layout: MobileLayout, nodeId: number): Mobi
   return {
     root: removeFromList(layout.root),
     groups: nextGroups,
+    groupParents: layout.groupParents ?? {},
     subgraphs: nextSubgraphs,
     hiddenBlocks: nextHiddenBlocks
   };
@@ -546,18 +572,43 @@ export function addNodeToLayout(
   container?: { groupId?: number; subgraphId?: string | null }
 ): MobileLayout {
   const ref: ItemRef = { type: 'node', id: nodeId };
+  const findGroupStableKey = (
+    groupId: number,
+    subgraphId: string | null
+  ): string | null => {
+    const scan = (
+      refs: ItemRef[],
+      currentSubgraphId: string | null
+    ): string | null => {
+      for (const item of refs) {
+        if (item.type === 'group' && item.id === groupId && currentSubgraphId === subgraphId) {
+          return item.stableKey;
+        }
+        if (item.type === 'group') {
+          const nested = scan(layout.groups[item.stableKey] ?? [], currentSubgraphId);
+          if (nested) return nested;
+          continue;
+        }
+        if (item.type === 'subgraph') {
+          const nested = scan(layout.subgraphs[item.id] ?? [], item.id);
+          if (nested) return nested;
+        }
+      }
+      return null;
+    };
+    return scan(layout.root, null);
+  };
 
   if (container?.subgraphId) {
     const subgraphItems = layout.subgraphs[container.subgraphId] ?? [];
     if (container.groupId != null) {
-      const groupKey = makeLocationPointer({
-        type: 'group',
-        groupId: container.groupId,
-        subgraphId: container.subgraphId
-      });
-      const groupStableKey =
-        Object.keys(layout.groups).find((key) => key === groupKey) ??
-        groupKey;
+      const groupStableKey = findGroupStableKey(container.groupId, container.subgraphId);
+      if (!groupStableKey) {
+        return {
+          ...layout,
+          subgraphs: { ...layout.subgraphs, [container.subgraphId]: [...subgraphItems, ref] }
+        };
+      }
       const groupItems = layout.groups[groupStableKey] ?? [];
       return {
         ...layout,
@@ -571,14 +622,13 @@ export function addNodeToLayout(
   }
 
   if (container?.groupId != null) {
-    const groupKey = makeLocationPointer({
-      type: 'group',
-      groupId: container.groupId,
-      subgraphId: container.subgraphId ?? null
-    });
-    const groupStableKey =
-      Object.keys(layout.groups).find((key) => key === groupKey) ??
-      groupKey;
+    const groupStableKey = findGroupStableKey(container.groupId, container.subgraphId ?? null);
+    if (!groupStableKey) {
+      return {
+        ...layout,
+        root: [...layout.root, ref]
+      };
+    }
     const groupItems = layout.groups[groupStableKey] ?? [];
     return {
       ...layout,
@@ -600,10 +650,29 @@ export function removeGroupFromLayout(
   groupId: number,
   subgraphId: string | null = null
 ): MobileLayout {
-  return removeGroupFromLayoutByKey(
-    layout,
-    makeLocationPointer({ type: 'group', groupId, subgraphId })
-  );
+  const findGroupStableKey = (
+    refs: ItemRef[],
+    currentSubgraphId: string | null
+  ): string | null => {
+    for (const ref of refs) {
+      if (ref.type === 'group') {
+        if (ref.id === groupId && currentSubgraphId === subgraphId) {
+          return ref.stableKey;
+        }
+        const nested = findGroupStableKey(layout.groups[ref.stableKey] ?? [], currentSubgraphId);
+        if (nested) return nested;
+        continue;
+      }
+      if (ref.type === 'subgraph') {
+        const nested = findGroupStableKey(layout.subgraphs[ref.id] ?? [], ref.id);
+        if (nested) return nested;
+      }
+    }
+    return null;
+  };
+  const stableKey = findGroupStableKey(layout.root, null);
+  if (!stableKey) return layout;
+  return removeGroupFromLayoutByKey(layout, stableKey);
 }
 
 export function removeGroupFromLayoutByKey(
@@ -626,7 +695,10 @@ export function removeGroupFromLayoutByKey(
   };
 
   const nextGroups = { ...layout.groups };
+  const nextGroupParents = { ...(layout.groupParents ?? {}) };
+  const removedParent = nextGroupParents[groupStableKey];
   delete nextGroups[groupStableKey];
+  delete nextGroupParents[groupStableKey];
 
   // Check root
   let nextRoot = layout.root;
@@ -649,9 +721,19 @@ export function removeGroupFromLayoutByKey(
     }
   }
 
+  for (const child of groupChildren) {
+    if (child.type !== 'group') continue;
+    if (removedParent) {
+      nextGroupParents[child.stableKey] = removedParent;
+    } else {
+      delete nextGroupParents[child.stableKey];
+    }
+  }
+
   return {
     root: nextRoot,
     groups: nextGroups,
+    groupParents: nextGroupParents,
     subgraphs: nextSubgraphs,
     hiddenBlocks: layout.hiddenBlocks
   };
@@ -668,6 +750,7 @@ export function moveItemInLayout(
   toContainerId: ContainerId,
   toIndex: number
 ): MobileLayout {
+  const currentGroupParents = layout.groupParents ?? {};
   const getList = (l: MobileLayout, c: ContainerId): ItemRef[] => {
     if (c.scope === 'root') return l.root;
     if (c.scope === 'group') return l.groups[c.groupKey] ?? [];
@@ -678,6 +761,11 @@ export function moveItemInLayout(
     if (c.scope === 'root') return { ...l, root: items };
     if (c.scope === 'group') return { ...l, groups: { ...l.groups, [c.groupKey]: items } };
     return { ...l, subgraphs: { ...l.subgraphs, [c.subgraphId]: items } };
+  };
+  const parentRefFromContainer = (c: ContainerId): GroupParentRef => {
+    if (c.scope === 'root') return { scope: 'root' };
+    if (c.scope === 'group') return { scope: 'group', groupKey: c.groupKey };
+    return { scope: 'subgraph', subgraphId: c.subgraphId };
   };
 
   const sameContainer =
@@ -703,6 +791,16 @@ export function moveItemInLayout(
   const toList = [...getList(next, toContainerId)];
   toList.splice(toIndex, 0, item);
   next = setList(next, toContainerId, toList);
+
+  if (item.type === 'group') {
+    next = {
+      ...next,
+      groupParents: {
+        ...(next.groupParents ?? currentGroupParents),
+        [item.stableKey]: parentRefFromContainer(toContainerId)
+      }
+    };
+  }
 
   return next;
 }
