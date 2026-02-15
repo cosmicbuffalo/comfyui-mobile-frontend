@@ -14,7 +14,6 @@ export function OutputsTopBarControls() {
     onDismiss: () => setMenuOpen(false),
     triggerRef: buttonRef,
     contentRef: menuRef,
-    closeOnScroll: false
   });
 
   return (
