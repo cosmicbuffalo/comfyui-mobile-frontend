@@ -30,10 +30,12 @@ This guide walks through every feature in the mobile frontend as of `v2.0.0`
   - [Swipe Navigation](#swipe-navigation)
 - [Workflow Page](#workflow-page)
   - [Workflow Options Menu](#workflow-options-menu)
+  - [Containers (Groups and Subgraphs)](#containers-groups-and-subgraphs)
   - [Node Cards](#node-cards)
   - [Node Connections](#node-connections)
   - [Parameters and Widgets](#parameters-and-widgets)
   - [Bookmarks](#bookmarks)
+  - [Reposition Mode](#reposition-mode)
   - [Search](#workflow-search)
   - [Notes](#notes)
   - [Output Preview](#output-preview)
@@ -191,17 +193,33 @@ The workflow page is the main editor view where you inspect and adjust your work
 Tap the `...` button in the top-right to access workflow-wide actions:
 
 - Go to queue / Go to outputs: quick navigation to other panels.
+- Add node: open node search and create a new node directly in the current workflow.
 - Search: opens a search bar to filter nodes by name, type, or ID with fuzzy matching.
 - Show/Hide connection buttons: toggles connection tracing buttons on node cards.
 - Fold all / Unfold all nodes.
 - Hide or show static nodes (nodes without editable inputs).
 - Hide or show bypassed nodes.
 - Show all hidden nodes.
-- Clear bookmarks: removes all bookmarked nodes.
+- Clear bookmarks: removes all bookmarked items (nodes and containers).
+- Workflow actions: save, save as, reload, discard changes, clear cache, and unload.
 - Reload the current workflow if it was loaded from a file, template, or past run.
 - Clear workflow cache.
 - Unload workflow to return to an empty state.
 - Clear all cache (local storage, session storage, caches, cookies) and reload.
+
+### Containers (Groups and Subgraphs)
+
+- Groups and subgraphs are both treated as editable containers in the mobile UI.
+- Container cards support:
+  - Fold/unfold.
+  - Bookmark.
+  - Hide/show.
+  - Move (reposition mode).
+  - Add node inside container.
+  - Bypass all nodes in container.
+  - Delete container (container-only or container + nested contents).
+- Nested containers are supported, including groups inside groups and groups/subgraphs within nested structures.
+- Empty containers show a placeholder action to quickly add a node.
 
 ### Node Cards
 
@@ -211,7 +229,7 @@ Each node is displayed as a card with controls and status:
 - Bypass state: bypassed nodes are visually dimmed purple.
 - Execution status: running nodes show a pulse; collapsed nodes show a progress ring.
 - Errors: a warning icon opens a detailed error popover.
-- Node `...` menu (ellipsis): edit label, bookmark node, bypass/engage node, hide node, and pin a widget.
+- Node `...` menu (ellipsis): edit label, bookmark node, bypass/engage node, hide node, move node, delete node, and pin a widget.
 - Connection trace button: cycles through highlighting inputs, outputs, both, or off.
 
 ### Node Connections
@@ -219,6 +237,10 @@ Each node is displayed as a card with controls and status:
 - Inputs and outputs display as directional buttons.
 - Tap a connection to jump to the connected node (through hidden nodes, if any).
 - If multiple connections exist, a menu lists destinations (including via bypassed nodes).
+- Long-press an input/output connection button to open connection editing.
+  - Input connections: choose a source node (or add a compatible new node) for that input.
+  - Output connections: multi-select target inputs to connect/disconnect in one submit action.
+  - If a selected target already has another source connected, the modal asks for overwrite confirmation before replacing that link.
 
 ### Parameters and Widgets
 
@@ -233,13 +255,20 @@ Each node is displayed as a card with controls and status:
 
 ### Bookmarks
 
-- Nodes can be bookmarked for quick access (up to five bookmarks per workflow).
-  - Bookmark a node via the node card's `...` menu.
+- Items can be bookmarked for quick access (up to five bookmarks per workflow).
+  - Bookmark nodes, groups, or subgraphs via each item's `...` menu.
 - Bookmarks appear fixed to the edge of the screen
-  - click a bookmark button to scroll to that node
+  - click a bookmark button to scroll to that item
   - long press to reposition the bookmarks list, tap again to lock in place
 - Bookmarks will be remembered when loading workflows
 - Use the "Clear Bookmarks" button in the workflow page `...` menu to delete all bookmarks for a workflow
+
+### Reposition Mode
+
+- Open reposition mode from a node or container `...` menu using **Move**.
+- Drag and drop nodes and containers to reorder or move across containers.
+- Click another item's hamburger button to change your repositioning target
+- Click "Done" to confirm your moves, or "Cancel" to discard position changes
 
 <a id="workflow-search"></a>
 ### Search
@@ -371,11 +400,13 @@ The outputs page is a file browser for your generated outputs and input assets. 
 - Tap the `...` on any file to open a context menu with actions:
   - Open the file in the viewer.
   - Favorite or unfavorite the file.
+  - Rename the file or folder.
   - Load workflow metadata from the image (if available).
   - Use the image in your workflow (load into a LoadImage node).
   - Move the file to another folder.
   - Delete the file.
 - Create new folders from the context menu or file actions.
+- In move dialogs, hidden folder visibility follows your hidden-files toggle so hidden destinations can be selected when needed.
 
 ### Use in Workflow
 
@@ -432,5 +463,4 @@ The full-screen viewer supports images and videos while keeping access to the bo
 ### Pinned widgets
 
 - If you have a pinned widget, click the pin button to edit your pinned widget without leaving the image viewer
-
 
