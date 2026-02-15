@@ -38,6 +38,7 @@ export function collectLayoutHiddenState(
     stableKeyByPointer
   } = options;
   const hasStableFlag = (state: Record<string, boolean>, pointer: string): boolean => {
+    if (pointer in state) return Boolean(state[pointer]);
     const stableKey = stableKeyByPointer[pointer];
     if (stableKey) return Boolean(state[stableKey]);
     return Boolean(state[pointer]);

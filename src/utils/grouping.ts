@@ -147,6 +147,7 @@ export function buildNestedList(
   groupOverrides?: Record<number, number | null>
 ): NestedItem[] {
   const hasStableFlag = (state: Record<string, boolean>, stableOrPointerKey: string): boolean => {
+    if (stableOrPointerKey in state) return Boolean(state[stableOrPointerKey]);
     const stableKey = stableKeyByPointer[stableOrPointerKey];
     if (stableKey) return Boolean(state[stableKey]);
     return Boolean(state[stableOrPointerKey]);
@@ -156,6 +157,7 @@ export function buildNestedList(
     stableOrPointerKey: string,
     fallback: boolean
   ): boolean => {
+    if (stableOrPointerKey in state) return state[stableOrPointerKey] ?? fallback;
     const stableKey = stableKeyByPointer[stableOrPointerKey];
     if (!stableKey) return state[stableOrPointerKey] ?? fallback;
     return state[stableKey] ?? fallback;
@@ -484,6 +486,7 @@ export function buildNestedListFromLayout(
   stableKeyByPointer: Record<string, string> = {}
 ): NestedItem[] {
   const hasStableFlag = (state: Record<string, boolean>, stableOrPointerKey: string): boolean => {
+    if (stableOrPointerKey in state) return Boolean(state[stableOrPointerKey]);
     const stableKey = stableKeyByPointer[stableOrPointerKey];
     if (stableKey) return Boolean(state[stableKey]);
     return Boolean(state[stableOrPointerKey]);
@@ -493,6 +496,7 @@ export function buildNestedListFromLayout(
     stableOrPointerKey: string,
     fallback: boolean
   ): boolean => {
+    if (stableOrPointerKey in state) return state[stableOrPointerKey] ?? fallback;
     const stableKey = stableKeyByPointer[stableOrPointerKey];
     if (!stableKey) return state[stableOrPointerKey] ?? fallback;
     return state[stableKey] ?? fallback;

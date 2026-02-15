@@ -57,9 +57,13 @@ function findGroupStableKeyInLayout(
   groupId: number,
   subgraphId: string | null
 ): string | null {
+  let firstMatch: string | null = null;
   const visit = (refs: ItemRef[], currentSubgraphId: string | null): string | null => {
     for (const ref of refs) {
       if (ref.type === "group") {
+        if (ref.id === groupId && firstMatch == null) {
+          firstMatch = ref.stableKey;
+        }
         if (ref.id === groupId && currentSubgraphId === subgraphId) {
           return ref.stableKey;
         }
@@ -74,7 +78,35 @@ function findGroupStableKeyInLayout(
     }
     return null;
   };
-  return visit(layout.root, null);
+  return visit(layout.root, null) ?? firstMatch;
+}
+
+function findGroupSubgraphIdByStableKey(
+  layout: MobileLayout,
+  groupStableKey: string
+): string | null {
+  const parent = layout.groupParents?.[groupStableKey];
+  if (!parent) {
+    const visit = (refs: ItemRef[], currentSubgraphId: string | null): string | null => {
+      for (const ref of refs) {
+        if (ref.type === "group") {
+          if (ref.stableKey === groupStableKey) return currentSubgraphId;
+          const nested = visit(layout.groups[ref.stableKey] ?? [], currentSubgraphId);
+          if (nested !== null) return nested;
+          continue;
+        }
+        if (ref.type === "subgraph") {
+          const nested = visit(layout.subgraphs[ref.id] ?? [], ref.id);
+          if (nested !== null) return nested;
+        }
+      }
+      return null;
+    };
+    return visit(layout.root, null);
+  }
+  if (parent.scope === "subgraph") return parent.subgraphId;
+  if (parent.scope === "root") return null;
+  return findGroupSubgraphIdByStableKey(layout, parent.groupKey);
 }
 
 function targetToDataKey(target: RepositionTarget, layout?: MobileLayout): string {
@@ -235,6 +267,11 @@ function computeInsertPositionByThreshold(
 
 const DRAG_THRESHOLD = 5;
 const OVERLAP_THRESHOLD_RATIO = 0.625; // 5/8 overlap trigger
+const EDGE_SCROLL_ZONE_RATIO = 1 / 6;
+const EDGE_SCROLL_SLOW_PX_PER_SEC = 120;
+const EDGE_SCROLL_FAST_PX_PER_SEC = 640;
+const EDGE_SCROLL_ACCEL_DELAY_MS = 350;
+const EDGE_SCROLL_ACCEL_DURATION_MS = 300;
 const INPUT_HIGHLIGHT_COLOR = themeColors.status.success;
 const OUTPUT_HIGHLIGHT_COLOR = themeColors.status.warning;
 const CONNECTED_NODE_BORDER_COLOR = themeColors.status.danger;
@@ -307,6 +344,10 @@ export function RepositionOverlay({
   const hoverExpandKeyRef = useRef<string | null>(null);
   const lastMovedTargetRef = useRef<RepositionTarget | null>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const autoScrollRafRef = useRef<number | null>(null);
+  const autoScrollDirectionRef = useRef<-1 | 1 | null>(null);
+  const autoScrollZoneEnteredAtRef = useRef(0);
+  const autoScrollLastFrameAtRef = useRef(0);
   const suppressNextTargetScrollRef = useRef(false);
   const hasCompletedInitialTargetScrollRef = useRef(false);
   const hasAppliedEntryAnchorRef = useRef(false);
@@ -338,6 +379,10 @@ export function RepositionOverlay({
   const [connectionHighlightTargetKey, setConnectionHighlightTargetKey] =
     useState<string | null>(null);
   const [dragVisual, setDragVisual] = useState<DragVisualState | null>(null);
+  const workingLayoutRef = useRef(workingLayout);
+  useEffect(() => {
+    workingLayoutRef.current = workingLayout;
+  }, [workingLayout]);
 
   const targetDataKey = useMemo(
     () => targetToDataKey(currentTarget, workingLayout),
@@ -506,6 +551,21 @@ export function RepositionOverlay({
     }
     return { rootMap, bySubgraph };
   }, [workflow]);
+  const groupByStableKey = useMemo(() => {
+    const map = new Map<string, WorkflowGroup>();
+    for (const group of workflow?.groups ?? []) {
+      const stableKey = group.stableKey ?? `legacy-group-root-${group.id}`;
+      map.set(stableKey, group);
+    }
+    for (const subgraph of workflow?.definitions?.subgraphs ?? []) {
+      for (const group of subgraph.groups ?? []) {
+        const stableKey =
+          group.stableKey ?? `legacy-group-${subgraph.id}-${group.id}`;
+        map.set(stableKey, group);
+      }
+    }
+    return map;
+  }, [workflow]);
   const subgraphMap = useMemo(
     () =>
       new Map<string, WorkflowSubgraphDefinition>(
@@ -539,7 +599,7 @@ export function RepositionOverlay({
 
   // Initial scroll + highlight
   useEffect(() => {
-    const key = targetToDataKey(currentTarget, workingLayout);
+    const key = targetToDataKey(currentTarget, workingLayoutRef.current);
     let frameId: number | null = null;
     if (suppressNextTargetScrollRef.current) {
       suppressNextTargetScrollRef.current = false;
@@ -590,7 +650,7 @@ export function RepositionOverlay({
         window.clearTimeout(highlightTimeoutRef.current);
       }
     };
-  }, [currentTarget, initialViewportAnchor, workingLayout]);
+  }, [currentTarget, initialViewportAnchor]);
 
   /** Parse a data key into a RepositionTarget. */
   const dataKeyToTarget = useCallback(
@@ -918,6 +978,77 @@ export function RepositionOverlay({
     [],
   );
 
+  const stopAutoScroll = useCallback(() => {
+    if (autoScrollRafRef.current != null) {
+      window.cancelAnimationFrame(autoScrollRafRef.current);
+      autoScrollRafRef.current = null;
+    }
+    autoScrollDirectionRef.current = null;
+    autoScrollZoneEnteredAtRef.current = 0;
+    autoScrollLastFrameAtRef.current = 0;
+  }, []);
+
+  const startAutoScroll = useCallback(
+    (direction: -1 | 1) => {
+      const container = scrollContainerRef.current;
+      if (!container) return;
+
+      const now = performance.now();
+      if (autoScrollDirectionRef.current !== direction) {
+        autoScrollDirectionRef.current = direction;
+        autoScrollZoneEnteredAtRef.current = now;
+        autoScrollLastFrameAtRef.current = now;
+      }
+
+      if (autoScrollRafRef.current != null) return;
+
+      const tick = (frameNow: number) => {
+        const el = scrollContainerRef.current;
+        const activeDirection = autoScrollDirectionRef.current;
+        if (!el || activeDirection == null || !pendingDragRef.current || !isDragging) {
+          autoScrollRafRef.current = null;
+          return;
+        }
+
+        const lastFrame = autoScrollLastFrameAtRef.current || frameNow;
+        const dtMs = Math.max(0, frameNow - lastFrame);
+        autoScrollLastFrameAtRef.current = frameNow;
+
+        const zoneElapsed = Math.max(
+          0,
+          frameNow - autoScrollZoneEnteredAtRef.current - EDGE_SCROLL_ACCEL_DELAY_MS,
+        );
+        const accelProgress =
+          EDGE_SCROLL_ACCEL_DURATION_MS > 0
+            ? Math.min(1, zoneElapsed / EDGE_SCROLL_ACCEL_DURATION_MS)
+            : 1;
+        const speedPxPerSec =
+          EDGE_SCROLL_SLOW_PX_PER_SEC +
+          (EDGE_SCROLL_FAST_PX_PER_SEC - EDGE_SCROLL_SLOW_PX_PER_SEC) *
+            accelProgress;
+        const deltaPx = (speedPxPerSec * dtMs) / 1000;
+
+        const prevTop = el.scrollTop;
+        const maxTop = Math.max(0, el.scrollHeight - el.clientHeight);
+        const nextTop = Math.max(
+          0,
+          Math.min(maxTop, prevTop + activeDirection * deltaPx),
+        );
+        el.scrollTop = nextTop;
+
+        if (nextTop === prevTop) {
+          autoScrollRafRef.current = null;
+          return;
+        }
+
+        autoScrollRafRef.current = window.requestAnimationFrame(tick);
+      };
+
+      autoScrollRafRef.current = window.requestAnimationFrame(tick);
+    },
+    [isDragging],
+  );
+
   const handlePointerMove = useCallback(
     (e: React.PointerEvent<HTMLDivElement>) => {
       const pending = pendingDragRef.current;
@@ -931,6 +1062,7 @@ export function RepositionOverlay({
       if (!isDragging) {
         if (Math.abs(dx) > Math.abs(dy) && Math.abs(dx) > DRAG_THRESHOLD) {
           pendingDragRef.current = null;
+          stopAutoScroll();
           setIsPointerArmedForDrag(false);
           if (scrollContainerRef.current) {
             scrollContainerRef.current.style.touchAction = "";
@@ -984,6 +1116,18 @@ export function RepositionOverlay({
 
       const container = scrollContainerRef.current;
       if (!container) return;
+
+      const containerRect = container.getBoundingClientRect();
+      const zoneHeight = containerRect.height * EDGE_SCROLL_ZONE_RATIO;
+      const topZoneBottom = containerRect.top + zoneHeight;
+      const bottomZoneTop = containerRect.bottom - zoneHeight;
+      if (e.clientY <= topZoneBottom) {
+        startAutoScroll(-1);
+      } else if (e.clientY >= bottomZoneTop) {
+        startAutoScroll(1);
+      } else {
+        stopAutoScroll();
+      }
 
       // Keep dragged element in a fixed layer so it does not move with reflowing containers.
       const el = container.querySelector(
@@ -1108,6 +1252,8 @@ export function RepositionOverlay({
       updateDragVisualState,
       collapsedItems,
       toStableStateKey,
+      startAutoScroll,
+      stopAutoScroll,
     ],
   );
 
@@ -1137,6 +1283,7 @@ export function RepositionOverlay({
       if (e.pointerId !== pending.pointerId) return;
 
       if (isDragging) {
+        stopAutoScroll();
         try {
           scrollContainerRef.current?.releasePointerCapture(e.pointerId);
         } catch {
@@ -1168,7 +1315,22 @@ export function RepositionOverlay({
             insertIdx,
           );
           setWorkingLayout(nextLayout);
-          lastMovedTargetRef.current = pending.target;
+          if (pending.target.type === "group" && pending.targetRef.type === "group") {
+            const nextSubgraphId = findGroupSubgraphIdByStableKey(
+              nextLayout,
+              pending.targetRef.stableKey
+            );
+            const nextTarget: RepositionTarget = {
+              type: "group",
+              id: pending.target.id,
+              subgraphId: nextSubgraphId
+            };
+            suppressNextTargetScrollRef.current = true;
+            setCurrentTarget(nextTarget);
+            lastMovedTargetRef.current = nextTarget;
+          } else {
+            lastMovedTargetRef.current = pending.target;
+          }
         }
 
         setIsDragging(false);
@@ -1178,6 +1340,7 @@ export function RepositionOverlay({
       }
 
       pendingDragRef.current = null;
+      stopAutoScroll();
       dragDeltaRef.current = 0;
       dragXRef.current = 0;
       insertIndexRef.current = -1;
@@ -1192,7 +1355,7 @@ export function RepositionOverlay({
         scrollContainerRef.current.style.touchAction = "";
       }
     },
-    [isDragging, workingLayout, clearAllTransforms],
+    [isDragging, workingLayout, clearAllTransforms, stopAutoScroll],
   );
 
   const handlePointerCancel = useCallback(
@@ -1200,6 +1363,7 @@ export function RepositionOverlay({
       const pending = pendingDragRef.current;
       if (!pending) return;
       if (isDragging) {
+        stopAutoScroll();
         try {
           scrollContainerRef.current?.releasePointerCapture(e.pointerId);
         } catch {
@@ -1217,6 +1381,7 @@ export function RepositionOverlay({
         setDragVisual(null);
       }
       pendingDragRef.current = null;
+      stopAutoScroll();
       dragDeltaRef.current = 0;
       dragXRef.current = 0;
       insertIndexRef.current = -1;
@@ -1231,16 +1396,17 @@ export function RepositionOverlay({
         scrollContainerRef.current.style.touchAction = "";
       }
     },
-    [isDragging, clearAllTransforms],
+    [isDragging, clearAllTransforms, stopAutoScroll],
   );
 
   useEffect(() => {
     return () => {
+      stopAutoScroll();
       if (hoverExpandTimeoutRef.current != null) {
         window.clearTimeout(hoverExpandTimeoutRef.current);
       }
     };
-  }, []);
+  }, [stopAutoScroll]);
 
   const handleDone = () => {
     const finalTarget = lastMovedTargetRef.current ?? currentTarget;
@@ -1423,9 +1589,10 @@ export function RepositionOverlay({
       if (ref.type === "group") {
         const groupRef = groupRefByStableKey.get(ref.stableKey);
         const group =
-          groupRef?.subgraphId == null
+          groupByStableKey.get(ref.stableKey) ??
+          (groupRef?.subgraphId == null
             ? groupMap.rootMap.get(ref.id)
-            : groupMap.bySubgraph.get(groupRef.subgraphId)?.get(ref.id);
+            : groupMap.bySubgraph.get(groupRef.subgraphId)?.get(ref.id));
         if (!group) return null;
         const dataKey = `group-${ref.stableKey}`;
         const isTarget = dataKey === targetDataKey;
