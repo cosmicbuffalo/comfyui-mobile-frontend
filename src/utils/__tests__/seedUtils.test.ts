@@ -74,8 +74,8 @@ describe('getSeedRandomBounds', () => {
 
   it('clamps to DEFAULT_SPECIAL_SEED_RANGE bounds', () => {
     const result = getSeedRandomBounds(makeNode({
-      randomMin: -999999999999999999,
-      randomMax: 999999999999999999
+      randomMin: -DEFAULT_SPECIAL_SEED_RANGE * 2,
+      randomMax: DEFAULT_SPECIAL_SEED_RANGE * 2
     }));
     expect(result.min).toBe(-DEFAULT_SPECIAL_SEED_RANGE);
     expect(result.max).toBe(DEFAULT_SPECIAL_SEED_RANGE);
