@@ -1,12 +1,11 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useTextareaFocus } from '@/hooks/useTextareaFocus';
-import { XMarkIcon } from '@/components/icons';
 import type { ViewerImage } from '@/utils/viewerImages';
-import { MediaViewerHeader } from './MediaViewerHeader';
-import { MediaViewerNavigation } from './MediaViewerNavigation';
-import { MediaViewerActions } from './MediaViewerActions';
-import { MediaViewerMetadata } from './MediaViewerMetadata';
+import { MediaViewerHeader } from './MediaViewer/Header';
+import { MediaViewerActions } from './MediaViewer/Actions';
+import { MediaViewerMetadata } from './MediaViewer/Metadata';
+import { CloseButton } from '@/components/buttons/CloseButton';
 import { extractMetadata } from '@/utils/metadata';
 import { isVideoFilename } from '@/utils/media';
 import { getImageMetadata } from '@/api/client';
@@ -17,9 +16,9 @@ interface MediaViewerProps {
   index: number;
   onIndexChange: (index: number) => void;
   onClose: () => void;
-  onDelete?: (item: ViewerImage) => void;
-  onLoadWorkflow?: (item: ViewerImage) => void;
-  onLoadInWorkflow?: (item: ViewerImage) => void;
+  onDelete: (item: ViewerImage) => void;
+  onLoadWorkflow: (item: ViewerImage) => void;
+  onLoadInWorkflow: (item: ViewerImage) => void;
   showMetadataToggle?: boolean;
   showLoadingPlaceholder?: boolean;
   loadingProgress?: number;
@@ -28,10 +27,11 @@ interface MediaViewerProps {
   initialTranslate?: { x: number; y: number };
   onTransformChange?: (scale: number, translate: { x: number; y: number }) => void;
   zoomResetKey?: string | number | null;
-  overlayZIndex?: number;
 }
 
 const DEFAULT_TRANSLATE = { x: 0, y: 0 };
+const MEDIA_VIEWER_Z_INDEX = 2100;
+const MEDIA_VIEWER_OVERLAY_Z_INDEX = MEDIA_VIEWER_Z_INDEX + 10;
 
 export function MediaViewer({
   open,
@@ -50,7 +50,6 @@ export function MediaViewer({
   initialTranslate = DEFAULT_TRANSLATE,
   onTransformChange,
   zoomResetKey,
-  overlayZIndex = 2100,
 }: MediaViewerProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const imageRef = useRef<HTMLImageElement>(null);
@@ -96,7 +95,6 @@ export function MediaViewer({
   const displayName = currentItem?.filename || currentItem?.alt || 'Output';
   const showMetadataOverlay = showMetadata && !isIdle;
   const canToggleMetadata = showMetadataToggle;
-  const chromeZ = overlayZIndex + 10;
   const metadataIsLoading = fileId ? Boolean(metadataLoading[fileId]) : false;
 
   const resetIdleTimer = useCallback(() => {
@@ -115,19 +113,19 @@ export function MediaViewer({
   }, [resetIdleTimer]);
 
   const handleDeleteClick = useCallback(() => {
-    if (!currentItem || !onDelete) return;
+    if (!currentItem) return;
     resetIdleTimer();
     onDelete(currentItem);
   }, [currentItem, onDelete, resetIdleTimer]);
 
   const handleLoadWorkflowClick = useCallback(() => {
-    if (!currentItem || !onLoadWorkflow) return;
+    if (!currentItem) return;
     resetIdleTimer();
     onLoadWorkflow(currentItem);
   }, [currentItem, onLoadWorkflow, resetIdleTimer]);
 
   const handleLoadInWorkflowClick = useCallback(() => {
-    if (!currentItem || !onLoadInWorkflow) return;
+    if (!currentItem) return;
     resetIdleTimer();
     onLoadInWorkflow(currentItem);
   }, [currentItem, onLoadInWorkflow, resetIdleTimer]);
@@ -353,20 +351,6 @@ export function MediaViewer({
     applyZoomModeRef.current(targetZoomModeRef.current);
   }, [open, zoomResetKey]);
 
-  const prev = () => {
-    resetIdleTimer();
-    if (index > 0) {
-      onIndexChange(index - 1);
-    }
-  };
-
-  const next = () => {
-    resetIdleTimer();
-    if (index < items.length - 1) {
-      onIndexChange(index + 1);
-    }
-  };
-
   const applyTransformToDOM = () => {
     const img = imageRef.current;
     if (!img) return;
@@ -472,7 +456,7 @@ export function MediaViewer({
 
     if (pointers.size === 0) {
       // Restore CSS transition before state updates so double-tap animates
-  
+
       const img = imageRef.current;
       if (img) img.style.transition = 'transform 0.05s linear';
 
@@ -542,17 +526,17 @@ export function MediaViewer({
   if (!currentItem && !showLoadingPlaceholder) {
     return createPortal(
       <div
-        className="fixed inset-0 z-[2000] bg-black flex flex-col items-center justify-center text-white"
+        className="fixed inset-0 bg-black flex flex-col items-center justify-center text-white"
+        style={{ zIndex: MEDIA_VIEWER_Z_INDEX }}
         role="dialog"
         aria-modal="true"
       >
-        <button
-          className="absolute top-4 right-4 z-[2010] w-10 h-10 rounded-full bg-black/60 text-white text-xl flex items-center justify-center"
+        <CloseButton
           onClick={onClose}
-          aria-label="Close viewer"
-        >
-          ×
-        </button>
+          buttonSize={9}
+          iconSize={6}
+          zIndex={MEDIA_VIEWER_OVERLAY_Z_INDEX}
+        />
         <p className="text-gray-400 mb-2">No images to display</p>
         <p className="text-gray-500 text-sm">images: {items.length}, index: {index}</p>
       </div>,
@@ -564,7 +548,7 @@ export function MediaViewer({
     <div
       id="media-viewer-overlay"
       className="fixed inset-0 bg-black"
-      style={{ zIndex: overlayZIndex }}
+      style={{ zIndex: MEDIA_VIEWER_Z_INDEX }}
       onWheel={handleWheel}
     >
       <div
@@ -632,22 +616,19 @@ export function MediaViewer({
         )}
       </div>
 
-      <button
+      <CloseButton
         onClick={onClose}
-        className={`absolute top-3 right-3 w-9 h-9 rounded-full flex items-center justify-center transition-colors ${
-          isIdle ? 'bg-transparent text-white' : 'bg-black/60 text-white'
-        }`}
-        style={{ zIndex: chromeZ }}
-        aria-label="Close viewer"
-      >
-        <XMarkIcon className="w-6 h-6" />
-      </button>
+        buttonSize={9}
+        iconSize={6}
+        isIdle={isIdle}
+        zIndex={MEDIA_VIEWER_OVERLAY_Z_INDEX}
+      />
 
       <div
         className={`absolute inset-0 pointer-events-none transition-opacity duration-300 ${
           isIdle ? 'opacity-0' : 'opacity-100'
         }`}
-        style={{ zIndex: chromeZ }}
+        style={{ zIndex: MEDIA_VIEWER_OVERLAY_Z_INDEX }}
       >
         {currentItem && (
           <>
@@ -656,22 +637,13 @@ export function MediaViewer({
               total={items.length}
               displayName={displayName}
             />
-            <MediaViewerNavigation
-              index={index}
-              total={items.length}
-              onPrev={prev}
-              onNext={next}
-            />
             <MediaViewerActions
               isVideo={isVideo}
-              onDelete={onDelete}
-              onLoadWorkflow={onLoadWorkflow}
-              onLoadInWorkflow={onLoadInWorkflow}
               showMetadataToggle={showMetadataToggle}
               canToggleMetadata={canToggleMetadata}
-              onDeleteClick={handleDeleteClick}
-              onLoadWorkflowClick={handleLoadWorkflowClick}
-              onLoadInWorkflowClick={handleLoadInWorkflowClick}
+              onDelete={handleDeleteClick}
+              onLoadWorkflow={handleLoadWorkflowClick}
+              onUseInWorkflow={handleLoadInWorkflowClick}
               onToggleMetadata={handleToggleMetadata}
             />
             <MediaViewerMetadata
