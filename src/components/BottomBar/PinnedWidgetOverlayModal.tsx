@@ -23,6 +23,8 @@ export function PinnedWidgetOverlayModal() {
   }, [pinnedWidget, workflow]);
 
   if (!pinOverlayOpen || !pinnedWidget) return null;
+  const pinnedNode = workflow?.nodes.find((n) => n.id === pinnedWidget.nodeId);
+  const pinnedNodeStableKey = pinnedNode?.stableKey ?? null;
 
   return (
     <div id="pin-overlay-hidden-anchor" className="hidden">
@@ -32,12 +34,14 @@ export function PinnedWidgetOverlayModal() {
         value={pinnedWidgetValue}
         options={pinnedWidget.options}
         onChange={(newValue) =>
-          updateNodeWidget(
-            pinnedWidget.nodeId,
-            pinnedWidget.widgetIndex,
-            newValue,
-            pinnedWidget.widgetName,
-          )
+          pinnedNodeStableKey
+            ? updateNodeWidget(
+                pinnedNodeStableKey,
+                pinnedWidget.widgetIndex,
+                newValue,
+                pinnedWidget.widgetName,
+              )
+            : undefined
         }
         hideLabel
         compact

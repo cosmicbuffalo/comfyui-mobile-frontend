@@ -32,6 +32,8 @@ So this mobile frontend is my attempt at improving upon the user experience of C
 ### ☑️ **Workflow Editor:** Browse, fold, and edit nodes in workflows
   - easily hide nodes you don't need to see
   - navigate by traversing connections between nodes and jumping to bookmarks
+  - add or delete nodes, and edit connections directly from the mobile UI
+  - reposition nodes, groups, and subgraphs in the mobile layout with drag-and-drop
   - load and save workflows from anywhere, whether on your server, pasted from your clipboard, or out of a generated image
 ### ☑️ **Workflow Runner:** Trigger generations and monitor progress through your queue
   - WebSocket integration for live status and progress monitoring.
@@ -51,10 +53,10 @@ So this mobile frontend is my attempt at improving upon the user experience of C
 
 - [ ] Better Custom Node Support
 - [ ] Expanded Workflow Editing Capabilities
-  - [ ] delete nodes from a workflow
-  - [ ] create new nodes in a workflow (via fuzzy search)
-  - [ ] move nodes in/out of groups/subgraphs
-  - [ ] modify connections between nodes
+  - [x] delete nodes from a workflow
+  - [x] create new nodes in a workflow (via fuzzy search)
+  - [x] move nodes in/out of groups/subgraphs
+  - [x] modify connections between nodes
   - [ ] load multiple workflows at once (workflow tabs)
 - [ ] ComfyUI Manager support
 - [ ] Auto-positioning of nodes/Compatibility with desktop FE's graph interface

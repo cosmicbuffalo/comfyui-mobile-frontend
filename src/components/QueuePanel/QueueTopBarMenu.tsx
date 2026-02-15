@@ -2,7 +2,9 @@ import type { RefObject } from 'react';
 import { useMemo } from 'react';
 import { useQueueStore } from '@/hooks/useQueue';
 import { useHistoryStore } from '@/hooks/useHistory';
-import { CancelCircleIcon, CaretDownIcon, CaretRightIcon, EllipsisVerticalIcon, EyeIcon, EyeOffIcon, InfoIcon, ArrowRightIcon, TrashIcon } from '@/components/icons';
+import { CancelCircleIcon, CaretDownIcon, CaretRightIcon, EyeIcon, EyeOffIcon, InfoIcon, ArrowRightIcon, TrashIcon } from '@/components/icons';
+import { ContextMenuButton } from '@/components/buttons/ContextMenuButton';
+import { ContextMenuBuilder } from '@/components/menus/ContextMenuBuilder';
 
 interface QueueTopBarMenuProps {
   open: boolean;
@@ -121,94 +123,80 @@ export function QueueTopBarMenu({
 
   return (
     <div id="queue-menu-container" className="relative">
-      <button
-        ref={buttonRef}
+      <ContextMenuButton
+        buttonRef={buttonRef}
         onClick={onToggle}
-        className="w-10 h-10 flex items-center justify-center rounded-lg text-gray-700 hover:bg-gray-100"
-        aria-label="Queue options"
-      >
-        <EllipsisVerticalIcon className="w-5 h-5 -rotate-90" />
-      </button>
+        ariaLabel="Queue options"
+      />
       {!open ? null : (
         <div
           id="queue-options-dropdown"
           ref={menuRef}
-          className="absolute right-0 top-11 z-50 w-48 bg-white border border-gray-200 rounded-lg shadow-lg overflow-hidden"
+          className="absolute right-0 top-11 z-50 w-48"
         >
-          <button
-            className="w-full flex items-center gap-2 text-left px-3 py-2 text-sm hover:bg-gray-50"
-            onClick={handleGoToWorkflowClick}
-          >
-            <ArrowRightIcon className="w-3 h-3 text-gray-500 rotate-180" />
-            Go to workflow
-          </button>
-          {hasPending && (
-            <button
-              className="w-full flex items-center gap-2 text-left px-3 py-2 text-sm hover:bg-gray-50"
-              onClick={handleCancelPendingClick}
-            >
-              <CancelCircleIcon className="w-4 h-4 text-gray-500" />
-              Cancel all pending
-            </button>
-          )}
-          {hasUnfoldedQueueItem && (
-            <button
-              className="w-full flex items-center gap-2 text-left px-3 py-2 text-sm hover:bg-gray-50"
-              onClick={handleFoldAllClick}
-            >
-              <CaretRightIcon className="w-7 h-7 -ml-1 text-gray-500" />
-              Fold all
-            </button>
-          )}
-          {hasFoldedQueueItem && (
-            <button
-              className="w-full flex items-center gap-2 text-left px-3 py-2 text-sm hover:bg-gray-50"
-              onClick={handleUnfoldAllClick}
-            >
-              <CaretDownIcon className="w-7 h-7 -ml-1 text-gray-500" />
-              Unfold all
-            </button>
-          )}
-          {hasHistory && (
-            <button
-              className="w-full flex items-center gap-2 text-left px-3 py-2 text-sm hover:bg-gray-50"
-              onClick={handleToggleMetadataClick}
-            >
-              <InfoIcon className="w-4 h-4 text-gray-500" />
-              {showQueueMetadata ? 'Hide metadata' : 'Show metadata'}
-            </button>
-          )}
-          {hasPreviewToggle && (
-            <button
-              className="w-full flex items-center gap-2 text-left px-3 py-2 text-sm hover:bg-gray-50"
-              onClick={handleTogglePreviewClick}
-            >
-              {previewsVisible ? (
-                <EyeOffIcon className="w-4 h-4 text-gray-500" />
-              ) : (
-                <EyeIcon className="w-4 h-4 text-gray-500" />
-              )}
-              {previewsVisible ? 'Hide previews' : 'Show previews'}
-            </button>
-          )}
-          {hasEmptyHistory && (
-            <button
-              className="w-full flex items-center gap-2 text-left px-3 py-2 text-sm hover:bg-gray-50 text-gray-600"
-              onClick={handleClearEmptyClick}
-            >
-              <TrashIcon className="w-4 h-4" />
-              Clear empty items
-            </button>
-          )}
-          {hasHistory && (
-            <button
-              className="w-full flex items-center gap-2 text-left px-3 py-2 text-sm hover:bg-gray-50 text-red-600"
-              onClick={handleClearHistoryClick}
-            >
-              <TrashIcon className="w-4 h-4" />
-              Clear history
-            </button>
-          )}
+          <ContextMenuBuilder
+            items={[
+              {
+                key: 'go-to-workflow',
+                label: 'Go to workflow',
+                icon: <ArrowRightIcon className="w-3 h-3 rotate-180" />,
+                onClick: handleGoToWorkflowClick
+              },
+              {
+                key: 'cancel-pending',
+                label: 'Cancel all pending',
+                icon: <CancelCircleIcon className="w-4 h-4" />,
+                onClick: handleCancelPendingClick,
+                hidden: !hasPending
+              },
+              {
+                key: 'fold-all',
+                label: 'Fold all',
+                icon: <CaretRightIcon className="w-7 h-7 -ml-1" />,
+                onClick: handleFoldAllClick,
+                hidden: !hasUnfoldedQueueItem
+              },
+              {
+                key: 'unfold-all',
+                label: 'Unfold all',
+                icon: <CaretDownIcon className="w-7 h-7 -ml-1" />,
+                onClick: handleUnfoldAllClick,
+                hidden: !hasFoldedQueueItem
+              },
+              {
+                key: 'toggle-metadata',
+                label: showQueueMetadata ? 'Hide metadata' : 'Show metadata',
+                icon: <InfoIcon className="w-4 h-4" />,
+                onClick: handleToggleMetadataClick,
+                hidden: !hasHistory
+              },
+              {
+                key: 'toggle-previews',
+                label: previewsVisible ? 'Hide previews' : 'Show previews',
+                icon: previewsVisible
+                  ? <EyeOffIcon className="w-4 h-4" />
+                  : <EyeIcon className="w-4 h-4" />,
+                onClick: handleTogglePreviewClick,
+                hidden: !hasPreviewToggle
+              },
+              {
+                key: 'clear-empty',
+                label: 'Clear empty items',
+                icon: <TrashIcon className="w-4 h-4" />,
+                onClick: handleClearEmptyClick,
+                color: 'muted',
+                hidden: !hasEmptyHistory
+              },
+              {
+                key: 'clear-history',
+                label: 'Clear history',
+                icon: <TrashIcon className="w-4 h-4" />,
+                onClick: handleClearHistoryClick,
+                color: 'danger',
+                hidden: !hasHistory
+              }
+            ]}
+          />
         </div>
       )}
     </div>

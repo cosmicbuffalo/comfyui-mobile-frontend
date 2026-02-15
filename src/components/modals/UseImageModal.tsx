@@ -30,26 +30,32 @@ export function UseImageModal({
   const scrollToNode = useWorkflowStore((s) => s.scrollToNode);
   const setCurrentPanel = useNavigationStore((s) => s.setCurrentPanel);
   const [loadNodeError, setLoadNodeError] = useState<string | null>(null);
-  const [loadingNodeId, setLoadingNodeId] = useState<number | null>(null);
+  const [loadingNodeStableKey, setLoadingNodeStableKey] = useState<string | null>(null);
 
   const loadableNodes = useMemo(() => {
     if (!workflow) return [];
-    return workflow.nodes.filter((node) => /loadimage/i.test(node.type));
+    return workflow.nodes
+      .filter((node) => /loadimage/i.test(node.type))
+      .map((node) => ({ node, stableKey: node.stableKey ?? null }))
+      .filter((entry): entry is { node: typeof workflow.nodes[number]; stableKey: string } => entry.stableKey !== null);
   }, [workflow]);
 
   useEffect(() => {
     if (!open) {
       setLoadNodeError(null);
-      setLoadingNodeId(null);
+      setLoadingNodeStableKey(null);
     }
   }, [open]);
 
-  const handleLoadIntoNode = async (nodeId: number) => {
+  const handleLoadIntoNode = async (nodeStableKey: string) => {
     if (!file || !workflow) return;
-    setLoadingNodeId(nodeId);
+    setLoadingNodeStableKey(nodeStableKey);
     setLoadNodeError(null);
     try {
-      const widget = resolveInputWidget({ workflow, nodeTypes, nodeId });
+      const targetNode = workflow.nodes.find((node) => node.stableKey === nodeStableKey);
+      if (!targetNode) throw new Error('Could not resolve selected node.');
+
+      const widget = resolveInputWidget({ workflow, nodeTypes, nodeId: targetNode.id });
       if (!widget) {
         throw new Error('Selected node does not accept image inputs.');
       }
@@ -62,18 +68,18 @@ export function UseImageModal({
           console.warn('Failed to refresh node types after upload:', refreshError);
         }
       }
-      updateNodeWidget(widget.node.id, widget.index, inputPath, widget.name);
+      updateNodeWidget(nodeStableKey, widget.index, inputPath, widget.name);
       clearNodeError(widget.node.id);
       setCurrentPanel('workflow');
       onLoaded?.();
       setTimeout(() => {
-        scrollToNode(widget.node.id, getNodeLabel(widget.node, nodeTypes));
+        scrollToNode(nodeStableKey, getNodeLabel(widget.node, nodeTypes));
       }, 150);
     } catch (err) {
       console.error('Failed to load image into node:', err);
       setLoadNodeError(err instanceof Error ? err.message : 'Failed to load image.');
     } finally {
-      setLoadingNodeId(null);
+      setLoadingNodeStableKey(null);
     }
   };
 
@@ -104,15 +110,15 @@ export function UseImageModal({
               No Load Image nodes found in the current workflow.
             </div>
           )}
-          {loadableNodes.map((node) => {
+          {loadableNodes.map(({ node, stableKey }) => {
             const label = getNodeLabel(node, nodeTypes);
-            const isBusy = loadingNodeId === node.id;
+            const isBusy = loadingNodeStableKey === stableKey;
             return (
               <button
-                key={`load-node-${node.id}`}
+                key={`load-node-${stableKey}`}
                 className="w-full text-left px-4 py-3 text-sm hover:bg-gray-50 flex items-center gap-2 disabled:opacity-60 disabled:cursor-not-allowed"
-                onClick={() => handleLoadIntoNode(node.id)}
-                disabled={loadingNodeId !== null}
+                onClick={() => handleLoadIntoNode(stableKey)}
+                disabled={loadingNodeStableKey !== null}
               >
                 <span className="text-gray-500 dark:text-gray-300">#{node.id}</span>
                 <span className="flex-1 text-gray-900 dark:text-gray-100 truncate">{label}</span>
@@ -130,7 +136,7 @@ export function UseImageModal({
           <button
             className="px-3 py-2 text-sm font-medium text-gray-600 hover:bg-gray-100 rounded-lg disabled:opacity-60"
             onClick={onClose}
-            disabled={loadingNodeId !== null}
+            disabled={loadingNodeStableKey !== null}
           >
             Close
           </button>

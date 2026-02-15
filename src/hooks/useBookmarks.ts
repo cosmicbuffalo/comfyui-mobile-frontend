@@ -13,20 +13,18 @@ interface SavedNodeState {
 interface SavedWorkflowState {
   nodes: Record<number, SavedNodeState>;
   seedModes: Record<number, SeedMode>;
-  collapsedGroups?: Record<number, boolean>;
-  hiddenGroups?: Record<number, boolean>;
-  collapsedSubgraphs?: Record<string, boolean>;
-  hiddenSubgraphs?: Record<string, boolean>;
-  bookmarkedNodeIds?: number[];
+  collapsedItems?: Record<string, boolean>;
+  hiddenItems?: Record<string, boolean>;
+  bookmarkedItems?: string[];
 }
 
 interface BookmarksState {
-  bookmarkedNodeIds: number[];
+  bookmarkedItems: string[];
   bookmarkBarSide: 'left' | 'right';
   bookmarkBarTop: number | null;
   bookmarkRepositioningActive: boolean;
-  toggleNodeBookmark: (nodeId: number) => void;
-  clearNodeBookmarks: () => void;
+  toggleBookmark: (stableKey: string) => void;
+  clearBookmarks: () => void;
   setBookmarkBarPosition: (position: { side?: 'left' | 'right'; top?: number | null }) => void;
   setBookmarkRepositioningActive: (active: boolean) => void;
 }
@@ -48,32 +46,18 @@ function buildSavedNodeStates(nodes: WorkflowNode[]): Record<number, SavedNodeSt
 function createSavedWorkflowState(
   workflow: Workflow,
   seedModes: Record<number, SeedMode>,
-  collapsedGroups: Record<number, boolean>,
-  hiddenGroups: Record<number, boolean>,
-  collapsedSubgraphs: Record<string, boolean>,
-  hiddenSubgraphs: Record<string, boolean>
+  collapsedItems: Record<string, boolean>,
+  hiddenItems: Record<string, boolean>
 ): SavedWorkflowState {
   return {
     nodes: buildSavedNodeStates(workflow.nodes),
     seedModes: { ...seedModes },
-    collapsedGroups: { ...collapsedGroups },
-    hiddenGroups: { ...hiddenGroups },
-    collapsedSubgraphs: { ...collapsedSubgraphs },
-    hiddenSubgraphs: { ...hiddenSubgraphs },
+    collapsedItems: { ...collapsedItems },
+    hiddenItems: { ...hiddenItems },
   };
 }
 
-function getValidBookmarks(
-  workflow: Workflow | null,
-  savedBookmarks: number[]
-): number[] {
-  if (!workflow) return [];
-  if (!savedBookmarks.length) return [];
-  const validNodeIds = new Set(workflow.nodes.map((node) => node.id));
-  return savedBookmarks.filter((id) => validNodeIds.has(id));
-}
-
-function areArraysEqual(a: number[], b: number[]): boolean {
+function areStringArraysEqual(a: string[], b: string[]): boolean {
   if (a === b) return true;
   if (a.length !== b.length) return false;
   for (let i = 0; i < a.length; i += 1) {
@@ -82,34 +66,60 @@ function areArraysEqual(a: number[], b: number[]): boolean {
   return true;
 }
 
+function getValidStableBookmarks(items: string[]): string[] {
+  const { workflow } = useWorkflowStore.getState();
+  if (!workflow) return [];
+  const validStableKeys = new Set<string>();
+  for (const node of workflow.nodes ?? []) {
+    if (node.stableKey) validStableKeys.add(node.stableKey);
+  }
+  for (const group of workflow.groups ?? []) {
+    if (group.stableKey) validStableKeys.add(group.stableKey);
+  }
+  for (const subgraph of workflow.definitions?.subgraphs ?? []) {
+    if (subgraph.stableKey) validStableKeys.add(subgraph.stableKey);
+    for (const group of subgraph.groups ?? []) {
+      if (group.stableKey) validStableKeys.add(group.stableKey);
+    }
+  }
+  const result: string[] = [];
+  const seen = new Set<string>();
+  for (const stableKey of items) {
+    if (!stableKey || seen.has(stableKey)) continue;
+    if (!validStableKeys.has(stableKey)) continue;
+    seen.add(stableKey);
+    result.push(stableKey);
+  }
+  return result;
+}
+
 export const useBookmarksStore = create<BookmarksState>()(
   persist(
     (set, get) => ({
-      bookmarkedNodeIds: [],
+      bookmarkedItems: [],
       bookmarkBarSide: 'right',
       bookmarkBarTop: null,
       bookmarkRepositioningActive: false,
-      toggleNodeBookmark: (nodeId) => {
-        const { bookmarkedNodeIds } = get();
+      toggleBookmark: (stableKey) => {
+        if (!stableKey) return;
+        const { bookmarkedItems } = get();
         const {
           currentWorkflowKey,
           savedWorkflowStates,
           workflow,
-          collapsedGroups,
-          hiddenGroups,
-          collapsedSubgraphs,
-          hiddenSubgraphs,
+          collapsedItems,
+          hiddenItems,
         } = useWorkflowStore.getState();
         const seedModes = useSeedStore.getState().seedModes;
 
-        const exists = bookmarkedNodeIds.includes(nodeId);
-        const nextBookmarks = exists
-          ? bookmarkedNodeIds.filter((id) => id !== nodeId)
-          : bookmarkedNodeIds.length >= MAX_BOOKMARKS
-            ? bookmarkedNodeIds
-            : [...bookmarkedNodeIds, nodeId];
+        const exists = bookmarkedItems.includes(stableKey);
+        const nextBookmarkedItems = exists
+          ? bookmarkedItems.filter((key) => key !== stableKey)
+          : bookmarkedItems.length >= MAX_BOOKMARKS
+            ? bookmarkedItems
+            : [...bookmarkedItems, stableKey];
 
-        if (nextBookmarks === bookmarkedNodeIds) return;
+        if (nextBookmarkedItems === bookmarkedItems) return;
 
         if (currentWorkflowKey) {
           const savedState = savedWorkflowStates[currentWorkflowKey] as SavedWorkflowState | undefined;
@@ -118,10 +128,8 @@ export const useBookmarksStore = create<BookmarksState>()(
             nextSavedState = createSavedWorkflowState(
               workflow,
               seedModes,
-              collapsedGroups,
-              hiddenGroups,
-              collapsedSubgraphs,
-              hiddenSubgraphs
+              collapsedItems,
+              hiddenItems
             );
           }
           if (nextSavedState) {
@@ -130,16 +138,16 @@ export const useBookmarksStore = create<BookmarksState>()(
                 ...savedWorkflowStates,
                 [currentWorkflowKey]: {
                   ...nextSavedState,
-                  bookmarkedNodeIds: [...nextBookmarks],
+                  bookmarkedItems: [...nextBookmarkedItems],
                 }
               }
             });
           }
         }
 
-        set({ bookmarkedNodeIds: nextBookmarks });
+        set({ bookmarkedItems: nextBookmarkedItems });
       },
-      clearNodeBookmarks: () => {
+      clearBookmarks: () => {
         const { currentWorkflowKey, savedWorkflowStates } = useWorkflowStore.getState();
         if (currentWorkflowKey && savedWorkflowStates[currentWorkflowKey]) {
           const savedState = savedWorkflowStates[currentWorkflowKey] as SavedWorkflowState;
@@ -148,12 +156,12 @@ export const useBookmarksStore = create<BookmarksState>()(
               ...savedWorkflowStates,
               [currentWorkflowKey]: {
                 ...savedState,
-                bookmarkedNodeIds: [],
+                bookmarkedItems: [],
               }
             }
           });
         }
-        set({ bookmarkedNodeIds: [] });
+        set({ bookmarkedItems: [] });
       },
       setBookmarkBarPosition: (position) => {
         set((state) => ({
@@ -178,33 +186,30 @@ export const useBookmarksStore = create<BookmarksState>()(
 
 function syncBookmarksFromWorkflowState(): void {
   const { workflow, currentWorkflowKey, savedWorkflowStates } = useWorkflowStore.getState();
-  const { bookmarkedNodeIds } = useBookmarksStore.getState();
+  const { bookmarkedItems } = useBookmarksStore.getState();
 
   if (!workflow) {
-    if (bookmarkedNodeIds.length > 0) {
-      useBookmarksStore.setState({ bookmarkedNodeIds: [] });
+    if (bookmarkedItems.length > 0) {
+      useBookmarksStore.setState({ bookmarkedItems: [] });
     }
     return;
   }
 
   if (!currentWorkflowKey) {
-    const validBookmarks = getValidBookmarks(workflow, bookmarkedNodeIds);
-    if (!areArraysEqual(bookmarkedNodeIds, validBookmarks)) {
-      useBookmarksStore.setState({ bookmarkedNodeIds: validBookmarks });
+    const validBookmarks = getValidStableBookmarks(bookmarkedItems);
+    if (!areStringArraysEqual(bookmarkedItems, validBookmarks)) {
+      useBookmarksStore.setState({ bookmarkedItems: validBookmarks });
     }
     return;
   }
 
   const savedState = savedWorkflowStates[currentWorkflowKey] as SavedWorkflowState | undefined;
-  const savedBookmarks = savedState?.bookmarkedNodeIds ?? [];
-  const validBookmarks = getValidBookmarks(workflow, savedBookmarks);
-  if (!areArraysEqual(bookmarkedNodeIds, validBookmarks)) {
-    useBookmarksStore.setState({ bookmarkedNodeIds: validBookmarks });
+  const validBookmarks = getValidStableBookmarks(savedState?.bookmarkedItems ?? []);
+  if (!areStringArraysEqual(bookmarkedItems, validBookmarks)) {
+    useBookmarksStore.setState({ bookmarkedItems: validBookmarks });
   }
 }
 
 useWorkflowStore.subscribe(() => {
   syncBookmarksFromWorkflowState();
 });
-
-syncBookmarksFromWorkflowState();

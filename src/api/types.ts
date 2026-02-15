@@ -20,6 +20,7 @@ export interface WorkflowOutput {
 
 export interface WorkflowNode {
   id: number;
+  stableKey?: string;
   type: string;
   pos: [number, number];
   size: [number, number];
@@ -39,6 +40,7 @@ export type WorkflowLink = [number, number, number, number, number, string];
 
 export interface WorkflowGroup {
   id: number;
+  stableKey?: string;
   title: string;
   bounding: [number, number, number, number]; // [x, y, width, height]
   color: string;
@@ -57,6 +59,7 @@ export interface WorkflowSubgraphLink {
 
 export interface WorkflowSubgraphDefinition {
   id: string;
+  stableKey?: string;
   name?: string;
   version?: number;
   state?: Record<string, unknown>;

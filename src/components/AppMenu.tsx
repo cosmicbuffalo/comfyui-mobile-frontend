@@ -6,7 +6,7 @@ import { PasteJsonPanel } from './AppMenu/PasteJsonPanel';
 import { SaveWorkflowPanel } from './AppMenu/SaveWorkflowPanel';
 import { TemplatesPanel } from './AppMenu/TemplatesPanel';
 import { UserWorkflowsPanel } from './AppMenu/UserWorkflowsPanel';
-import { useWorkflowStore } from '@/hooks/useWorkflow';
+import { stripWorkflowClientMetadata, useWorkflowStore } from '@/hooks/useWorkflow';
 import { useThemeStore } from '@/hooks/useTheme';
 import type { Workflow } from '@/api/types';
 import {
@@ -200,7 +200,7 @@ export function AppMenu({
 
     try {
       setLoading(true);
-      await saveUserWorkflow(finalFilename, workflow);
+      await saveUserWorkflow(finalFilename, stripWorkflowClientMetadata(workflow));
       setSavedWorkflow(workflow, finalFilename); // Update saved state
       setError(null);
       onClose();
@@ -236,7 +236,7 @@ export function AppMenu({
   const handleDownload = () => {
     if (!workflow) return;
 
-    const json = JSON.stringify(workflow, null, 2);
+    const json = JSON.stringify(stripWorkflowClientMetadata(workflow), null, 2);
     const blob = new Blob([json], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
 

@@ -9,6 +9,7 @@ import { getImageUrl, getNodeTypes, uploadImageFile } from "@/api/client";
 import { useWorkflowStore } from "@/hooks/useWorkflow";
 import { useThemeStore } from "@/hooks/useTheme";
 import { useCoarsePointer } from "@/hooks/useCoarsePointer";
+import { themeColors } from "@/theme/colors";
 
 interface ComboControlProps {
   containerClass: string;
@@ -227,8 +228,8 @@ export function ComboControl({
     </button>
   ) : null;
 
-  const lightText = "#111827";
-  const lightSubtleText = "#6b7280";
+  const lightText = themeColors.text.primary;
+  const lightSubtleText = themeColors.text.secondary;
 
   if (useModalFlow) {
     return (
@@ -246,7 +247,12 @@ export function ComboControl({
           onClick={() => !disabled && setInternalModalOpen(true)}
         >
           <span
-            className={`combo-control-trigger-label truncate min-w-0 flex-1 ${!selectedOption ? "text-gray-400 dark:text-gray-500" : "text-gray-900 dark:text-[#e5e7eb]"} ${hasPin ? "pr-16" : "pr-6"}`}
+            className={`combo-control-trigger-label truncate min-w-0 flex-1 ${!selectedOption ? "text-gray-400 dark:text-gray-500" : "text-gray-900"} ${hasPin ? "pr-16" : "pr-6"}`}
+            style={
+              selectedOption && isDark
+                ? { color: themeColors.text.onDark }
+                : undefined
+            }
           >
             {selectedOption ? selectedOption.label : "Select..."}
           </span>
@@ -314,7 +320,9 @@ export function ComboControl({
                 border: "none",
                 marginTop: "0.5rem",
                 borderRadius: 0,
-                backgroundColor: isDark ? "transparent" : "#ffffff",
+                backgroundColor: isDark
+                  ? themeColors.transparent
+                  : themeColors.surface.white,
               }),
               menuList: (base) => ({
                 ...base,
@@ -334,10 +342,10 @@ export function ComboControl({
                       ...base,
                       color: lightText,
                       backgroundColor: state.isSelected
-                        ? "#e5e7eb"
+                        ? themeColors.surface.gray200
                         : state.isFocused
-                          ? "#f3f4f6"
-                          : "transparent",
+                          ? themeColors.surface.gray100
+                          : themeColors.transparent,
                     },
               singleValue: (base) => ({
                 ...base,
@@ -353,9 +361,11 @@ export function ComboControl({
               }),
               control: (base) => ({
                 ...base,
-                borderColor: "#3b82f6",
-                boxShadow: "0 0 0 1px #3b82f6",
-                backgroundColor: isDark ? base.backgroundColor : "#ffffff",
+                borderColor: themeColors.border.focusBlue,
+                boxShadow: `0 0 0 1px ${themeColors.border.focusBlue}`,
+                backgroundColor: isDark
+                  ? base.backgroundColor
+                  : themeColors.surface.white,
                 color: isDark ? base.color : lightText,
               }),
             }}
@@ -415,10 +425,10 @@ export function ComboControl({
                     ...base,
                     color: lightText,
                     backgroundColor: state.isSelected
-                      ? "#e5e7eb"
+                      ? themeColors.surface.gray200
                       : state.isFocused
-                        ? "#f3f4f6"
-                        : "transparent",
+                        ? themeColors.surface.gray100
+                        : themeColors.transparent,
                   },
             singleValue: (base) => ({
               ...base,

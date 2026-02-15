@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { NodeTypes, Workflow, WorkflowInput, WorkflowNode } from '@/api/types';
+import type { WorkflowInput, WorkflowNode } from '@/api/types';
 import { useWorkflowStore, getWidgetDefinitions, getInputWidgetDefinitions, getWidgetIndexForInput, findSeedWidgetIndex } from '@/hooks/useWorkflow';
 import { useSeedStore } from '@/hooks/useSeed';
 import { useBookmarksStore } from '@/hooks/useBookmarks';
@@ -7,15 +7,19 @@ import { usePinnedWidgetStore } from '@/hooks/usePinnedWidget';
 import { useWorkflowErrorsStore } from '@/hooks/useWorkflowErrors';
 import { useOverallProgress } from '@/hooks/useOverallProgress';
 import { useQueueStore } from '@/hooks/useQueue';
+import { useNodeErrorPopover } from '@/hooks/useNodeErrorPopover';
 import { getImageUrl } from '@/api/client';
 import { getMediaType } from '@/utils/media';
-import { NodeCardConnections } from './NodeCard/NodeCardConnections';
-import { NodeCardMenu } from './NodeCard/NodeCardMenu';
-import { NodeCardErrorPopover } from './NodeCard/NodeCardErrorPopover';
-import { NodeCardNote } from './NodeCard/NodeCardNote';
-import { NodeCardOutputPreview } from './NodeCard/NodeCardOutputPreview';
-import { NodeCardHeader } from './NodeCard/NodeCardHeader';
-import { NodeCardParameters } from './NodeCard/NodeCardParameters';
+import { NodeCardMenu } from './NodeCard/Menu';
+import { NodeCardErrorPopover } from './NodeCard/ErrorPopover';
+import { NodeCardNote } from './NodeCard/Note';
+import { NodeCardOutputPreview } from './NodeCard/OutputPreview';
+import { NodeCardHeader } from './NodeCard/Header';
+import { DeleteNodeModal } from '@/components/modals/DeleteNodeModal';
+import { ErrorHighlightBadge } from './NodeCard/ErrorHighlightBadge';
+import { NodeCardConnectionsSection } from './NodeCard/ConnectionsSection';
+import { NodeCardParameters } from './NodeCard/Parameters';
+import { resolveLoadImagePreview } from '@/utils/loadImagePreview';
 
 const EMPTY_IMAGES: Array<{ filename: string; subfolder: string; type: string }> = [];
 type ImageLike = (typeof EMPTY_IMAGES)[number];
@@ -27,17 +31,28 @@ interface NodeCardProps {
   errorBadgeLabel?: string | null;
   onImageClick?: (images: Array<{ src: string; alt?: string }>, index: number) => void;
   inGroup?: boolean;
+  onMoveNode?: () => void;
 }
 
-export const NodeCard = memo(function NodeCard({ node, isExecuting, isConnectionHighlighted = false, errorBadgeLabel, onImageClick, inGroup = false }: NodeCardProps) {
+export const NodeCard = memo(function NodeCard({
+  node,
+  isExecuting,
+  isConnectionHighlighted = false,
+  errorBadgeLabel,
+  onImageClick,
+  inGroup = false,
+  onMoveNode
+}: NodeCardProps) {
   const nodeTypes = useWorkflowStore((s) => s.nodeTypes);
   const workflow = useWorkflowStore((s) => s.workflow);
   const updateNodeWidget = useWorkflowStore((s) => s.updateNodeWidget);
   const updateNodeWidgets = useWorkflowStore((s) => s.updateNodeWidgets);
   const updateNodeTitle = useWorkflowStore((s) => s.updateNodeTitle);
   const toggleBypass = useWorkflowStore((s) => s.toggleBypass);
-  const toggleNodeFold = useWorkflowStore((s) => s.toggleNodeFold);
-  const hideNode = useWorkflowStore((s) => s.hideNode);
+  const setItemCollapsed = useWorkflowStore((s) => s.setItemCollapsed);
+  const setItemHidden = useWorkflowStore((s) => s.setItemHidden);
+  const collapsedItems = useWorkflowStore((s) => s.collapsedItems);
+  const nodeStableKey = node.stableKey ?? null;
   const setConnectionHighlightMode = useWorkflowStore((s) => s.setConnectionHighlightMode);
   const connectionHighlightMode = useWorkflowStore((s) => s.connectionHighlightModes[node.id] ?? 'off');
   const setSeedMode = useSeedStore((s) => s.setSeedMode);
@@ -47,8 +62,8 @@ export const NodeCard = memo(function NodeCard({ node, isExecuting, isConnection
     s.pinnedWidget?.nodeId === node.id ? s.pinnedWidget : null
   );
   const setPinnedWidget = usePinnedWidgetStore((s) => s.setPinnedWidget);
-  const bookmarkedNodeIds = useBookmarksStore((s) => s.bookmarkedNodeIds);
-  const toggleNodeBookmark = useBookmarksStore((s) => s.toggleNodeBookmark);
+  const bookmarkedItems = useBookmarksStore((s) => s.bookmarkedItems);
+  const toggleBookmark = useBookmarksStore((s) => s.toggleBookmark);
   const nodeImages = useWorkflowStore((s) => s.nodeOutputs[String(node.id)]);
   const nodeErrors = useWorkflowErrorsStore((s) => s.nodeErrors[String(node.id)]);
   const progress = useWorkflowStore((s) => s.progress);
@@ -66,9 +81,14 @@ export const NodeCard = memo(function NodeCard({ node, isExecuting, isConnection
   const displayNodeProgress = overallProgress === 100 ? 100 : progress;
   const handleSetSeedMode = useCallback(
     (nodeId: number, mode: 'fixed' | 'randomize' | 'increment' | 'decrement') => {
-      setSeedMode(nodeId, mode, { workflow, nodeTypes, updateNodeWidgets });
+      if (!nodeStableKey) return;
+      setSeedMode(nodeId, mode, {
+        workflow,
+        nodeTypes,
+        updateNodeWidgets: (_rawNodeId, updates) => updateNodeWidgets(nodeStableKey, updates)
+      });
     },
-    [nodeTypes, setSeedMode, updateNodeWidgets, workflow]
+    [nodeStableKey, nodeTypes, setSeedMode, updateNodeWidgets, workflow]
   );
   const handleSetPinnedWidget = useCallback(
     (pin: {
@@ -84,7 +104,7 @@ export const NodeCard = memo(function NodeCard({ node, isExecuting, isConnection
   );
   const resolvedImages = nodeImages ?? EMPTY_IMAGES;
   const [previewImage, setPreviewImage] = useState<ImageLike | null>(null);
-  const [errorPopoverOpen, setErrorPopoverOpen] = useState(false);
+  const { errorPopoverOpen, setErrorPopoverOpen, resetErrorPopover } = useNodeErrorPopover();
   const noteTextareaRef = useRef<HTMLTextAreaElement>(null);
   const [isEditingNote, setIsEditingNote] = useState(false);
   const [isEditingLabel, setIsEditingLabel] = useState(false);
@@ -93,6 +113,8 @@ export const NodeCard = memo(function NodeCard({ node, isExecuting, isConnection
   const lastNoteTapRef = useRef<number>(0);
   const errorIconRef = useRef<HTMLButtonElement>(null);
   const [highlightLabel, setHighlightLabel] = useState<string | null>(null);
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const deleteNode = useWorkflowStore((s) => s.deleteNode);
 
   useEffect(() => {
     const handleShowLabel = (event: Event) => {
@@ -144,7 +166,7 @@ export const NodeCard = memo(function NodeCard({ node, isExecuting, isConnection
   const displayName: string = nodeTitle || typeDef?.display_name || node.type;
   const isKSampler = node.type === 'KSampler';
   const isBypassed = node.mode === 4;
-  const isCollapsed = Boolean(node.flags?.collapsed);
+  const isCollapsed = nodeStableKey ? Boolean(collapsedItems[nodeStableKey]) : false;
   const isLoadImageNode = /LoadImage/i.test(node.type);
   const inputImagePreview = useMemo(() => {
     if (!isLoadImageNode || !workflow || !nodeTypes) return null;
@@ -217,7 +239,8 @@ export const NodeCard = memo(function NodeCard({ node, isExecuting, isConnection
 
   const handleUpdateNote = (value: string) => {
     if (noteWidgetIndex === null) return;
-    updateNodeWidget(node.id, noteWidgetIndex, value);
+    if (!nodeStableKey) return;
+    updateNodeWidget(nodeStableKey, noteWidgetIndex, value);
   };
 
   const noteLinkified = useMemo(() => {
@@ -343,12 +366,14 @@ export const NodeCard = memo(function NodeCard({ node, isExecuting, isConnection
     ? isWidgetPinned(singlePinnableWidget.widgetIndex)
     : false;
   const hasPinnedWidget = Boolean(pinnedWidgetForThisNode);
-  const isNodeBookmarked = bookmarkedNodeIds.includes(node.id);
-  const canAddNodeBookmark = bookmarkedNodeIds.length < 5 || isNodeBookmarked;
+  const isNodeBookmarked = nodeStableKey ? bookmarkedItems.includes(nodeStableKey) : false;
+  const totalBookmarkCount = bookmarkedItems.length;
+  const canAddNodeBookmark = totalBookmarkCount < 5 || isNodeBookmarked;
 
   const showImagePreview = (hasImageOutput || isImageOutputNode) && !!effectivePreviewImage;
   const inputConnectionCount = node.inputs?.filter((input) => input.link != null).length ?? 0;
   const outputConnectionCount = node.outputs?.reduce((count, output) => count + (output.links?.length ?? 0), 0) ?? 0;
+  const hasNodeConnections = inputConnectionCount > 0 || outputConnectionCount > 0;
   const leftLineCount = Math.min(3, inputConnectionCount);
   const rightLineCount = Math.min(3, outputConnectionCount);
   const previewList = effectivePreviewImage
@@ -387,24 +412,37 @@ export const NodeCard = memo(function NodeCard({ node, isExecuting, isConnection
 
   const handleLabelBlur = () => {
     const nextValue = labelValue.trim();
-    updateNodeTitle(node.id, nextValue.length > 0 ? nextValue : null);
+    if (!nodeStableKey) return;
+    updateNodeTitle(nodeStableKey, nextValue.length > 0 ? nextValue : null);
     setIsEditingLabel(false);
   };
 
+  const handleUpdateNodeWidget = useCallback(
+    (widgetIndex: number, value: unknown, widgetName?: string) => {
+      if (!nodeStableKey) return;
+      updateNodeWidget(nodeStableKey, widgetIndex, value, widgetName);
+    },
+    [nodeStableKey, updateNodeWidget]
+  );
+
+  const handleUpdateNodeWidgets = useCallback(
+    (updates: Record<number, unknown>) => {
+      if (!nodeStableKey) return;
+      updateNodeWidgets(nodeStableKey, updates);
+    },
+    [nodeStableKey, updateNodeWidgets]
+  );
+
   const showHighlightLabel = Boolean(highlightLabel && !/^error\b/i.test(highlightLabel));
   return (
-    <div id={`node-card-wrapper-${node.id}`} className="relative node-card-outer">
+    <div
+      id={`node-card-wrapper-${node.id}`}
+      className="relative node-card-outer"
+    >
       <div id={`node-anchor-${node.id}`} className="absolute -top-3 left-0 right-0 h-0 node-scroll-anchor" />
 
-      {/* Highlight Label Badge */}
       {showHighlightLabel && (
-        <div
-          className="absolute -top-6 left-1/2 -translate-x-1/2 z-[100] animate-in fade-in slide-in-from-bottom-2 duration-200"
-        >
-          <div className="bg-red-600 text-white text-[10px] font-black px-2 py-0.5 rounded-full shadow-lg whitespace-nowrap uppercase tracking-tighter ring-2 ring-white">
-            {highlightLabel}
-          </div>
-        </div>
+        <ErrorHighlightBadge label={highlightLabel ?? ''} />
       )}
 
       {errorBadgeLabel && (
@@ -419,12 +457,14 @@ export const NodeCard = memo(function NodeCard({ node, isExecuting, isConnection
         id={`node-card-${node.id}`}
         className={`
         node-card-inner
-        ${inGroup ? 'rounded-lg shadow-sm py-1' : 'rounded-xl shadow-md px-3 py-1 mb-3'}
+        ${inGroup ? 'rounded-lg shadow-sm py-1' : 'rounded-xl shadow-md px-2 py-1 mb-3'}
         border-2
         ${hasErrors ? 'border-red-700 shadow-red-200' : (isConnectionHighlighted ? 'border-orange-500 shadow-orange-200' : (isExecuting ? 'border-green-500 shadow-green-200' : (isBypassed ? 'border-purple-300' : 'border-transparent')))}
         ${isBypassed ? (isCollapsed ? 'bg-purple-200' : 'bg-purple-100/50') : 'bg-white'}
       `}
-        style={{ overflow: 'visible' }}
+        style={{
+          overflow: 'visible',
+        }}
       >
       <NodeCardHeader
         nodeId={node.id}
@@ -442,10 +482,14 @@ export const NodeCard = memo(function NodeCard({ node, isExecuting, isConnection
         errorIconRef={errorIconRef}
         errorPopoverOpen={errorPopoverOpen}
         setErrorPopoverOpen={setErrorPopoverOpen}
-        toggleNodeFold={toggleNodeFold}
+        toggleNodeFold={() => {
+          if (!nodeStableKey) return;
+          setItemCollapsed(nodeStableKey, !isCollapsed);
+        }}
         rightSlot={(
           <NodeCardMenu
             nodeId={node.id}
+            nodeStableKey={nodeStableKey}
             isBypassed={isBypassed}
             onEditLabel={handleEditLabel}
             pinnableWidgets={pinnableWidgets}
@@ -456,9 +500,13 @@ export const NodeCard = memo(function NodeCard({ node, isExecuting, isConnection
             setPinnedWidget={handleSetPinnedWidget}
             isNodeBookmarked={isNodeBookmarked}
             canAddNodeBookmark={canAddNodeBookmark}
-            onToggleNodeBookmark={() => toggleNodeBookmark(node.id)}
+            onToggleNodeBookmark={() =>
+              nodeStableKey ? toggleBookmark(nodeStableKey) : undefined
+            }
             toggleBypass={toggleBypass}
-            hideNode={hideNode}
+            setItemHidden={setItemHidden}
+            onDeleteNode={() => setShowDeleteModal(true)}
+            onMoveNode={onMoveNode ?? (() => {})}
             connectionHighlightMode={connectionHighlightMode}
             setConnectionHighlightMode={setConnectionHighlightMode}
             leftLineCount={leftLineCount}
@@ -473,7 +521,7 @@ export const NodeCard = memo(function NodeCard({ node, isExecuting, isConnection
         }`}
       >
         <div
-          className={`overflow-hidden transition-opacity duration-200 ease-out ${
+          className={`collapse-container overflow-hidden transition-opacity px-1 duration-200 ease-out ${
             isCollapsed ? "opacity-0" : "opacity-100"
           }`}
         >
@@ -484,16 +532,15 @@ export const NodeCard = memo(function NodeCard({ node, isExecuting, isConnection
           )}
 
           <div id={`node-content-${node.id}`} className={`node-expanded-content ${isBypassed ? 'opacity-60 grayscale' : ''}`}>
-            {/* Inputs & Outputs section - side by side at top */}
-            <NodeCardConnections
+            <NodeCardConnectionsSection
               nodeId={node.id}
+              nodeType={node.type}
               inputs={connectionInputs}
               outputs={visibleOutputs}
               allInputs={node.inputs}
               allOutputs={node.outputs}
             />
 
-            {/* Parameters section - editable values (both widget values and input widgets) */}
             <NodeCardParameters
               node={node}
               isBypassed={isBypassed}
@@ -503,8 +550,8 @@ export const NodeCard = memo(function NodeCard({ node, isExecuting, isConnection
               visibleInputWidgets={visibleInputWidgets}
               visibleWidgets={visibleWidgets}
               errorInputNames={errorInputNames}
-              onUpdateNodeWidget={updateNodeWidget}
-              onUpdateNodeWidgets={updateNodeWidgets}
+              onUpdateNodeWidget={handleUpdateNodeWidget}
+              onUpdateNodeWidgets={handleUpdateNodeWidgets}
               getWidgetIndexForInput={handleGetWidgetIndexForInput}
               findSeedWidgetIndex={handleFindSeedWidgetIndex}
               setSeedMode={handleSetSeedMode}
@@ -543,52 +590,23 @@ export const NodeCard = memo(function NodeCard({ node, isExecuting, isConnection
         open={errorPopoverOpen && hasErrors}
         errors={nodeErrors ?? []}
         anchorRef={errorIconRef}
-        onClose={() => setErrorPopoverOpen(false)}
+        onClose={resetErrorPopover}
       />
+
+      {showDeleteModal && (
+        <DeleteNodeModal
+          nodeId={node.id}
+          displayName={displayName}
+          hasConnections={hasNodeConnections}
+          onCancel={() => setShowDeleteModal(false)}
+          onDelete={(reconnect) => {
+            if (nodeStableKey) {
+              deleteNode(nodeStableKey, reconnect);
+            }
+            setShowDeleteModal(false);
+          }}
+        />
+      )}
     </div>
   );
 });
-
-function resolveLoadImagePreview(workflow: Workflow, nodeTypes: NodeTypes | null, node: WorkflowNode): ImageLike | null {
-  if (!nodeTypes) return null;
-  const widgetIndex = getWidgetIndexForInput(workflow, nodeTypes, node, 'image') ??
-    getWidgetIndexForInput(workflow, nodeTypes, node, 'filename') ??
-    getWidgetIndexForInput(workflow, nodeTypes, node, 'file');
-  if (widgetIndex == null || !Array.isArray(node.widgets_values)) return null;
-  const rawValue = node.widgets_values[widgetIndex];
-  return parseInputImageValue(rawValue);
-}
-
-function parseInputImageValue(value: unknown): ImageLike | null {
-  if (typeof value === 'string' && value.trim()) {
-    const { filename, subfolder } = splitSubfolder(value.trim());
-    return { filename, subfolder, type: 'input' };
-  }
-  if (!value || typeof value !== 'object') return null;
-  const record = value as Record<string, unknown>;
-  const filename = typeof record.filename === 'string'
-    ? record.filename
-    : typeof record.name === 'string'
-      ? record.name
-      : null;
-  if (!filename || !filename.trim()) return null;
-  const subfolder = typeof record.subfolder === 'string' ? record.subfolder : '';
-  const type = typeof record.type === 'string' ? record.type : 'input';
-  const { filename: parsedName, subfolder: parsedSubfolder } = splitSubfolder(filename.trim());
-  return {
-    filename: parsedName,
-    subfolder: subfolder || parsedSubfolder,
-    type
-  };
-}
-
-// Split a path like "folder/file.png" into subfolder + filename for /view.
-function splitSubfolder(path: string): { filename: string; subfolder: string } {
-  const normalized = path.replace(/^\/+/, '');
-  const parts = normalized.split('/').filter(Boolean);
-  if (parts.length <= 1) {
-    return { filename: normalized, subfolder: '' };
-  }
-  const filename = parts.pop() ?? normalized;
-  return { filename, subfolder: parts.join('/') };
-}

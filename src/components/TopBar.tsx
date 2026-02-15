@@ -4,11 +4,12 @@ import { useAppMenuStore } from '@/hooks/useAppMenu';
 import { useQueueStore } from '@/hooks/useQueue';
 import { useHistoryStore } from '@/hooks/useHistory';
 import { useOutputsStore } from '@/hooks/useOutputs';
-import { MenuIcon } from '@/components/icons';
 import { AppMenu } from './AppMenu';
 import { QueueTopBarControls } from './QueuePanel/QueueTopBarControls';
 import { OutputsTopBarControls } from './OutputsPanel/OutputsTopBarControls';
 import { WorkflowTopBarControls } from './WorkflowPanel/WorkflowTopBarControls';
+import { MenuButton } from '@/components/buttons/MenuButton';
+import { TopBarTitle } from './TopBar/Title';
 
 interface TopBarProps {
   mode?: 'workflow' | 'queue' | 'outputs';
@@ -81,8 +82,7 @@ export function TopBar({ mode = 'workflow' }: TopBarProps) {
   const workflow = useWorkflowStore((s) => s.workflow);
   const originalWorkflow = useWorkflowStore((s) => s.originalWorkflow);
   const currentFilename = useWorkflowStore((s) => s.currentFilename);
-  const manuallyHiddenNodes = useWorkflowStore((s) => s.manuallyHiddenNodes);
-  const hiddenSubgraphs = useWorkflowStore((s) => s.hiddenSubgraphs);
+  const hiddenItems = useWorkflowStore((s) => s.hiddenItems);
   const pending = useQueueStore((s) => s.pending);
   const history = useHistoryStore((s) => s.history);
   const outputsSource = useOutputsStore((s) => s.source);
@@ -94,8 +94,8 @@ export function TopBar({ mode = 'workflow' }: TopBarProps) {
   const nodeCountLabel = useMemo(() => {
     if (!workflow) return '';
     const totalNodes = workflow.nodes.length;
-    const manualHiddenCount = Object.keys(manuallyHiddenNodes).length;
-    const hasHiddenSubgraphs = Object.values(hiddenSubgraphs).some(Boolean);
+    const manualHiddenCount = Object.keys(hiddenItems).length;
+    const hasHiddenSubgraphs = Object.values(hiddenItems).some(Boolean);
     if (manualHiddenCount === 0 && !hasHiddenSubgraphs) {
       return `${totalNodes} nodes ${isDirty ? '[Unsaved]' : ''}`.trim();
     }
@@ -108,7 +108,13 @@ export function TopBar({ mode = 'workflow' }: TopBarProps) {
           const scope = (origin as { scope?: string }).scope;
           if (scope !== 'subgraph') return count;
           const subgraphId = (origin as { subgraphId?: string }).subgraphId;
-          if (subgraphId && hiddenSubgraphs[subgraphId]) {
+          const stableSubgraphKey = subgraphId
+            ? workflow.definitions?.subgraphs?.find((sg) => sg.id === subgraphId)?.stableKey
+            : null;
+          if (
+            stableSubgraphKey &&
+            hiddenItems[stableSubgraphKey]
+          ) {
             return count + 1;
           }
           return count;
@@ -117,7 +123,7 @@ export function TopBar({ mode = 'workflow' }: TopBarProps) {
 
     const hiddenCount = manualHiddenCount + hiddenSubgraphNodeCount;
     return `${totalNodes} nodes (${hiddenCount} hidden) ${isDirty ? '[Unsaved]' : ''}`.trim();
-  }, [workflow, manuallyHiddenNodes, hiddenSubgraphs, isDirty]);
+  }, [workflow, hiddenItems, isDirty]);
 
   useEffect(() => {
     const el = barRef.current;
@@ -167,35 +173,17 @@ export function TopBar({ mode = 'workflow' }: TopBarProps) {
       data-top-bar="true"
     >
       <div id="top-bar-content" className="flex items-center justify-between px-4 py-3">
-        {/* Menu button */}
-        <button
-          onClick={() => setAppMenuOpen(true)}
-          className="w-10 h-10 flex items-center justify-center rounded-lg
-                     text-gray-700 hover:bg-gray-100"
-        >
-          <MenuIcon className="w-6 h-6" />
-        </button>
-
-        {/* Title - double tap to scroll to top */}
-        <div id="top-bar-title-container" className="flex-1 text-center min-w-0 px-2 cursor-pointer" onClick={handleTitleTap}>
-          <h1 id="top-bar-title" className="font-semibold text-gray-900 text-lg truncate flex items-center justify-center">
-            <span className="truncate">{title}</span>
-            {mode === 'workflow' && isDirty && <span id="dirty-indicator" className="text-blue-500 ml-1 font-bold">*</span>}
-          </h1>
-          {mode === 'workflow' && workflow && (
-            <p className="node-count-display text-xs text-gray-500">
-              {nodeCountLabel}
-            </p>
-          )}
-          {mode === 'queue' && (
-            <p className="run-count-display text-xs text-gray-500">
-              {history.length} {history.length === 1 ? 'run' : 'runs'}
-              {pending.length > 0 && ` (${pending.length} pending)`}
-            </p>
-          )}
-        </div>
-
-        {/* Status indicators / menu slot */}
+        <MenuButton onClick={() => setAppMenuOpen(true)} />
+        <TopBarTitle
+          title={title}
+          mode={mode}
+          isDirty={Boolean(isDirty)}
+          hasWorkflow={Boolean(workflow)}
+          nodeCountLabel={nodeCountLabel}
+          historyLength={history.length}
+          pendingLength={pending.length}
+          onTap={handleTitleTap}
+        />
         <div id="top-bar-right-slot" className="w-10 h-10 flex items-center justify-center">
           {rightControls}
         </div>

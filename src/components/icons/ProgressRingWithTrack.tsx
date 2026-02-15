@@ -1,4 +1,5 @@
 import type { IconProps } from './types';
+import { themeColors } from '@/theme/colors';
 
 export interface ProgressRingWithTrackProps extends IconProps {
   progress: number;
@@ -10,8 +11,8 @@ export interface ProgressRingWithTrackProps extends IconProps {
 export function ProgressRingWithTrack({
   progress,
   radius = 10,
-  trackColor = '#e5e7eb',
-  progressColor = '#3b82f6',
+  trackColor = themeColors.border.gray200,
+  progressColor = themeColors.brand.blue500,
   ...props
 }: ProgressRingWithTrackProps) {
   const normalized = Math.min(100, Math.max(0, progress));

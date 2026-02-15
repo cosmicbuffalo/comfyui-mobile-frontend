@@ -6,7 +6,7 @@ interface DismissOnOutsideClickOptions {
   onDismiss: () => void;
   triggerRef: RefObject<HTMLElement | null>;
   contentRef: RefObject<HTMLElement | null>;
-  closeOnScroll?: boolean;
+  ignoreScrollWithinContent?: boolean;
 }
 
 export function useDismissOnOutsideClick({
@@ -14,7 +14,7 @@ export function useDismissOnOutsideClick({
   onDismiss,
   triggerRef,
   contentRef,
-  closeOnScroll = true
+  ignoreScrollWithinContent = false
 }: DismissOnOutsideClickOptions) {
   useEffect(() => {
     if (!open) return;
@@ -28,20 +28,20 @@ export function useDismissOnOutsideClick({
       }
       onDismiss();
     };
-    const handleScroll = () => {
-      if (closeOnScroll) {
-        onDismiss();
+    const handleScroll = (event: Event) => {
+      if (ignoreScrollWithinContent) {
+        const target = event.target as Node | null;
+        if (contentRef.current && target && contentRef.current.contains(target)) {
+          return;
+        }
       }
+      onDismiss();
     };
     document.addEventListener('mousedown', handleClick);
-    if (closeOnScroll) {
-      document.addEventListener('scroll', handleScroll, true);
-    }
+    document.addEventListener('scroll', handleScroll, true);
     return () => {
       document.removeEventListener('mousedown', handleClick);
-      if (closeOnScroll) {
-        document.removeEventListener('scroll', handleScroll, true);
-      }
+      document.removeEventListener('scroll', handleScroll, true);
     };
-  }, [open, onDismiss, triggerRef, contentRef, closeOnScroll]);
+  }, [open, onDismiss, triggerRef, contentRef, ignoreScrollWithinContent]);
 }

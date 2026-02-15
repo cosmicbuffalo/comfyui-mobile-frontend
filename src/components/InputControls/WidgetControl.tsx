@@ -342,12 +342,6 @@ export function WidgetControl({
               ? String(value)
               : "Empty"}
         </div>
-        <div
-          id={`widget-icon-container-${name}`}
-          className="icon-container ml-2 text-gray-400"
-        >
-          {/* Placeholder for arrow or type icon if needed */}
-        </div>
       </div>
 
       <FullscreenWidgetModal

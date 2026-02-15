@@ -1,4 +1,5 @@
 import type { IconProps } from './types';
+import { themeColors } from '@/theme/colors';
 
 export interface ProgressRingProps extends IconProps {
   progress: number;
@@ -16,7 +17,7 @@ export function ProgressRing({ progress, radius = 11, ...props }: ProgressRingPr
         cy="12"
         r={radius}
         fill="none"
-        stroke="rgba(34,197,94,0.9)"
+        stroke={themeColors.status.successStrong}
         strokeWidth="2"
         strokeLinecap="round"
         strokeDasharray={circumference}
