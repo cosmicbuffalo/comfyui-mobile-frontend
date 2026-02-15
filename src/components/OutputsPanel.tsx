@@ -1,22 +1,27 @@
 import { useEffect, useMemo, useState, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { useOutputsStore } from '@/hooks/useOutputs';
 import { useWorkflowStore } from '@/hooks/useWorkflow';
 import { useNavigationStore } from '@/hooks/useNavigation';
 import type { FileItem } from '@/api/client';
 import type { ViewerImage } from '@/utils/viewerImages';
 import { getMediaType } from '@/utils/media';
-import { deleteFile, moveFiles, createFolder, getUserImages } from '@/api/client';
+import { deleteFile, moveFiles, createFolder, getUserImages, renameFile } from '@/api/client';
 import {
-  FolderIcon, EllipsisVerticalIcon, CheckIcon,
-  BookmarkIconSvg, BookmarkOutlineIcon, ChevronDownIcon, ChevronRightIcon,
-  TrashIcon, WorkflowLoadIcon, ThickArrowRightIcon, VideoCameraIcon
+  FolderIcon, BookmarkIconSvg, BookmarkOutlineIcon, TrashIcon
 } from '@/components/icons';
 import { useDismissOnOutsideClick } from '@/hooks/useDismissOnOutsideClick';
+import { useAnchoredMenuPosition } from '@/hooks/useAnchoredMenuPosition';
 import { FilterModal } from './OutputsPanel/FilterModal';
-import { OutputsWorkflowConfirmModal } from '@/components/modals/OutputsWorkflowConfirmModal';
 import { MediaViewer } from '@/components/ImageViewer/MediaViewer';
 import { UseImageModal } from '@/components/modals/UseImageModal';
+import { ModalFrame } from '@/components/modals/ModalFrame';
+import { Dialog } from '@/components/modals/Dialog';
 import { loadWorkflowFromFile, resolveFilePath } from '@/utils/workflowOperations';
+import { OutputsPanelHeader } from './OutputsPanel/Header';
+import { OutputsFoldersSection } from './OutputsPanel/FoldersSection';
+import { OutputsFilesSection } from './OutputsPanel/FilesSection';
+import { OutputsContextMenu } from './OutputsPanel/ContextMenu';
 
 const FOLDERS_COLLAPSED_KEY = 'outputs-folders-collapsed';
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -33,156 +38,9 @@ function formatDateLabel(timestamp?: number): string {
   return date.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
 }
 
-function FileCard({
-  file,
-  viewMode,
-  selectionMode,
-  isSelected,
-  isFavorited,
-  onNavigateFolder,
-  onOpen,
-  onMenu,
-  onToggleSelection
-}: {
-  file: FileItem;
-  viewMode: 'grid' | 'list';
-  selectionMode: boolean;
-  isSelected: boolean;
-  isFavorited: boolean;
-  onNavigateFolder: (folder: string) => void;
-  onOpen: (file: FileItem) => void;
-  onMenu: (file: FileItem, e: React.MouseEvent) => void;
-  onToggleSelection: (id: string) => void;
-}) {
-  const isFolder = file.type === 'folder';
-  const [previewError, setPreviewError] = useState(false);
-
-  /* eslint-disable react-hooks/set-state-in-effect */
-  useEffect(() => {
-    setPreviewError(false);
-  }, [file.previewUrl, file.id]);
-  /* eslint-enable react-hooks/set-state-in-effect */
-
-  const handleClick = () => {
-    if (selectionMode) {
-      onToggleSelection(file.id);
-    } else if (isFolder) {
-      onNavigateFolder(file.name);
-    } else {
-      onOpen(file);
-    }
-  };
-
-  const handleMenuButtonClick = (event: React.MouseEvent) => {
-    event.stopPropagation();
-    onMenu(file, event);
-  };
-
-  if (viewMode === 'list') {
-    return (
-      <div
-        className={`file-card-list-item flex items-center gap-3 p-2 hover:bg-gray-50 border-b border-gray-100 last:border-0 ${isSelected ? 'bg-blue-50' : ''}`}
-        onClick={handleClick}
-      >
-        {selectionMode && (
-          <div className={`selection-checkbox w-5 h-5 rounded border flex items-center justify-center flex-shrink-0 ${isSelected ? 'bg-blue-600 border-blue-600 text-white' : 'border-gray-300 bg-white'}`}>
-             {isSelected && <CheckIcon className="w-3.5 h-3.5" />}
-          </div>
-        )}
-        <div className={`file-preview-container w-10 h-10 flex-shrink-0 flex items-center justify-center rounded text-gray-500 overflow-hidden relative ${isFolder ? '' : 'bg-gray-100'}`}>
-           {isFolder ? (
-             <FolderIcon className="w-6 h-6 text-amber-500" />
-           ) : file.previewUrl && !previewError ? (
-             <img
-               src={file.previewUrl}
-               className="w-full h-full object-cover"
-               loading="lazy"
-               onError={() => setPreviewError(true)}
-             />
-           ) : (
-             file.type === 'video' ? (
-               <VideoCameraIcon className="w-5 h-5 text-gray-500" />
-             ) : (
-               <span className="text-xs font-bold">IMG</span>
-             )
-           )}
-        </div>
-        <div className="file-info-container flex-1 min-w-0">
-          <div className="file-name text-sm font-medium text-gray-900 truncate">{file.name}</div>
-        </div>
-        <div className="file-actions-container flex items-center gap-2">
-          {isFavorited && (
-            <BookmarkIconSvg className="w-4 h-4 text-yellow-500" />
-          )}
-          <button
-            className="p-2 text-gray-400 hover:text-gray-700"
-            onClick={handleMenuButtonClick}
-          >
-            <EllipsisVerticalIcon className="w-5 h-5 -rotate-90" />
-          </button>
-        </div>
-      </div>
-    );
-  }
-
-  // Grid
-  return (
-    <div className="file-card-grid-item flex flex-col gap-1">
-      <div
-        className={`relative aspect-square bg-gray-100 rounded-lg overflow-hidden transition-all ${isSelected ? 'ring-4 ring-blue-500 ring-offset-2' : ''}`}
-        onClick={handleClick}
-      >
-        {isFolder ? (
-          <div className="folder-grid-content w-full h-full flex flex-col items-center justify-center text-gray-500">
-            <FolderIcon className="w-12 h-12 mb-2 text-amber-500" />
-          </div>
-        ) : file.previewUrl && !previewError ? (
-          <img
-            src={file.previewUrl}
-            className="w-full h-full object-cover"
-            loading="lazy"
-            onError={() => setPreviewError(true)}
-          />
-        ) : (
-          <div className="media-placeholder w-full h-full flex items-center justify-center bg-gray-800 text-white font-bold">
-            {file.type === 'video' ? (
-              <VideoCameraIcon className="w-10 h-10 text-white/80" />
-            ) : (
-              'IMG'
-            )}
-          </div>
-        )}
-
-        {selectionMode ? (
-          <div className="selection-badge-container absolute top-2 left-2">
-            <div className={`selection-badge w-6 h-6 rounded-full border-2 flex items-center justify-center shadow-sm ${isSelected ? 'bg-blue-600 border-blue-600 text-white' : 'border-white bg-black/20'}`}>
-              {isSelected && <CheckIcon className="w-4 h-4" />}
-            </div>
-          </div>
-        ) : (
-          <div className="file-menu-trigger-container absolute top-1 right-1 flex flex-col items-center gap-1">
-            <button
-              className="p-1 bg-gray-500/40 rounded-full text-white hover:bg-gray-500/60"
-              onClick={handleMenuButtonClick}
-            >
-              <EllipsisVerticalIcon className="w-4 h-4 -rotate-90" />
-            </button>
-            {isFavorited && (
-              <BookmarkIconSvg className="w-4 h-4 text-yellow-400 drop-shadow" />
-            )}
-          </div>
-        )}
-
-        {file.type === 'video' && <div className="video-label absolute top-1 left-1 bg-black/50 px-1 rounded text-[10px] text-white">VID</div>}
-      </div>
-      <div className="file-name text-xs text-gray-700 truncate px-1">{file.name}</div>
-    </div>
-  );
-}
-
 export function OutputsPanel({ visible }: { visible: boolean }) {
   const {
-    source, currentFolder, isLoading, viewMode, filter, sort, favorites,
+    source, currentFolder, isLoading, viewMode, showHidden, filter, sort, favorites,
     selectionMode, selectedIds,
     setCurrentFolder, navigateToPath, fetchFolders, fetchFiles,
     toggleFavorite, toggleSelection, getDisplayedFiles, refresh, selectIds, toggleSelectionMode,
@@ -208,11 +66,13 @@ export function OutputsPanel({ visible }: { visible: boolean }) {
     [workflow, originalWorkflow]
   );
 
-  const [menuTarget, setMenuTarget] = useState<{ file: FileItem, x: number, y: number } | null>(null);
+  const [menuTarget, setMenuTarget] = useState<{ file: FileItem } | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<FileItem | null>(null);
   const [loadWorkflowTarget, setLoadWorkflowTarget] = useState<FileItem | null>(null);
   const [outputsWorkflowConfirmFile, setOutputsWorkflowConfirmFile] = useState<FileItem | null>(null);
   const [loadNodePickerOpen, setLoadNodePickerOpen] = useState(false);
+  const [renameTarget, setRenameTarget] = useState<FileItem | null>(null);
+  const [renameValue, setRenameValue] = useState('');
   const [deleteSelectionOpen, setDeleteSelectionOpen] = useState(false);
   const [movePickerOpen, setMovePickerOpen] = useState(false);
   const [movePath, setMovePath] = useState<string | null>(null);
@@ -226,6 +86,7 @@ export function OutputsPanel({ visible }: { visible: boolean }) {
   const [viewerImages, setViewerImages] = useState<ViewerImage[]>([]);
   const [viewerIndex, setViewerIndex] = useState(0);
   const menuRef = useRef<HTMLDivElement>(null);
+  const menuButtonRef = useRef<HTMLButtonElement>(null);
   const hasFetchedRef = useRef(false);
   const [foldersCollapsed, setFoldersCollapsed] = useState(() => {
     const saved = localStorage.getItem(FOLDERS_COLLAPSED_KEY);
@@ -259,10 +120,24 @@ export function OutputsPanel({ visible }: { visible: boolean }) {
     setLoadNodePickerOpen(true);
   };
 
+  const { menuStyle, resetMenuPosition } = useAnchoredMenuPosition({
+    open: !!menuTarget,
+    buttonRef: menuButtonRef,
+    menuRef,
+    repositionToken: menuTarget?.file.id,
+    menuWidth: 176,
+    horizontalAnchorOffset: 160,
+    viewportPadding: 8,
+    bottomBarReserve: 104
+  });
+
   useDismissOnOutsideClick({
     open: !!menuTarget,
-    onDismiss: () => setMenuTarget(null),
-    triggerRef: { current: null },
+    onDismiss: () => {
+      setMenuTarget(null);
+      resetMenuPosition();
+    },
+    triggerRef: menuButtonRef,
     contentRef: menuRef
   });
 
@@ -447,9 +322,9 @@ export function OutputsPanel({ visible }: { visible: boolean }) {
 
   const handleMenu = (file: FileItem, e: React.MouseEvent) => {
       e.preventDefault();
-      const x = Math.min(e.clientX, window.innerWidth - 200);
-      const y = Math.min(e.clientY, window.innerHeight - 200);
-      setMenuTarget({ file, x, y });
+      e.stopPropagation();
+      menuButtonRef.current = e.currentTarget as HTMLButtonElement;
+      setMenuTarget({ file });
   };
 
   const handleFavorite = () => {
@@ -478,6 +353,13 @@ export function OutputsPanel({ visible }: { visible: boolean }) {
   const handleDeleteRequest = () => {
     if (!menuTarget) return;
     setDeleteTarget(menuTarget.file);
+    setMenuTarget(null);
+  };
+
+  const handleRenameRequest = () => {
+    if (!menuTarget) return;
+    setRenameTarget(menuTarget.file);
+    setRenameValue(menuTarget.file.name);
     setMenuTarget(null);
   };
 
@@ -606,6 +488,30 @@ export function OutputsPanel({ visible }: { visible: boolean }) {
     setMenuTarget(null);
   };
 
+  const closeRenameModal = () => {
+    setRenameTarget(null);
+    setRenameValue('');
+  };
+
+  const confirmRename = async () => {
+    if (!renameTarget) return;
+    const nextName = renameValue.trim();
+    if (!nextName) return;
+    if (nextName === renameTarget.name) {
+      closeRenameModal();
+      return;
+    }
+    try {
+      const filePath = resolveFilePath(renameTarget, source);
+      await renameFile(filePath, nextName, source);
+      refresh();
+      closeRenameModal();
+    } catch (err) {
+      console.error('Failed to rename item:', err);
+      window.alert('Failed to rename item.');
+    }
+  };
+
   const closeMoveModal = () => {
     setMovePickerOpen(false);
     setMoveItemIds([]);
@@ -639,7 +545,7 @@ export function OutputsPanel({ visible }: { visible: boolean }) {
       await createFolder(path, source);
       setNewFolderName('');
       setMoveLoading(true);
-      const result = await getUserImages(source, 1000, 0, 'modified', false, movePath);
+      const result = await getUserImages(source, 1000, 0, 'modified', false, movePath, showHidden);
       setMoveFolders(result.filter((item) => item.type === 'folder'));
     } catch (err) {
       console.error('Failed to create folder:', err);
@@ -739,7 +645,7 @@ export function OutputsPanel({ visible }: { visible: boolean }) {
     const loadFolders = async () => {
       setMoveLoading(true);
       try {
-        const result = await getUserImages(source, 1000, 0, 'modified', false, movePath);
+        const result = await getUserImages(source, 1000, 0, 'modified', false, movePath, showHidden);
         if (canceled) return;
         setMoveFolders(result.filter((item) => item.type === 'folder'));
       } catch (err) {
@@ -754,7 +660,7 @@ export function OutputsPanel({ visible }: { visible: boolean }) {
     return () => {
       canceled = true;
     };
-  }, [movePickerOpen, movePath, source]);
+  }, [movePickerOpen, movePath, source, showHidden]);
 
   useEffect(() => {
     if (selectionActionOpen && selectedIds.length === 0) {
@@ -782,133 +688,46 @@ export function OutputsPanel({ visible }: { visible: boolean }) {
   return (
     <div
       id="outputs-panel-wrapper"
-      className="absolute inset-x-0 top-[69px] bottom-0"
+      className="absolute inset-x-0 top-[60px] bottom-0"
       style={{ display: visible ? 'block' : 'none' }}
     >
       <div id="outputs-panel-root" className="h-full bg-white flex flex-col pt-[4px] pb-[80px]">
-       {/* Header with breadcrumb */}
-       <div id="outputs-panel-header" className="px-4 py-3 flex flex-col gap-3 border-b border-gray-100">
-          <div id="outputs-header-top-row" className="flex items-center justify-between min-h-[24px]">
-            {renderBreadcrumbs()}
+       <OutputsPanelHeader
+         breadcrumbs={renderBreadcrumbs()}
+         selectionMode={selectionMode}
+         selectedCount={selectedIds.length}
+         onClearSelection={handleSelectionClear}
+       />
 
-            {selectionMode && (
-               <div className="selection-status-container flex items-center gap-2 shrink-0 ml-2">
-                  <span className="text-[10px] font-bold text-blue-600 uppercase">{selectedIds.length} selected</span>
-                  <button
-                     onClick={handleSelectionClear}
-                     className="text-[10px] text-gray-500 underline uppercase font-bold"
-                  >
-                     Clear
-                  </button>
-               </div>
-            )}
-          </div>
-       </div>
-
-       {/* Content */}
        <div id="outputs-content-container" className="flex-1 overflow-y-auto p-4">
-          {/* Folders Section (always list view, collapsible) */}
-          {folders.length > 0 && (
-            <div id="outputs-folders-section" className="mb-4">
-              <button
-                onClick={toggleFoldersCollapsed}
-                className="flex items-center gap-2 w-full text-left mb-2 py-1 text-sm font-medium text-gray-600 hover:text-gray-900"
-              >
-                {foldersCollapsed ? (
-                  <ChevronRightIcon className="w-4 h-4" />
-                ) : (
-                  <ChevronDownIcon className="w-4 h-4" />
-                )}
-                <span>Folders ({folders.length})</span>
-              </button>
-              {!foldersCollapsed && (
-                <div className="flex flex-col border border-gray-200 rounded-lg overflow-hidden">
-                  {folders.map(file => (
-                    <FileCard
-                      key={file.id}
-                      file={file}
-                      viewMode="list"
-                      selectionMode={selectionMode}
-                      isSelected={selectedIds.includes(file.id)}
-                      isFavorited={favorites.includes(file.id)}
-                      onNavigateFolder={setCurrentFolder}
-                      onOpen={handleOpen}
-                      onMenu={handleMenu}
-                      onToggleSelection={toggleSelection}
-                    />
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
+          <OutputsFoldersSection
+            folders={folders}
+            foldersCollapsed={foldersCollapsed}
+            toggleFoldersCollapsed={toggleFoldersCollapsed}
+            selectionMode={selectionMode}
+            selectedIds={selectedIds}
+            favorites={favorites}
+            setCurrentFolder={setCurrentFolder}
+            handleOpen={handleOpen}
+            handleMenu={handleMenu}
+            toggleSelection={toggleSelection}
+          />
 
-          {/* Files Grid/List */}
-          <div id="outputs-files-section" className="flex flex-col gap-4">
-            {fileSections.map((section) => (
-              <div key={section.key} className="flex flex-col gap-2">
-                <div className="flex items-center justify-between gap-3">
-                  <button
-                    className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wide text-gray-500 hover:text-gray-800"
-                    onClick={() => toggleSectionCollapsed(section.key)}
-                  >
-                    {collapsedSections[section.key] ? (
-                      <ChevronRightIcon className="w-3.5 h-3.5" />
-                    ) : (
-                      <ChevronDownIcon className="w-3.5 h-3.5" />
-                    )}
-                    <span>{section.label} ({section.files.length})</span>
-                  </button>
-                  {selectionMode && (
-                    <button
-                      className="text-[10px] font-bold uppercase text-blue-600 hover:text-blue-700"
-                      onClick={() => selectIds(section.files.map((file) => file.id))}
-                    >
-                      Select all
-                    </button>
-                  )}
-                </div>
-                {!collapsedSections[section.key] && (
-                  viewMode === 'grid' ? (
-                    <div className="grid grid-cols-2 gap-4 auto-rows-min">
-                      {section.files.map((file) => (
-                        <FileCard
-                          key={file.id}
-                          file={file}
-                          viewMode={viewMode}
-                          selectionMode={selectionMode}
-                          isSelected={selectedIds.includes(file.id)}
-                          isFavorited={favorites.includes(file.id)}
-                          onNavigateFolder={setCurrentFolder}
-                          onOpen={handleOpen}
-                          onMenu={handleMenu}
-                          onToggleSelection={toggleSelection}
-                        />
-                      ))}
-                    </div>
-                  ) : (
-                    <div className="flex flex-col">
-                      {section.files.map((file) => (
-                        <FileCard
-                          key={file.id}
-                          file={file}
-                          viewMode={viewMode}
-                          selectionMode={selectionMode}
-                          isSelected={selectedIds.includes(file.id)}
-                          isFavorited={favorites.includes(file.id)}
-                          onNavigateFolder={setCurrentFolder}
-                          onOpen={handleOpen}
-                          onMenu={handleMenu}
-                          onToggleSelection={toggleSelection}
-                        />
-                      ))}
-                    </div>
-                  )
-                )}
-              </div>
-            ))}
-          </div>
+          <OutputsFilesSection
+            fileSections={fileSections}
+            collapsedSections={collapsedSections}
+            viewMode={viewMode}
+            selectionMode={selectionMode}
+            selectedIds={selectedIds}
+            favorites={favorites}
+            setCurrentFolder={setCurrentFolder}
+            handleOpen={handleOpen}
+            handleMenu={handleMenu}
+            toggleSelection={toggleSelection}
+            toggleSectionCollapsed={toggleSectionCollapsed}
+            selectIds={selectIds}
+          />
 
-          {/* Loading Indicator */}
           {isLoading && (
             <div id="outputs-loading-indicator" className="py-4 flex justify-center">
               <span className="text-gray-400 text-sm">Loading...</span>
@@ -926,84 +745,25 @@ export function OutputsPanel({ visible }: { visible: boolean }) {
           )}
        </div>
 
-       {/* Context Menu */}
-       {menuTarget && (
-         <>
-           <div
-             id="outputs-context-menu-overlay"
-             className="fixed inset-0 z-[1690]"
-             onClick={() => setMenuTarget(null)}
-             onPointerDown={(event) => event.stopPropagation()}
-           />
-           <div
-             id="outputs-context-menu"
-             ref={menuRef}
-             className="fixed z-[1700] bg-white shadow-xl rounded-lg border border-gray-200 w-52 py-1"
-             style={{ top: menuTarget.y, left: menuTarget.x }}
-             onPointerDown={(event) => event.stopPropagation()}
-             onClick={(event) => event.stopPropagation()}
-           >
-              <button
-                className="w-full text-left px-4 py-2 text-sm hover:bg-gray-50 flex items-center gap-2"
-                onClick={handleFavorite}
-              >
-                {favorites.includes(menuTarget.file.id) ? <BookmarkIconSvg className="w-4 h-4" /> : <BookmarkOutlineIcon className="w-4 h-4" />}
-                {favorites.includes(menuTarget.file.id) ? 'Unfavorite' : 'Favorite'}
-              </button>
-              <button
-                className="w-full text-left px-4 py-2 text-sm hover:bg-gray-50 flex items-center gap-2"
-                onClick={handleSelectSingle}
-              >
-                <CheckIcon className="w-4 h-4 text-gray-500" />
-                Select
-              </button>
-              <button
-                className="w-full text-left px-4 py-2 text-sm hover:bg-gray-50 flex items-center gap-2"
-                onClick={handleMoveSingle}
-              >
-                <FolderIcon className="w-4 h-4 text-gray-500" />
-                Move
-              </button>
-              {menuTarget.file.type === 'image' && (
-                <button
-                  className="w-full text-left px-4 py-2 text-sm hover:bg-gray-50 flex items-center gap-2"
-                  onClick={handleLoadWorkflow}
-                >
-                  <WorkflowLoadIcon className="w-4 h-4 text-gray-500" />
-                  Load workflow
-                </button>
-              )}
-              {menuTarget.file.type === 'image' && (
-                <button
-                  className="w-full text-left px-4 py-2 text-sm hover:bg-gray-50 flex items-center gap-2"
-                  onClick={handleLoadInWorkflow}
-                >
-                  <ThickArrowRightIcon className="w-4 h-4 text-gray-500" />
-                  Use in workflow
-                </button>
-              )}
-              <button
-                className="w-full text-left px-4 py-2 text-sm text-red-600 hover:bg-red-50 flex items-center gap-2"
-                onClick={handleDeleteRequest}
-              >
-                <TrashIcon className="w-4 h-4" />
-                Delete
-              </button>
-           </div>
-         </>
-       )}
+       <OutputsContextMenu
+         menuTarget={menuTarget}
+         favorites={favorites}
+         setMenuTarget={setMenuTarget}
+         menuRef={menuRef}
+         menuStyle={menuStyle}
+         handleFavorite={handleFavorite}
+         handleSelectSingle={handleSelectSingle}
+         handleMoveSingle={handleMoveSingle}
+         handleRenameRequest={handleRenameRequest}
+         handleLoadWorkflow={handleLoadWorkflow}
+         handleLoadInWorkflow={handleLoadInWorkflow}
+         handleDeleteRequest={handleDeleteRequest}
+       />
        {selectionActionOpen && (
-         <div
-           id="outputs-selection-actions"
-           className="fixed inset-0 z-[1800] bg-black/40 flex items-center justify-center p-4"
-           onClick={() => setSelectionActionOpen(false)}
-           role="dialog"
-           aria-modal="true"
-         >
-           <div
-             className="w-full max-w-sm bg-white border border-gray-200 rounded-xl shadow-lg overflow-hidden"
-             onClick={(event) => event.stopPropagation()}
-           >
+        <ModalFrame
+          onClose={() => setSelectionActionOpen(false)}
+          zIndex={1800}
+        >
              <div className="px-4 py-3 text-sm font-semibold text-gray-700 border-b border-gray-100">
                {selectedIds.length} selected
              </div>
@@ -1036,22 +796,13 @@ export function OutputsPanel({ visible }: { visible: boolean }) {
              >
                Cancel
              </button>
-           </div>
-         </div>
+         </ModalFrame>
        )}
        {movePickerOpen && (
-         <div
-           id="outputs-move-picker-overlay"
-           className="fixed inset-0 z-[1850] bg-black/50 flex items-center justify-center p-4"
-           onClick={closeMoveModal}
-           role="dialog"
-           aria-modal="true"
-         >
-           <div
-             id="outputs-move-picker"
-             className="w-full max-w-sm bg-white border border-gray-200 rounded-xl shadow-lg overflow-hidden"
-             onClick={(event) => event.stopPropagation()}
-           >
+        <ModalFrame
+          onClose={closeMoveModal}
+          zIndex={1850}
+        >
              <div className="px-4 py-3 text-sm font-semibold text-gray-700 border-b border-gray-100">
                {movePath !== moveOriginPath
                  ? <>Move to <FolderIcon className="w-4 h-4 text-amber-500 inline" /> {movePath || 'root'}</>
@@ -1114,92 +865,99 @@ export function OutputsPanel({ visible }: { visible: boolean }) {
                  Submit
                </button>
              </div>
-           </div>
-         </div>
+         </ModalFrame>
        )}
        {deleteTarget && (
-        <div
-          id="outputs-delete-confirm-overlay"
-          className="fixed inset-0 z-[2100] bg-black/50 flex items-center justify-center p-4"
-          onClick={closeDeleteModal}
-          role="dialog"
-          aria-modal="true"
-        >
-          <div
-            id="outputs-delete-confirm-modal"
-            className="w-full max-w-sm bg-white border border-gray-200 rounded-xl shadow-lg p-4"
-            onClick={(event) => event.stopPropagation()}
-          >
-            <div id="outputs-delete-confirm-title" className="text-gray-900 text-base font-semibold">Delete file?</div>
-            <div id="outputs-delete-confirm-description" className="text-gray-600 text-sm mt-1">
-              {deleteTarget.type === 'folder'
-                ? `This will permanently delete the folder "${deleteTarget.name}" and all of its contents from the server. This cannot be undone.`
-                : `This will permanently delete "${deleteTarget.name}" from the server. This cannot be undone.`}
-            </div>
-            <div id="outputs-delete-confirm-actions" className="mt-4 flex justify-end gap-2">
-              <button
-                className="px-3 py-2 rounded-lg text-sm font-medium text-gray-600 hover:bg-gray-100"
-                onClick={closeDeleteModal}
-              >
-                Cancel
-              </button>
-              <button
-                className="px-3 py-2 rounded-lg text-sm font-medium text-white bg-red-600 hover:bg-red-700"
-                onClick={confirmDelete}
-              >
-                Delete
-              </button>
-            </div>
-          </div>
-        </div>
+         <Dialog
+           onClose={closeDeleteModal}
+           title="Delete file?"
+           description={
+             deleteTarget.type === 'folder'
+               ? `This will permanently delete the folder "${deleteTarget.name}" and all of its contents from the server. This cannot be undone.`
+               : `This will permanently delete "${deleteTarget.name}" from the server. This cannot be undone.`
+           }
+           actions={[
+             {
+               label: 'Cancel',
+               onClick: closeDeleteModal,
+               className: 'px-3 py-2 rounded-lg text-sm font-medium text-gray-600 hover:bg-gray-100'
+             },
+             {
+               label: 'Delete',
+               onClick: confirmDelete,
+               className: 'px-3 py-2 rounded-lg text-sm font-medium text-white bg-red-600 hover:bg-red-700'
+             }
+           ]}
+         />
        )}
        {deleteSelectionOpen && (
-        <div
-          id="outputs-delete-selection-overlay"
-          className="fixed inset-0 z-[1800] bg-black/50 flex items-center justify-center p-4"
-          onClick={() => setDeleteSelectionOpen(false)}
-          role="dialog"
-          aria-modal="true"
-        >
-          <div
-            id="outputs-delete-selection-modal"
-            className="w-full max-w-sm bg-white border border-gray-200 rounded-xl shadow-lg p-4"
-            onClick={(event) => event.stopPropagation()}
-          >
-            <div className="text-gray-900 text-base font-semibold">Delete selected files?</div>
-            <div className="text-gray-600 text-sm mt-1">
-              This will permanently delete {selectedIds.length} selected file{selectedIds.length === 1 ? '' : 's'} from the server. This cannot be undone.
+         <Dialog
+           onClose={() => setDeleteSelectionOpen(false)}
+           title="Delete selected files?"
+           description={`This will permanently delete ${selectedIds.length} selected file${selectedIds.length === 1 ? '' : 's'} from the server. This cannot be undone.`}
+           zIndex={1800}
+           actions={[
+             {
+               label: 'Cancel',
+               onClick: () => setDeleteSelectionOpen(false),
+               className: 'px-3 py-2 rounded-lg text-sm font-medium text-gray-600 hover:bg-gray-100'
+             },
+             {
+               label: 'Delete',
+               onClick: confirmDeleteSelection,
+               className: 'px-3 py-2 rounded-lg text-sm font-medium text-white bg-red-600 hover:bg-red-700'
+             }
+           ]}
+        />
+       )}
+       {renameTarget && (
+         <ModalFrame
+           onClose={closeRenameModal}
+           zIndex={1850}
+         >
+          <div className="p-4">
+            <div className="text-gray-900 text-base font-semibold">
+              Rename {renameTarget.type === 'folder' ? 'folder' : 'file'}
             </div>
+            <div className="text-gray-600 text-sm mt-1 truncate">
+              Current: {renameTarget.name}
+            </div>
+            <input
+              value={renameValue}
+              onChange={(event) => setRenameValue(event.target.value)}
+              onKeyDown={(event) => { if (event.key === 'Enter') void confirmRename(); }}
+              placeholder={renameTarget.type === 'folder' ? 'Folder name' : 'File name'}
+              className="mt-3 w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
+              autoFocus
+            />
             <div className="mt-4 flex justify-end gap-2">
               <button
                 className="px-3 py-2 rounded-lg text-sm font-medium text-gray-600 hover:bg-gray-100"
-                onClick={() => setDeleteSelectionOpen(false)}
+                onClick={closeRenameModal}
               >
                 Cancel
               </button>
               <button
-                className="px-3 py-2 rounded-lg text-sm font-medium text-white bg-red-600 hover:bg-red-700"
-                onClick={confirmDeleteSelection}
+                className={`px-3 py-2 rounded-lg text-sm font-medium ${
+                  renameValue.trim() && renameValue.trim() !== renameTarget.name
+                    ? 'text-white bg-blue-600 hover:bg-blue-700'
+                    : 'text-gray-400 bg-gray-200 cursor-not-allowed'
+                }`}
+                onClick={() => { void confirmRename(); }}
+                disabled={!renameValue.trim() || renameValue.trim() === renameTarget.name}
               >
-                Delete
+                Rename
               </button>
             </div>
           </div>
-        </div>
+         </ModalFrame>
        )}
        {newFolderModalOpen && (
-        <div
-          id="outputs-new-folder-overlay"
-          className="fixed inset-0 z-[1850] bg-black/50 flex items-center justify-center p-4"
-          onClick={() => { setNewFolderModalOpen(false); setCreateFolderName(''); }}
-          role="dialog"
-          aria-modal="true"
-        >
-          <div
-            id="outputs-new-folder-modal"
-            className="w-full max-w-sm bg-white border border-gray-200 rounded-xl shadow-lg p-4"
-            onClick={(event) => event.stopPropagation()}
-          >
+         <ModalFrame
+           onClose={() => { setNewFolderModalOpen(false); setCreateFolderName(''); }}
+           zIndex={1850}
+         >
+           <div className="p-4">
             <div className="text-gray-900 text-base font-semibold">New folder</div>
             <div className="text-gray-600 text-sm mt-1">
               Create a new folder in {currentFolder ? <><FolderIcon className="w-3.5 h-3.5 text-amber-500 inline" /> {currentFolder}</> : 'root'}
@@ -1227,8 +985,8 @@ export function OutputsPanel({ visible }: { visible: boolean }) {
                 Create
               </button>
             </div>
-          </div>
-        </div>
+           </div>
+         </ModalFrame>
        )}
        <UseImageModal
          open={loadNodePickerOpen}
@@ -1250,11 +1008,26 @@ export function OutputsPanel({ visible }: { visible: boolean }) {
          onChangeFilter={setFilter}
          onChangeSort={setSort}
        />
-       <OutputsWorkflowConfirmModal
-         file={outputsWorkflowConfirmFile}
-         onCancel={handleOutputsWorkflowCancel}
-         onConfirm={handleOutputsWorkflowConfirm}
-       />
+       {outputsWorkflowConfirmFile && createPortal(
+         <Dialog
+           onClose={handleOutputsWorkflowCancel}
+           title="Unsaved changes"
+           description="Are you sure you want to load this workflow? You have unsaved changes."
+           actions={[
+             {
+               label: 'Cancel',
+               onClick: handleOutputsWorkflowCancel,
+               className: 'px-3 py-2 rounded-lg text-sm font-medium text-gray-600 hover:bg-gray-100'
+             },
+             {
+               label: 'Continue',
+               onClick: () => { void handleOutputsWorkflowConfirm(); },
+               className: 'px-3 py-2 rounded-lg text-sm font-medium text-white bg-red-600 hover:bg-red-700'
+             }
+           ]}
+         />,
+         document.body
+       )}
        <MediaViewer
          open={viewerOpen}
          items={viewerImages}

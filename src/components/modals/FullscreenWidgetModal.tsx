@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import { createPortal } from 'react-dom';
-import { CloseIcon } from '@/components/icons';
+import { useThemeStore } from '@/hooks/useTheme';
+import { FullscreenModalHeader } from './FullscreenModalHeader';
 interface FullscreenWidgetModalProps {
   isOpen: boolean;
   title: string;
@@ -16,6 +17,9 @@ export function FullscreenWidgetModal({
   children,
   headerActions
 }: FullscreenWidgetModalProps) {
+  const theme = useThemeStore((s) => s.theme);
+  const isDark = theme === 'dark';
+
   // Lock body scroll when modal is open
   useEffect(() => {
     if (isOpen) {
@@ -34,36 +38,21 @@ export function FullscreenWidgetModal({
       className="fixed inset-0 z-[2100] bg-gray-400/40 dark:bg-black/50 backdrop-blur-sm safe-area-top"
       onClick={onClose}
     >
-      {/* Modal Content */}
       <div
         className="w-full h-full flex flex-col"
         style={{
-          paddingTop: 'env(safe-area-inset-top, 0px)',
+          paddingTop: 'env(--top-bar-offset, 0px)',
           paddingBottom: 'var(--bottom-bar-offset, 0px)'
         }}
         onClick={(e) => e.stopPropagation()}
       >
-        {/* Header/Input Area - Below top bar */}
-        <div className="bg-white dark:bg-[#151a23] p-4 border-b border-gray-200 dark:border-gray-800 shadow-sm relative z-50 min-h-0 overflow-y-auto">
-          <div className="flex justify-between items-start mb-2">
-            <span className="font-semibold text-gray-700 dark:text-gray-200 truncate pr-4 pt-1 flex-1">{title}</span>
-            <div className="flex items-center gap-2">
-              {headerActions}
-              <button
-                onClick={onClose}
-                className="w-10 h-10 flex items-center justify-center rounded-full bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors"
-                aria-label="Close"
-              >
-                <CloseIcon className="w-6 h-6" />
-              </button>
-            </div>
-          </div>
-          <div className="mt-2">
-            {children}
-          </div>
-        </div>
-
-        {/* Allow touching below to close */}
+        <FullscreenModalHeader
+          title={title}
+          onClose={onClose}
+          headerActions={headerActions}
+          isDark={isDark}
+        />
+        <div className="mt-2 px-4 pb-4">{children}</div>
         <div className="flex-1" onClick={onClose} />
       </div>
     </div>,

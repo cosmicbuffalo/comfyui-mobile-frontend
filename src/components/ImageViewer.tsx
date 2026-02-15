@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { MediaViewer } from './ImageViewer/MediaViewer';
 import { useWorkflowStore } from '@/hooks/useWorkflow';
 import { useNavigationStore } from '@/hooks/useNavigation';
@@ -9,9 +10,8 @@ import { useOverallProgress } from '@/hooks/useOverallProgress';
 import { buildViewerImages, type ViewerImage } from '@/utils/viewerImages';
 import { deleteFile, type FileItem } from '@/api/client';
 import type { HistoryOutputImage } from '@/api/types';
-import { OutputsWorkflowConfirmModal } from '@/components/modals/OutputsWorkflowConfirmModal';
+import { Dialog } from '@/components/modals/Dialog';
 import { UseImageModal } from '@/components/modals/UseImageModal';
-import { DeleteConfirmationModal } from '@/components/modals/DeleteConfirmationModal';
 import { loadWorkflowFromFile, resolveFilePath, resolveFileSource } from '@/utils/workflowOperations';
 
 interface ImageViewerProps {
@@ -202,13 +202,32 @@ export function ImageViewer({ onClose }: ImageViewerProps) {
         initialTranslate={initialTranslate}
         onTransformChange={handleTransformChange}
         zoomResetKey={followQueueSwitchId}
-        overlayZIndex={2100}
       />
-      <OutputsWorkflowConfirmModal
-        file={loadWorkflowTarget}
-        onCancel={() => setLoadWorkflowTarget(null)}
-        onConfirm={handleLoadWorkflow}
-      />
+      {loadWorkflowTarget && createPortal(
+        <Dialog
+          onClose={() => setLoadWorkflowTarget(null)}
+          title="Unsaved changes"
+          description="Are you sure you want to load this workflow? You have unsaved changes."
+          actions={[
+            {
+              label: 'Cancel',
+              onClick: () => setLoadWorkflowTarget(null),
+              className: 'px-3 py-2 rounded-lg text-sm font-medium text-gray-600 hover:bg-gray-100'
+            },
+            {
+              label: 'Continue',
+              onClick: () => {
+                void (async () => {
+                  await handleLoadWorkflow(loadWorkflowTarget);
+                  setLoadWorkflowTarget(null);
+                })();
+              },
+              className: 'px-3 py-2 rounded-lg text-sm font-medium text-white bg-red-600 hover:bg-red-700'
+            }
+          ]}
+        />,
+        document.body
+      )}
       <UseImageModal
         open={loadNodeOpen}
         file={loadNodeTarget}
@@ -216,12 +235,25 @@ export function ImageViewer({ onClose }: ImageViewerProps) {
         onClose={handleLoadNodeClose}
         onLoaded={handleLoadNodeComplete}
       />
-      {deleteTarget && (
-        <DeleteConfirmationModal
-          file={deleteTarget}
-          onCancel={() => setDeleteTarget(null)}
-          onConfirm={handleDeleteConfirm}
-        />
+      {deleteTarget && createPortal(
+        <Dialog
+          onClose={() => setDeleteTarget(null)}
+          title="Delete file?"
+          description={`This will permanently delete "${deleteTarget.name}" from the server. This cannot be undone.`}
+          actions={[
+            {
+              label: 'Cancel',
+              onClick: () => setDeleteTarget(null),
+              className: 'px-3 py-2 rounded-lg text-sm font-medium text-gray-600 hover:bg-gray-100'
+            },
+            {
+              label: 'Delete',
+              onClick: () => { void handleDeleteConfirm(); },
+              className: 'px-3 py-2 rounded-lg text-sm font-medium text-white bg-red-600 hover:bg-red-700'
+            }
+          ]}
+        />,
+        document.body
       )}
     </>
   );

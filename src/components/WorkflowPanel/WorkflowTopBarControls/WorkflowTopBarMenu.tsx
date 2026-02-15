@@ -1,10 +1,12 @@
 import type { RefObject } from 'react';
-import { useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { useWorkflowStore, getInputWidgetDefinitions, getWidgetDefinitions } from '@/hooks/useWorkflow';
 import { useBookmarksStore } from '@/hooks/useBookmarks';
 import { useHistoryStore } from '@/hooks/useHistory';
 import { loadTemplateWorkflow, loadUserWorkflow } from '@/api/client';
-import { CaretDownIcon, CaretRightIcon, EllipsisVerticalIcon, EyeIcon, EyeOffIcon, LogoutIcon, ArrowRightIcon, ReloadIcon, SearchIcon, TrashIcon } from '@/components/icons';
+import { CaretDownIcon, CaretRightIcon, EyeIcon, EyeOffIcon, ArrowRightIcon, ReloadIcon, SearchIcon, TrashIcon, PlusIcon, WorkflowIcon } from '@/components/icons';
+import { ContextMenuButton } from '@/components/buttons/ContextMenuButton';
+import { ContextMenuBuilder } from '@/components/menus/ContextMenuBuilder';
 
 interface WorkflowTopBarMenuProps {
   open: boolean;
@@ -14,7 +16,8 @@ interface WorkflowTopBarMenuProps {
   onClose: () => void;
   onGoToQueue: () => void;
   onGoToOutputs: () => void;
-  onHandleDirtyAction: (action: 'unload' | 'clearWorkflowCache' | 'clearAllCache') => void;
+  onAddNode: () => void;
+  onOpenWorkflowActions: () => void;
 }
 
 export function WorkflowTopBarMenu({
@@ -25,22 +28,18 @@ export function WorkflowTopBarMenu({
   onClose,
   onGoToQueue,
   onGoToOutputs,
-  onHandleDirtyAction
+  onAddNode,
+  onOpenWorkflowActions
 }: WorkflowTopBarMenuProps) {
   const workflow = useWorkflowStore((s) => s.workflow);
   const nodeTypes = useWorkflowStore((s) => s.nodeTypes);
-  const setNodeFold = useWorkflowStore((s) => s.setNodeFold);
-  const setGroupCollapsed = useWorkflowStore((s) => s.setGroupCollapsed);
-  const setSubgraphCollapsed = useWorkflowStore((s) => s.setSubgraphCollapsed);
-  const setNodeHidden = useWorkflowStore((s) => s.setNodeHidden);
+  const setItemCollapsed = useWorkflowStore((s) => s.setItemCollapsed);
+  const setItemHidden = useWorkflowStore((s) => s.setItemHidden);
   const showAllHiddenNodes = useWorkflowStore((s) => s.showAllHiddenNodes);
-  const manuallyHiddenNodes = useWorkflowStore((s) => s.manuallyHiddenNodes);
-  const hiddenGroups = useWorkflowStore((s) => s.hiddenGroups);
-  const hiddenSubgraphs = useWorkflowStore((s) => s.hiddenSubgraphs);
-  const bookmarkedNodeIds = useBookmarksStore((s) => s.bookmarkedNodeIds);
-  const clearNodeBookmarks = useBookmarksStore((s) => s.clearNodeBookmarks);
-  const collapsedGroups = useWorkflowStore((s) => s.collapsedGroups);
-  const collapsedSubgraphs = useWorkflowStore((s) => s.collapsedSubgraphs);
+  const hiddenItems = useWorkflowStore((s) => s.hiddenItems);
+  const bookmarkedItems = useBookmarksStore((s) => s.bookmarkedItems);
+  const clearBookmarks = useBookmarksStore((s) => s.clearBookmarks);
+  const collapsedItems = useWorkflowStore((s) => s.collapsedItems);
   const workflowSource = useWorkflowStore((s) => s.workflowSource);
   const loadWorkflow = useWorkflowStore((s) => s.loadWorkflow);
   const searchOpen = useWorkflowStore((s) => s.searchOpen);
@@ -51,86 +50,125 @@ export function WorkflowTopBarMenu({
     (s) => s.toggleConnectionButtonsVisible,
   );
   const history = useHistoryStore((s) => s.history);
+  const hasStableFlag = useCallback(
+    (state: Record<string, boolean>, stableKey: string): boolean =>
+      Boolean(state[stableKey]),
+    [],
+  );
 
   const hasWorkflow = Boolean(workflow);
-  const allWorkflowNodeIds = useMemo(() => (
-    workflow?.nodes.map((node) => node.id) ?? []
+  const allWorkflowNodeStableKeys = useMemo(() => (
+    workflow?.nodes
+      .map((node) => node.stableKey ?? null)
+      .filter((key): key is string => key != null) ?? []
   ), [workflow]);
-  const allGroupIds = useMemo(() => {
-    if (!workflow) return [];
-    const rootGroups = workflow.groups?.map((group) => group.id) ?? [];
-    const subgraphGroups = workflow.definitions?.subgraphs?.flatMap((subgraph) => (
-      subgraph.groups?.map((group) => group.id) ?? []
-    )) ?? [];
-    return [...rootGroups, ...subgraphGroups];
+  const allGroupTargets = useMemo(() => {
+    const groups = [
+      ...(workflow?.groups ?? []),
+      ...((workflow?.definitions?.subgraphs ?? []).flatMap((subgraph) => subgraph.groups ?? [])),
+    ];
+    return groups
+      .map((group) => group.stableKey ?? null)
+      .filter((stableKey): stableKey is string => stableKey != null);
   }, [workflow]);
-  const allSubgraphIds = useMemo(() => (
-    workflow?.definitions?.subgraphs?.map((subgraph) => subgraph.id) ?? []
+  const allSubgraphStableKeys = useMemo(() => (
+    (workflow?.definitions?.subgraphs?.map((subgraph) => subgraph.stableKey ?? null) ?? []).filter((key): key is string => key != null)
   ), [workflow]);
 
-  const bypassedNodeIds = useMemo(() => (
-    workflow?.nodes.filter((node) => node.mode === 4).map((node) => node.id) ?? []
+  const bypassedNodes = useMemo(() => (
+    workflow?.nodes.filter((node) => node.mode === 4) ?? []
   ), [workflow]);
-  const staticNodeIds = useMemo(() => {
+  const staticNodes = useMemo(() => {
     if (!workflow || !nodeTypes) return [];
     return workflow.nodes.filter((node) => {
       if (node.type === 'Fast Groups Bypasser (rgthree)') return false;
       const widgetDefs = getWidgetDefinitions(nodeTypes, node).filter((widget) => !widget.connected);
       const inputWidgetDefs = getInputWidgetDefinitions(nodeTypes, node).filter((widget) => !widget.connected);
       return widgetDefs.length === 0 && inputWidgetDefs.length === 0;
-    }).map((node) => node.id);
+    });
   }, [workflow, nodeTypes]);
-  const bypassedNodeCount = bypassedNodeIds.length;
-  const staticNodeCount = staticNodeIds.length;
+  const bypassedNodeCount = bypassedNodes.length;
+  const staticNodeCount = staticNodes.length;
   const manuallyHiddenCount = useMemo(
-    () => Object.values(manuallyHiddenNodes).filter(Boolean).length,
-    [manuallyHiddenNodes]
+    () => Object.values(hiddenItems).filter(Boolean).length,
+    [hiddenItems]
   );
   const hiddenBypassedCount = useMemo(
-    () => bypassedNodeIds.filter((id) => manuallyHiddenNodes[id]).length,
-    [bypassedNodeIds, manuallyHiddenNodes]
+    () =>
+      bypassedNodes.filter((node) =>
+        (() => {
+          const stableKey = node.stableKey;
+          return stableKey ? hiddenItems[stableKey] : false;
+        })()
+      ).length,
+    [bypassedNodes, hiddenItems]
   );
   const hiddenStaticCount = useMemo(
-    () => staticNodeIds.filter((id) => manuallyHiddenNodes[id]).length,
-    [staticNodeIds, manuallyHiddenNodes]
+    () =>
+      staticNodes.filter((node) =>
+        (() => {
+          const stableKey = node.stableKey;
+          return stableKey ? hiddenItems[stableKey] : false;
+        })()
+      ).length,
+    [staticNodes, hiddenItems]
   );
 
   const visibleNodes = useMemo(() => {
     if (!workflow) return [];
-    return workflow.nodes.filter((node) => !manuallyHiddenNodes[node.id]);
-  }, [workflow, manuallyHiddenNodes]);
+    return workflow.nodes.filter(
+      (node) =>
+        (() => {
+          const stableKey = node.stableKey;
+          return stableKey ? !hiddenItems[stableKey] : true;
+        })()
+    );
+  }, [workflow, hiddenItems]);
 
   const hasFoldedVisibleNode = useMemo(
-    () => visibleNodes.some((node) => node.flags?.collapsed),
-    [visibleNodes]
+    () =>
+      visibleNodes.some((node) => {
+        const stableKey = node.stableKey ?? null;
+        return stableKey ? collapsedItems[stableKey] === true : false;
+      }),
+    [collapsedItems, visibleNodes]
   );
   const hasUnfoldedVisibleNode = useMemo(
-    () => visibleNodes.some((node) => !node.flags?.collapsed),
-    [visibleNodes]
+    () =>
+      visibleNodes.some((node) => {
+        const stableKey = node.stableKey ?? null;
+        return stableKey ? collapsedItems[stableKey] !== true : true;
+      }),
+    [collapsedItems, visibleNodes]
   );
   const hasCollapsedGroup = useMemo(
-    () => allGroupIds.some((groupId) => collapsedGroups[groupId] ?? true),
-    [allGroupIds, collapsedGroups]
+    () => allGroupTargets.some((stableKey) => collapsedItems[stableKey] === true),
+    [allGroupTargets, collapsedItems]
   );
   const hasExpandedGroup = useMemo(
-    () => allGroupIds.some((groupId) => collapsedGroups[groupId] === false),
-    [allGroupIds, collapsedGroups]
+    () => allGroupTargets.some((stableKey) => (collapsedItems[stableKey] ?? false) === false),
+    [allGroupTargets, collapsedItems]
   );
   const hasCollapsedSubgraph = useMemo(
-    () => allSubgraphIds.some((subgraphId) => collapsedSubgraphs[subgraphId] ?? true),
-    [allSubgraphIds, collapsedSubgraphs]
+    () => allSubgraphStableKeys.some((stableKey) =>
+      (collapsedItems[stableKey] ?? false)
+    ),
+    [allSubgraphStableKeys, collapsedItems]
   );
   const hasExpandedSubgraph = useMemo(
-    () => allSubgraphIds.some((subgraphId) => collapsedSubgraphs[subgraphId] === false),
-    [allSubgraphIds, collapsedSubgraphs]
+    () => allSubgraphStableKeys.some((stableKey) =>
+      (collapsedItems[stableKey] ?? false) === false
+    ),
+    [allSubgraphStableKeys, collapsedItems]
   );
   const hasFoldedVisibleItem = hasFoldedVisibleNode || hasCollapsedGroup || hasCollapsedSubgraph;
   const hasUnfoldedVisibleItem = hasUnfoldedVisibleNode || hasExpandedGroup || hasExpandedSubgraph;
   const showAllHiddenNodesButton = useMemo(() => {
     if (manuallyHiddenCount > 0) return true;
-    if (Object.values(hiddenGroups).some(Boolean)) return true;
-    return Object.values(hiddenSubgraphs).some(Boolean);
-  }, [manuallyHiddenCount, hiddenGroups, hiddenSubgraphs]);
+    const anyHiddenGroup = allGroupTargets.some((stableKey) => hasStableFlag(hiddenItems, stableKey));
+    if (anyHiddenGroup) return true;
+    return allSubgraphStableKeys.some((stableKey) => hiddenItems[stableKey] === true);
+  }, [manuallyHiddenCount, hiddenItems, allGroupTargets, allSubgraphStableKeys, hasStableFlag]);
 
   const [visibilityModalOpen, setVisibilityModalOpen] = useState(false);
 
@@ -154,22 +192,33 @@ export function WorkflowTopBarMenu({
     closeMenu();
   };
 
+  const handleAddNodeClick = () => {
+    onAddNode();
+    closeMenu();
+  };
+
   const handleFoldAllClick = () => {
-    allWorkflowNodeIds.forEach((id) => setNodeFold(id, true));
-    allGroupIds.forEach((id) => setGroupCollapsed(id, true));
-    allSubgraphIds.forEach((id) => setSubgraphCollapsed(id, true));
+    allWorkflowNodeStableKeys.forEach((stableKey) => setItemCollapsed(stableKey, true));
+    allGroupTargets.forEach((stableKey) => setItemCollapsed(stableKey, true));
+    allSubgraphStableKeys.forEach((stableKey) => setItemCollapsed(stableKey, true));
     closeMenu();
   };
 
   const handleUnfoldAllClick = () => {
-    allWorkflowNodeIds.forEach((id) => setNodeFold(id, false));
-    allGroupIds.forEach((id) => setGroupCollapsed(id, false));
-    allSubgraphIds.forEach((id) => setSubgraphCollapsed(id, false));
+    allWorkflowNodeStableKeys.forEach((stableKey) => setItemCollapsed(stableKey, false));
+    allGroupTargets.forEach((stableKey) => setItemCollapsed(stableKey, false));
+    allSubgraphStableKeys.forEach((stableKey) => setItemCollapsed(stableKey, false));
     closeMenu();
   };
 
+  const handleShowAllHiddenClick = () => {
+    showAllHiddenNodes();
+    allGroupTargets.forEach((stableKey) => setItemHidden(stableKey, false));
+    allSubgraphStableKeys.forEach((stableKey) => setItemHidden(stableKey, false));
+  };
+
   const handleClearBookmarksClick = () => {
-    clearNodeBookmarks();
+    clearBookmarks();
     closeMenu();
   };
 
@@ -208,145 +257,101 @@ export function WorkflowTopBarMenu({
     closeMenu();
   };
 
-  const handleClearWorkflowCacheClick = () => {
-    onHandleDirtyAction('clearWorkflowCache');
-  };
-
-  const handleUnloadWorkflowClick = () => {
-    onHandleDirtyAction('unload');
-  };
-
-  const handleClearAllCacheClick = () => {
-    onHandleDirtyAction('clearAllCache');
-  };
-
   return (
     <div id="workflow-menu-container" className="relative">
-      <button
-        ref={buttonRef}
+      <ContextMenuButton
+        buttonRef={buttonRef}
         onClick={onToggle}
-        className="w-10 h-10 flex items-center justify-center rounded-lg text-gray-700 hover:bg-gray-100"
-        aria-label="Workflow options"
-      >
-        <EllipsisVerticalIcon className="w-5 h-5 -rotate-90" />
-      </button>
+        ariaLabel="Workflow options"
+      />
       {!open ? null : (
         <div
           id="workflow-options-dropdown"
           ref={menuRef}
-          className="absolute right-0 top-11 z-50 w-52 bg-white border border-gray-200 rounded-lg shadow-lg overflow-hidden"
+          className="absolute right-0 top-11 z-50 w-52"
         >
-          <button
-            className="w-full flex items-center gap-2 text-left px-3 py-2 text-sm hover:bg-gray-50"
-            onClick={handleGoToQueueClick}
-          >
-            <ArrowRightIcon className="w-3 h-3 text-gray-500" />
-            Go to queue
-          </button>
-          <button
-            className="w-full flex items-center gap-2 text-left px-3 py-2 text-sm hover:bg-gray-50"
-            onClick={handleGoToOutputsClick}
-          >
-            <ArrowRightIcon className="w-3 h-3 text-gray-500 rotate-180" />
-            Go to outputs
-          </button>
-          {!searchOpen && (
-            <button
-              className="w-full flex items-center gap-2 text-left px-3 py-2 text-sm hover:bg-gray-50"
-              onClick={handleSearchClick}
-            >
-              <SearchIcon className="w-4 h-4 text-gray-500" />
-              Search
-            </button>
-          )}
-          <button
-            className="w-full flex items-center gap-2 text-left px-3 py-2 text-sm hover:bg-gray-50"
-            onClick={() => { setVisibilityModalOpen(true); closeMenu(); }}
-          >
-            <EyeIcon className="w-4 h-4 text-gray-500" />
-            Hide / Show
-          </button>
-          {hasUnfoldedVisibleItem && (
-            <button
-              className="w-full flex items-center gap-2 text-left px-3 py-2 text-sm hover:bg-gray-50"
-              onClick={handleFoldAllClick}
-            >
-              <CaretRightIcon className="w-6 h-6 -ml-1 text-gray-500" />
-              Fold all
-            </button>
-          )}
-          {hasFoldedVisibleItem && (
-            <button
-              className="w-full flex items-center gap-2 text-left px-3 py-2 text-sm hover:bg-gray-50"
-              onClick={handleUnfoldAllClick}
-            >
-              <CaretDownIcon className="w-6 h-6 -ml-1 text-gray-500" />
-              Unfold all
-            </button>
-          )}
-          {bookmarkedNodeIds.length > 0 && (
-            <button
-              className="w-full flex items-center gap-2 text-left px-3 py-2 text-sm hover:bg-gray-50"
-              onClick={handleClearBookmarksClick}
-            >
-              <TrashIcon className="w-4 h-4 text-gray-500" />
-              Clear bookmarks
-            </button>
-          )}
-          {workflowSource && (
-            workflowSource.type === 'user' ? (
-              <button
-                className="w-full flex items-center gap-2 text-left px-3 py-2 text-sm hover:bg-gray-50"
-                onClick={handleReloadUserClick}
-              >
-                <ReloadIcon className="w-4 h-4 text-gray-500" />
-                Reload workflow
-              </button>
-            ) : workflowSource.type === 'template' ? (
-              <button
-                className="w-full flex items-center gap-2 text-left px-3 py-2 text-sm hover:bg-gray-50"
-                onClick={handleReloadTemplateClick}
-              >
-                <ReloadIcon className="w-4 h-4 text-gray-500" />
-                Reload workflow
-              </button>
-            ) : workflowSource.type === 'history' ? (
-              history.find(h => h.prompt_id === workflowSource.promptId)?.workflow ? (
-                <button
-                  className="w-full flex items-center gap-2 text-left px-3 py-2 text-sm hover:bg-gray-50"
-                  onClick={handleReloadHistoryClick}
-                >
-                  <ReloadIcon className="w-4 h-4 text-gray-500" />
-                  Reload workflow
-                </button>
-              ) : null
-            ) : null
-          )}
-          {hasWorkflow && (
-            <button
-              className="w-full flex items-center gap-2 text-left px-3 py-2 text-sm hover:bg-gray-50"
-              onClick={handleClearWorkflowCacheClick}
-            >
-              <TrashIcon className="w-4 h-4 text-gray-500" />
-              Clear workflow cache
-            </button>
-          )}
-          {hasWorkflow && (
-            <button
-              className="w-full flex items-center gap-2 text-left px-3 py-2 text-sm hover:bg-gray-50 text-red-600"
-              onClick={handleUnloadWorkflowClick}
-            >
-              <LogoutIcon className="w-4 h-4" />
-              Unload workflow
-            </button>
-          )}
-          <button
-            className="w-full flex items-center gap-2 text-left px-3 py-2 text-sm hover:bg-gray-50 text-red-600"
-            onClick={handleClearAllCacheClick}
-          >
-            <TrashIcon className="w-4 h-4" />
-            Clear all cache
-          </button>
+          <ContextMenuBuilder
+            items={[
+              {
+                key: 'go-to-queue',
+                label: 'Go to queue',
+                icon: <ArrowRightIcon className="w-3 h-3" />,
+                onClick: handleGoToQueueClick
+              },
+              {
+                key: 'go-to-outputs',
+                label: 'Go to outputs',
+                icon: <ArrowRightIcon className="w-3 h-3 rotate-180" />,
+                onClick: handleGoToOutputsClick
+              },
+              {
+                key: 'search',
+                label: 'Search',
+                icon: <SearchIcon className="w-4 h-4" />,
+                onClick: handleSearchClick,
+                hidden: searchOpen
+              },
+              {
+                key: 'add-node',
+                label: 'Add node',
+                icon: <PlusIcon className="w-4 h-4" />,
+                onClick: handleAddNodeClick,
+                hidden: !hasWorkflow
+              },
+              {
+                key: 'hide-show',
+                label: 'Hide / Show',
+                icon: <EyeIcon className="w-4 h-4" />,
+                onClick: () => { setVisibilityModalOpen(true); closeMenu(); }
+              },
+              {
+                key: 'fold-all',
+                label: 'Fold all',
+                icon: <CaretRightIcon className="w-6 h-6 -ml-1" />,
+                onClick: handleFoldAllClick,
+                hidden: !hasUnfoldedVisibleItem
+              },
+              {
+                key: 'unfold-all',
+                label: 'Unfold all',
+                icon: <CaretDownIcon className="w-6 h-6 -ml-1" />,
+                onClick: handleUnfoldAllClick,
+                hidden: !hasFoldedVisibleItem
+              },
+              {
+                key: 'clear-bookmarks',
+                label: 'Clear bookmarks',
+                icon: <TrashIcon className="w-4 h-4" />,
+                onClick: handleClearBookmarksClick,
+                hidden: bookmarkedItems.length === 0
+              },
+              {
+                key: 'reload-workflow',
+                label: 'Reload workflow',
+                icon: <ReloadIcon className="w-4 h-4" />,
+                onClick: workflowSource?.type === 'user'
+                  ? handleReloadUserClick
+                  : workflowSource?.type === 'template'
+                    ? handleReloadTemplateClick
+                    : workflowSource?.type === 'history' && history.find((h) => h.prompt_id === workflowSource.promptId)?.workflow
+                      ? handleReloadHistoryClick
+                      : undefined,
+                hidden: !workflowSource || (
+                  workflowSource.type === 'history' &&
+                  !history.find((h) => h.prompt_id === workflowSource.promptId)?.workflow
+                )
+              },
+              {
+                key: 'workflow-actions',
+                label: 'Workflow actions',
+                icon: <WorkflowIcon className="w-4 h-4" />,
+                onClick: () => {
+                  onOpenWorkflowActions();
+                  closeMenu();
+                }
+              }
+            ]}
+          />
         </div>
       )}
       {visibilityModalOpen && (
@@ -364,68 +369,76 @@ export function WorkflowTopBarMenu({
               Hide / Show
             </div>
             <div className="max-h-[50vh] overflow-y-auto">
-              {staticNodeCount > 0 && (
-                <button
-                  className="w-full flex items-center gap-2 text-left px-4 py-3 text-sm hover:bg-gray-50"
-                  onClick={() => {
-                    if (hiddenStaticCount < staticNodeCount) {
-                      staticNodeIds.forEach((id) => setNodeHidden(id, true));
-                    } else {
-                      staticNodeIds.forEach((id) => setNodeHidden(id, false));
-                    }
-                  }}
-                >
-                  {hiddenStaticCount < staticNodeCount ? (
-                    <EyeOffIcon className="w-4 h-4 text-gray-500" />
-                  ) : (
-                    <EyeIcon className="w-4 h-4 text-gray-500" />
-                  )}
-                  {hiddenStaticCount < staticNodeCount
-                    ? `Hide static nodes (${staticNodeCount})`
-                    : `Show static nodes (${staticNodeCount})`}
-                </button>
-              )}
-              {bypassedNodeCount > 0 && (
-                <button
-                  className="w-full flex items-center gap-2 text-left px-4 py-3 text-sm hover:bg-gray-50"
-                  onClick={() => {
-                    if (hiddenBypassedCount > 0) {
-                      bypassedNodeIds.forEach((id) => setNodeHidden(id, false));
-                    } else {
-                      bypassedNodeIds.forEach((id) => setNodeHidden(id, true));
-                    }
-                  }}
-                >
-                  {hiddenBypassedCount > 0 ? (
-                    <EyeIcon className="w-4 h-4 text-gray-500" />
-                  ) : (
-                    <EyeOffIcon className="w-4 h-4 text-gray-500" />
-                  )}
-                  {hiddenBypassedCount > 0
-                    ? `Show bypassed nodes (${bypassedNodeCount})`
-                    : `Hide bypassed nodes (${bypassedNodeCount})`}
-                </button>
-              )}
-              <button
-                className="w-full flex items-center gap-2 text-left px-4 py-3 text-sm hover:bg-gray-50"
-                onClick={toggleConnectionButtonsVisible}
-              >
-                {connectionButtonsVisible ? (
-                  <EyeOffIcon className="w-4 h-4 text-gray-500" />
-                ) : (
-                  <EyeIcon className="w-4 h-4 text-gray-500" />
-                )}
-                {connectionButtonsVisible ? 'Hide connection buttons' : 'Show connection buttons'}
-              </button>
-              {showAllHiddenNodesButton && (
-                <button
-                  className="w-full flex items-center gap-2 text-left px-4 py-3 text-sm hover:bg-gray-50"
-                  onClick={showAllHiddenNodes}
-                >
-                  <EyeIcon className="w-4 h-4 text-gray-500" />
-                  Show all hidden nodes
-                </button>
-              )}
+              <ContextMenuBuilder
+                itemClassName="px-4 py-3"
+                items={[
+                  {
+                    key: 'static-nodes',
+                    label: hiddenStaticCount < staticNodeCount
+                      ? `Hide static nodes (${staticNodeCount})`
+                      : `Show static nodes (${staticNodeCount})`,
+                    icon: hiddenStaticCount < staticNodeCount
+                      ? <EyeOffIcon className="w-4 h-4" />
+                      : <EyeIcon className="w-4 h-4" />,
+                    onClick: () => {
+                      if (hiddenStaticCount < staticNodeCount) {
+                        staticNodes.forEach((node) => {
+                          const stableKey = node.stableKey ?? null;
+                          if (!stableKey) return;
+                          setItemHidden(stableKey, true);
+                        });
+                      } else {
+                        staticNodes.forEach((node) => {
+                          const stableKey = node.stableKey ?? null;
+                          if (!stableKey) return;
+                          setItemHidden(stableKey, false);
+                        });
+                      }
+                    },
+                    hidden: staticNodeCount === 0
+                  },
+                  {
+                    key: 'bypassed-nodes',
+                    label: hiddenBypassedCount > 0
+                      ? `Show bypassed nodes (${bypassedNodeCount})`
+                      : `Hide bypassed nodes (${bypassedNodeCount})`,
+                    icon: hiddenBypassedCount > 0
+                      ? <EyeIcon className="w-4 h-4" />
+                      : <EyeOffIcon className="w-4 h-4" />,
+                    onClick: () => {
+                      if (hiddenBypassedCount > 0) {
+                        bypassedNodes.forEach((node) => {
+                          const stableKey = node.stableKey ?? null;
+                          if (!stableKey) return;
+                          setItemHidden(stableKey, false);
+                        });
+                      } else {
+                        bypassedNodes.forEach((node) => {
+                          const stableKey = node.stableKey ?? null;
+                          if (!stableKey) return;
+                          setItemHidden(stableKey, true);
+                        });
+                      }
+                    },
+                    hidden: bypassedNodeCount === 0
+                  },
+                  {
+                    key: 'toggle-connection-buttons',
+                    label: connectionButtonsVisible ? 'Hide connection buttons' : 'Show connection buttons',
+                    icon: connectionButtonsVisible
+                      ? <EyeOffIcon className="w-4 h-4" />
+                      : <EyeIcon className="w-4 h-4" />,
+                    onClick: toggleConnectionButtonsVisible
+                  },
+                  {
+                    key: 'show-all-hidden',
+                    label: 'Show all hidden nodes',
+                    icon: <EyeIcon className="w-4 h-4" />,
+                    onClick: handleShowAllHiddenClick,
+                    hidden: !showAllHiddenNodesButton
+                  }
+                ]}
+              />
             </div>
             <div className="px-4 py-3 border-t border-gray-100 flex justify-end">
               <button
