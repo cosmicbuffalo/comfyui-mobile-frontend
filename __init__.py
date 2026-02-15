@@ -5,7 +5,6 @@ import server
 from aiohttp import web
 import folder_paths
 import json
-import time
 from PIL import Image, ImageOps
 import io
 from importlib import import_module as _import_module
@@ -385,6 +384,38 @@ def setup_mobile_route():
         except Exception as e:
             return web.json_response({"error": str(e)}, status=500)
 
+    async def api_rename_file(request):
+        try:
+            data = await request.json()
+            path = data.get('path')
+            new_name = (data.get('newName') or '').strip()
+            source = data.get('source', 'output')
+
+            if not path:
+                return web.json_response({"error": "No path provided"}, status=400)
+            if not new_name:
+                return web.json_response({"error": "No new name provided"}, status=400)
+            if '/' in new_name or '\\' in new_name or new_name in ('.', '..'):
+                return web.json_response({"error": "Invalid name"}, status=400)
+
+            base_dir = folder_paths.get_input_directory() if source == 'input' else folder_paths.get_output_directory()
+            src_path = os.path.abspath(os.path.join(base_dir, path))
+            if not src_path.startswith(os.path.abspath(base_dir)):
+                return web.json_response({"error": "Access denied"}, status=403)
+            if not os.path.exists(src_path):
+                return web.json_response({"error": "Source not found"}, status=404)
+
+            dst_path = os.path.abspath(os.path.join(os.path.dirname(src_path), new_name))
+            if not dst_path.startswith(os.path.abspath(base_dir)):
+                return web.json_response({"error": "Access denied"}, status=403)
+            if os.path.exists(dst_path):
+                return web.json_response({"error": "A file or folder with that name already exists"}, status=409)
+
+            os.rename(src_path, dst_path)
+            return web.json_response({"success": True})
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=500)
+
     # Register API routes
     mobile_app.router.add_get('/api/files', api_list_files)
     mobile_app.router.add_delete('/api/files', api_delete_file)
@@ -393,7 +424,7 @@ def setup_mobile_route():
     mobile_app.router.add_get('/api/image-metadata', api_image_metadata)
     mobile_app.router.add_post('/api/files/move', api_move_files)
     mobile_app.router.add_post('/api/files/mkdir', api_mkdir)
-
+    mobile_app.router.add_post('/api/files/rename', api_rename_file)
     # Handler to serve index.html for SPA routing (non-API routes only)
     async def serve_index(request):
         # Don't serve index.html for API routes

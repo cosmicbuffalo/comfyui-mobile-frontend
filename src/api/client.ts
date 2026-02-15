@@ -464,3 +464,19 @@ export async function createFolder(path: string, source: AssetSource = 'output')
     throw new Error(error.error || 'Failed to create folder');
   }
 }
+
+export async function renameFile(
+  path: string,
+  newName: string,
+  source: AssetSource = 'output'
+): Promise<void> {
+  const response = await fetch(`${API_BASE}/mobile/api/files/rename`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ path, newName, source })
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({}));
+    throw new Error(error.error || 'Failed to rename file');
+  }
+}
