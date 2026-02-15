@@ -26,7 +26,7 @@ export function PasteJsonPanel({
       <MenuSubPageHeader title="Paste JSON" onBack={onBack} />
       <MenuErrorNotice error={error} onDismiss={onDismissError} />
 
-      <div className="flex-1 flex flex-col space-y-4 overflow-hidden">
+      <div className="flex-1 flex flex-col space-y-4">
         <p className="text-sm text-gray-600">
           Paste your workflow JSON below.
         </p>
@@ -47,7 +47,7 @@ export function PasteJsonPanel({
             value={pastedJson}
             onChange={(e) => onChangeJson(e.target.value)}
             placeholder='{"last_node_id": ...}'
-            className="w-full flex-1 p-3 border border-gray-300 rounded-lg font-mono text-xs resize-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+            className="w-full flex-1 p-3 border border-gray-300 rounded-lg font-mono text-xs resize-none outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
           />
         </div>
         <div className="flex gap-3 pt-2">

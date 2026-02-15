@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef } from 'react';
 import { TopBar } from './components/TopBar';
 import { WorkflowPanel } from './components/WorkflowPanel';
 import { BottomBar } from './components/BottomBar';
@@ -151,7 +151,7 @@ function App() {
     setFollowQueue(true);
   };
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const root = document.documentElement;
     root.classList.toggle('dark', theme === 'dark');
     root.style.colorScheme = theme;
@@ -178,7 +178,6 @@ function App() {
           <WorkflowPanel visible={currentPanel === 'workflow'} onImageClick={openViewer} />
           <QueuePanel visible={currentPanel === 'queue'} onImageClick={openViewer} />
         </>
-        {/* Cover to hide content scrolling behind bottom bar */}
         <div
           id="bottom-bar-spacer"
           className="fixed inset-x-0 bottom-0 bg-gray-100 pointer-events-none z-[1500]"

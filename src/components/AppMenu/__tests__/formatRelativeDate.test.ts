@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { formatRelativeDate } from '../UserWorkflowsPanel';
+import { formatRelativeDate } from '../formatRelativeDate';
 
 // Pin "now" so tests are deterministic
 const NOW = new Date('2025-03-15T12:00:00Z');

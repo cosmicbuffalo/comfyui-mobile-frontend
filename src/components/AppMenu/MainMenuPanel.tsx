@@ -1,4 +1,4 @@
-import { BookIcon, CaretDownIcon, ClipboardDownloadIcon, ExternalLinkIcon, FolderIcon, GithubIcon, InfoCircleOutlineIcon, MoonIcon, SaveAsIcon, SaveDiskIcon, SunIcon, TemplateIcon, WorkflowLoadIcon } from '@/components/icons';
+import { BookIcon, CaretDownIcon, ClipboardDownloadIcon, ExternalLinkIcon, FolderIcon, GithubIcon, InfoCircleOutlineIcon, MoonIcon, SaveAsIcon, SaveDiskIcon, SunIcon, TemplateIcon, WorkflowIcon } from '@/components/icons';
 import type { Workflow } from '@/api/types';
 import { MenuErrorNotice } from './MenuErrorNotice';
 
@@ -89,7 +89,7 @@ export function MainMenuPanel({
               className="w-full flex items-center gap-3 p-4 bg-white border border-gray-200
                          rounded-xl text-left hover:bg-gray-50 min-h-[56px]"
             >
-              <WorkflowLoadIcon className="w-6 h-6 text-gray-600" />
+              <WorkflowIcon className="w-6 h-6 text-gray-600" />
               <span className="font-medium text-gray-900">My Workflows</span>
               <span className="ml-auto text-gray-400">→</span>
             </button>

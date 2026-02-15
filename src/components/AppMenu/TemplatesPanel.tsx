@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import { TemplateIcon, XMarkIcon } from '@/components/icons';
+import { TemplateIcon } from '@/components/icons';
+import { SearchBar } from '@/components/SearchBar';
 import { LoadingSpinner } from '../LoadingSpinner';
 import { MenuSubPageHeader } from './MenuSubPageHeader';
 import { MenuErrorNotice } from './MenuErrorNotice';
@@ -41,24 +42,13 @@ export function TemplatesPanel({
       <MenuErrorNotice error={error} onDismiss={onDismissError} />
 
       {!loading && hasTemplates && (
-        <div className="relative py-2">
-          <input
-            type="text"
+        <div className="py-2">
+          <SearchBar
             value={search}
-            onChange={(e) => setSearch(e.target.value)}
+            onChange={setSearch}
             placeholder="Search"
-            className="w-full px-3 py-2 pr-9 bg-white border border-gray-200 rounded-lg
-                       text-sm text-gray-900 placeholder-gray-400
-                       focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            inputClassName="bg-white"
           />
-          {search && (
-            <button
-              onClick={() => setSearch('')}
-              className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-gray-400 hover:text-gray-600"
-            >
-              <XMarkIcon className="w-4 h-4" />
-            </button>
-          )}
         </div>
       )}
 
