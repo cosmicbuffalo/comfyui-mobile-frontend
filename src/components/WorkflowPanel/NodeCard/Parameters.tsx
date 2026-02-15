@@ -10,6 +10,8 @@ import {
   useWorkflowStore
 } from '@/hooks/useWorkflow';
 import { useSeedStore } from '@/hooks/useSeed';
+import { themeColors } from '@/theme/colors';
+import { cssColorToHex, hexToHsl, normalizeColorTokens, normalizeHexColor } from '@/utils/colorUtils';
 
 interface WidgetDescriptor {
   widgetIndex: number;
@@ -29,8 +31,8 @@ interface NodeCardParametersProps {
   visibleInputWidgets: WidgetDescriptor[];
   visibleWidgets: WidgetDescriptor[];
   errorInputNames: Set<string>;
-  onUpdateNodeWidget: (nodeId: number, widgetIndex: number, value: unknown, widgetName?: string) => void;
-  onUpdateNodeWidgets: (nodeId: number, updates: Record<number, unknown>) => void;
+  onUpdateNodeWidget: (widgetIndex: number, value: unknown, widgetName?: string) => void;
+  onUpdateNodeWidgets: (updates: Record<number, unknown>) => void;
   getWidgetIndexForInput: (name: string) => number | null;
   findSeedWidgetIndex: () => number | null;
   setSeedMode: (nodeId: number, mode: 'fixed' | 'randomize' | 'increment' | 'decrement') => void;
@@ -58,7 +60,7 @@ export function NodeCardParameters({
   const widgetValues = Array.isArray(node.widgets_values) ? node.widgets_values : [];
   const nodeTypes = useWorkflowStore((state) => state.nodeTypes);
   const workflow = useWorkflowStore((state) => state.workflow);
-  const bypassAllInGroup = useWorkflowStore((state) => state.bypassAllInGroup);
+  const bypassAllInContainer = useWorkflowStore((state) => state.bypassAllInContainer);
   const storedSeedMode = useSeedStore((state) => state.seedModes[node.id]);
   const lastSeedValue = useSeedStore((state) => state.seedLastValues[node.id] ?? null);
   const isFastGroupsBypasser = node.type === 'Fast Groups Bypasser (rgthree)';
@@ -87,95 +89,17 @@ export function NodeCardParameters({
     const customSortAlphabet =
       typeof props.customSortAlphabet === 'string' ? props.customSortAlphabet : '';
 
-    const normalizeHex = (value: string) => {
-      const cleaned = value.replace('#', '').trim();
-      if (/^[0-9a-f]{3}$/i.test(cleaned)) {
-        return `#${cleaned.replace(/(.)/g, '$1$1').toLowerCase()}`;
-      }
-      if (/^[0-9a-f]{6}$/i.test(cleaned)) {
-        return `#${cleaned.toLowerCase()}`;
-      }
-      return null;
-    };
-
-    const cssColorToHex = (value: string) => {
-      if (typeof document === 'undefined') return null;
-      const target = document.createElement('span');
-      target.style.color = value;
-      if (!document.body) return null;
-      document.body.appendChild(target);
-      const computed = getComputedStyle(target).color;
-      document.body.removeChild(target);
-      const match = computed.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/i);
-      if (!match) return null;
-      const [, r, g, b] = match.map(Number);
-      if ([r, g, b].some((v) => Number.isNaN(v))) return null;
-      return `#${[r, g, b].map((v) => v.toString(16).padStart(2, '0')).join('')}`;
-    };
-
-    const comfyGroupColors: Record<string, string> = {
-      nocolor: '#353535',
-      red: '#553333',
-      brown: '#593930',
-      green: '#335533',
-      blue: '#333355',
-      pale_blue: '#3f5159',
-      cyan: '#335555',
-      purple: '#553355',
-      yellow: '#665533',
-      black: '#000000'
-    };
-
-    const normalizeColorTokens = (value: string) => {
-      const tokens: string[] = [];
-      const lowered = value.trim().toLowerCase();
-      if (lowered) {
-        tokens.push(lowered);
-        const mapped = comfyGroupColors[lowered.replace(/\s+/g, '')] ?? comfyGroupColors[lowered];
-        if (mapped) {
-          tokens.push(mapped);
-        }
-      }
-      const normalizedHex = normalizeHex(value);
-      if (normalizedHex) {
-        tokens.push(normalizedHex);
-        return tokens;
-      }
-      const cssHex = cssColorToHex(value);
-      if (cssHex) tokens.push(cssHex);
-      return tokens;
-    };
-
-    const hexToHsl = (hex: string) => {
-      const cleaned = hex.replace('#', '').trim();
-      if (!/^[0-9a-f]{6}$/i.test(cleaned)) return null;
-      const r = parseInt(cleaned.slice(0, 2), 16) / 255;
-      const g = parseInt(cleaned.slice(2, 4), 16) / 255;
-      const b = parseInt(cleaned.slice(4, 6), 16) / 255;
-      const max = Math.max(r, g, b);
-      const min = Math.min(r, g, b);
-      const delta = max - min;
-      let h = 0;
-      if (delta !== 0) {
-        if (max === r) h = ((g - b) / delta) % 6;
-        else if (max === g) h = (b - r) / delta + 2;
-        else h = (r - g) / delta + 4;
-        h = Math.round(h * 60);
-        if (h < 0) h += 360;
-      }
-      const l = (max + min) / 2;
-      const s = delta === 0 ? 0 : delta / (1 - Math.abs(2 * l - 1));
-      return { h, s, l };
-    };
+    const comfyGroupColors: Record<string, string> =
+      themeColors.workflow.fastGroupBypassColors;
 
     const filterColors = matchColors
       .split(',')
       .map((color) => color.trim())
       .filter(Boolean)
-      .flatMap(normalizeColorTokens);
+      .flatMap((color) => normalizeColorTokens(color, comfyGroupColors));
     const filterColorSet = new Set(filterColors);
     const filterHueMatchers = filterColors
-      .map((token) => normalizeHex(token) ?? cssColorToHex(token))
+      .map((token) => normalizeHexColor(token) ?? cssColorToHex(token))
       .filter((hex): hex is string => Boolean(hex))
       .map((hex) => hexToHsl(hex))
       .filter((hsl): hsl is { h: number; s: number; l: number } => Boolean(hsl));
@@ -207,8 +131,7 @@ export function NodeCardParameters({
     const entries: Array<{
       key: string;
       label: string;
-      groupId: number;
-      subgraphId: string | null;
+      stableKey: string;
       color?: string;
       isEngaged: boolean;
       isDisabled: boolean;
@@ -217,8 +140,8 @@ export function NodeCardParameters({
 
     const shouldIncludeGroup = (group: WorkflowGroup) => {
       if (filterColorSet.size > 0) {
-        const groupTokens = group.color ? normalizeColorTokens(group.color) : [];
-        const groupHex = group.color ? normalizeHex(group.color) : null;
+        const groupTokens = group.color ? normalizeColorTokens(group.color, comfyGroupColors) : [];
+        const groupHex = group.color ? normalizeHexColor(group.color) : null;
         const groupHsl = groupHex ? hexToHsl(groupHex) : null;
         const hasExactMatch = groupTokens.some((token) => filterColorSet.has(token)) ||
           (groupHex ? filterColorSet.has(groupHex) : false);
@@ -242,6 +165,8 @@ export function NodeCardParameters({
 
     const pushGroup = (group: WorkflowGroup, subgraphId: string | null) => {
       if (!shouldIncludeGroup(group)) return;
+      const stableKey = group.stableKey ?? null;
+      if (!stableKey) return;
       const targetNodeIds = collectBypassGroupTargetNodeIds(workflow, group.id, subgraphId);
       let isEngaged = false;
       for (const nodeId of targetNodeIds) {
@@ -253,8 +178,7 @@ export function NodeCardParameters({
       entries.push({
         key: `${subgraphId ?? 'root'}-${group.id}`,
         label: group.title?.trim() || `Group ${group.id}`,
-        groupId: group.id,
-        subgraphId,
+        stableKey,
         color: group.color,
         isEngaged,
         isDisabled: targetNodeIds.size === 0,
@@ -320,9 +244,9 @@ export function NodeCardParameters({
     return entries;
   }, [isFastGroupsBypasser, node.properties, workflow]);
 
-  const handleFastGroupToggle = (entry: { isDisabled: boolean; groupId: number; isEngaged: boolean; subgraphId?: string | null }) => () => {
+  const handleFastGroupToggle = (entry: { isDisabled: boolean; stableKey: string; isEngaged: boolean }) => () => {
     if (entry.isDisabled) return;
-    bypassAllInGroup(entry.groupId, entry.isEngaged, entry.subgraphId ?? undefined);
+    bypassAllInContainer(entry.stableKey, entry.isEngaged);
   };
 
   const handleSeedModeValue = (newValue: unknown) => {
@@ -333,30 +257,30 @@ export function NodeCardParameters({
   };
 
   const handleSeedControlChange = (controlIndex: number) => (newValue: unknown) => {
-    onUpdateNodeWidget(node.id, controlIndex, newValue);
+    onUpdateNodeWidget(controlIndex, newValue);
     handleSeedModeValue(newValue);
   };
 
   const handleSeedValueChange = (seedIndex: number) => (newValue: number) => {
-    onUpdateNodeWidget(node.id, seedIndex, newValue, 'seed');
+    onUpdateNodeWidget(seedIndex, newValue, 'seed');
     setSeedMode(node.id, 'fixed');
   };
 
   const handleSeedNewFixedRandomClick = (seedIndex: number) => () => {
     if (!nodeTypes) return;
     const nextSeed = generateSeedFromNode(nodeTypes, node);
-    onUpdateNodeWidget(node.id, seedIndex, nextSeed, 'seed');
+    onUpdateNodeWidget(seedIndex, nextSeed, 'seed');
     setSeedMode(node.id, 'fixed');
   };
 
   const handleSeedUseLastClick = (seedIndex: number) => () => {
     if (typeof lastSeedValue !== 'number') return;
-    onUpdateNodeWidget(node.id, seedIndex, lastSeedValue, 'seed');
+    onUpdateNodeWidget(seedIndex, lastSeedValue, 'seed');
     setSeedMode(node.id, 'fixed');
   };
 
   const handleInputWidgetChange = (inputWidget: WidgetDescriptor) => (newValue: unknown) => {
-    onUpdateNodeWidget(node.id, inputWidget.widgetIndex, newValue, inputWidget.name);
+    onUpdateNodeWidget(inputWidget.widgetIndex, newValue, inputWidget.name);
   };
 
   const handleWidgetChange = (widget: WidgetDescriptor) => (newValue: unknown) => {
@@ -370,18 +294,18 @@ export function NodeCardParameters({
             const currentVal = widgetValues[idx] as Record<string, unknown>;
             updates[idx] = { ...currentVal, on: newValue };
           });
-          onUpdateNodeWidgets(node.id, updates);
+          onUpdateNodeWidgets(updates);
         }
       }
     } else {
-      onUpdateNodeWidget(node.id, widget.widgetIndex, newValue, widget.name);
+      onUpdateNodeWidget(widget.widgetIndex, newValue, widget.name);
     }
   };
 
   if (!showParameters && fastGroupToggles.length === 0) return null;
 
   return (
-    <div className="mb-3">
+    <div className="node-parameters mb-2">
       {fastGroupToggles.length > 0 && (
         <div className="mb-4">
           <div className="text-xs text-gray-400 dark:text-gray-300 mb-1.5 uppercase tracking-wide">
@@ -396,7 +320,10 @@ export function NodeCardParameters({
                 <div className="flex items-center gap-2 min-w-0">
                   <span
                     className="h-2.5 w-2.5 rounded-full"
-                    style={{ backgroundColor: entry.color || '#9ca3af' }}
+                    style={{
+                      backgroundColor:
+                        entry.color || themeColors.workflow.defaultGroupDot,
+                    }}
                   />
                   <span className="text-sm font-medium text-gray-800 dark:text-gray-100 truncate">
                     {entry.label}
@@ -443,7 +370,7 @@ export function NodeCardParameters({
                   name="seed"
                   type="INT"
                   value={seedValue}
-                  onChange={(newValue) => onUpdateNodeWidget(node.id, seedIndex, newValue, 'seed')}
+                  onChange={(newValue) => onUpdateNodeWidget(seedIndex, newValue, 'seed')}
                   disabled={isBypassed}
                   hasError={errorInputNames.has('seed')}
                 />
@@ -593,7 +520,7 @@ export function NodeCardParameters({
                   type="COMBO"
                   value={controlValue}
                   options={controlChoices}
-                  onChange={(newValue) => onUpdateNodeWidget(node.id, 1, newValue)}
+                  onChange={(newValue) => onUpdateNodeWidget(1, newValue)}
                   disabled={isBypassed}
                 />
               </div>

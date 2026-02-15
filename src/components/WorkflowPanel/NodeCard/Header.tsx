@@ -17,7 +17,7 @@ interface NodeCardHeaderProps {
   errorIconRef: RefObject<HTMLButtonElement | null>;
   errorPopoverOpen: boolean;
   setErrorPopoverOpen: (next: boolean) => void;
-  toggleNodeFold: (nodeId: number) => void;
+  toggleNodeFold: () => void;
   rightSlot?: ReactNode;
 }
 
@@ -38,16 +38,16 @@ export function NodeCardHeader({
   errorPopoverOpen,
   setErrorPopoverOpen,
   toggleNodeFold,
-  rightSlot
+  rightSlot,
 }: NodeCardHeaderProps) {
   const handleHeaderClick = () => {
     if (isEditingLabel) return;
-    toggleNodeFold(nodeId);
+    toggleNodeFold();
   };
 
   const handleFoldButtonClick = (event: React.MouseEvent<HTMLButtonElement>) => {
     event.stopPropagation();
-    toggleNodeFold(nodeId);
+    toggleNodeFold();
   };
 
   const handleErrorButtonClick = (event: React.MouseEvent<HTMLButtonElement>) => {

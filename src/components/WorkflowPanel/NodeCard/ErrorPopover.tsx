@@ -54,10 +54,10 @@ export function NodeCardErrorPopover({
       if (!event.target) return;
       // If clicking the anchor (error icon), let the anchor's click handler handle it
       if (anchorRef.current?.contains(event.target as Node)) return;
-      
+
       // If clicking inside the popover, ignore
       if (popoverRef.current?.contains(event.target as Node)) return;
-      
+
       // Otherwise, close
       onClose();
     };
@@ -80,7 +80,7 @@ export function NodeCardErrorPopover({
     <div
       ref={popoverRef}
       id={`error-popover-${nodeId}`}
-      className="error-popover-root fixed z-[2000] bg-red-50 border border-red-700 rounded-lg shadow-lg w-72 max-h-64 overflow-auto"
+      className="error-popover-root fixed z-[2000] bg-red-50 border border-red-700 rounded-lg shadow-lg w-72 max-h-64 overflow-hidden"
       style={{ top: position.top, left: position.left }}
     >
       <div id={`error-popover-header-${nodeId}`} className="popover-header flex items-center justify-between px-3 py-2 border-b border-red-200 bg-red-700">
@@ -112,7 +112,7 @@ export function NodeCardErrorPopover({
               />
               <div className="error-content-wrapper min-w-0">
                 {err.inputName && (
-                  <div className="error-input-name font-medium text-red-900 mb-0.5">
+                  <div className="error-input-name font-medium text-red-800 mb-0.5">
                     {err.inputName}
                   </div>
                 )}

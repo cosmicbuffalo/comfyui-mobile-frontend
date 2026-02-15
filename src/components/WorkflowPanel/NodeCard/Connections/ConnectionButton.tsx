@@ -1,8 +1,12 @@
-import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { Workflow, WorkflowInput, WorkflowOutput } from '@/api/types';
 import { useWorkflowStore } from '@/hooks/useWorkflow';
 import { findConnectedNode, findConnectedOutputNodes } from '@/utils/nodeOrdering';
+import { ConnectionModal } from '@/components/modals/ConnectionModal';
+import { resolveRerouteConnectionLabel } from '@/utils/rerouteLabels';
+import { ContextMenuBuilder } from '@/components/menus/ContextMenuBuilder';
+import { ConnectionRow } from './ConnectionRow';
 
 function getTypeClass(type: string): string {
   const normalizedType = String(type).split(',')[0].trim(); // Handle multi-types like "FLOAT,INT"
@@ -28,6 +32,7 @@ interface ConnectionButtonProps {
   slotIndex: number;
   compact?: boolean;
   hideLabel?: boolean;
+  isRequired?: boolean;
 }
 
 export const ConnectionButton = memo(function ConnectionButton({
@@ -36,18 +41,29 @@ export const ConnectionButton = memo(function ConnectionButton({
   direction,
   slotIndex,
   compact = false,
-  hideLabel = false
+  hideLabel = false,
+  isRequired = false
 }: ConnectionButtonProps) {
   const workflow = useWorkflowStore((s) => s.workflow);
   const scrollToNode = useWorkflowStore((s) => s.scrollToNode);
   const revealNodeWithParents = useWorkflowStore((s) => s.revealNodeWithParents);
   const nodeTypes = useWorkflowStore((s) => s.nodeTypes);
-  const manuallyHiddenNodes = useWorkflowStore((s) => s.manuallyHiddenNodes);
+  const hiddenItems = useWorkflowStore((s) => s.hiddenItems);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [connectionModalOpen, setConnectionModalOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
   const buttonRef = useRef<HTMLButtonElement>(null);
   const [menuPosition, setMenuPosition] = useState<{ top: number; right?: number; left?: number } | null>(null);
   const updatePositionRef = useRef<(() => void) | null>(null);
+  const longPressTimerRef = useRef<number | null>(null);
+  const pointerStartRef = useRef<{ x: number; y: number } | null>(null);
+  const longPressTriggeredRef = useRef(false);
+
+  const resolvedLabel = useMemo(() => {
+    const fallback = slot.localized_name || slot.name;
+    if (!workflow) return fallback;
+    return resolveRerouteConnectionLabel(workflow, nodeId, direction, fallback);
+  }, [workflow, direction, slot.localized_name, slot.name, nodeId]);
 
   // Find connected node(s)
   const connectedNodes = useMemo(() => {
@@ -72,13 +88,14 @@ export const ConnectionButton = memo(function ConnectionButton({
     if (!workflow) {
       return { effectiveNodes: [], directNodes: [], bypassedTargets: [] };
     }
-    if (Object.keys(manuallyHiddenNodes).length === 0) {
+    if (Object.keys(hiddenItems).length === 0) {
       return { effectiveNodes: connectedNodes, directNodes: connectedNodes, bypassedTargets: [] };
     }
     const nodeMap = new Map<number, Workflow['nodes'][number]>(
       workflow.nodes.map((node) => [node.id, node])
     );
-    const isHiddenNode = (node: Workflow['nodes'][number]) => Boolean(manuallyHiddenNodes[node.id]);
+    const isHiddenNode = (node: Workflow['nodes'][number]) =>
+      Boolean(node.stableKey && hiddenItems[node.stableKey]);
     const seen = new Set<number>();
     const collectTargets = (nodeId: number): Workflow['nodes'] => {
       if (seen.has(nodeId)) return [];
@@ -158,27 +175,83 @@ export const ConnectionButton = memo(function ConnectionButton({
       directNodes: direct,
       bypassedTargets: dedupedBypassed
     };
-  }, [connectedNodes, workflow, direction, slot.type, manuallyHiddenNodes]);
+  }, [connectedNodes, workflow, direction, slot.type, hiddenItems]);
 
   const connectionCount = effectiveNodes.length;
   const connectedNodeId = connectionCount === 1 ? effectiveNodes[0].id : null;
 
   const hasConnection = connectionCount > 0;
+  const isEmptyRequiredInput = direction === 'input' && !hasConnection && isRequired;
+
+  const clearLongPress = useCallback(() => {
+    if (longPressTimerRef.current != null) {
+      window.clearTimeout(longPressTimerRef.current);
+      longPressTimerRef.current = null;
+    }
+  }, []);
+
+  const getNodeStableKey = useCallback((targetNode: Workflow['nodes'][number]): string | null => {
+    return targetNode.stableKey ?? null;
+  }, []);
 
   const handleClick = () => {
+    if (longPressTriggeredRef.current) {
+      longPressTriggeredRef.current = false;
+      return;
+    }
+    // Empty required input: open connection modal
+    if (isEmptyRequiredInput) {
+      setConnectionModalOpen(true);
+      return;
+    }
     if (!hasConnection) return;
     if (connectionCount === 1 && connectedNodeId !== null) {
-      revealNodeWithParents(connectedNodeId);
-      scrollToNode(connectedNodeId);
+      const connectedNode = effectiveNodes[0];
+      const stableKey = connectedNode ? getNodeStableKey(connectedNode) : null;
+      if (stableKey) {
+        revealNodeWithParents(stableKey);
+        scrollToNode(stableKey);
+      }
       return;
     }
     setMenuOpen((prev) => !prev);
   };
 
+  // Long-press opens connection editor: populated inputs, or any output
+  const handlePointerDown = useCallback((event: React.PointerEvent) => {
+    const canOpenByLongPress = direction === 'input' ? hasConnection : true;
+    if (!canOpenByLongPress) return;
+    pointerStartRef.current = { x: event.clientX, y: event.clientY };
+    longPressTriggeredRef.current = false;
+    longPressTimerRef.current = window.setTimeout(() => {
+      longPressTimerRef.current = null;
+      longPressTriggeredRef.current = true;
+      setConnectionModalOpen(true);
+    }, 500);
+  }, [direction, hasConnection]);
+
+  const handlePointerMove = useCallback((event: React.PointerEvent) => {
+    if (!pointerStartRef.current) return;
+    const dx = event.clientX - pointerStartRef.current.x;
+    const dy = event.clientY - pointerStartRef.current.y;
+    if (Math.hypot(dx, dy) > 8) {
+      clearLongPress();
+    }
+  }, [clearLongPress]);
+
+  const handlePointerUp = useCallback(() => {
+    clearLongPress();
+    pointerStartRef.current = null;
+  }, [clearLongPress]);
+
   const handleMenuNodeClick = (targetId: number) => (event: React.MouseEvent<HTMLButtonElement>) => {
     event.stopPropagation();
-    revealNodeWithParents(targetId);
-    scrollToNode(targetId);
+    const targetNode = effectiveNodes.find((node) => node.id === targetId);
+    const stableKey = targetNode ? getNodeStableKey(targetNode) : null;
+    if (stableKey) {
+      revealNodeWithParents(stableKey);
+      scrollToNode(stableKey);
+    }
     setMenuOpen(false);
   };
 
@@ -230,70 +303,45 @@ export const ConnectionButton = memo(function ConnectionButton({
     };
   }, [menuOpen]);
 
+  // Clean up long press on unmount
+  useEffect(() => {
+    return () => clearLongPress();
+  }, [clearLongPress]);
+
   const sizeClass = compact ? 'w-7 h-7' : 'w-10 h-10';
   const arrowClass = compact ? 'text-sm' : 'text-base';
 
   if (!workflow) return null;
 
+  const currentlyConnectedNodeId = direction === 'input' && hasConnection && connectedNodeId !== null
+    ? connectedNodeId
+    : null;
+  const shouldWrapResolvedLabel = resolvedLabel.includes('/') || resolvedLabel.includes('\n');
+
   return (
     <div className="flex items-center gap-2">
-      {direction === 'input' ? (
-        <>
-          {/* Input: Button on left, Label on right */}
-          <button
-            onClick={handleClick}
-            disabled={!hasConnection}
-            ref={buttonRef}
-            className={`
-              flex items-center justify-center rounded-full font-medium
-              ${sizeClass} flex-shrink-0
-              transition-opacity
-              ${getTypeClass(slot.type)}
-              ${!hasConnection ? 'opacity-40 cursor-not-allowed' : 'opacity-100 cursor-pointer active:scale-95'}
-            `}
-          >
-            {hasConnection && <span className={arrowClass}>←</span>}
-          </button>
-          {!hideLabel && (
-            <span className="text-sm text-gray-700 truncate">
-              {slot.localized_name || slot.name}
-            </span>
-          )}
-        </>
-      ) : (
-        <>
-          {/* Output: Label on left, Count badge, Button on right */}
-          {!hideLabel && (
-            <span className="text-sm text-gray-700 truncate">
-              {slot.localized_name || slot.name}
-            </span>
-          )}
-          {connectionCount > 1 && (
-            <span className="bg-gray-200 text-gray-700 rounded-full px-2 py-0.5 text-xs font-medium flex-shrink-0">
-              {connectionCount}
-            </span>
-          )}
-          <button
-            onClick={handleClick}
-            disabled={!hasConnection}
-            ref={buttonRef}
-            className={`
-              flex items-center justify-center rounded-full font-medium
-              ${sizeClass} flex-shrink-0
-              transition-opacity
-              ${getTypeClass(slot.type)}
-              ${!hasConnection ? 'opacity-40 cursor-not-allowed' : 'opacity-100 cursor-pointer active:scale-95'}
-            `}
-          >
-            {hasConnection && <span className={arrowClass}>→</span>}
-          </button>
-        </>
-      )}
+      <ConnectionRow
+        direction={direction}
+        hasConnection={hasConnection}
+        isEmptyRequiredInput={isEmptyRequiredInput}
+        hideLabel={hideLabel}
+        resolvedLabel={resolvedLabel}
+        shouldWrapResolvedLabel={shouldWrapResolvedLabel}
+        sizeClass={sizeClass}
+        arrowClass={arrowClass}
+        typeClass={getTypeClass(slot.type)}
+        buttonRef={buttonRef}
+        connectionCount={connectionCount}
+        onClick={handleClick}
+        onPointerDown={handlePointerDown}
+        onPointerMove={handlePointerMove}
+        onPointerUp={handlePointerUp}
+      />
 
       {menuOpen && menuPosition && createPortal(
         <div
           ref={menuRef}
-          className="fixed z-[1000] bg-white border border-gray-200 rounded-lg shadow-lg overflow-hidden"
+          className="fixed z-[1000]"
           style={{
             top: menuPosition.top,
             right: menuPosition.right,
@@ -301,43 +349,69 @@ export const ConnectionButton = memo(function ConnectionButton({
             maxWidth: 'calc(100vw - 16px)'
           }}
         >
-          {directNodes.map((node) => {
-            const typeDef = nodeTypes?.[node.type];
-            const label = typeDef?.display_name || node.type;
-            return (
-              <button
-                key={node.id}
-                className="block text-left px-3 py-2 text-sm hover:bg-gray-50"
-                onClick={handleMenuNodeClick(node.id)}
-              >
-                {label} #{node.id}
-              </button>
-            );
-          })}
-          {directNodes.length > 0 && bypassedTargets.length > 0 && (
-            <div className="px-3">
-              <div className="flex items-center gap-2">
-                <div className="h-px flex-1 bg-gray-200" />
-                <span className="text-[10px] text-gray-400">(via bypassed)</span>
-                <div className="h-px flex-1 bg-gray-200" />
-              </div>
-            </div>
-          )}
-          {bypassedTargets.map((node) => {
-            const typeDef = nodeTypes?.[node.type];
-            const label = typeDef?.display_name || node.type;
-            return (
-              <button
-                key={`bypassed-${node.id}`}
-                className="block text-left px-3 py-2 text-sm hover:bg-gray-50"
-                onClick={handleMenuNodeClick(node.id)}
-              >
-                {label} #{node.id}
-              </button>
-            );
-          })}
+          <ContextMenuBuilder
+            items={[
+              ...directNodes.map((node) => {
+                const typeDef = nodeTypes?.[node.type];
+                const label = typeDef?.display_name || node.type;
+                return {
+                  key: `direct-${node.id}`,
+                  label: `${label} #${node.id}`,
+                  onClick: handleMenuNodeClick(node.id)
+                };
+              }),
+              {
+                type: 'custom' as const,
+                key: 'bypassed-label',
+                hidden: !(directNodes.length > 0 && bypassedTargets.length > 0),
+                render: (
+                  <div className="px-3 py-1">
+                    <div className="flex items-center gap-2">
+                      <div className="h-px flex-1 bg-gray-200" />
+                      <span className="text-[10px] text-gray-400">(via bypassed)</span>
+                      <div className="h-px flex-1 bg-gray-200" />
+                    </div>
+                  </div>
+                )
+              },
+              ...bypassedTargets.map((node) => {
+                const typeDef = nodeTypes?.[node.type];
+                const label = typeDef?.display_name || node.type;
+                return {
+                  key: `bypassed-${node.id}`,
+                  label: `${label} #${node.id}`,
+                  onClick: handleMenuNodeClick(node.id)
+                };
+              })
+            ]}
+          />
         </div>,
         document.body
+      )}
+
+      {connectionModalOpen && (
+        direction === 'input' ? (
+          <ConnectionModal
+            mode="input"
+            isOpen={connectionModalOpen}
+            onClose={() => setConnectionModalOpen(false)}
+            nodeId={nodeId}
+            inputIndex={slotIndex}
+            inputType={slot.type}
+            inputName={resolvedLabel}
+            currentlyConnectedNodeId={currentlyConnectedNodeId}
+          />
+        ) : (
+          <ConnectionModal
+            mode="output"
+            isOpen={connectionModalOpen}
+            onClose={() => setConnectionModalOpen(false)}
+            nodeId={nodeId}
+            outputIndex={slotIndex}
+            outputType={slot.type}
+            outputName={resolvedLabel}
+          />
+        )
       )}
     </div>
   );
