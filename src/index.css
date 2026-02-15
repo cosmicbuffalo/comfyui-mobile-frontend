@@ -219,6 +219,15 @@ button, .touchable {
   -webkit-tap-highlight-color: transparent;
 }
 
+@keyframes node-card-wiggle {
+  0% {
+    transform: rotate(-0.6deg);
+  }
+  100% {
+    transform: rotate(0.6deg);
+  }
+}
+
 /* Node highlight animation */
 @keyframes highlight-pulse {
   0%, 100% {
