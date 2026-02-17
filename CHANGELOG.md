@@ -1,5 +1,56 @@
 # Changelog
 
+## 2.1.0 - 2026-02-15
+
+### Added
+
+- Expanded workflow editing support: add/remove nodes, reconnect node inputs/outputs, and reposition items on the mobile layout
+- Generic container editing actions for both groups and subgraphs (hide, bookmark, bypass nested nodes, delete container-only or container + nested contents)
+- Outputs panel rename actions for both files and folders
+
+### Changed
+
+- Unified group/subgraph rendering into shared container components across workflow and repositioning views
+- Migrated workflow UI state handling to stable identity keys for item-level state operations
+- Consolidated context-menu trigger button variants into shared reusable button components
+
+### Fixed
+
+- Move modal now respects hidden-folder visibility settings when selecting destination folders
+- Multiple container and bookmark state consistency issues after key/state refactors
+
+## 2.0.6 - 2026-02-08
+
+### Fixed
+
+- Fix image loading bug in media viewer
+- Minor cosmetic UI fixes
+
+## 2.0.5 - 2026-02-07
+
+### Added
+
+- Workflow and template search
+
+## 2.0.4 - 2026-02-06
+
+### Changed
+
+- README updates and documentation fixes
+- Added `pyproject.toml`
+- Added automatic publish action setup
+- Added initial test suite setup
+
+## 2.0.3 - 2026-02-06
+
+### Fixed
+
+- Bugfixes for movement and selection of files/folders in the outputs panel
+
+### Changed
+
+- Added screenshots to project documentation
+
 ## 2.0.2 - 2026-02-02
 
 ### Fixed
