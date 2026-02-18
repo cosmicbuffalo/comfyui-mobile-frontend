@@ -11,6 +11,10 @@ describe('resolveFileSource', () => {
     expect(resolveFileSource(makeFile('input/photo.png'))).toBe('input');
   });
 
+  it('returns "temp" for files starting with temp/', () => {
+    expect(resolveFileSource(makeFile('temp/preview.png'))).toBe('temp');
+  });
+
   it('returns "output" for files without input/ prefix', () => {
     expect(resolveFileSource(makeFile('output/result.png'))).toBe('output');
     expect(resolveFileSource(makeFile('result.png'))).toBe('output');
@@ -21,6 +25,7 @@ describe('resolveFilePath', () => {
   it('strips the source prefix from the id', () => {
     expect(resolveFilePath(makeFile('output/img.png'))).toBe('img.png');
     expect(resolveFilePath(makeFile('input/photo.jpg'))).toBe('photo.jpg');
+    expect(resolveFilePath(makeFile('temp/preview.png'))).toBe('preview.png');
   });
 
   it('returns id unchanged when no matching prefix', () => {

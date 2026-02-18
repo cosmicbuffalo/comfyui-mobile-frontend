@@ -1,4 +1,13 @@
 import type { Workflow, WorkflowNode, NodeTypes } from '@/api/types';
+import { extractLoraList, findLoraListIndex } from '@/utils/loraManager';
+import {
+  extractTriggerWordList,
+  extractTriggerWordListLoose,
+  extractTriggerWordMessage,
+  findTriggerWordListIndex,
+  findTriggerWordMessageIndex,
+  isTriggerWordToggleNodeType
+} from '@/utils/triggerWordToggle';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
@@ -54,9 +63,20 @@ export function getWorkflowWidgetIndexMap(
 }
 
 export function isWidgetInputType(typeOrOptions: string | unknown[]): boolean {
-  if (Array.isArray(typeOrOptions)) return true;
+  if (Array.isArray(typeOrOptions)) {
+    const signature = typeOrOptions.map((entry) => String(entry)).join(',').toUpperCase();
+    if (signature.includes('AUTOCOMPLETE_TEXT_PROMPT') || signature.includes('AUTOCOMPLETE_TEXT_LORAS')) {
+      return true;
+    }
+    return true;
+  }
   const normalized = String(typeOrOptions).toUpperCase();
-  return normalized === 'INT' || normalized === 'FLOAT' || normalized === 'BOOLEAN' || normalized === 'STRING';
+  return normalized === 'INT' ||
+    normalized === 'FLOAT' ||
+    normalized === 'BOOLEAN' ||
+    normalized === 'STRING' ||
+    normalized.includes('AUTOCOMPLETE_TEXT_LORAS') ||
+    normalized.includes('AUTOCOMPLETE_TEXT_PROMPT');
 }
 
 export function normalizeWidgetValue(
@@ -98,21 +118,59 @@ export function normalizeComboValue(
   defaultValue: unknown
 ): unknown {
   if (options.length === 0) return value;
-  const normalized = normalizeWidgetValue(value, options, { comboIndexToValue: true });
-  const normalizedString = String(normalized);
-  const normalizedBase = normalizedString.split(/[\\/]/).pop() ?? normalizedString;
-  const directMatch = options.find((opt) => String(opt) === normalizedString);
-  if (directMatch !== undefined) {
-    return directMatch;
-  }
-  const baseMatch = options.find((opt) => String(opt) === normalizedBase);
-  if (baseMatch !== undefined) {
-    return baseMatch;
+  const resolved = resolveComboOption(value, options);
+  if (resolved !== undefined) {
+    return resolved;
   }
   if (defaultValue !== undefined && options.some((opt) => String(opt) === String(defaultValue))) {
     return defaultValue;
   }
   return options[0];
+}
+
+const SAFETENSORS_SUFFIX = '.safetensors';
+
+function stripSafetensorsSuffix(value: string): string {
+  const lower = value.toLowerCase();
+  if (lower.endsWith(SAFETENSORS_SUFFIX)) {
+    return value.slice(0, value.length - SAFETENSORS_SUFFIX.length);
+  }
+  return value;
+}
+
+function getComboBase(value: string): string {
+  return value.split(/[\\/]/).pop() ?? value;
+}
+
+export function resolveComboOption(
+  value: unknown,
+  options: unknown[]
+): unknown | undefined {
+  if (!Array.isArray(options) || options.length === 0) return undefined;
+  const normalized = normalizeWidgetValue(value, options, { comboIndexToValue: true });
+  const normalizedString = String(normalized);
+  const normalizedBase = getComboBase(normalizedString);
+
+  const directMatch = options.find((opt) => String(opt) === normalizedString);
+  if (directMatch !== undefined) {
+    return directMatch;
+  }
+
+  const baseMatch = options.find((opt) => String(opt) === normalizedBase);
+  if (baseMatch !== undefined) {
+    return baseMatch;
+  }
+
+  const normalizedNoExt = stripSafetensorsSuffix(normalizedBase);
+  const normalizedNoExtLower = normalizedNoExt.toLowerCase();
+  const extensionlessMatch = options.find((opt) => {
+    const optString = String(opt);
+    const optBase = getComboBase(optString);
+    const optNoExt = stripSafetensorsSuffix(optBase);
+    return optNoExt.toLowerCase() === normalizedNoExtLower;
+  });
+
+  return extensionlessMatch;
 }
 
 export function isValueCompatible(value: unknown, typeOrOptions: string | unknown[]): boolean {
@@ -296,6 +354,9 @@ export function buildQueuePromptInputs(
     inputs.seed = seedOverrides[node.id];
   }
 
+  appendLoraManagerInputs(node, inputs, widgetValuesArray, widgetIndexMap);
+  appendTriggerWordToggleInputs(node, inputs, widgetValuesArray, widgetIndexMap);
+
   return inputs;
 }
 
@@ -451,5 +512,70 @@ export function buildWorkflowPromptInputs(
     inputs.seed = seedOverrides[node.id];
   }
 
+  appendLoraManagerInputs(node, inputs, widgetValuesArray, widgetIndexMap);
+  appendTriggerWordToggleInputs(node, inputs, widgetValuesArray, widgetIndexMap);
+
   return inputs;
+}
+
+function appendLoraManagerInputs(
+  node: WorkflowNode,
+  inputs: Record<string, unknown>,
+  widgetValuesArray: unknown[] | null,
+  widgetIndexMap: Record<string, number> | null
+) {
+  if ('loras' in inputs) return;
+
+  const mappedIndex = widgetIndexMap?.loras;
+  const listIndex = mappedIndex !== undefined ? mappedIndex : findLoraListIndex(node);
+  if (listIndex === null) return;
+
+  const rawValue = widgetValuesArray?.[listIndex];
+  const loraList = extractLoraList(rawValue);
+  if (loraList) {
+    inputs.loras = loraList;
+  }
+}
+
+function appendTriggerWordToggleInputs(
+  node: WorkflowNode,
+  inputs: Record<string, unknown>,
+  widgetValuesArray: unknown[] | null,
+  widgetIndexMap: Record<string, number> | null
+) {
+  if (!isTriggerWordToggleNodeType(node.type)) return;
+
+  const mappedListIndex = widgetIndexMap?.toggle_trigger_words;
+  const listIndex = mappedListIndex !== undefined
+    ? mappedListIndex
+    : findTriggerWordListIndex(node);
+  if (listIndex === null) return;
+
+  if (!('toggle_trigger_words' in inputs)) {
+    const rawValue = widgetValuesArray?.[listIndex];
+    const triggerList = extractTriggerWordList(rawValue) ?? extractTriggerWordListLoose(rawValue);
+    if (triggerList) {
+      inputs.toggle_trigger_words = triggerList;
+    }
+  }
+
+  const mappedMessageIndex = widgetIndexMap?.originalMessage ?? widgetIndexMap?.orinalMessage;
+  const messageIndex = mappedMessageIndex !== undefined
+    ? mappedMessageIndex
+    : findTriggerWordMessageIndex(node, listIndex);
+  if (messageIndex === null) return;
+
+  const messageValue = widgetValuesArray?.[messageIndex];
+  const message = extractTriggerWordMessage(messageValue);
+  if (message === null) return;
+
+  const messageKey = widgetIndexMap && 'originalMessage' in widgetIndexMap
+    ? 'originalMessage'
+    : (widgetIndexMap && 'orinalMessage' in widgetIndexMap
+      ? 'orinalMessage'
+      : 'orinalMessage');
+
+  if (!(messageKey in inputs)) {
+    inputs[messageKey] = message;
+  }
 }

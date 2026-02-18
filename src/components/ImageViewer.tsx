@@ -9,7 +9,6 @@ import { useHistoryStore } from '@/hooks/useHistory';
 import { useOverallProgress } from '@/hooks/useOverallProgress';
 import { buildViewerImages, type ViewerImage } from '@/utils/viewerImages';
 import { deleteFile, type FileItem } from '@/api/client';
-import type { HistoryOutputImage } from '@/api/types';
 import { Dialog } from '@/components/modals/Dialog';
 import { UseImageModal } from '@/components/modals/UseImageModal';
 import { loadWorkflowFromFile, resolveFilePath, resolveFileSource } from '@/utils/workflowOperations';
@@ -78,11 +77,9 @@ export function ImageViewer({ onClose }: ImageViewerProps) {
     if (history.length === 0) return;
     const latest = history[0];
     if (lastFollowPromptRef.current === latest.prompt_id) return;
-    const latestOutputImages = latest.outputs.images
-      .filter((img: HistoryOutputImage) => img.type === 'output');
-    if (latestOutputImages.length === 0) return;
+    if (latest.outputs.images.length === 0) return;
 
-    const allImages = buildViewerImages(history, { onlyOutput: true, alt: 'Generation' });
+    const allImages = buildViewerImages(history, { alt: 'Generation' });
     if (allImages.length === 0) return;
 
     lastFollowPromptRef.current = latest.prompt_id;

@@ -133,7 +133,7 @@ function App() {
 
   // Open viewer in follow queue mode (from bottom bar button)
   const openFollowQueueViewer = () => {
-    const allImages = buildViewerImages(history, { onlyOutput: true, alt: 'Generation' });
+    const allImages = buildViewerImages(history, { alt: 'Generation' });
 
     // Disable swipe navigation before opening viewer
     setSwipeEnabled(false);

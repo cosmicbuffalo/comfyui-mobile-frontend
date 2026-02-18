@@ -1,6 +1,7 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { WorkflowInput, WorkflowNode } from '@/api/types';
 import { useWorkflowStore, getWidgetDefinitions, getInputWidgetDefinitions, getWidgetIndexForInput, findSeedWidgetIndex } from '@/hooks/useWorkflow';
+import { isLoraManagerNodeType } from '@/utils/loraManager';
 import { useSeedStore } from '@/hooks/useSeed';
 import { useBookmarksStore } from '@/hooks/useBookmarks';
 import { usePinnedWidgetStore } from '@/hooks/usePinnedWidget';
@@ -65,6 +66,7 @@ export const NodeCard = memo(function NodeCard({
   const bookmarkedItems = useBookmarksStore((s) => s.bookmarkedItems);
   const toggleBookmark = useBookmarksStore((s) => s.toggleBookmark);
   const nodeImages = useWorkflowStore((s) => s.nodeOutputs[String(node.id)]);
+  const nodeTextOutput = useWorkflowStore((s) => s.nodeTextOutputs[String(node.id)] ?? null);
   const nodeErrors = useWorkflowErrorsStore((s) => s.nodeErrors[String(node.id)]);
   const progress = useWorkflowStore((s) => s.progress);
   const executingPromptId = useWorkflowStore((s) => s.executingPromptId);
@@ -165,6 +167,7 @@ export const NodeCard = memo(function NodeCard({
   }, [node]);
   const displayName: string = nodeTitle || typeDef?.display_name || node.type;
   const isKSampler = node.type === 'KSampler';
+  const isLoraManagerNode = isLoraManagerNodeType(node.type);
   const isBypassed = node.mode === 4;
   const isCollapsed = nodeStableKey ? Boolean(collapsedItems[nodeStableKey]) : false;
   const isLoadImageNode = /LoadImage/i.test(node.type);
@@ -289,14 +292,22 @@ export const NodeCard = memo(function NodeCard({
   // Collect all pinnable widgets for the pin submenu
   const pinnableWidgets = useMemo(() => {
     const items: Array<{ widgetIndex: number; name: string; type: string; options?: Record<string, unknown> | unknown[] }> = [];
+    const isPinEligible = (widgetType: string, widgetName: string) => {
+      if (widgetType.startsWith('LM_LORA')) return false;
+      if (widgetType.startsWith('TW_')) return false;
+      if (isLoraManagerNode && widgetName === 'text') return false;
+      return true;
+    };
     visibleInputWidgets.forEach((w) => {
+      if (!isPinEligible(w.type, w.name)) return;
       items.push({ widgetIndex: w.widgetIndex, name: w.name, type: w.type, options: w.options });
     });
     visibleWidgets.forEach((w) => {
+      if (!isPinEligible(w.type, w.name)) return;
       items.push({ widgetIndex: w.widgetIndex, name: w.name, type: w.type, options: w.options });
     });
     return items;
-  }, [visibleInputWidgets, visibleWidgets]);
+  }, [visibleInputWidgets, visibleWidgets, isLoraManagerNode]);
 
   // Filter inputs to only show those that are actual connections (connected or connectable without widget values)
   const isWidgetInput = useCallback((input: WorkflowInput) => {
@@ -308,7 +319,15 @@ export const NodeCard = memo(function NodeCard({
     if (Array.isArray(typeOrOptions)) return true;
     const normalized = String(typeOrOptions).toUpperCase();
     const hasDefault = Object.prototype.hasOwnProperty.call(options ?? {}, 'default');
-    return ['INT', 'FLOAT', 'BOOLEAN', 'STRING'].includes(normalized) || hasDefault;
+    return [
+      'INT',
+      'FLOAT',
+      'BOOLEAN',
+      'STRING',
+    ].includes(normalized) ||
+      normalized.includes('AUTOCOMPLETE_TEXT_LORAS') ||
+      normalized.includes('AUTOCOMPLETE_TEXT_PROMPT') ||
+      hasDefault;
   }, [typeDef]);
 
   const connectionInputs = useMemo(() => {
@@ -371,6 +390,7 @@ export const NodeCard = memo(function NodeCard({
   const canAddNodeBookmark = totalBookmarkCount < 5 || isNodeBookmarked;
 
   const showImagePreview = (hasImageOutput || isImageOutputNode) && !!effectivePreviewImage;
+  const showTextPreview = typeof nodeTextOutput === 'string' && nodeTextOutput.length > 0;
   const inputConnectionCount = node.inputs?.filter((input) => input.link != null).length ?? 0;
   const outputConnectionCount = node.outputs?.reduce((count, output) => count + (output.links?.length ?? 0), 0) ?? 0;
   const hasNodeConnections = inputConnectionCount > 0 || outputConnectionCount > 0;
@@ -490,6 +510,7 @@ export const NodeCard = memo(function NodeCard({
           <NodeCardMenu
             nodeId={node.id}
             nodeStableKey={nodeStableKey}
+            isLoraManagerNode={isLoraManagerNode}
             isBypassed={isBypassed}
             onEditLabel={handleEditLabel}
             pinnableWidgets={pinnableWidgets}
@@ -572,8 +593,9 @@ export const NodeCard = memo(function NodeCard({
             )}
 
             <NodeCardOutputPreview
-              show={showImagePreview}
+              show={showImagePreview || showTextPreview}
               previewImage={effectivePreviewImage}
+              previewText={showTextPreview ? nodeTextOutput : null}
               displayName={displayName}
               onImageClick={() => onImageClick?.(previewList, 0)}
               isExecuting={Boolean(isExecuting)}

@@ -1,5 +1,28 @@
 # Changelog
 
+## 2.2.0 - 2026-02-17
+
+### Added
+
+- LoRA Manager integration layer:
+  - Support for LoraManager nodes and websocket integration (thanks @pccr10001!)
+- Node text output previews are now rendered in the workflow panel
+- Focused unit/integration coverage for LoRA Manager and related serialization behavior:
+  - `loraManager` utils
+  - `triggerWordToggle` utils
+  - LoRA manager store/action flows
+  - viewer image building and temp-source workflow path resolution
+
+### Changed
+
+- Queue/Image Viewer media pipeline now includes preview/temp images in the same generated order instead of output-only lists
+- Follow Queue mode now advances using all generated media (including previews), not just saved output files
+
+### Fixed
+
+- Loading workflow metadata from temp images now resolves `temp` as a first-class source instead of incorrectly defaulting to `output`
+- Queue card image ordering mismatch that could open the wrong media item when previews were present
+
 ## 2.1.0 - 2026-02-15
 
 ### Added

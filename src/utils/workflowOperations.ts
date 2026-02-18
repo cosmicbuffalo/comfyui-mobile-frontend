@@ -11,6 +11,7 @@ export type LoadWorkflowFn = (
 
 export function resolveFileSource(file: FileItem): AssetSource {
   if (file.id.startsWith('input/')) return 'input';
+  if (file.id.startsWith('temp/')) return 'temp';
   return 'output';
 }
 

@@ -23,6 +23,7 @@ import {
   getWorkflowWidgetIndexMap,
   getWidgetValue,
   normalizeWidgetValue,
+  resolveComboOption,
 } from "@/utils/workflowInputs";
 import { buildWorkflowCacheKey } from "@/utils/workflowCacheKey";
 import { expandWorkflowSubgraphs } from "@/utils/expandWorkflowSubgraphs";
@@ -657,6 +658,8 @@ interface WorkflowState {
 
   // Node output images (keyed by node ID)
   nodeOutputs: Record<string, NodeOutputImage[]>;
+  // Node text output previews (keyed by node ID)
+  nodeTextOutputs: Record<string, string>;
   // Prompt output images (keyed by prompt ID)
   promptOutputs: Record<string, HistoryOutputImage[]>;
   runCount: number;
@@ -736,6 +739,7 @@ interface WorkflowState {
   queueWorkflow: (count: number) => Promise<void>;
   saveCurrentWorkflowState: () => void;
   setNodeOutput: (stableKey: StableKey, images: NodeOutputImage[]) => void;
+  setNodeTextOutput: (stableKey: StableKey, text: string) => void;
   clearNodeOutputs: () => void;
   addPromptOutputs: (promptId: string, images: HistoryOutputImage[]) => void;
   clearPromptOutputs: (promptId?: string) => void;
@@ -1501,16 +1505,19 @@ function collectWorkflowLoadErrors(
       const rawValue = getWidgetValue(node, name, widgetIndex);
       if (rawValue === undefined || rawValue === null) continue;
 
+      const resolved = resolveComboOption(rawValue, typeOrOptions);
       const normalized = normalizeWidgetValue(rawValue, typeOrOptions, {
         comboIndexToValue: true,
       });
       const normalizedString = String(normalized);
       const normalizedBase =
         normalizedString.split(/[\\/]/).pop() ?? normalizedString;
-      const hasMatch = typeOrOptions.some((opt) => {
-        const optString = String(opt);
-        return optString === normalizedString || optString === normalizedBase;
-      });
+      const hasMatch =
+        resolved !== undefined ||
+        typeOrOptions.some((opt) => {
+          const optString = String(opt);
+          return optString === normalizedString || optString === normalizedBase;
+        });
 
       if (!hasMatch) {
         const nodeId = String(node.id);
@@ -1530,6 +1537,61 @@ function collectWorkflowLoadErrors(
   return errors;
 }
 
+function normalizeWorkflowComboValues(
+  workflow: Workflow,
+  nodeTypes: NodeTypes
+): { workflow: Workflow; changed: boolean } {
+  let changed = false;
+
+  const nodes = workflow.nodes.map((node) => {
+    if (!Array.isArray(node.widgets_values)) return node;
+    const typeDef = nodeTypes[node.type];
+    if (!typeDef?.input) return node;
+
+    const requiredOrder = typeDef.input_order?.required || Object.keys(typeDef.input.required || {});
+    const optionalOrder = typeDef.input_order?.optional || Object.keys(typeDef.input.optional || {});
+    const orderedInputs = [...requiredOrder, ...optionalOrder];
+    let nextValues: unknown[] | null = null;
+
+    for (const name of orderedInputs) {
+      const inputDef = typeDef.input.required?.[name] || typeDef.input.optional?.[name];
+      if (!inputDef) continue;
+      const [typeOrOptions] = inputDef;
+      if (!Array.isArray(typeOrOptions) || typeOrOptions.length === 0) continue;
+
+      const inputEntry = node.inputs.find((input) => input.name === name);
+      if (inputEntry?.link != null) continue;
+
+      const widgetIndex = getWidgetIndexForInput(workflow, nodeTypes, node, name);
+      if (widgetIndex === null) continue;
+      if (widgetIndex < 0 || widgetIndex >= node.widgets_values.length) continue;
+
+      const rawValue = getWidgetValue(node, name, widgetIndex);
+      if (rawValue === undefined || rawValue === null) continue;
+
+      const resolved = resolveComboOption(rawValue, typeOrOptions);
+      if (resolved === undefined || resolved === rawValue) continue;
+
+      if (!nextValues) {
+        nextValues = [...node.widgets_values];
+      }
+      nextValues[widgetIndex] = resolved;
+      changed = true;
+    }
+
+    if (!nextValues) return node;
+    return { ...node, widgets_values: nextValues };
+  });
+
+  if (!changed) {
+    return { workflow, changed: false };
+  }
+
+  return {
+    workflow: { ...workflow, nodes },
+    changed: true
+  };
+}
 export const useWorkflowStore = create<WorkflowState>()(
   persist(
     (set, get) => {
@@ -2147,6 +2209,31 @@ export const useWorkflowStore = create<WorkflowState>()(
               nodeOutputs: {
                 ...state.nodeOutputs,
                 [nodeId]: images,
+              },
+            };
+          })(),
+        }));
+      };
+
+      const setNodeTextOutput: WorkflowState["setNodeTextOutput"] = (
+        stableKey,
+        text,
+      ) => {
+        set((state) => ({
+          ...(() => {
+            const identity = state.workflow
+              ? resolveNodeIdentityFromStableKey(
+                  state.workflow,
+                  stableKey,
+                  state.pointerByStableKey,
+                )
+              : null;
+            if (!identity) return {};
+            const nodeId = String(identity.nodeId);
+            return {
+              nodeTextOutputs: {
+                ...state.nodeTextOutputs,
+                [nodeId]: text,
               },
             };
           })(),
@@ -2913,8 +3000,12 @@ export const useWorkflowStore = create<WorkflowState>()(
             ...normalizedWorkflow,
             nodes: restoredNodes,
           };
+          const normalizedResult = nodeTypes
+            ? normalizeWorkflowComboValues(restoredWorkflow, nodeTypes)
+            : { workflow: restoredWorkflow, changed: false };
+          finalWorkflow = normalizedResult.workflow;
           const normalizedHiddenNodes = normalizeManuallyHiddenNodeKeys(
-            restoredWorkflow,
+            finalWorkflow,
             get().hiddenItems,
           );
           const rawCollapsedItems = {
@@ -2924,7 +3015,7 @@ export const useWorkflowStore = create<WorkflowState>()(
             ...(savedState.hiddenItems ?? {}),
           };
           const restoredLayout = buildLayoutForWorkflow(
-            restoredWorkflow,
+            finalWorkflow,
             normalizedHiddenNodes,
           );
           const reconciled = reconcileStableRegistry(
@@ -2963,7 +3054,7 @@ export const useWorkflowStore = create<WorkflowState>()(
           );
           const defaultCollapsedItems: Record<string, boolean> = {};
           const restoredWorkflowWithStableKeys = annotateWorkflowWithStableKeys(
-            restoredWorkflow,
+            finalWorkflow,
             reconciled.layoutToStable,
           );
           finalWorkflow = restoredWorkflowWithStableKeys;
@@ -3030,11 +3121,6 @@ export const useWorkflowStore = create<WorkflowState>()(
             get().stableKeyByPointer,
             get().pointerByStableKey,
           );
-          const normalizedWorkflowWithStableKeys =
-            annotateWorkflowWithStableKeys(
-              normalizedWorkflow,
-              reconciled.layoutToStable,
-            );
           const normalizedHiddenNodesStable = stableRecordFromLayoutRecord(
             normalizedHiddenNodes,
             reconciled.layoutToStable,
@@ -3048,10 +3134,28 @@ export const useWorkflowStore = create<WorkflowState>()(
               )
             : {};
           useWorkflowErrorsStore.getState().setError(null);
+          const normalizedResult = nodeTypes
+            ? normalizeWorkflowComboValues(normalizedWorkflow, nodeTypes)
+            : { workflow: normalizedWorkflow, changed: false };
+          finalWorkflow = normalizedResult.workflow;
+          const normalizedWorkflowWithStableKeys =
+            annotateWorkflowWithStableKeys(
+              finalWorkflow,
+              reconciled.layoutToStable,
+            );
+          let syncedEmbedWorkflow = normalizedEmbedWorkflow;
+          if (syncedEmbedWorkflow) {
+            for (const node of normalizedWorkflowWithStableKeys.nodes) {
+              syncedEmbedWorkflow = updateEmbedWorkflowFromExpandedNode(
+                syncedEmbedWorkflow,
+                node,
+              );
+            }
+          }
           set({
             workflowSource: source,
             workflow: normalizedWorkflowWithStableKeys,
-            embedWorkflow: normalizedEmbedWorkflow,
+            embedWorkflow: syncedEmbedWorkflow,
             originalWorkflow: JSON.parse(
               JSON.stringify(normalizedWorkflowWithStableKeys),
             ),
@@ -3130,6 +3234,7 @@ export const useWorkflowStore = create<WorkflowState>()(
           pointerByStableKey: {},
           runCount: 1,
           nodeOutputs: {},
+          nodeTextOutputs: {},
           promptOutputs: {},
           followQueue: false,
           workflowLoadedAt: Date.now(),
@@ -3271,7 +3376,7 @@ export const useWorkflowStore = create<WorkflowState>()(
         };
 
       const clearNodeOutputs: WorkflowState["clearNodeOutputs"] = () => {
-        set({ nodeOutputs: {} });
+        set({ nodeOutputs: {}, nodeTextOutputs: {} });
       };
 
       const addPromptOutputs: WorkflowState["addPromptOutputs"] = (
@@ -4327,6 +4432,7 @@ export const useWorkflowStore = create<WorkflowState>()(
         nodeDurationStats: {},
         workflowDurationStats: {},
         nodeOutputs: {},
+        nodeTextOutputs: {},
         promptOutputs: {},
         runCount: 1,
         followQueue: false,
@@ -4353,6 +4459,7 @@ export const useWorkflowStore = create<WorkflowState>()(
         connectNodes,
         disconnectInput,
         setNodeOutput,
+        setNodeTextOutput,
         clearNodeOutputs,
         requestAddNodeModal,
         clearAddNodeModalRequest,

@@ -1,5 +1,12 @@
 import type { WorkflowNode, NodeTypes, NodeTypeDefinition } from '@/api/types';
 import { getWidgetValue, isWidgetInputType } from '@/utils/workflowInputs';
+import { findLoraListIndex, isLoraList, isLoraManagerNodeType } from '@/utils/loraManager';
+import {
+  extractTriggerWordList,
+  extractTriggerWordListLoose,
+  findTriggerWordListIndex,
+  isTriggerWordToggleNodeType
+} from '@/utils/triggerWordToggle';
 
 export interface WidgetDefinition {
   name: string;
@@ -18,6 +25,104 @@ export function getNodeTypeDefinition(
 ): NodeTypeDefinition | null {
   if (!nodeTypes) return null;
   return nodeTypes[nodeType] || null;
+}
+
+function getStandardLoraOptions(nodeTypes: NodeTypes | null): unknown[] {
+  if (!nodeTypes) return [];
+  const standardLoraNode = getNodeTypeDefinition(nodeTypes, 'LoraLoader');
+  if (standardLoraNode?.input?.required?.['lora_name']) {
+    const [typeOrOptions] = standardLoraNode.input.required['lora_name'];
+    if (Array.isArray(typeOrOptions)) {
+      return typeOrOptions;
+    }
+  }
+  return [];
+}
+
+function buildLoraManagerWidgetDefinitions(
+  node: WorkflowNode,
+  nodeTypes: NodeTypes | null
+): WidgetDefinition[] {
+  if (!Array.isArray(node.widgets_values)) return [];
+  const listIndex = findLoraListIndex(node);
+  if (listIndex === null) return [];
+  const rawList = node.widgets_values[listIndex];
+  if (!isLoraList(rawList)) return [];
+
+  const loraOptions = getStandardLoraOptions(nodeTypes);
+  const definitions: WidgetDefinition[] = [];
+  const list = rawList;
+
+  if (list.length > 0) {
+    definitions.push({
+      name: 'Loras',
+      type: 'LM_LORA_HEADER',
+      options: undefined,
+      value: list.every((entry) => entry?.active !== false),
+      widgetIndex: listIndex,
+      isCombo: false,
+      connected: false,
+      inputIndex: -1
+    });
+  }
+
+  list.forEach((entry, index) => {
+    definitions.push({
+      name: entry?.name || 'Lora',
+      type: 'LM_LORA',
+      options: {
+        entryIndex: index,
+        choices: loraOptions.length > 0 ? loraOptions : undefined
+      },
+      value: entry,
+      widgetIndex: listIndex,
+      isCombo: false,
+      connected: false,
+      inputIndex: -1
+    });
+  });
+
+  definitions.push({
+    name: 'Add Lora',
+    type: 'LM_LORA_ADD',
+    options: { choices: loraOptions.length > 0 ? loraOptions : undefined },
+    value: null,
+    widgetIndex: listIndex,
+    isCombo: false,
+    connected: false,
+    inputIndex: -1
+  });
+
+  return definitions;
+}
+
+function buildTriggerWordToggleWidgetDefinitions(
+  node: WorkflowNode,
+  allowStrengthAdjustment: boolean,
+  preferredListIndex?: number | null
+): WidgetDefinition[] {
+  if (!Array.isArray(node.widgets_values)) return [];
+  const listIndex = preferredListIndex ?? findTriggerWordListIndex(node);
+  if (listIndex === null) return [];
+  if (listIndex < 0 || listIndex >= node.widgets_values.length) return [];
+
+  const rawList = node.widgets_values[listIndex];
+  const list = extractTriggerWordList(rawList) ?? extractTriggerWordListLoose(rawList);
+  if (!Array.isArray(list) || list.length === 0) return [];
+
+  return list.map((entry, index) => ({
+    name: entry?.text || 'Trigger Word',
+    type: 'TW_WORD',
+    options: {
+      entryIndex: index,
+      allowStrengthAdjustment
+    },
+    value: entry,
+    widgetIndex: listIndex,
+    isCombo: false,
+    connected: false,
+    inputIndex: -1
+  }));
 }
 
 function collectWidgetDefinitions(
@@ -55,16 +160,7 @@ function collectWidgetDefinitions(
       const showSeparate = node.properties?.['Show Strengths'] === 'Separate Model & Clip';
 
       // Try to get Lora options from the standard LoraLoader if available
-      let loraOptions: unknown[] = [];
-      if (nodeTypes) {
-        const standardLoraNode = getNodeTypeDefinition(nodeTypes, 'LoraLoader');
-        if (standardLoraNode?.input?.required?.['lora_name']) {
-           const [typeOrOptions] = standardLoraNode.input.required['lora_name'];
-           if (Array.isArray(typeOrOptions)) {
-             loraOptions = typeOrOptions;
-           }
-        }
-      }
+      const loraOptions = getStandardLoraOptions(nodeTypes);
 
       if (Array.isArray(node.widgets_values)) {
         const widgetValues = node.widgets_values;
@@ -128,6 +224,18 @@ function collectWidgetDefinitions(
 
     const typeDef = getNodeTypeDefinition(nodeTypes, node.type);
     if (!typeDef?.input) {
+      const loraManagerDefs = isLoraManagerNodeType(node.type)
+        ? buildLoraManagerWidgetDefinitions(node, nodeTypes)
+        : [];
+      if (loraManagerDefs.length > 0) {
+        return loraManagerDefs;
+      }
+      const triggerWordDefs = isTriggerWordToggleNodeType(node.type)
+        ? buildTriggerWordToggleWidgetDefinitions(node, false)
+        : [];
+      if (triggerWordDefs.length > 0) {
+        return triggerWordDefs;
+      }
       const hasSeedOutput = node.outputs?.some((output) =>
         String(output.name || '').toLowerCase().includes('seed') &&
         String(output.type || '').toUpperCase().includes('INT')
@@ -155,6 +263,17 @@ function collectWidgetDefinitions(
     const processInput = (name: string, input: [string | unknown[], Record<string, unknown>?]) => {
       if (!input) return; // Defensive check
       const [typeOrOptions, inputOptions] = input;
+      const typeSignature = Array.isArray(typeOrOptions)
+        ? typeOrOptions.map((entry) => String(entry)).join(',')
+        : String(typeOrOptions);
+      const typeSignatureUpper = typeSignature.toUpperCase();
+      const normalizedType = String(typeOrOptions);
+      const isAutocompleteLoras = typeSignatureUpper.includes('AUTOCOMPLETE_TEXT_LORAS');
+      const isAutocompletePrompt = typeSignatureUpper.includes('AUTOCOMPLETE_TEXT_PROMPT');
+      const isLoraManagerTextInput =
+        isLoraManagerNodeType(node.type) && name === 'text';
+      const isAutocompleteTextInput =
+        isAutocompleteLoras || isAutocompletePrompt || isLoraManagerTextInput;
       const inputIndex = node.inputs.findIndex((i) => i.name === name);
       const inputEntry = inputIndex >= 0 ? node.inputs[inputIndex] : undefined;
       const isConnected = inputEntry?.link != null;
@@ -162,15 +281,18 @@ function collectWidgetDefinitions(
       const hasSocket = Boolean(inputEntry);
       const hasDefault = Object.prototype.hasOwnProperty.call(inputOptions ?? {}, 'default');
       const isWidgetType = isWidgetInputType(typeOrOptions) || isWidgetToggle || !hasSocket || hasDefault;
-      const isCombo = Array.isArray(typeOrOptions);
-      const comboOptions = isCombo
+      const isCombo = Array.isArray(typeOrOptions) && !isAutocompleteTextInput;
+      const comboOptions: Record<string, unknown> = isCombo
         ? { ...(inputOptions ?? {}), options: typeOrOptions }
-        : inputOptions;
+        : { ...(inputOptions ?? {}) };
+      if (isAutocompleteTextInput) {
+        comboOptions.multiline = true;
+      }
       if (isWidgetType) {
         const value = getWidgetValue(node, name, widgetIndex);
         definitions.push({
           name,
-          type: isCombo ? 'COMBO' : String(typeOrOptions),
+          type: isCombo ? 'COMBO' : (isAutocompleteTextInput ? 'STRING' : normalizedType),
           options: comboOptions,
           value,
           widgetIndex,
@@ -196,6 +318,26 @@ function collectWidgetDefinitions(
     for (const name of optionalOrder) {
       const input = typeDef.input.optional?.[name];
       if (input) processInput(name, input);
+    }
+
+    if (isLoraManagerNodeType(node.type)) {
+      definitions.push(...buildLoraManagerWidgetDefinitions(node, nodeTypes));
+    }
+
+    if (isTriggerWordToggleNodeType(node.type)) {
+      const allowStrengthValue = definitions.find(
+        (def) => def.name === 'allow_strength_adjustment'
+      )?.value;
+      const mappedListIndex = definitions.find(
+        (def) => def.name === 'toggle_trigger_words'
+      )?.widgetIndex;
+      definitions.push(
+        ...buildTriggerWordToggleWidgetDefinitions(
+          node,
+          Boolean(allowStrengthValue),
+          mappedListIndex ?? null
+        )
+      );
     }
 
     return definitions;

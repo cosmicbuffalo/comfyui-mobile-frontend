@@ -1,10 +1,11 @@
 import { useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { BypassToggleIcon, BookmarkIconSvg, BookmarkOutlineIcon, ChevronRightIcon, EyeOffIcon, MoveUpDownIcon, NodeConnectionsIcon, EditIcon, PinIconSvg, PinOutlineIcon, TrashIcon } from '@/components/icons';
+import { BypassToggleIcon, BookmarkIconSvg, BookmarkOutlineIcon, ChevronRightIcon, EyeOffIcon, MoveUpDownIcon, NodeConnectionsIcon, EditIcon, ExternalLinkIcon, PinIconSvg, PinOutlineIcon, TrashIcon } from '@/components/icons';
 import { useAnchoredMenuPosition } from '@/hooks/useAnchoredMenuPosition';
 import { useDismissOnOutsideClick } from '@/hooks/useDismissOnOutsideClick';
 import { ContextMenuButton } from '@/components/buttons/ContextMenuButton';
 import { ContextMenuBuilder } from '@/components/menus/ContextMenuBuilder';
+import { openLoraManagerUiInNewTab } from '@/utils/loraManagerUi';
 
 interface PinnableWidget {
   widgetIndex: number;
@@ -16,6 +17,7 @@ interface PinnableWidget {
 interface NodeCardMenuProps {
   nodeId: number;
   nodeStableKey: string | null;
+  isLoraManagerNode: boolean;
   isBypassed: boolean;
   onEditLabel: () => void;
   pinnableWidgets: PinnableWidget[];
@@ -51,6 +53,7 @@ interface NodeCardMenuProps {
 export function NodeCardMenu({
   nodeId,
   nodeStableKey,
+  isLoraManagerNode,
   isBypassed,
   onEditLabel,
   pinnableWidgets,
@@ -137,6 +140,12 @@ export function NodeCardMenu({
     event.stopPropagation();
     if (!nodeStableKey) return;
     setItemHidden(nodeStableKey, true);
+    closeMenu();
+  };
+
+  const handleOpenLoraManagerClick = (event: React.MouseEvent<HTMLButtonElement>) => {
+    event.stopPropagation();
+    openLoraManagerUiInNewTab();
     closeMenu();
   };
 
@@ -255,6 +264,13 @@ export function NodeCardMenu({
                   onMoveNode();
                   closeMenu();
                 }
+              },
+              {
+                key: 'open-lora-manager',
+                label: 'Open LoRA Manager',
+                icon: <ExternalLinkIcon className="w-4 h-4" />,
+                onClick: handleOpenLoraManagerClick,
+                hidden: !isLoraManagerNode
               },
               {
                 type: 'divider',

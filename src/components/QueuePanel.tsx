@@ -175,7 +175,7 @@ export function QueuePanel({ visible, onImageClick }: QueuePanelProps) {
 
   const viewerImages = useMemo(() => {
     const doneItems = unifiedList.filter((item) => item.status === 'done').map((item) => item.data);
-    return buildViewerImages(doneItems, { onlyOutput: true, alt: 'Generation' });
+    return buildViewerImages(doneItems, { alt: 'Generation' });
   }, [unifiedList]);
 
   const firstDoneItemId = useMemo(() => {
