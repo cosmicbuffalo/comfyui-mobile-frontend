@@ -14,8 +14,6 @@ jobs:
     steps:
       - name: Check out code
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
       - name: Extract version from pyproject.toml
         id: version
@@ -24,21 +22,15 @@ jobs:
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
 
-      - name: Check if tag already exists
-        id: check_tag
-        run: |
-          if git rev-parse "v${{ steps.version.outputs.version }}" >/dev/null 2>&1; then
-            echo "exists=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "exists=false" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Create draft release
-        if: steps.check_tag.outputs.exists == 'false'
-        run: |
-          gh release create "${{ steps.version.outputs.tag }}" \
-            --draft \
-            --generate-notes \
-            --title "${{ steps.version.outputs.tag }}"
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Create or update draft release
+        uses: ncipollo/release-action@v1
+        with:
+          tag: ${{ steps.version.outputs.tag }}
+          name: ${{ steps.version.outputs.tag }}
+          commit: ${{ github.sha }}
+          draft: true
+          generateReleaseNotes: true
+          allowUpdates: true
+          updateOnlyUnreleased: true
+          removeArtifacts: true
+          token: ${{ secrets.GITHUB_TOKEN }}
