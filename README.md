@@ -48,6 +48,7 @@ So this mobile frontend is my attempt at improving upon the user experience of C
   - perform bulk operations like moves or deletes
   - add files to favorites for quick access later
 ### ☑️ **Dark/Light Themes:** Theme toggle with persistent settings.
+### ☑️ **LoraManager Support:** First-class support for LoraManager nodes and websocket integration
 
 ## Planned Features
 
@@ -168,6 +169,16 @@ http://<your-comfyui-ip>:8188/mobile
 
 > [!IMPORTANT]
 > Don't forget to add the `--listen` flag to your ComfyUI startup command to make your ComfyUI instance [accessible to other devices on your LAN](https://github.com/Comfy-Org/ComfyUI/blob/master/comfy/cli_args.py#L38)
+
+### LoRA Manager UI Integration
+
+This mobile frontend supports LoRA Manager nodes and websocket integration. The integration will work mostly out of the box, but the "Open LoRA Manager" action assumes by default that your LoRA Manager is running at `/loras` on the same host. If this is not the case, you can override the default assumption using one of the two methods:
+
+1. `VITE_LORA_MANAGER_UI_URL` environment variable (build-time, run `npm run build` in the custom node directory to apply this change)
+2. `localStorage["comfyui-mobile-lora-manager-ui-url"]` override
+
+> [!WARNING]
+> These override methods were not thoroughly tested in development, good luck and feel free to PR any improvements
 
 ## Development
 
