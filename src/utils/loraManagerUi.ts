@@ -1,8 +1,15 @@
 const DEFAULT_LORA_MANAGER_UI_PATH = "/loras";
+const ALLOWED_PROTOCOLS = new Set(["http:", "https:"]);
 
-function toAbsoluteUrl(value: string): string {
+function toAllowedAbsoluteUrl(value: string): string | null {
   if (typeof window === "undefined") return value;
-  return new URL(value, window.location.origin).toString();
+  try {
+    const nextUrl = new URL(value, window.location.origin);
+    if (!ALLOWED_PROTOCOLS.has(nextUrl.protocol)) return null;
+    return nextUrl.toString();
+  } catch {
+    return null;
+  }
 }
 
 export function getLoraManagerUiUrl(): string {
@@ -12,15 +19,22 @@ export function getLoraManagerUiUrl(): string {
     typeof import.meta.env.VITE_LORA_MANAGER_UI_URL === "string"
       ? import.meta.env.VITE_LORA_MANAGER_UI_URL.trim()
       : "";
-  if (envUrl) return toAbsoluteUrl(envUrl);
+  if (envUrl) {
+    const resolved = toAllowedAbsoluteUrl(envUrl);
+    if (resolved) return resolved;
+  }
 
   const localOverride =
     typeof window !== "undefined"
       ? window.localStorage.getItem("comfyui-mobile-lora-manager-ui-url")?.trim() ?? ""
       : "";
-  if (localOverride) return toAbsoluteUrl(localOverride);
+  if (localOverride) {
+    const resolved = toAllowedAbsoluteUrl(localOverride);
+    if (resolved) return resolved;
+  }
 
-  return toAbsoluteUrl(DEFAULT_LORA_MANAGER_UI_PATH);
+  const fallback = toAllowedAbsoluteUrl(DEFAULT_LORA_MANAGER_UI_PATH);
+  return fallback ?? DEFAULT_LORA_MANAGER_UI_PATH;
 }
 
 export function openLoraManagerUiInNewTab(): boolean {

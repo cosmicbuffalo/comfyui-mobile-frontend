@@ -77,7 +77,7 @@ export function ComboControl({
   const rawValueString =
     value === null ? NULL_OPTION_VALUE : String(value ?? "");
   const rawBase = rawValueString.split(/[\\/]/).pop() ?? rawValueString;
-  const resolvedValue = resolveComboOption(rawValueString, mergedChoices);
+  const resolvedValue = resolveComboOption(value, mergedChoices);
   const resolvedValueString =
     resolvedValue === undefined ? null : String(resolvedValue);
   const hasValueMatch =

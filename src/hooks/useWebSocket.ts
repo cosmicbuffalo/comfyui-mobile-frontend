@@ -257,18 +257,23 @@ export function useWebSocket() {
           const { node, prompt_id, output } = executedMsg.data;
           const stableKey = resolveStableNodeKey(node);
           const stableKeysForOutput = resolveStableNodeKeysForOutput(node);
-          if (output.images) {
+          const images = output.images;
+          if (images) {
              // Store for history
              if (!pendingOutputsRef.current[prompt_id]) {
                pendingOutputsRef.current[prompt_id] = [];
              }
-             pendingOutputsRef.current[prompt_id].push(...output.images);
-             addPromptOutputs(prompt_id, output.images);
+             pendingOutputsRef.current[prompt_id].push(...images);
+             addPromptOutputs(prompt_id, images);
 
              // Store for node display
-             if (stableKey) {
-               setNodeOutput(stableKey, output.images);
-             }
+             const targetKeys =
+               stableKeysForOutput.length > 0
+                 ? stableKeysForOutput
+                 : (stableKey ? [stableKey] : []);
+             targetKeys.forEach((key) => {
+               setNodeOutput(key, images);
+             });
           }
           const textPreview = extractTextPreviewFromOutput(output as Record<string, unknown>);
           if (textPreview && stableKeysForOutput.length > 0) {
