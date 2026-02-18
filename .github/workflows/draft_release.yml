@@ -31,5 +31,6 @@ jobs:
           draft: true
           generateReleaseNotes: true
           allowUpdates: true
+          updateOnlyUnreleased: true
           removeArtifacts: true
           token: ${{ secrets.GITHUB_TOKEN }}
