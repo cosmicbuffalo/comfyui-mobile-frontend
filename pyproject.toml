@@ -1,7 +1,7 @@
 [project]
 name = "comfyui-mobile-frontend"
 description = "A mobile-friendly user interface for ComfyUI mounted in parallel with the main frontend at /mobile"
-version = "2.1.0"
+version = "2.2.0"
 license = {file = "LICENSE"}
 
 [project.urls]
