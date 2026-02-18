@@ -66,6 +66,7 @@ export const NodeCard = memo(function NodeCard({
   const bookmarkedItems = useBookmarksStore((s) => s.bookmarkedItems);
   const toggleBookmark = useBookmarksStore((s) => s.toggleBookmark);
   const nodeImages = useWorkflowStore((s) => s.nodeOutputs[String(node.id)]);
+  const nodeTextOutput = useWorkflowStore((s) => s.nodeTextOutputs[String(node.id)] ?? null);
   const nodeErrors = useWorkflowErrorsStore((s) => s.nodeErrors[String(node.id)]);
   const progress = useWorkflowStore((s) => s.progress);
   const executingPromptId = useWorkflowStore((s) => s.executingPromptId);
@@ -318,7 +319,15 @@ export const NodeCard = memo(function NodeCard({
     if (Array.isArray(typeOrOptions)) return true;
     const normalized = String(typeOrOptions).toUpperCase();
     const hasDefault = Object.prototype.hasOwnProperty.call(options ?? {}, 'default');
-    return ['INT', 'FLOAT', 'BOOLEAN', 'STRING', 'AUTOCOMPLETE_TEXT_LORAS'].includes(normalized) || hasDefault;
+    return [
+      'INT',
+      'FLOAT',
+      'BOOLEAN',
+      'STRING',
+    ].includes(normalized) ||
+      normalized.includes('AUTOCOMPLETE_TEXT_LORAS') ||
+      normalized.includes('AUTOCOMPLETE_TEXT_PROMPT') ||
+      hasDefault;
   }, [typeDef]);
 
   const connectionInputs = useMemo(() => {
@@ -381,6 +390,7 @@ export const NodeCard = memo(function NodeCard({
   const canAddNodeBookmark = totalBookmarkCount < 5 || isNodeBookmarked;
 
   const showImagePreview = (hasImageOutput || isImageOutputNode) && !!effectivePreviewImage;
+  const showTextPreview = typeof nodeTextOutput === 'string' && nodeTextOutput.length > 0;
   const inputConnectionCount = node.inputs?.filter((input) => input.link != null).length ?? 0;
   const outputConnectionCount = node.outputs?.reduce((count, output) => count + (output.links?.length ?? 0), 0) ?? 0;
   const hasNodeConnections = inputConnectionCount > 0 || outputConnectionCount > 0;
@@ -500,6 +510,7 @@ export const NodeCard = memo(function NodeCard({
           <NodeCardMenu
             nodeId={node.id}
             nodeStableKey={nodeStableKey}
+            isLoraManagerNode={isLoraManagerNode}
             isBypassed={isBypassed}
             onEditLabel={handleEditLabel}
             pinnableWidgets={pinnableWidgets}
@@ -582,8 +593,9 @@ export const NodeCard = memo(function NodeCard({
             )}
 
             <NodeCardOutputPreview
-              show={showImagePreview}
+              show={showImagePreview || showTextPreview}
               previewImage={effectivePreviewImage}
+              previewText={showTextPreview ? nodeTextOutput : null}
               displayName={displayName}
               onImageClick={() => onImageClick?.(previewList, 0)}
               isExecuting={Boolean(isExecuting)}

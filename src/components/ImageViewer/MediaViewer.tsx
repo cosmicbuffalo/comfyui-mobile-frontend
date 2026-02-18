@@ -9,6 +9,7 @@ import { CloseButton } from '@/components/buttons/CloseButton';
 import { extractMetadata } from '@/utils/metadata';
 import { isVideoFilename } from '@/utils/media';
 import { getImageMetadata } from '@/api/client';
+import { resolveFilePath, resolveFileSource } from '@/utils/workflowOperations';
 
 interface MediaViewerProps {
   open: boolean;
@@ -51,6 +52,7 @@ export function MediaViewer({
   onTransformChange,
   zoomResetKey,
 }: MediaViewerProps) {
+  const overlayRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const imageRef = useRef<HTMLImageElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -199,8 +201,8 @@ export function MediaViewer({
     if (!fileId) return;
     if (metadata !== undefined || metadataIsLoading) return;
 
-    const source = fileId.startsWith('input/') ? 'input' : 'output';
-    const path = fileId.startsWith(`${source}/`) ? fileId.slice(source.length + 1) : fileId;
+    const source = resolveFileSource(currentItem.file);
+    const path = resolveFilePath(currentItem.file, source);
     setMetadataLoading((prev) => ({ ...prev, [fileId]: true }));
     getImageMetadata(path, source)
       .then((data) => {
@@ -508,7 +510,7 @@ export function MediaViewer({
     }
   };
 
-  const handleWheel = (event: React.WheelEvent) => {
+  const handleWheel = useCallback((event: WheelEvent) => {
     if (isVideo) return;
     if (!event.ctrlKey) return;
     event.preventDefault();
@@ -519,7 +521,16 @@ export function MediaViewer({
     const nextTranslate = clampTranslate(translateRef.current, nextScale);
     translateRef.current = nextTranslate;
     setTranslate(nextTranslate);
-  };
+  }, [clampTranslate, fitScale, isVideo]);
+
+  useEffect(() => {
+    const overlay = overlayRef.current;
+    if (!overlay) return;
+    overlay.addEventListener('wheel', handleWheel, { passive: false });
+    return () => {
+      overlay.removeEventListener('wheel', handleWheel);
+    };
+  }, [handleWheel]);
 
   if (!open) return null;
 
@@ -546,10 +557,10 @@ export function MediaViewer({
 
   return createPortal(
     <div
+      ref={overlayRef}
       id="media-viewer-overlay"
       className="fixed inset-0 bg-black"
       style={{ zIndex: MEDIA_VIEWER_Z_INDEX }}
-      onWheel={handleWheel}
     >
       <div
         ref={containerRef}

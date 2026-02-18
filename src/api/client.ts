@@ -350,7 +350,7 @@ export interface FileItem {
   size?: number;
 }
 
-export type AssetSource = 'output' | 'input';
+export type AssetSource = 'output' | 'input' | 'temp';
 export type SortMode = 'modified' | 'modified-reverse' | 'name' | 'name-reverse' | 'size' | 'size-reverse';
 
 // Mobile Files API - browse output/input directories

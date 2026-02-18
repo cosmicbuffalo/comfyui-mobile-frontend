@@ -10,13 +10,6 @@ export interface LoraManagerEntry {
   [key: string]: unknown;
 }
 
-const LORA_MANAGER_NODE_TYPES = new Set([
-  'Lora Loader (LoraManager)',
-  'Lora Stacker (LoraManager)',
-  'WanVideo Lora Select (LoraManager)',
-  'Lora Randomizer (LoraManager)',
-  'Lora Cycler (LoraManager)'
-]);
 const LORA_LOADER_NODE_TYPES = new Set([
   'Lora Loader (LoraManager)'
 ]);
@@ -40,7 +33,7 @@ const EPSILON = Number.EPSILON;
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 
-export const LORA_PATTERN = /<lora:([^:>]+):([-\d\.]+)(?::([-\d\.]+))?>/g;
+export const LORA_PATTERN = /<lora:([^:>]+):([-\d.]+)(?::([-\d.]+))?>/g;
 
 export function isLoraManagerNodeType(nodeType: string): boolean {
   return isLoraLoaderNodeType(nodeType) || isLoraDirectProviderNodeType(nodeType);

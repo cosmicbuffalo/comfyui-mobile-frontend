@@ -98,11 +98,13 @@ function buildLoraManagerWidgetDefinitions(
 
 function buildTriggerWordToggleWidgetDefinitions(
   node: WorkflowNode,
-  allowStrengthAdjustment: boolean
+  allowStrengthAdjustment: boolean,
+  preferredListIndex?: number | null
 ): WidgetDefinition[] {
   if (!Array.isArray(node.widgets_values)) return [];
-  const listIndex = findTriggerWordListIndex(node);
+  const listIndex = preferredListIndex ?? findTriggerWordListIndex(node);
   if (listIndex === null) return [];
+  if (listIndex < 0 || listIndex >= node.widgets_values.length) return [];
 
   const rawList = node.widgets_values[listIndex];
   const list = extractTriggerWordList(rawList) ?? extractTriggerWordListLoose(rawList);
@@ -261,8 +263,17 @@ function collectWidgetDefinitions(
     const processInput = (name: string, input: [string | unknown[], Record<string, unknown>?]) => {
       if (!input) return; // Defensive check
       const [typeOrOptions, inputOptions] = input;
+      const typeSignature = Array.isArray(typeOrOptions)
+        ? typeOrOptions.map((entry) => String(entry)).join(',')
+        : String(typeOrOptions);
+      const typeSignatureUpper = typeSignature.toUpperCase();
       const normalizedType = String(typeOrOptions);
-      const isAutocompleteLoras = normalizedType === 'AUTOCOMPLETE_TEXT_LORAS';
+      const isAutocompleteLoras = typeSignatureUpper.includes('AUTOCOMPLETE_TEXT_LORAS');
+      const isAutocompletePrompt = typeSignatureUpper.includes('AUTOCOMPLETE_TEXT_PROMPT');
+      const isLoraManagerTextInput =
+        isLoraManagerNodeType(node.type) && name === 'text';
+      const isAutocompleteTextInput =
+        isAutocompleteLoras || isAutocompletePrompt || isLoraManagerTextInput;
       const inputIndex = node.inputs.findIndex((i) => i.name === name);
       const inputEntry = inputIndex >= 0 ? node.inputs[inputIndex] : undefined;
       const isConnected = inputEntry?.link != null;
@@ -270,18 +281,18 @@ function collectWidgetDefinitions(
       const hasSocket = Boolean(inputEntry);
       const hasDefault = Object.prototype.hasOwnProperty.call(inputOptions ?? {}, 'default');
       const isWidgetType = isWidgetInputType(typeOrOptions) || isWidgetToggle || !hasSocket || hasDefault;
-      const isCombo = Array.isArray(typeOrOptions);
+      const isCombo = Array.isArray(typeOrOptions) && !isAutocompleteTextInput;
       const comboOptions: Record<string, unknown> = isCombo
         ? { ...(inputOptions ?? {}), options: typeOrOptions }
         : { ...(inputOptions ?? {}) };
-      if (isAutocompleteLoras) {
+      if (isAutocompleteTextInput) {
         comboOptions.multiline = true;
       }
       if (isWidgetType) {
         const value = getWidgetValue(node, name, widgetIndex);
         definitions.push({
           name,
-          type: isCombo ? 'COMBO' : (isAutocompleteLoras ? 'STRING' : normalizedType),
+          type: isCombo ? 'COMBO' : (isAutocompleteTextInput ? 'STRING' : normalizedType),
           options: comboOptions,
           value,
           widgetIndex,
@@ -317,8 +328,15 @@ function collectWidgetDefinitions(
       const allowStrengthValue = definitions.find(
         (def) => def.name === 'allow_strength_adjustment'
       )?.value;
+      const mappedListIndex = definitions.find(
+        (def) => def.name === 'toggle_trigger_words'
+      )?.widgetIndex;
       definitions.push(
-        ...buildTriggerWordToggleWidgetDefinitions(node, Boolean(allowStrengthValue))
+        ...buildTriggerWordToggleWidgetDefinitions(
+          node,
+          Boolean(allowStrengthValue),
+          mappedListIndex ?? null
+        )
       );
     }
 

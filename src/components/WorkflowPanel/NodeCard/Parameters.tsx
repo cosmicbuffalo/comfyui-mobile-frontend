@@ -9,6 +9,7 @@ import {
   isSpecialSeedValue,
   useWorkflowStore
 } from '@/hooks/useWorkflow';
+import { useLoraManagerStore } from '@/hooks/useLoraManager';
 import { useSeedStore } from '@/hooks/useSeed';
 import {
   applyLoraValuesToText,
@@ -79,7 +80,7 @@ export function NodeCardParameters({
   const widgetValues = Array.isArray(node.widgets_values) ? node.widgets_values : [];
   const nodeTypes = useWorkflowStore((state) => state.nodeTypes);
   const workflow = useWorkflowStore((state) => state.workflow);
-  const syncTriggerWordsForNode = useWorkflowStore((state) => state.syncTriggerWordsForNode);
+  const syncTriggerWordsForNode = useLoraManagerStore((state) => state.syncTriggerWordsForNode);
   const bypassAllInContainer = useWorkflowStore((state) => state.bypassAllInContainer);
   const storedSeedMode = useSeedStore((state) => state.seedModes[node.id]);
   const lastSeedValue = useSeedStore((state) => state.seedLastValues[node.id] ?? null);
@@ -315,7 +316,7 @@ export function NodeCardParameters({
       }
     }
     onUpdateNodeWidgets(updates);
-    syncTriggerWordsForNode(node.id);
+    syncTriggerWordsForCurrentNode();
   };
 
   const getCurrentLoraList = (listIndex: number) => {
@@ -344,7 +345,12 @@ export function NodeCardParameters({
 
   const getTriggerWordMessage = (listIndex: number) => {
     if (!Array.isArray(node.widgets_values)) return '';
-    const messageIndex = findTriggerWordMessageIndex(node, listIndex);
+    const widgetIndexMap = workflow?.widget_idx_map?.[String(node.id)];
+    const mappedMessageIndex =
+      widgetIndexMap?.originalMessage ?? widgetIndexMap?.orinalMessage;
+    const messageIndex = mappedMessageIndex !== undefined
+      ? mappedMessageIndex
+      : findTriggerWordMessageIndex(node, listIndex);
     if (messageIndex === null) return '';
     const rawValue = node.widgets_values[messageIndex];
     return extractTriggerWordMessage(rawValue) ?? '';
@@ -368,6 +374,21 @@ export function NodeCardParameters({
       defaultActive,
       allowStrengthAdjustment
     };
+  };
+
+  const getTriggerWordListIndex = () => {
+    const mappedIndex = getWidgetIndexForInput('toggle_trigger_words');
+    if (mappedIndex !== null) return mappedIndex;
+    return findTriggerWordListIndex(node);
+  };
+
+  const syncTriggerWordsForCurrentNode = () => {
+    const origin = (node.properties as Record<string, unknown> | undefined)?.[
+      '__mobile_origin'
+    ] as { scope?: string; subgraphId?: string; nodeId?: number } | undefined;
+    const graphId = origin?.scope === 'subgraph' ? origin.subgraphId ?? null : 'root';
+    const targetNodeId = typeof origin?.nodeId === 'number' ? origin.nodeId : node.id;
+    syncTriggerWordsForNode(targetNodeId, graphId);
   };
 
   const handleInputWidgetChange = (inputWidget: WidgetDescriptor) => (newValue: unknown) => {
@@ -407,7 +428,7 @@ export function NodeCardParameters({
     }
 
     if (isTriggerWordToggleNode && widget.name === 'default_active' && typeof newValue === 'boolean') {
-      const listIndex = findTriggerWordListIndex(node);
+      const listIndex = getTriggerWordListIndex();
       if (listIndex !== null) {
         const currentList = getCurrentTriggerWordList(listIndex);
         const nextList = currentList.map((entry) => ({
@@ -422,7 +443,7 @@ export function NodeCardParameters({
     }
 
     if (isTriggerWordToggleNode && widget.name === 'group_mode' && typeof newValue === 'boolean') {
-      const listIndex = findTriggerWordListIndex(node);
+      const listIndex = getTriggerWordListIndex();
       if (listIndex !== null) {
         const currentList = getCurrentTriggerWordList(listIndex);
         const settings = getTriggerWordSettings();
@@ -448,7 +469,7 @@ export function NodeCardParameters({
     }
 
     if (isTriggerWordToggleNode && widget.name === 'allow_strength_adjustment' && typeof newValue === 'boolean') {
-      const listIndex = findTriggerWordListIndex(node);
+      const listIndex = getTriggerWordListIndex();
       if (listIndex !== null) {
         const currentList = getCurrentTriggerWordList(listIndex);
         const settings = getTriggerWordSettings();
@@ -526,7 +547,7 @@ export function NodeCardParameters({
           [widget.widgetIndex]: newValue,
           [listIndex]: merged
         });
-        syncTriggerWordsForNode(node.id);
+        syncTriggerWordsForCurrentNode();
         return;
       }
     }

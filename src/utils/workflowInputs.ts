@@ -63,13 +63,20 @@ export function getWorkflowWidgetIndexMap(
 }
 
 export function isWidgetInputType(typeOrOptions: string | unknown[]): boolean {
-  if (Array.isArray(typeOrOptions)) return true;
+  if (Array.isArray(typeOrOptions)) {
+    const signature = typeOrOptions.map((entry) => String(entry)).join(',').toUpperCase();
+    if (signature.includes('AUTOCOMPLETE_TEXT_PROMPT') || signature.includes('AUTOCOMPLETE_TEXT_LORAS')) {
+      return true;
+    }
+    return true;
+  }
   const normalized = String(typeOrOptions).toUpperCase();
   return normalized === 'INT' ||
     normalized === 'FLOAT' ||
     normalized === 'BOOLEAN' ||
     normalized === 'STRING' ||
-    normalized === 'AUTOCOMPLETE_TEXT_LORAS';
+    normalized.includes('AUTOCOMPLETE_TEXT_LORAS') ||
+    normalized.includes('AUTOCOMPLETE_TEXT_PROMPT');
 }
 
 export function normalizeWidgetValue(
@@ -348,7 +355,7 @@ export function buildQueuePromptInputs(
   }
 
   appendLoraManagerInputs(node, inputs, widgetValuesArray, widgetIndexMap);
-  appendTriggerWordToggleInputs(node, inputs, widgetValuesArray);
+  appendTriggerWordToggleInputs(node, inputs, widgetValuesArray, widgetIndexMap);
 
   return inputs;
 }
@@ -506,7 +513,7 @@ export function buildWorkflowPromptInputs(
   }
 
   appendLoraManagerInputs(node, inputs, widgetValuesArray, widgetIndexMap);
-  appendTriggerWordToggleInputs(node, inputs, widgetValuesArray);
+  appendTriggerWordToggleInputs(node, inputs, widgetValuesArray, widgetIndexMap);
 
   return inputs;
 }
@@ -533,27 +540,42 @@ function appendLoraManagerInputs(
 function appendTriggerWordToggleInputs(
   node: WorkflowNode,
   inputs: Record<string, unknown>,
-  widgetValuesArray: unknown[] | null
+  widgetValuesArray: unknown[] | null,
+  widgetIndexMap: Record<string, number> | null
 ) {
   if (!isTriggerWordToggleNodeType(node.type)) return;
 
-  if (!('toggle_trigger_words' in inputs)) {
-    const listIndex = findTriggerWordListIndex(node);
-    if (listIndex !== null) {
-      const rawValue = widgetValuesArray?.[listIndex];
-      const triggerList = extractTriggerWordList(rawValue) ?? extractTriggerWordListLoose(rawValue);
-      if (triggerList) {
-        inputs.toggle_trigger_words = triggerList;
-      }
+  const mappedListIndex = widgetIndexMap?.toggle_trigger_words;
+  const listIndex = mappedListIndex !== undefined
+    ? mappedListIndex
+    : findTriggerWordListIndex(node);
+  if (listIndex === null) return;
 
-      const messageIndex = findTriggerWordMessageIndex(node, listIndex);
-      if (messageIndex !== null) {
-        const messageValue = widgetValuesArray?.[messageIndex];
-        const message = extractTriggerWordMessage(messageValue);
-        if (message !== null && !('orinalMessage' in inputs)) {
-          inputs.orinalMessage = message;
-        }
-      }
+  if (!('toggle_trigger_words' in inputs)) {
+    const rawValue = widgetValuesArray?.[listIndex];
+    const triggerList = extractTriggerWordList(rawValue) ?? extractTriggerWordListLoose(rawValue);
+    if (triggerList) {
+      inputs.toggle_trigger_words = triggerList;
     }
+  }
+
+  const mappedMessageIndex = widgetIndexMap?.originalMessage ?? widgetIndexMap?.orinalMessage;
+  const messageIndex = mappedMessageIndex !== undefined
+    ? mappedMessageIndex
+    : findTriggerWordMessageIndex(node, listIndex);
+  if (messageIndex === null) return;
+
+  const messageValue = widgetValuesArray?.[messageIndex];
+  const message = extractTriggerWordMessage(messageValue);
+  if (message === null) return;
+
+  const messageKey = widgetIndexMap && 'originalMessage' in widgetIndexMap
+    ? 'originalMessage'
+    : (widgetIndexMap && 'orinalMessage' in widgetIndexMap
+      ? 'orinalMessage'
+      : 'orinalMessage');
+
+  if (!(messageKey in inputs)) {
+    inputs[messageKey] = message;
   }
 }

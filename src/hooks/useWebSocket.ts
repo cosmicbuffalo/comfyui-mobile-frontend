@@ -1,9 +1,57 @@
 import { useEffect, useRef, useState } from 'react';
 import { connectWebSocket, clientId } from '@/api/client';
 import { useWorkflowStore } from './useWorkflow';
+import { useLoraManagerStore } from './useLoraManager';
 import { useQueueStore } from './useQueue';
 import { useHistoryStore } from './useHistory';
 import type { WSMessage, WSStatusMessage, WSProgressMessage, WSExecutingMessage, WSExecutedMessage, HistoryOutputImage } from '@/api/types';
+
+export function extractTextPreviewFromOutput(output: Record<string, unknown>): string | null {
+  const preferredKeys = ['text', 'string', 'strings', 'result', 'value', '__value__', 'ui'];
+  const mediaContainerKeys = new Set([
+    'images',
+    'image',
+    'videos',
+    'video',
+    'gifs',
+    'audio',
+    'filename',
+    'filenames',
+    'subfolder',
+    'type',
+  ]);
+
+  const findString = (
+    value: unknown,
+    depth: number,
+    contextKey?: string
+  ): string | null => {
+    if (depth > 5 || value == null) return null;
+    if (contextKey && mediaContainerKeys.has(contextKey)) return null;
+    if (typeof value === 'string') {
+      const trimmed = value.trim();
+      return trimmed ? trimmed : null;
+    }
+    if (Array.isArray(value)) {
+      for (const entry of value) {
+        const found = findString(entry, depth + 1, contextKey);
+        if (found) return found;
+      }
+      return null;
+    }
+    if (typeof value === 'object') {
+      const record = value as Record<string, unknown>;
+      for (const key of preferredKeys) {
+        if (!(key in record)) continue;
+        const found = findString(record[key], depth + 1, key);
+        if (found) return found;
+      }
+    }
+    return null;
+  };
+
+  return findString(output, 0);
+}
 
 export function useWebSocket() {
   const [isConnected, setIsConnected] = useState(false);
@@ -15,14 +63,15 @@ export function useWebSocket() {
   const storeActionsRef = useRef({
     setExecutionState: useWorkflowStore.getState().setExecutionState,
     setNodeOutput: useWorkflowStore.getState().setNodeOutput,
+    setNodeTextOutput: useWorkflowStore.getState().setNodeTextOutput,
     clearNodeOutputs: useWorkflowStore.getState().clearNodeOutputs,
     addPromptOutputs: useWorkflowStore.getState().addPromptOutputs,
     clearPromptOutputs: useWorkflowStore.getState().clearPromptOutputs,
     applyControlAfterGenerate: useWorkflowStore.getState().applyControlAfterGenerate,
-    applyLoraCodeUpdate: useWorkflowStore.getState().applyLoraCodeUpdate,
-    applyTriggerWordUpdate: useWorkflowStore.getState().applyTriggerWordUpdate,
-    applyWidgetUpdate: useWorkflowStore.getState().applyWidgetUpdate,
-    registerLoraManagerNodes: useWorkflowStore.getState().registerLoraManagerNodes,
+    applyLoraCodeUpdate: useLoraManagerStore.getState().applyLoraCodeUpdate,
+    applyTriggerWordUpdate: useLoraManagerStore.getState().applyTriggerWordUpdate,
+    applyWidgetUpdate: useLoraManagerStore.getState().applyWidgetUpdate,
+    registerLoraManagerNodes: useLoraManagerStore.getState().registerLoraManagerNodes,
     updateFromStatus: useQueueStore.getState().updateFromStatus,
     fetchQueue: useQueueStore.getState().fetchQueue,
     addHistoryEntry: useHistoryStore.getState().addHistoryEntry,
@@ -34,14 +83,15 @@ export function useWebSocket() {
     storeActionsRef.current = {
       setExecutionState: useWorkflowStore.getState().setExecutionState,
       setNodeOutput: useWorkflowStore.getState().setNodeOutput,
+      setNodeTextOutput: useWorkflowStore.getState().setNodeTextOutput,
       clearNodeOutputs: useWorkflowStore.getState().clearNodeOutputs,
       addPromptOutputs: useWorkflowStore.getState().addPromptOutputs,
       clearPromptOutputs: useWorkflowStore.getState().clearPromptOutputs,
       applyControlAfterGenerate: useWorkflowStore.getState().applyControlAfterGenerate,
-      applyLoraCodeUpdate: useWorkflowStore.getState().applyLoraCodeUpdate,
-      applyTriggerWordUpdate: useWorkflowStore.getState().applyTriggerWordUpdate,
-      applyWidgetUpdate: useWorkflowStore.getState().applyWidgetUpdate,
-      registerLoraManagerNodes: useWorkflowStore.getState().registerLoraManagerNodes,
+      applyLoraCodeUpdate: useLoraManagerStore.getState().applyLoraCodeUpdate,
+      applyTriggerWordUpdate: useLoraManagerStore.getState().applyTriggerWordUpdate,
+      applyWidgetUpdate: useLoraManagerStore.getState().applyWidgetUpdate,
+      registerLoraManagerNodes: useLoraManagerStore.getState().registerLoraManagerNodes,
       updateFromStatus: useQueueStore.getState().updateFromStatus,
       fetchQueue: useQueueStore.getState().fetchQueue,
       addHistoryEntry: useHistoryStore.getState().addHistoryEntry,
@@ -59,16 +109,67 @@ export function useWebSocket() {
       const workflowState = useWorkflowStore.getState();
       const workflow = workflowState.workflow;
       if (!workflow) return null;
-      const candidates = workflow.nodes.filter((node) => node.id === numericNodeId);
+      let candidates = workflow.nodes.filter((node) => node.id === numericNodeId);
+      if (candidates.length === 0) {
+        candidates = workflow.nodes.filter((node) => {
+          const origin = (node.properties as Record<string, unknown> | undefined)?.__mobile_origin;
+          if (!origin || typeof origin !== 'object') return false;
+          const originNodeId = (origin as { nodeId?: unknown }).nodeId;
+          return Number(originNodeId) === numericNodeId;
+        });
+      }
       if (candidates.length === 0) return null;
       const preferred = candidates.find((node) => node.stableKey) ?? candidates[0];
       return preferred?.stableKey ?? null;
+    };
+
+    const resolveStableNodeKeysForOutput = (
+      rawNodeId: number | string | null | undefined,
+    ): string[] => {
+      if (rawNodeId == null) return [];
+      const numericNodeId = Number(rawNodeId);
+      if (!Number.isFinite(numericNodeId)) return [];
+      const workflowState = useWorkflowStore.getState();
+      const workflow = workflowState.workflow;
+      if (!workflow) return [];
+
+      const keys = new Set<string>();
+      const byId = workflow.nodes.filter((node) => node.id === numericNodeId);
+      byId.forEach((node) => {
+        if (node.stableKey) keys.add(node.stableKey);
+      });
+
+      const byOrigin = workflow.nodes.filter((node) => {
+        const origin = (node.properties as Record<string, unknown> | undefined)?.__mobile_origin;
+        if (!origin || typeof origin !== 'object') return false;
+        const originNodeId = (origin as { nodeId?: unknown }).nodeId;
+        return Number(originNodeId) === numericNodeId;
+      });
+      byOrigin.forEach((node) => {
+        if (node.stableKey) keys.add(node.stableKey);
+      });
+
+      // If the executed node is an expanded clone, also mirror output to its origin/root node id.
+      for (const node of byId) {
+        const origin = (node.properties as Record<string, unknown> | undefined)?.__mobile_origin;
+        if (!origin || typeof origin !== 'object') continue;
+        const originNodeId = Number((origin as { nodeId?: unknown }).nodeId);
+        if (!Number.isFinite(originNodeId)) continue;
+        workflow.nodes
+          .filter((entry) => entry.id === originNodeId)
+          .forEach((entry) => {
+            if (entry.stableKey) keys.add(entry.stableKey);
+          });
+      }
+
+      return Array.from(keys);
     };
 
     const handleMessage = (data: unknown) => {
       const {
         setExecutionState,
         setNodeOutput,
+        setNodeTextOutput,
         addPromptOutputs,
         clearPromptOutputs,
         updateFromStatus,
@@ -154,6 +255,8 @@ export function useWebSocket() {
         case 'executed': {
           const executedMsg = msg as WSExecutedMessage;
           const { node, prompt_id, output } = executedMsg.data;
+          const stableKey = resolveStableNodeKey(node);
+          const stableKeysForOutput = resolveStableNodeKeysForOutput(node);
           if (output.images) {
              // Store for history
              if (!pendingOutputsRef.current[prompt_id]) {
@@ -163,10 +266,15 @@ export function useWebSocket() {
              addPromptOutputs(prompt_id, output.images);
 
              // Store for node display
-             const stableKey = resolveStableNodeKey(node);
              if (stableKey) {
                setNodeOutput(stableKey, output.images);
              }
+          }
+          const textPreview = extractTextPreviewFromOutput(output as Record<string, unknown>);
+          if (textPreview && stableKeysForOutput.length > 0) {
+            stableKeysForOutput.forEach((key) => {
+              setNodeTextOutput(key, textPreview);
+            });
           }
           break;
         }

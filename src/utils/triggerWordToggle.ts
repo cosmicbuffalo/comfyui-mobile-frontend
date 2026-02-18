@@ -68,20 +68,50 @@ export function findTriggerWordListIndex(node: WorkflowNode): number | null {
   const values = node.widgets_values;
 
   let looseCandidate: { index: number; score: number } | null = null;
+  const emptyCandidates: number[] = [];
   for (let i = 0; i < values.length; i += 1) {
     const value = values[i];
-    if (isTriggerWordList(value, true)) {
+    const strictList = extractTriggerWordList(value);
+    if (strictList && strictList.length > 0) {
       return i;
     }
-    if (isTriggerWordList(value, false)) {
-      const score = Array.isArray(value) ? value.length : 0;
+    const looseList = extractTriggerWordListLoose(value);
+    if (looseList && looseList.length > 0) {
+      const score = looseList.length;
       if (!looseCandidate || score > looseCandidate.score) {
         looseCandidate = { index: i, score };
       }
     }
+    const arrayValue = Array.isArray(value)
+      ? value
+      : (isRecord(value) && Array.isArray(value.__value__) ? value.__value__ : null);
+    if (arrayValue && arrayValue.length === 0) {
+      emptyCandidates.push(i);
+    }
   }
 
-  return looseCandidate ? looseCandidate.index : null;
+  if (looseCandidate) return looseCandidate.index;
+  if (emptyCandidates.length === 0) return null;
+
+  const getStringValue = (value: unknown): string | null => {
+    if (typeof value === 'string') return value;
+    if (isRecord(value) && typeof value.__value__ === 'string') {
+      return value.__value__;
+    }
+    return null;
+  };
+
+  const messageAdjacentCandidate = emptyCandidates.find((index) => {
+    const prev = values[index - 1];
+    const next = values[index + 1];
+    return getStringValue(prev) !== null || getStringValue(next) !== null;
+  });
+
+  if (messageAdjacentCandidate !== undefined) {
+    return messageAdjacentCandidate;
+  }
+
+  return emptyCandidates[0];
 }
 
 export function findTriggerWordMessageIndex(

@@ -90,11 +90,12 @@ export function QueueCard({
   );
   const { savedImages, displayImages } = useMemo(() => {
     const saved = sourceImages.filter((img: HistoryOutputImage) => img.type === 'output');
-    const preview = sourceImages.filter((img: HistoryOutputImage) => img.type !== 'output');
-    const showPreviews = previewsVisible || (saved.length === 0 && preview.length > 0);
+    const showPreviews = previewsVisible || saved.length === 0;
     return {
       savedImages: saved,
-      displayImages: showPreviews ? [...saved, ...preview] : saved
+      displayImages: showPreviews
+        ? sourceImages
+        : sourceImages.filter((img: HistoryOutputImage) => img.type === 'output')
     };
   }, [previewsVisible, sourceImages]);
   const hasVideoOutputs = useMemo(() => (

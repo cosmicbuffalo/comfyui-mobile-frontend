@@ -1,14 +1,17 @@
 import { describe, it, expect } from 'vitest';
 import {
+  buildQueuePromptInputs,
+  buildWorkflowPromptInputs,
   getWidgetValue,
   getWorkflowWidgetIndexMap,
   isWidgetInputType,
   normalizeWidgetValue,
   normalizeComboValue,
   isValueCompatible,
+  resolveComboOption,
   resolveSource,
 } from '../workflowInputs';
-import type { Workflow, WorkflowNode } from '@/api/types';
+import type { NodeTypes, Workflow, WorkflowNode } from '@/api/types';
 
 function makeNode(id: number, type: string, overrides?: Partial<WorkflowNode>): WorkflowNode {
   return {
@@ -337,5 +340,166 @@ describe('resolveSource', () => {
 
     const result = resolveSource(wf, 1);
     expect(result).toBeNull();
+  });
+});
+
+describe('resolveComboOption', () => {
+  it('matches extensionless and base-path values to combo options', () => {
+    const options = ['foo.safetensors', 'bar.safetensors'];
+    expect(resolveComboOption('models/foo', options)).toBe('foo.safetensors');
+    expect(resolveComboOption('nested/path/bar.safetensors', options)).toBe('bar.safetensors');
+  });
+
+  it('resolves numeric combo index values to option value', () => {
+    const options = ['euler', 'ddim', 'dpmpp'];
+    expect(resolveComboOption(1, options)).toBe('ddim');
+  });
+});
+
+describe('lora manager prompt serialization', () => {
+  const nodeTypes: NodeTypes = {
+    'Lora Loader (LoraManager)': {
+      input: {
+        required: {
+          text: ['STRING', {}],
+        },
+      },
+      input_order: {
+        required: ['text'],
+        optional: [],
+      },
+      output: [],
+      output_name: [],
+      name: 'Lora Loader (LoraManager)',
+      display_name: 'Lora Loader (LoraManager)',
+      description: '',
+      python_module: '',
+      category: '',
+    },
+  };
+
+  it('includes loras input from widgetIndexMap in workflow prompt', () => {
+    const loras = [{ name: 'foo.safetensors', strength: 0.7 }];
+    const node = makeNode(1, 'Lora Loader (LoraManager)', {
+      widgets_values: ['prompt', loras],
+    });
+    const workflow: Workflow = {
+      last_node_id: 1,
+      last_link_id: 0,
+      nodes: [node],
+      links: [],
+      groups: [],
+      config: {},
+      version: 1,
+    };
+
+    const inputs = buildWorkflowPromptInputs(
+      workflow,
+      nodeTypes,
+      node,
+      'Lora Loader (LoraManager)',
+      new Set([1]),
+      { text: 0, loras: 1 },
+    );
+
+    expect(inputs).toMatchObject({
+      text: 'prompt',
+      loras,
+    });
+  });
+
+});
+
+describe('trigger word prompt serialization', () => {
+  const nodeTypes: NodeTypes = {
+    'TriggerWord Toggle (LoraManager)': {
+      input: {
+        required: {
+          group_mode: ['BOOLEAN', {}],
+          default_active: ['BOOLEAN', {}],
+          allow_strength_adjustment: ['BOOLEAN', {}],
+        },
+      },
+      input_order: {
+        required: ['group_mode', 'default_active', 'allow_strength_adjustment'],
+        optional: [],
+      },
+      output: [],
+      output_name: [],
+      name: 'TriggerWord Toggle (LoraManager)',
+      display_name: 'TriggerWord Toggle (LoraManager)',
+      description: '',
+      python_module: '',
+      category: '',
+    },
+  };
+
+  function makeTriggerWorkflow(node: WorkflowNode): Workflow {
+    return {
+      last_node_id: node.id,
+      last_link_id: 0,
+      nodes: [node],
+      links: [],
+      groups: [],
+      config: {},
+      version: 1,
+    };
+  }
+
+  it('uses originalMessage key when present in widgetIndexMap', () => {
+    const list = [{ text: 'foo', active: true }];
+    const node = makeNode(5, 'TriggerWord Toggle (LoraManager)', {
+      widgets_values: [true, true, false, list, 'foo'],
+    });
+    const workflow = makeTriggerWorkflow(node);
+    const inputs = buildWorkflowPromptInputs(
+      workflow,
+      nodeTypes,
+      node,
+      'TriggerWord Toggle (LoraManager)',
+      new Set([5]),
+      { group_mode: 0, default_active: 1, allow_strength_adjustment: 2, toggle_trigger_words: 3, originalMessage: 4 },
+    );
+
+    expect(inputs.toggle_trigger_words).toEqual(list);
+    expect(inputs.originalMessage).toBe('foo');
+  });
+
+  it('falls back to orinalMessage key when originalMessage is not mapped', () => {
+    const list = [{ text: 'foo', active: true }];
+    const node = makeNode(6, 'TriggerWord Toggle (LoraManager)', {
+      widgets_values: [true, true, false, list, 'foo'],
+    });
+    const workflow = makeTriggerWorkflow(node);
+    const inputs = buildQueuePromptInputs(
+      workflow,
+      nodeTypes,
+      node,
+      'TriggerWord Toggle (LoraManager)',
+      new Set([6]),
+      { group_mode: 0, default_active: 1, allow_strength_adjustment: 2, toggle_trigger_words: 3 },
+    );
+
+    expect(inputs.toggle_trigger_words).toEqual(list);
+    expect(inputs.orinalMessage).toBe('foo');
+  });
+
+  it('prefers mapped trigger-word list index when earlier empty arrays exist', () => {
+    const list = [{ text: 'mapped', active: true }];
+    const node = makeNode(7, 'TriggerWord Toggle (LoraManager)', {
+      widgets_values: [true, [], false, list, 'mapped'],
+    });
+    const workflow = makeTriggerWorkflow(node);
+    const inputs = buildQueuePromptInputs(
+      workflow,
+      nodeTypes,
+      node,
+      'TriggerWord Toggle (LoraManager)',
+      new Set([7]),
+      { group_mode: 0, default_active: 2, toggle_trigger_words: 3, originalMessage: 4 },
+    );
+
+    expect(inputs.toggle_trigger_words).toEqual(list);
+    expect(inputs.originalMessage).toBe('mapped');
   });
 });

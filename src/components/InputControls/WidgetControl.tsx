@@ -184,7 +184,7 @@ export function WidgetControl({
     };
 
     const handleToggleExpanded = () => {
-      const nextExpanded = !Boolean(loraValue.expanded);
+      const nextExpanded = !loraValue.expanded;
       handleEntryChange({
         expanded: nextExpanded,
         clipStrength: nextExpanded
@@ -201,7 +201,7 @@ export function WidgetControl({
           <button
             type="button"
             onClick={() =>
-              handleEntryChange({ active: !Boolean(loraValue.active) })
+              handleEntryChange({ active: !loraValue.active })
             }
             className={`lm-lora-enabled-button flex-1 py-2 rounded-lg text-sm font-semibold transition-colors ${loraValue.active ? "bg-blue-600 text-white" : "bg-gray-700 text-white"} ${disabled ? "opacity-60 cursor-not-allowed" : ""}`}
             disabled={disabled}
@@ -226,7 +226,10 @@ export function WidgetControl({
                 name=""
                 hideLabel
                 value={loraValue.name}
-                options={choices}
+                options={{
+                  options: choices,
+                  stripSafetensorsSuffix: true,
+                }}
                 onChange={(val) => handleEntryChange({ name: String(val) })}
                 disabled={disabled}
                 hasPin={false}
@@ -343,7 +346,7 @@ export function WidgetControl({
           <button
             type="button"
             onClick={() =>
-              handleEntryChange({ active: !Boolean(triggerValue.active) })
+              handleEntryChange({ active: !triggerValue.active })
             }
             className={`tw-word-toggle px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${triggerValue.active ? "bg-blue-600 text-white" : "bg-gray-700 text-white"} ${disabled ? "opacity-60 cursor-not-allowed" : ""}`}
             disabled={disabled}

@@ -10,6 +10,7 @@ import { useWorkflowStore } from "@/hooks/useWorkflow";
 import { useThemeStore } from "@/hooks/useTheme";
 import { useCoarsePointer } from "@/hooks/useCoarsePointer";
 import { themeColors } from "@/theme/colors";
+import { resolveComboOption } from "@/utils/workflowInputs";
 
 interface ComboControlProps {
   containerClass: string;
@@ -66,6 +67,7 @@ export function ComboControl({
     : ((getOption("options") as unknown[]) ?? []);
   const supportsImageUpload = Boolean(getOption("image_upload"));
   const imageFolder = (getOption("image_folder") as string) ?? "input";
+  const stripSafetensorsSuffix = Boolean(getOption("stripSafetensorsSuffix"));
   const NULL_OPTION_VALUE = "__null__";
   const hasNullChoice = rawChoices.some((opt) => opt === null);
   const choices = rawChoices
@@ -75,18 +77,26 @@ export function ComboControl({
   const rawValueString =
     value === null ? NULL_OPTION_VALUE : String(value ?? "");
   const rawBase = rawValueString.split(/[\\/]/).pop() ?? rawValueString;
+  const resolvedValue = resolveComboOption(rawValueString, mergedChoices);
+  const resolvedValueString =
+    resolvedValue === undefined ? null : String(resolvedValue);
   const hasValueMatch =
-    mergedChoices.includes(rawValueString) || mergedChoices.includes(rawBase);
+    resolvedValueString !== null ||
+    mergedChoices.includes(rawValueString) ||
+    mergedChoices.includes(rawBase);
   const isMissingValue =
     value !== null &&
     value !== undefined &&
     rawValueString !== "" &&
     !hasValueMatch;
   const valueString = hasValueMatch
-    ? mergedChoices.includes(rawValueString)
-      ? rawValueString
-      : rawBase
+    ? resolvedValueString ??
+      (mergedChoices.includes(rawValueString) ? rawValueString : rawBase)
     : rawValueString;
+  const getDisplayLabel = (optionValue: string) => {
+    if (!stripSafetensorsSuffix) return optionValue;
+    return optionValue.replace(/\.safetensors$/i, "");
+  };
   const selectOptions: SelectOption[] = [];
   if (value === null || hasNullChoice) {
     selectOptions.push({ value: NULL_OPTION_VALUE, label: "None" });
@@ -94,12 +104,15 @@ export function ComboControl({
   if (isMissingValue) {
     selectOptions.push({
       value: rawValueString,
-      label: rawValueString,
+      label: getDisplayLabel(rawValueString),
       isMissing: true,
     });
   }
   selectOptions.push(
-    ...mergedChoices.map((opt) => ({ value: opt, label: opt })),
+    ...mergedChoices.map((opt) => ({
+      value: opt,
+      label: getDisplayLabel(opt),
+    })),
   );
   const selectedOption =
     selectOptions.find((opt) => opt.value === valueString) ?? null;
