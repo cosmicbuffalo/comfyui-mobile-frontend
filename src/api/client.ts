@@ -1,8 +1,4 @@
 import type { NodeTypes, QueueInfo, History, Workflow } from './types';
-import {
-  buildQueuePromptInputs,
-  getWorkflowWidgetIndexMap
-} from '@/utils/workflowInputs';
 
 export const API_BASE = '';
 
@@ -150,79 +146,6 @@ export async function loadTemplateWorkflow(moduleName: string, templateName: str
     `${API_BASE}/api/workflow_templates/${encodeURIComponent(moduleName)}/${encodeURIComponent(templateName)}`
   );
   if (!response.ok) throw new Error('Failed to load template');
-  return response.json();
-}
-
-// Prompt execution
-function resolveClassType(nodeType: string, nodeTypes: NodeTypes): string | null {
-  if (nodeTypes[nodeType]) {
-    return nodeType;
-  }
-
-  const match = Object.entries(nodeTypes).find(
-    ([, def]) => def.display_name === nodeType || def.name === nodeType
-  );
-  if (match) {
-    return match[0];
-  }
-
-  return null;
-}
-
-
-export async function queuePrompt(
-  workflow: Workflow,
-  clientId: string,
-  nodeTypes: NodeTypes,
-  seedOverrides?: Record<number, number>
-): Promise<{ prompt_id: string; number: number }> {
-  const prompt: Record<string, unknown> = {};
-  const allowedNodeIds = new Set<number>();
-  const classTypeById = new Map<number, string>();
-
-  for (const node of workflow.nodes) {
-    const classType = resolveClassType(node.type, nodeTypes);
-    if (classType) {
-      allowedNodeIds.add(node.id);
-      classTypeById.set(node.id, classType);
-    }
-  }
-
-  for (const node of workflow.nodes) {
-    const classType = classTypeById.get(node.id);
-    if (!classType) {
-      continue;
-    }
-
-    const inputs = buildQueuePromptInputs(
-      workflow,
-      nodeTypes,
-      node,
-      classType,
-      allowedNodeIds,
-      getWorkflowWidgetIndexMap(workflow, node.id),
-      seedOverrides
-    );
-    prompt[String(node.id)] = {
-      class_type: classType,
-      inputs
-    };
-  }
-
-  const response = await fetch(`${API_BASE}/api/prompt`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      prompt,
-      client_id: clientId
-    })
-  });
-
-  if (!response.ok) {
-    const error = await response.json();
-    throw new Error(error.error?.message || 'Failed to queue prompt');
-  }
-
   return response.json();
 }
 
@@ -455,9 +378,15 @@ export async function deleteFile(path: string, source: AssetSource = 'output'): 
   }
 }
 
-export async function getFileWorkflow(path: string, source: AssetSource = 'output'): Promise<Workflow> {
+export async function getFileWorkflow(
+  path: string,
+  source: AssetSource = 'output',
+  options?: { signal?: AbortSignal },
+): Promise<Workflow> {
   const params = new URLSearchParams({ path, source });
-  const response = await fetch(`${API_BASE}/mobile/api/file-metadata?${params.toString()}`);
+  const response = await fetch(`${API_BASE}/mobile/api/file-metadata?${params.toString()}`, {
+    signal: options?.signal,
+  });
   if (!response.ok) {
     const error = await response.json().catch(() => ({}));
     throw new Error(error.error || 'Failed to load file metadata');
@@ -467,6 +396,23 @@ export async function getFileWorkflow(path: string, source: AssetSource = 'outpu
     throw new Error('No workflow metadata found');
   }
   return data.workflow as Workflow;
+}
+
+export async function getFileWorkflowAvailability(
+  path: string,
+  source: AssetSource = 'output',
+  options?: { signal?: AbortSignal },
+): Promise<boolean> {
+  const params = new URLSearchParams({ path, source });
+  const response = await fetch(`${API_BASE}/mobile/api/workflow-availability?${params.toString()}`, {
+    signal: options?.signal,
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({}));
+    throw new Error(error.error || 'Failed to load workflow availability');
+  }
+  const data = await response.json();
+  return Boolean(data.available);
 }
 
 export async function getImageMetadata(

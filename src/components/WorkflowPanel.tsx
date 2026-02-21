@@ -30,6 +30,7 @@ import { AddNodeModal } from "@/components/modals/AddNodeModal";
 import { DeleteContainerModal } from "@/components/modals/DeleteContainerModal";
 import { SearchBar } from "@/components/SearchBar";
 import { themeColors } from "@/theme/colors";
+import { requireStableKey } from "@/utils/stableKeys";
 import {
   CaretDownIcon,
   DocumentIcon,
@@ -156,7 +157,13 @@ export function WorkflowPanel({
   const bookmarkDragOffsetRef = useRef<{ x: number; y: number } | null>(null);
   const handledAddNodeModalRequestIdRef = useRef<number | null>(null);
   const stableNodeKeyById = useMemo(
-    () => new Map((workflow?.nodes ?? []).map((node) => [node.id, node.stableKey ?? null])),
+    () =>
+      new Map(
+        (workflow?.nodes ?? []).map((node) => [
+          node.id,
+          requireStableKey(node.stableKey, `node ${node.id}`),
+        ]),
+      ),
     [workflow],
   );
   const stableSubgraphKeyById = useMemo(
@@ -164,7 +171,7 @@ export function WorkflowPanel({
       new Map(
         (workflow?.definitions?.subgraphs ?? []).map((subgraph) => [
           subgraph.id,
-          subgraph.stableKey ?? null,
+          requireStableKey(subgraph.stableKey, `subgraph ${subgraph.id}`),
         ]),
       ),
     [workflow],
@@ -187,16 +194,17 @@ export function WorkflowPanel({
     const visit = (refs: ItemRef[], currentSubgraphId: string | null) => {
       refs.forEach((ref) => {
         if (ref.type === "node") {
-          const stableKey = stableNodeKeyById.get(ref.id) ?? null;
-          if (stableKey) {
-            byStableKey.set(stableKey, {
-              stableKey,
-              type: "node",
-              nodeId: ref.id,
-              subgraphId: currentSubgraphId,
-              text: String(ref.id),
-            });
-          }
+          const stableKey = requireStableKey(
+            stableNodeKeyById.get(ref.id),
+            `layout node ref ${ref.id}`,
+          );
+          byStableKey.set(stableKey, {
+            stableKey,
+            type: "node",
+            nodeId: ref.id,
+            subgraphId: currentSubgraphId,
+            text: String(ref.id),
+          });
           return;
         }
         if (ref.type === "group") {
@@ -217,15 +225,16 @@ export function WorkflowPanel({
           return;
         }
         if (ref.type === "subgraph") {
-          const stableKey = stableSubgraphKeyById.get(ref.id) ?? null;
-          if (stableKey) {
-            byStableKey.set(stableKey, {
-              stableKey,
-              type: "subgraph",
-              subgraphId: ref.id,
-              text: "SG",
-            });
-          }
+          const stableKey = requireStableKey(
+            stableSubgraphKeyById.get(ref.id),
+            `layout subgraph ref ${ref.id}`,
+          );
+          byStableKey.set(stableKey, {
+            stableKey,
+            type: "subgraph",
+            subgraphId: ref.id,
+            text: "SG",
+          });
           if (visitedSubgraphs.has(ref.id)) return;
           visitedSubgraphs.add(ref.id);
           visit(mobileLayout.subgraphs[ref.id] ?? [], ref.id);
@@ -248,13 +257,23 @@ export function WorkflowPanel({
     (stableKey: string): { groupKeys: string[]; subgraphIds: string[] } | null => {
       const path = findLayoutPath(mobileLayout, ({ ref }) => {
         if (ref.type === "node") {
-          return (stableNodeKeyById.get(ref.id) ?? null) === stableKey;
+          return (
+            requireStableKey(
+              stableNodeKeyById.get(ref.id),
+              `layout node ref ${ref.id}`,
+            ) === stableKey
+          );
         }
         if (ref.type === "group") {
           return ref.stableKey === stableKey;
         }
         if (ref.type === "subgraph") {
-          return (stableSubgraphKeyById.get(ref.id) ?? null) === stableKey;
+          return (
+            requireStableKey(
+              stableSubgraphKeyById.get(ref.id),
+              `layout subgraph ref ${ref.id}`,
+            ) === stableKey
+          );
         }
         return false;
       });
@@ -618,8 +637,7 @@ export function WorkflowPanel({
       ? ordered
       : ordered.filter(
           (node) => {
-            const stableKey = node.stableKey ?? null;
-            if (!stableKey) return true;
+            const stableKey = requireStableKey(node.stableKey, `node ${node.id}`);
             return !hiddenItems[stableKey];
           },
         );
@@ -810,7 +828,9 @@ export function WorkflowPanel({
     const nodeMap = new Map(workflow.nodes.map((node) => [node.id, node]));
     const highlighted = new Set<number>();
     const isHiddenNode = (node: (typeof workflow.nodes)[number]) =>
-      Boolean(node.stableKey && hiddenItems[node.stableKey]);
+      Boolean(
+        hiddenItems[requireStableKey(node.stableKey, `node ${node.id}`)],
+      );
 
     const collectTargets = (
       nodeId: number,
@@ -980,8 +1000,11 @@ export function WorkflowPanel({
       const label = typeof detail === "object" ? detail.label : undefined;
       if (typeof nodeId !== "number") return;
       const resolvedNode = workflow?.nodes.find((entry) => entry.id === nodeId);
-      const stableKey = resolvedNode?.stableKey ?? null;
-      if (!stableKey) return;
+      if (!resolvedNode) return;
+      const stableKey = requireStableKey(
+        resolvedNode.stableKey,
+        `node ${resolvedNode.id}`,
+      );
       setItemCollapsed(stableKey, false);
       // Use native scrollIntoView instead of virtualizer
       const nodeElement =
@@ -1093,8 +1116,11 @@ export function WorkflowPanel({
     for (const item of items) {
       if (item.type === "hiddenBlock") continue;
       if (item.type === "node") {
-        const stableKey = item.node.stableKey ?? null;
-        if (!stableKey || !collapsedItems[stableKey]) return true;
+        const stableKey = requireStableKey(
+          item.node.stableKey,
+          `node ${item.node.id}`,
+        );
+        if (!collapsedItems[stableKey]) return true;
         continue;
       }
       if (!item.isCollapsed) return true;
@@ -1109,27 +1135,27 @@ export function WorkflowPanel({
         for (const item of nestedItems) {
           if (item.type === "hiddenBlock") continue;
           if (item.type === "node") {
-            const stableKey = item.node.stableKey ?? null;
-            if (stableKey) {
-              setItemCollapsed(stableKey, collapsed);
-            }
+            const stableKey = requireStableKey(
+              item.node.stableKey,
+              `node ${item.node.id}`,
+            );
+            setItemCollapsed(stableKey, collapsed);
             continue;
           }
           if (item.type === "group") {
-            const groupStableKey = item.stableKey;
-            if (!groupStableKey) {
-              applyCollapse(item.children);
-              continue;
-            }
+            const groupStableKey = requireStableKey(
+              item.stableKey,
+              `group ${item.group.id}`,
+            );
             setItemCollapsed(groupStableKey, collapsed);
             applyCollapse(item.children);
             continue;
           }
-          const stableSubgraphKey =
-            stableSubgraphKeyById.get(item.subgraph.id) ?? null;
-          if (stableSubgraphKey) {
-            setItemCollapsed(stableSubgraphKey, collapsed);
-          }
+          const stableSubgraphKey = requireStableKey(
+            stableSubgraphKeyById.get(item.subgraph.id),
+            `subgraph ${item.subgraph.id}`,
+          );
+          setItemCollapsed(stableSubgraphKey, collapsed);
           applyCollapse(item.children);
         }
       };
@@ -1174,9 +1200,10 @@ export function WorkflowPanel({
         setItemHidden(stableGroupKey, false);
       }
       for (const subgraphId of state.hiddenSubgraphIds) {
-        const stableSubgraphKey =
-          stableSubgraphKeyById.get(subgraphId) ?? null;
-        if (!stableSubgraphKey) continue;
+        const stableSubgraphKey = requireStableKey(
+          stableSubgraphKeyById.get(subgraphId),
+          `subgraph ${subgraphId}`,
+        );
         setItemHidden(stableSubgraphKey, false);
       }
       for (const nodeKey of state.hiddenNodeKeys) {
@@ -1204,18 +1231,18 @@ export function WorkflowPanel({
         const hasVisibleChildren = item.children.some(
           (child) => child.type !== "hiddenBlock",
         );
-        const groupStableKey = item.stableKey;
-        if (!groupStableKey) return null;
+        const groupStableKey = requireStableKey(
+          item.stableKey,
+          `group ${item.group.id}`,
+        );
         const hiddenState = getHiddenStateForGroup(groupStableKey);
-        const isGroupBookmarked = groupStableKey
-          ? bookmarkedItems.includes(groupStableKey)
-          : false;
+        const isGroupBookmarked = bookmarkedItems.includes(groupStableKey);
         const canShowGroupBookmarkAction =
           bookmarkedItems.length < 5 || isGroupBookmarked;
         const hiddenNodeCount = hiddenState.hiddenNodeCount;
         const foldAllLabel = hasExpandedChildren ? "Fold all" : "Unfold all";
         const handleFoldAll = () => {
-          if (!hasExpandedChildren && groupStableKey) {
+          if (!hasExpandedChildren) {
             setItemCollapsed(groupStableKey, false);
           }
           setNestedCollapsed(item.children, hasExpandedChildren);
@@ -1244,10 +1271,8 @@ export function WorkflowPanel({
               isBookmarked={isGroupBookmarked}
               canShowBookmarkAction={canShowGroupBookmarkAction}
               foldAllLabel={foldAllLabel}
-              onToggleCollapse={() => groupStableKey && setItemCollapsed(groupStableKey, !item.isCollapsed)}
-              onToggleBookmark={() =>
-                groupStableKey ? toggleBookmark(groupStableKey) : undefined
-              }
+              onToggleCollapse={() => setItemCollapsed(groupStableKey, !item.isCollapsed)}
+              onToggleBookmark={() => toggleBookmark(groupStableKey)}
               onShowHiddenNodes={() => {
                 if (hiddenNodeCount > 0) {
                   revealHiddenState(hiddenState);
@@ -1255,16 +1280,15 @@ export function WorkflowPanel({
               }}
               onToggleFoldAll={handleFoldAll}
               onBypassAll={(bypass) =>
-                groupStableKey && bypassAllInContainer(groupStableKey, bypass)
+                bypassAllInContainer(groupStableKey, bypass)
               }
-              onHide={() => groupStableKey && setItemHidden(groupStableKey, true)}
+              onHide={() => setItemHidden(groupStableKey, true)}
               onAddNode={() => {
                 setAddNodeGroupId(item.group.id);
                 setAddNodeSubgraphId(item.subgraphId ?? null);
                 setAddNodeModalOpen(true);
               }}
               onDelete={() => {
-                if (!groupStableKey) return;
                 if (item.nodeCount === 0) {
                   deleteContainer(groupStableKey, { deleteNodes: false });
                   return;
@@ -1286,7 +1310,7 @@ export function WorkflowPanel({
                 })
               }
               onCommitTitle={(nextTitle) =>
-                groupStableKey && updateContainerTitle(groupStableKey, nextTitle)
+                updateContainerTitle(groupStableKey, nextTitle)
               }
             />
             <div
@@ -1343,10 +1367,11 @@ export function WorkflowPanel({
         const subgraphHiddenState = getHiddenStateForSubgraph(item.subgraph.id);
         const subgraphHiddenNodeCount = subgraphHiddenState.hiddenNodeCount;
         const subgraphStableKey =
-          stableSubgraphKeyById.get(item.subgraph.id) ?? null;
-        const isSubgraphBookmarked = subgraphStableKey
-          ? bookmarkedItems.includes(subgraphStableKey)
-          : false;
+          requireStableKey(
+            stableSubgraphKeyById.get(item.subgraph.id),
+            `subgraph ${item.subgraph.id}`,
+          );
+        const isSubgraphBookmarked = bookmarkedItems.includes(subgraphStableKey);
         const canShowSubgraphBookmarkAction =
           bookmarkedItems.length < 5 || isSubgraphBookmarked;
         const subgraphHasExpandedChildren = hasExpandedNestedItems(item.children);
@@ -1354,7 +1379,7 @@ export function WorkflowPanel({
           ? "Fold all"
           : "Unfold all";
         const handleSubgraphFoldAll = () => {
-          if (!subgraphHasExpandedChildren && subgraphStableKey) {
+          if (!subgraphHasExpandedChildren) {
             setItemCollapsed(subgraphStableKey, false);
           }
           setNestedCollapsed(item.children, subgraphHasExpandedChildren);
@@ -1371,7 +1396,7 @@ export function WorkflowPanel({
               ["--subgraph-border" as string]: SUBGRAPH_BORDER_COLOR,
             }}
             data-reposition-item={`subgraph-${item.subgraph.id}`}
-            data-stable-key={subgraphStableKey ?? undefined}
+            data-stable-key={subgraphStableKey}
           >
             <GraphContainerHeader
               containerType="subgraph"
@@ -1386,13 +1411,11 @@ export function WorkflowPanel({
               canShowBookmarkAction={canShowSubgraphBookmarkAction}
               foldAllLabel={subgraphFoldAllLabel}
               onToggleCollapse={() =>
-                subgraphStableKey && setItemCollapsed(subgraphStableKey, !item.isCollapsed)
+                setItemCollapsed(subgraphStableKey, !item.isCollapsed)
               }
-              onToggleBookmark={() =>
-                subgraphStableKey ? toggleBookmark(subgraphStableKey) : undefined
-              }
+              onToggleBookmark={() => toggleBookmark(subgraphStableKey)}
               onBypassAll={(bypass) =>
-                subgraphStableKey && bypassAllInContainer(subgraphStableKey, bypass)
+                bypassAllInContainer(subgraphStableKey, bypass)
               }
               onToggleFoldAll={handleSubgraphFoldAll}
               onShowHiddenNodes={
@@ -1403,10 +1426,9 @@ export function WorkflowPanel({
                 }
               }
               onHide={() =>
-                subgraphStableKey && setItemHidden(subgraphStableKey, true)
+                setItemHidden(subgraphStableKey, true)
               }
               onDelete={() => {
-                if (!subgraphStableKey) return;
                 if (item.nodeCount === 0) {
                   deleteContainer(subgraphStableKey, { deleteNodes: false });
                   return;
@@ -1431,7 +1453,6 @@ export function WorkflowPanel({
                 })
               }
               onCommitTitle={(nextTitle) =>
-                subgraphStableKey &&
                 updateContainerTitle(subgraphStableKey, nextTitle)
               }
             />
@@ -1487,7 +1508,7 @@ export function WorkflowPanel({
         <div
           key={`node-${item.node.id}-${keyBase}`}
           data-reposition-item={`node-${item.node.id}`}
-          data-stable-key={item.node.stableKey ?? undefined}
+          data-stable-key={requireStableKey(item.node.stableKey, `node ${item.node.id}`)}
         >
           <NodeCard
             node={item.node}

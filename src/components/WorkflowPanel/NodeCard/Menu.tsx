@@ -16,7 +16,7 @@ interface PinnableWidget {
 
 interface NodeCardMenuProps {
   nodeId: number;
-  nodeStableKey: string | null;
+  nodeStableKey: string;
   isLoraManagerNode: boolean;
   isBypassed: boolean;
   onEditLabel: () => void;
@@ -103,7 +103,6 @@ export function NodeCardMenu({
 
   const handleHighlightConnections = (event: React.MouseEvent<HTMLButtonElement>) => {
     event.stopPropagation();
-    if (!nodeStableKey) return;
     const hasInputs = leftLineCount > 0;
     const hasOutputs = rightLineCount > 0;
     if (!hasInputs && !hasOutputs) return;
@@ -131,14 +130,12 @@ export function NodeCardMenu({
 
   const handleToggleBypassClick = (event: React.MouseEvent<HTMLButtonElement>) => {
     event.stopPropagation();
-    if (!nodeStableKey) return;
     toggleBypass(nodeStableKey);
     closeMenu();
   };
 
   const handleHideNodeClick = (event: React.MouseEvent<HTMLButtonElement>) => {
     event.stopPropagation();
-    if (!nodeStableKey) return;
     setItemHidden(nodeStableKey, true);
     closeMenu();
   };

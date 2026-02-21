@@ -8,7 +8,7 @@ import { MediaViewerMetadata } from './MediaViewer/Metadata';
 import { CloseButton } from '@/components/buttons/CloseButton';
 import { extractMetadata } from '@/utils/metadata';
 import { isVideoFilename } from '@/utils/media';
-import { getImageMetadata } from '@/api/client';
+import { getFileWorkflowAvailability, getImageMetadata } from '@/api/client';
 import { resolveFilePath, resolveFileSource } from '@/utils/workflowOperations';
 
 interface MediaViewerProps {
@@ -33,6 +33,11 @@ interface MediaViewerProps {
 const DEFAULT_TRANSLATE = { x: 0, y: 0 };
 const MEDIA_VIEWER_Z_INDEX = 2100;
 const MEDIA_VIEWER_OVERLAY_Z_INDEX = MEDIA_VIEWER_Z_INDEX + 10;
+const workflowAvailabilityCache = new Map<string, boolean>();
+
+function makeWorkflowAvailabilityCacheKey(source: string, path: string): string {
+  return `${source}:${path}`;
+}
 
 export function MediaViewer({
   open,
@@ -80,6 +85,8 @@ export function MediaViewer({
   const targetZoomModeRef = useRef<'fit' | 'cover'>('fit');
   const [metadataById, setMetadataById] = useState<Record<string, ReturnType<typeof extractMetadata> | null>>({});
   const [metadataLoading, setMetadataLoading] = useState<Record<string, boolean>>({});
+  const [workflowAvailableById, setWorkflowAvailableById] = useState<Record<string, boolean>>({});
+  const [workflowLoadingById, setWorkflowLoadingById] = useState<Record<string, boolean>>({});
   const [videoError, setVideoError] = useState(false);
   const { isInputFocused } = useTextareaFocus();
 
@@ -98,6 +105,11 @@ export function MediaViewer({
   const showMetadataOverlay = showMetadata && !isIdle;
   const canToggleMetadata = showMetadataToggle;
   const metadataIsLoading = fileId ? Boolean(metadataLoading[fileId]) : false;
+  const workflowAvailabilityKnown = fileId ? Object.prototype.hasOwnProperty.call(workflowAvailableById, fileId) : false;
+  const workflowIsLoading = fileId ? Boolean(workflowLoadingById[fileId]) : false;
+  const canLoadWorkflow = !isVideo
+    || Boolean(currentItem?.workflow)
+    || (fileId ? Boolean(workflowAvailableById[fileId]) : false);
 
   const resetIdleTimer = useCallback(() => {
     setIsIdle(false);
@@ -160,6 +172,54 @@ export function MediaViewer({
     lastTapRef.current = null;
     targetZoomModeRef.current = 'fit';
   }, [open, index, initialScale, initialTranslate]);
+  /* eslint-enable react-hooks/set-state-in-effect */
+
+  /* eslint-disable react-hooks/set-state-in-effect */
+  useEffect(() => {
+    if (!open) return;
+    if (!isVideo) return;
+    if (currentItem?.workflow) return;
+    if (!currentItem?.file) return;
+    if (!fileId) return;
+    if (workflowAvailabilityKnown || workflowIsLoading) return;
+
+    const source = resolveFileSource(currentItem.file);
+    const path = resolveFilePath(currentItem.file, source);
+    const cacheKey = makeWorkflowAvailabilityCacheKey(source, path);
+    const cached = workflowAvailabilityCache.get(cacheKey);
+    if (cached !== undefined) {
+      setWorkflowAvailableById((prev) => ({ ...prev, [fileId]: cached }));
+      return;
+    }
+
+    const controller = new AbortController();
+    setWorkflowLoadingById((prev) => ({ ...prev, [fileId]: true }));
+    getFileWorkflowAvailability(path, source, { signal: controller.signal })
+      .then((available) => {
+        workflowAvailabilityCache.set(cacheKey, available);
+        setWorkflowAvailableById((prev) => ({ ...prev, [fileId]: available }));
+      })
+      .catch(() => {
+        if (controller.signal.aborted) return;
+        workflowAvailabilityCache.set(cacheKey, false);
+        setWorkflowAvailableById((prev) => ({ ...prev, [fileId]: false }));
+      })
+      .finally(() => {
+        if (controller.signal.aborted) return;
+        setWorkflowLoadingById((prev) => ({ ...prev, [fileId]: false }));
+      });
+
+    return () => {
+      controller.abort();
+    };
+  }, [
+    open,
+    isVideo,
+    currentItem,
+    fileId,
+    workflowAvailabilityKnown,
+    workflowIsLoading,
+  ]);
   /* eslint-enable react-hooks/set-state-in-effect */
 
   /* eslint-disable react-hooks/set-state-in-effect */
@@ -650,6 +710,7 @@ export function MediaViewer({
             />
             <MediaViewerActions
               isVideo={isVideo}
+              canLoadWorkflow={canLoadWorkflow}
               showMetadataToggle={showMetadataToggle}
               canToggleMetadata={canToggleMetadata}
               onDelete={handleDeleteClick}

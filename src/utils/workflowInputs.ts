@@ -9,8 +9,118 @@ import {
   isTriggerWordToggleNodeType
 } from '@/utils/triggerWordToggle';
 
+const DATE_PARTS = {
+  d: (date: Date) => date.getDate(),
+  M: (date: Date) => date.getMonth() + 1,
+  h: (date: Date) => date.getHours(),
+  m: (date: Date) => date.getMinutes(),
+  s: (date: Date) => date.getSeconds(),
+};
+
+const DATE_FORMAT_PATTERN =
+  Object.keys(DATE_PARTS)
+    .map((key) => `${key}${key}?`)
+    .join("|") + "|yyy?y?";
+
+const ILLEGAL_FILENAME_CHARS =
+  // eslint-disable-next-line no-control-regex
+  /[/?<>\\:*|"\x00-\x1F\x7F]/g;
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function formatDateToken(text: string, date: Date): string {
+  return text.replace(new RegExp(DATE_FORMAT_PATTERN, "g"), (token: string): string => {
+    if (token === "yy") return `${date.getFullYear()}`.substring(2);
+    if (token === "yyyy") return date.getFullYear().toString();
+    if (token[0] in DATE_PARTS) {
+      const part = DATE_PARTS[token[0] as keyof typeof DATE_PARTS](date);
+      return `${part}`.padStart(token.length, "0");
+    }
+    return token;
+  });
+}
+
+function collectAllWorkflowNodes(workflow: Workflow): WorkflowNode[] {
+  const subgraphNodes = (workflow.definitions?.subgraphs ?? []).flatMap(
+    (subgraph) => subgraph.nodes ?? []
+  );
+  return [...workflow.nodes, ...subgraphNodes];
+}
+
+function resolveReplacementWidgetValue(
+  workflow: Workflow,
+  node: WorkflowNode,
+  widgetName: string,
+): unknown {
+  const widgetIndexMap = getWorkflowWidgetIndexMap(workflow, node.id);
+  const mappedIndex = widgetIndexMap?.[widgetName];
+  if (mappedIndex !== undefined) {
+    return getWidgetValue(node, widgetName, mappedIndex);
+  }
+
+  return getWidgetValue(node, widgetName, undefined);
+}
+
+function applyTextReplacements(workflow: Workflow, value: string): string {
+  const allNodes = collectAllWorkflowNodes(workflow);
+
+  return value.replace(/%([^%]+)%/g, (match, text: string) => {
+    const split = text.split(".");
+    if (split.length !== 2) {
+      if (split[0]?.startsWith("date:")) {
+        return formatDateToken(split[0].substring(5), new Date());
+      }
+
+      if (text !== "width" && text !== "height") {
+        console.warn("[workflowInputs] Invalid replacement pattern", text);
+      }
+      return match;
+    }
+
+    let nodes = allNodes.filter(
+      (nodeItem) => nodeItem.properties?.["Node name for S&R"] === split[0]
+    );
+    if (!nodes.length) {
+      nodes = allNodes.filter(
+        (nodeItem) => (nodeItem as { title?: unknown }).title === split[0]
+      );
+    }
+    if (!nodes.length) {
+      console.warn("[workflowInputs] Unable to find node", split[0]);
+      return match;
+    }
+    if (nodes.length > 1) {
+      console.warn("[workflowInputs] Multiple nodes matched", split[0], "using first match");
+    }
+
+    const node = nodes[0];
+    const widgetValue = resolveReplacementWidgetValue(workflow, node, split[1]);
+    if (widgetValue === undefined) {
+      console.warn(
+        "[workflowInputs] Unable to find widget",
+        split[1],
+        "on node",
+        split[0],
+        node
+      );
+      return match;
+    }
+
+    return `${widgetValue ?? ""}`.replace(ILLEGAL_FILENAME_CHARS, "_");
+  });
+}
+
+function finalizeInputValue(
+  workflow: Workflow,
+  inputName: string,
+  value: unknown,
+): unknown {
+  if (inputName === "filename_prefix" && typeof value === "string") {
+    return applyTextReplacements(workflow, value);
+  }
+  return value;
 }
 
 function getPrimitiveInlineValue(node: WorkflowNode): unknown {
@@ -230,136 +340,6 @@ export function resolveSource(
   return { nodeId: sourceNodeId, slotIndex: sourceSlotIndex };
 }
 
-export function buildQueuePromptInputs(
-  workflow: Workflow,
-  nodeTypes: NodeTypes,
-  node: Workflow['nodes'][number],
-  classType: string,
-  allowedNodeIds: Set<number>,
-  widgetIndexMap: Record<string, number> | null,
-  seedOverrides?: Record<number, number>
-): Record<string, unknown> {
-  const inputs: Record<string, unknown> = {};
-
-  // Add connections from links first.
-  for (const input of node.inputs) {
-    if (input.link != null) {
-      const link = workflow.links.find((l) => l[0] === input.link);
-      if (link) {
-        const sourceNodeId = link[1];
-        if (allowedNodeIds.has(sourceNodeId)) {
-          inputs[input.name] = [String(sourceNodeId), link[2]];
-        } else {
-          const sourceNode = workflow.nodes.find((n) => n.id === sourceNodeId);
-          if (sourceNode) {
-            const value = getPrimitiveInlineValue(sourceNode);
-            if (value !== undefined) {
-              inputs[input.name] = value;
-            } else {
-              console.warn(
-                `[workflowInputs] Missing source node for input '${input.name}' on node ${node.id} (${node.type}).`,
-                {
-                  sourceNodeId,
-                  sourceNodeType: sourceNode.type,
-                  sourceAllowed: false
-                }
-              );
-            }
-          }
-        }
-      }
-    }
-  }
-
-  const typeDef = nodeTypes[classType];
-  if (!typeDef?.input) {
-    return inputs;
-  }
-
-  const requiredOrder = typeDef.input_order?.required || Object.keys(typeDef.input.required || {});
-  const optionalOrder = typeDef.input_order?.optional || Object.keys(typeDef.input.optional || {});
-  const orderedInputs = [...requiredOrder, ...optionalOrder];
-  const usedWidgetIndices = new Set<number>();
-  let widgetCursor = 0;
-  const widgetValuesArray = Array.isArray(node.widgets_values) ? node.widgets_values : null;
-
-  if (widgetIndexMap) {
-    Object.values(widgetIndexMap).forEach((idx) => usedWidgetIndices.add(idx));
-  }
-
-  for (const name of orderedInputs) {
-    const inputDef = typeDef.input.required?.[name] || typeDef.input.optional?.[name];
-    if (!inputDef) continue;
-
-    const [typeOrOptions] = inputDef;
-    const inputEntry = node.inputs.find((i) => i.name === name);
-    const isConnected = inputEntry?.link != null;
-    const isWidgetToggle = Boolean(inputEntry?.widget) && !isConnected;
-    const hasSocket = Boolean(inputEntry);
-    const isCombo = Array.isArray(typeOrOptions);
-    const isWidget = isCombo || !hasSocket || isWidgetToggle;
-
-    if (isWidget) {
-      if (!widgetValuesArray) {
-        if (name === 'seed' && seedOverrides?.[node.id] !== undefined && !(name in inputs)) {
-          inputs[name] = seedOverrides[node.id];
-        } else if (!isConnected && !(name in inputs)) {
-          const rawValue = getWidgetValue(node, name, undefined);
-          if (rawValue !== undefined) {
-            inputs[name] = normalizeWidgetValue(rawValue, typeOrOptions);
-          }
-        }
-        continue;
-      }
-
-      let indexToUse = widgetIndexMap?.[name];
-
-      if (indexToUse === undefined) {
-        for (let idx = widgetCursor; idx < widgetValuesArray.length; idx += 1) {
-          if (usedWidgetIndices.has(idx)) continue;
-          const candidate = widgetValuesArray[idx];
-          if (isValueCompatible(candidate, typeOrOptions)) {
-            indexToUse = idx;
-            break;
-          }
-        }
-
-        if (indexToUse === undefined && widgetCursor < widgetValuesArray.length) {
-          while (usedWidgetIndices.has(widgetCursor) && widgetCursor < widgetValuesArray.length) {
-            widgetCursor += 1;
-          }
-          if (widgetCursor < widgetValuesArray.length) {
-            indexToUse = widgetCursor;
-          }
-        }
-      }
-
-      if (name === 'seed' && seedOverrides?.[node.id] !== undefined && !(name in inputs)) {
-        inputs[name] = seedOverrides[node.id];
-      } else if (indexToUse !== undefined && !isConnected && !(name in inputs)) {
-        const rawValue = getWidgetValue(node, name, indexToUse);
-        if (rawValue !== undefined) {
-          inputs[name] = normalizeWidgetValue(rawValue, typeOrOptions);
-        }
-      }
-
-      if (indexToUse !== undefined) {
-        usedWidgetIndices.add(indexToUse);
-        widgetCursor = Math.max(widgetCursor, indexToUse + 1);
-      }
-    }
-  }
-
-  if (seedOverrides?.[node.id] !== undefined && !('seed' in inputs) && !('noise_seed' in inputs)) {
-    inputs.seed = seedOverrides[node.id];
-  }
-
-  appendLoraManagerInputs(node, inputs, widgetValuesArray, widgetIndexMap);
-  appendTriggerWordToggleInputs(node, inputs, widgetValuesArray, widgetIndexMap);
-
-  return inputs;
-}
-
 export function buildWorkflowPromptInputs(
   workflow: Workflow,
   nodeTypes: NodeTypes,
@@ -438,9 +418,17 @@ export function buildWorkflowPromptInputs(
           const rawValue = getWidgetValue(node, name, indexToUse);
           if (rawValue !== undefined) {
             if (Array.isArray(typeOrOptions)) {
-              inputs[name] = normalizeComboValue(rawValue, typeOrOptions, defaultValue);
+              inputs[name] = finalizeInputValue(
+                workflow,
+                name,
+                normalizeComboValue(rawValue, typeOrOptions, defaultValue)
+              );
             } else {
-              inputs[name] = normalizeWidgetValue(rawValue, typeOrOptions);
+              inputs[name] = finalizeInputValue(
+                workflow,
+                name,
+                normalizeWidgetValue(rawValue, typeOrOptions)
+              );
             }
           }
         } else if (!isConnected && hasDefault && !(name in inputs)) {
@@ -472,13 +460,13 @@ export function buildWorkflowPromptInputs(
       if (!(name in inputs) && widgetValuesArray && index < widgetValuesArray.length) {
         const value = widgetValuesArray[index];
         if (value !== undefined && value !== null) {
-          inputs[name] = value;
+          inputs[name] = finalizeInputValue(workflow, name, value);
         }
       }
       if (!(name in inputs) && !widgetValuesArray) {
         const value = getWidgetValue(node, name, index);
         if (value !== undefined && value !== null) {
-          inputs[name] = value;
+          inputs[name] = finalizeInputValue(workflow, name, value);
         }
       }
     }

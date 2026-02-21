@@ -21,6 +21,7 @@ import { ErrorHighlightBadge } from './NodeCard/ErrorHighlightBadge';
 import { NodeCardConnectionsSection } from './NodeCard/ConnectionsSection';
 import { NodeCardParameters } from './NodeCard/Parameters';
 import { resolveLoadImagePreview } from '@/utils/loadImagePreview';
+import { requireStableKey } from '@/utils/stableKeys';
 
 const EMPTY_IMAGES: Array<{ filename: string; subfolder: string; type: string }> = [];
 type ImageLike = (typeof EMPTY_IMAGES)[number];
@@ -53,7 +54,7 @@ export const NodeCard = memo(function NodeCard({
   const setItemCollapsed = useWorkflowStore((s) => s.setItemCollapsed);
   const setItemHidden = useWorkflowStore((s) => s.setItemHidden);
   const collapsedItems = useWorkflowStore((s) => s.collapsedItems);
-  const nodeStableKey = node.stableKey ?? null;
+  const nodeStableKey = requireStableKey(node.stableKey, `node ${node.id}`);
   const setConnectionHighlightMode = useWorkflowStore((s) => s.setConnectionHighlightMode);
   const connectionHighlightMode = useWorkflowStore((s) => s.connectionHighlightModes[node.id] ?? 'off');
   const setSeedMode = useSeedStore((s) => s.setSeedMode);
@@ -83,7 +84,6 @@ export const NodeCard = memo(function NodeCard({
   const displayNodeProgress = overallProgress === 100 ? 100 : progress;
   const handleSetSeedMode = useCallback(
     (nodeId: number, mode: 'fixed' | 'randomize' | 'increment' | 'decrement') => {
-      if (!nodeStableKey) return;
       setSeedMode(nodeId, mode, {
         workflow,
         nodeTypes,
@@ -169,7 +169,7 @@ export const NodeCard = memo(function NodeCard({
   const isKSampler = node.type === 'KSampler';
   const isLoraManagerNode = isLoraManagerNodeType(node.type);
   const isBypassed = node.mode === 4;
-  const isCollapsed = nodeStableKey ? Boolean(collapsedItems[nodeStableKey]) : false;
+  const isCollapsed = Boolean(collapsedItems[nodeStableKey]);
   const isLoadImageNode = /LoadImage/i.test(node.type);
   const inputImagePreview = useMemo(() => {
     if (!isLoadImageNode || !workflow || !nodeTypes) return null;
@@ -242,7 +242,6 @@ export const NodeCard = memo(function NodeCard({
 
   const handleUpdateNote = (value: string) => {
     if (noteWidgetIndex === null) return;
-    if (!nodeStableKey) return;
     updateNodeWidget(nodeStableKey, noteWidgetIndex, value);
   };
 
@@ -385,7 +384,7 @@ export const NodeCard = memo(function NodeCard({
     ? isWidgetPinned(singlePinnableWidget.widgetIndex)
     : false;
   const hasPinnedWidget = Boolean(pinnedWidgetForThisNode);
-  const isNodeBookmarked = nodeStableKey ? bookmarkedItems.includes(nodeStableKey) : false;
+  const isNodeBookmarked = bookmarkedItems.includes(nodeStableKey);
   const totalBookmarkCount = bookmarkedItems.length;
   const canAddNodeBookmark = totalBookmarkCount < 5 || isNodeBookmarked;
 
@@ -432,14 +431,12 @@ export const NodeCard = memo(function NodeCard({
 
   const handleLabelBlur = () => {
     const nextValue = labelValue.trim();
-    if (!nodeStableKey) return;
     updateNodeTitle(nodeStableKey, nextValue.length > 0 ? nextValue : null);
     setIsEditingLabel(false);
   };
 
   const handleUpdateNodeWidget = useCallback(
     (widgetIndex: number, value: unknown, widgetName?: string) => {
-      if (!nodeStableKey) return;
       updateNodeWidget(nodeStableKey, widgetIndex, value, widgetName);
     },
     [nodeStableKey, updateNodeWidget]
@@ -447,7 +444,6 @@ export const NodeCard = memo(function NodeCard({
 
   const handleUpdateNodeWidgets = useCallback(
     (updates: Record<number, unknown>) => {
-      if (!nodeStableKey) return;
       updateNodeWidgets(nodeStableKey, updates);
     },
     [nodeStableKey, updateNodeWidgets]
@@ -503,7 +499,6 @@ export const NodeCard = memo(function NodeCard({
         errorPopoverOpen={errorPopoverOpen}
         setErrorPopoverOpen={setErrorPopoverOpen}
         toggleNodeFold={() => {
-          if (!nodeStableKey) return;
           setItemCollapsed(nodeStableKey, !isCollapsed);
         }}
         rightSlot={(
@@ -521,9 +516,7 @@ export const NodeCard = memo(function NodeCard({
             setPinnedWidget={handleSetPinnedWidget}
             isNodeBookmarked={isNodeBookmarked}
             canAddNodeBookmark={canAddNodeBookmark}
-            onToggleNodeBookmark={() =>
-              nodeStableKey ? toggleBookmark(nodeStableKey) : undefined
-            }
+            onToggleNodeBookmark={() => toggleBookmark(nodeStableKey)}
             toggleBypass={toggleBypass}
             setItemHidden={setItemHidden}
             onDeleteNode={() => setShowDeleteModal(true)}
@@ -622,9 +615,7 @@ export const NodeCard = memo(function NodeCard({
           hasConnections={hasNodeConnections}
           onCancel={() => setShowDeleteModal(false)}
           onDelete={(reconnect) => {
-            if (nodeStableKey) {
-              deleteNode(nodeStableKey, reconnect);
-            }
+            deleteNode(nodeStableKey, reconnect);
             setShowDeleteModal(false);
           }}
         />

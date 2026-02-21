@@ -7,11 +7,17 @@ import { useImageViewerStore } from '@/hooks/useImageViewer';
 import { useQueueStore } from '@/hooks/useQueue';
 import { useHistoryStore } from '@/hooks/useHistory';
 import { useOverallProgress } from '@/hooks/useOverallProgress';
+import { useHistoryWorkflowByFileId } from '@/hooks/useHistoryWorkflowByFileId';
 import { buildViewerImages, type ViewerImage } from '@/utils/viewerImages';
 import { deleteFile, type FileItem } from '@/api/client';
 import { Dialog } from '@/components/modals/Dialog';
 import { UseImageModal } from '@/components/modals/UseImageModal';
-import { loadWorkflowFromFile, resolveFilePath, resolveFileSource } from '@/utils/workflowOperations';
+import {
+  loadWorkflowFromFile,
+  resolveFilePath,
+  resolveFileSource,
+  resolveViewerItemWorkflowLoad,
+} from '@/utils/workflowOperations';
 
 interface ImageViewerProps {
   onClose: () => void;
@@ -35,7 +41,7 @@ export function ImageViewer({ onClose }: ImageViewerProps) {
   const running = useQueueStore((s) => s.running);
   const history = useHistoryStore((s) => s.history);
   const [deleteTarget, setDeleteTarget] = useState<FileItem | null>(null);
-  const [loadWorkflowTarget, setLoadWorkflowTarget] = useState<FileItem | null>(null);
+  const [loadWorkflowTarget, setLoadWorkflowTarget] = useState<ViewerImage | null>(null);
   const [loadNodeTarget, setLoadNodeTarget] = useState<FileItem | null>(null);
   const [loadNodeOpen, setLoadNodeOpen] = useState(false);
   const lastFollowPromptRef = useRef<string | null>(null);
@@ -61,6 +67,7 @@ export function ImageViewer({ onClose }: ImageViewerProps) {
   const displayProgress = Math.min(100, Math.max(0, overallProgress ?? 0));
   const current = index >= 0 ? (images[index] ?? images[0] ?? null) : null;
   const showLoadingPlaceholder = (!current && (followQueueActive || isGenerating)) || (index < 0 && isGenerating);
+  const historyWorkflowByFileId = useHistoryWorkflowByFileId();
 
   useEffect(() => {
     if (!open || !followQueueActive) {
@@ -135,18 +142,33 @@ export function ImageViewer({ onClose }: ImageViewerProps) {
   };
 
   const handleLoadWorkflowRequest = (item: ViewerImage) => {
-    if (!item.file) return;
+    if (!item.file && !item.workflow) return;
     if (isDirty) {
-      setLoadWorkflowTarget(item.file);
+      setLoadWorkflowTarget(item);
       return;
     }
-    handleLoadWorkflow(item.file);
+    void handleLoadWorkflow(item);
   };
 
-  const handleLoadWorkflow = async (file: FileItem) => {
+  const handleLoadWorkflow = async (item: ViewerImage) => {
     try {
+      const resolvedWorkflowLoad = resolveViewerItemWorkflowLoad(
+        item,
+        historyWorkflowByFileId,
+      );
+      if (resolvedWorkflowLoad) {
+        loadWorkflow(
+          resolvedWorkflowLoad.workflow,
+          resolvedWorkflowLoad.filename,
+          { source: resolvedWorkflowLoad.source },
+        );
+        onClose();
+        queueMicrotask(() => setCurrentPanel('workflow'));
+        return;
+      }
+      if (!item.file) return;
       await loadWorkflowFromFile({
-        file,
+        file: item.file,
         loadWorkflow,
         onLoaded: () => {
           onClose();

@@ -1,4 +1,5 @@
 import { getImageUrl, type FileItem } from '@/api/client';
+import type { Workflow } from '@/api/types';
 import { extractMetadata } from '@/utils/metadata';
 import { getMediaType, type MediaType } from '@/utils/media';
 
@@ -7,6 +8,8 @@ export interface ViewerImage {
   alt?: string;
   mediaType?: MediaType;
   metadata?: ReturnType<typeof extractMetadata>;
+  workflow?: Workflow;
+  promptId?: string;
   durationSeconds?: number;
   success?: boolean;
   filename?: string;
@@ -20,8 +23,10 @@ export interface HistoryImageSource {
 }
 
 export interface HistoryImageItem {
+  prompt_id?: string;
   outputs?: { images?: HistoryImageSource[] };
   prompt: unknown;
+  workflow?: Workflow;
   durationSeconds?: number;
   success?: boolean;
 }
@@ -55,6 +60,8 @@ export function buildViewerImages(
         alt: altText,
         mediaType,
         metadata,
+        workflow: item.workflow,
+        promptId: item.prompt_id,
         durationSeconds,
         success,
         filename: img.filename,
