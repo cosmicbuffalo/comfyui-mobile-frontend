@@ -11,9 +11,13 @@ jobs:
     name: Create Draft Release
     runs-on: ubuntu-latest
     if: ${{ github.repository_owner == 'cosmicbuffalo' }}
+    permissions:
+      contents: write
     steps:
       - name: Check out code
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Extract version from pyproject.toml
         id: version
@@ -21,6 +25,17 @@ jobs:
           VERSION=$(grep -m1 '^version' pyproject.toml | sed 's/version *= *"\(.*\)"/\1/')
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Ensure version tag exists
+        run: |
+          TAG="${{ steps.version.outputs.tag }}"
+          git fetch --tags origin
+          if git ls-remote --exit-code --tags origin "refs/tags/${TAG}" >/dev/null 2>&1; then
+            echo "Tag ${TAG} already exists on origin"
+            exit 0
+          fi
+          git tag "${TAG}" "${GITHUB_SHA}"
+          git push origin "refs/tags/${TAG}"
 
       - name: Create or update draft release
         uses: ncipollo/release-action@v1
