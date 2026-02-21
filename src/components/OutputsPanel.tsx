@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { useOutputsStore } from '@/hooks/useOutputs';
 import { useWorkflowStore } from '@/hooks/useWorkflow';
 import { useNavigationStore } from '@/hooks/useNavigation';
+import { useHistoryWorkflowByFileId } from '@/hooks/useHistoryWorkflowByFileId';
 import type { FileItem } from '@/api/client';
 import type { ViewerImage } from '@/utils/viewerImages';
 import { getMediaType } from '@/utils/media';
@@ -17,7 +18,11 @@ import { MediaViewer } from '@/components/ImageViewer/MediaViewer';
 import { UseImageModal } from '@/components/modals/UseImageModal';
 import { ModalFrame } from '@/components/modals/ModalFrame';
 import { Dialog } from '@/components/modals/Dialog';
-import { loadWorkflowFromFile, resolveFilePath } from '@/utils/workflowOperations';
+import {
+  loadWorkflowFromFile,
+  resolveFilePath,
+  resolveViewerItemWorkflowLoad,
+} from '@/utils/workflowOperations';
 import { OutputsPanelHeader } from './OutputsPanel/Header';
 import { OutputsFoldersSection } from './OutputsPanel/FoldersSection';
 import { OutputsFilesSection } from './OutputsPanel/FilesSection';
@@ -170,16 +175,23 @@ export function OutputsPanel({ visible }: { visible: boolean }) {
 
   const displayedFiles = getDisplayedFiles();
   const sortMode = useOutputsStore((s) => s.sort.mode);
+  const historyWorkflowByFileId = useHistoryWorkflowByFileId();
+
   const openOutputsViewer = (file: FileItem) => {
     const displayed = getDisplayedFiles();
     const mediaFiles = displayed.filter((f) => (f.type === 'image' || f.type === 'video') && f.fullUrl);
-    const media = mediaFiles.map((f) => ({
+    const media = mediaFiles.map((f) => {
+      const historyMatch = historyWorkflowByFileId.get(f.id);
+      return {
       src: f.fullUrl!,
       alt: f.name,
       mediaType: getMediaType(f.name),
+      workflow: historyMatch?.workflow,
+      promptId: historyMatch?.promptId,
       file: f,
       filename: f.name
-    }));
+      };
+    });
     const index = mediaFiles.findIndex((f) => f.id === file.id);
     if (index >= 0) {
       setViewerImages(media);
@@ -229,6 +241,21 @@ export function OutputsPanel({ visible }: { visible: boolean }) {
   };
 
   const handleOutputsViewerLoadWorkflow = (item: ViewerImage) => {
+    const resolvedWorkflowLoad = resolveViewerItemWorkflowLoad(
+      item,
+      historyWorkflowByFileId,
+    );
+    if (resolvedWorkflowLoad) {
+      loadWorkflow(
+        resolvedWorkflowLoad.workflow,
+        resolvedWorkflowLoad.filename,
+        { source: resolvedWorkflowLoad.source },
+      );
+      setCurrentPanel('workflow');
+      setViewerOpen(false);
+      setOutputsViewerOpen(false);
+      return;
+    }
     if (!item.file) return;
     requestLoadWorkflowFromFile(item.file, { closeViewer: true });
   };

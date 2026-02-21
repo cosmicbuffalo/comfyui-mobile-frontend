@@ -199,6 +199,11 @@ function reconcileStableRegistry(
     if (stableKey && usedStable.has(stableKey)) {
       stableKey = undefined;
     }
+    if (!stableKey && !parseLocationPointer(pointer)) {
+      // Migration shim: persisted layouts may already key groups by stable key (not pointers).
+      // Preserve that identity mapping to avoid remapping stable-keyed group containers.
+      stableKey = pointer;
+    }
     if (!stableKey) {
       const hint = pointerIdentityHint(pointer);
       const bucket = hintToStable.get(hint) ?? [];
@@ -456,6 +461,16 @@ type ContainerIdentity =
   | { type: "group"; groupId: number; subgraphId: string | null; stableKey: StableKey }
   | { type: "subgraph"; subgraphId: string; stableKey: StableKey };
 
+function resolveLayoutPointerForStateKey(
+  key: string,
+  stableToLayout: Record<string, string>,
+): string | null {
+  const mappedPointer = stableToLayout[key];
+  if (mappedPointer) return mappedPointer;
+  if (parseLocationPointer(key)) return key;
+  return null;
+}
+
 function resolveContainerIdentityFromStableKey(
   workflow: Workflow,
   stableKey: StableKey,
@@ -554,11 +569,8 @@ function normalizeStableBooleanRecord(
   const next: Record<string, boolean> = {};
   for (const [key, value] of Object.entries(state)) {
     if (!value) continue;
-    if (pointerByStableKey[key]) {
-      next[key] = true;
-      continue;
-    }
-    const stableKey = stableKeyByPointer[key];
+    const pointer = resolveLayoutPointerForStateKey(key, pointerByStableKey);
+    const stableKey = pointer ? stableKeyByPointer[pointer] : stableKeyByPointer[key];
     if (!stableKey) continue;
     next[stableKey] = true;
   }
@@ -574,13 +586,29 @@ function normalizeStableCollapsedRecord(
   const next: Record<string, boolean> = {};
   for (const [key, value] of Object.entries(state)) {
     if (value !== true) continue;
-    if (pointerByStableKey[key]) {
-      next[key] = true;
-      continue;
-    }
-    const stableKey = stableKeyByPointer[key];
+    const pointer = resolveLayoutPointerForStateKey(key, pointerByStableKey);
+    const stableKey = pointer ? stableKeyByPointer[pointer] : stableKeyByPointer[key];
     if (!stableKey) continue;
     next[stableKey] = true;
+  }
+  return next;
+}
+
+function normalizeStableBookmarkList(
+  bookmarks: string[] | undefined,
+  stableKeyByPointer: Record<string, StableKey>,
+  pointerByStableKey: Record<string, string>,
+): string[] {
+  if (!bookmarks || bookmarks.length === 0) return [];
+  const next: string[] = [];
+  const seen = new Set<string>();
+  for (const key of bookmarks) {
+    if (!key) continue;
+    const pointer = resolveLayoutPointerForStateKey(key, pointerByStableKey);
+    const stableKey = pointer ? stableKeyByPointer[pointer] : stableKeyByPointer[key];
+    if (!stableKey || seen.has(stableKey)) continue;
+    seen.add(stableKey);
+    next.push(stableKey);
   }
   return next;
 }
@@ -775,6 +803,7 @@ interface WorkflowState {
   prepareRepositionScrollTarget: (target: RepositionScrollTarget) => void;
   updateWorkflowDuration: (signature: string, durationMs: number) => void;
   clearWorkflowCache: () => void;
+  ensureStableKeysAndRepair: () => boolean;
   applyControlAfterGenerate: () => void;
 }
 
@@ -936,28 +965,95 @@ function withStableKeysForGroups(
   });
 }
 
+function hasMissingStableKeys(workflow: Workflow): boolean {
+  if (workflow.nodes.some((node) => !node.stableKey)) return true;
+  if ((workflow.groups ?? []).some((group) => !group.stableKey)) return true;
+  for (const subgraph of workflow.definitions?.subgraphs ?? []) {
+    if (!subgraph.stableKey) return true;
+    if ((subgraph.nodes ?? []).some((node) => !node.stableKey)) return true;
+    if ((subgraph.groups ?? []).some((group) => !group.stableKey)) return true;
+  }
+  return false;
+}
+
+function hasLayoutGroupKeyMismatch(workflow: Workflow, layout: MobileLayout): boolean {
+  for (const group of workflow.groups ?? []) {
+    if (group.stableKey && !(group.stableKey in layout.groups)) return true;
+  }
+  for (const subgraph of workflow.definitions?.subgraphs ?? []) {
+    for (const group of subgraph.groups ?? []) {
+      if (group.stableKey && !(group.stableKey in layout.groups)) return true;
+    }
+  }
+  return false;
+}
+
+function ensureWorkflowHasStableKeys(workflow: Workflow): Workflow {
+  if (!hasMissingStableKeys(workflow)) return workflow;
+
+  const nextNodes = (workflow.nodes ?? []).map((node) =>
+    node.stableKey ? node : { ...node, stableKey: createStableKey() }
+  );
+  const nextGroups = (workflow.groups ?? []).map((group) =>
+    group.stableKey ? group : { ...group, stableKey: createStableKey() }
+  );
+  const nextSubgraphs = (workflow.definitions?.subgraphs ?? []).map((subgraph) => {
+    const stableKey = subgraph.stableKey ?? createStableKey();
+    const nodes = (subgraph.nodes ?? []).map((n) =>
+      n.stableKey ? n : { ...n, stableKey: createStableKey() }
+    );
+    const groups = (subgraph.groups ?? []).map((g) =>
+      g.stableKey ? g : { ...g, stableKey: createStableKey() }
+    );
+    return { ...subgraph, stableKey, nodes, groups };
+  });
+
+  return {
+    ...workflow,
+    nodes: nextNodes,
+    groups: nextGroups,
+    definitions: workflow.definitions
+      ? {
+          ...workflow.definitions,
+          subgraphs: nextSubgraphs,
+        }
+      : workflow.definitions,
+  };
+}
+
+function canonicalizeWorkflowStableKeys(
+  workflow: Workflow,
+  stableKeyByPointer: Record<string, StableKey>,
+): Workflow {
+  return annotateWorkflowWithStableKeys(workflow, stableKeyByPointer);
+}
+
 function annotateWorkflowWithStableKeys(
   workflow: Workflow,
   stableKeyByPointer: Record<string, StableKey>,
 ): Workflow {
-  const nextNodes = withStableKeysForNodes(workflow.nodes, stableKeyByPointer);
+  const workflowWithStableFallbacks = ensureWorkflowHasStableKeys(workflow);
+  const nextNodes = withStableKeysForNodes(
+    workflowWithStableFallbacks.nodes,
+    stableKeyByPointer,
+  );
   const nextGroups = withStableKeysForGroups(
-    workflow.groups ?? [],
+    workflowWithStableFallbacks.groups ?? [],
     stableKeyByPointer,
     null,
   );
   const rootNodesChanged = nextNodes.some(
-    (node, index) => node !== workflow.nodes[index],
+    (node, index) => node !== workflowWithStableFallbacks.nodes[index],
   );
   const rootGroupsChanged = nextGroups.some(
-    (group, index) => group !== (workflow.groups ?? [])[index],
+    (group, index) => group !== (workflowWithStableFallbacks.groups ?? [])[index],
   );
 
-  const subgraphs = workflow.definitions?.subgraphs;
+  const subgraphs = workflowWithStableFallbacks.definitions?.subgraphs;
   if (!subgraphs) {
     return rootNodesChanged || rootGroupsChanged
-      ? { ...workflow, nodes: nextNodes, groups: nextGroups }
-      : workflow;
+      ? { ...workflowWithStableFallbacks, nodes: nextNodes, groups: nextGroups }
+      : workflowWithStableFallbacks;
   }
 
   let subgraphsChanged = false;
@@ -996,14 +1092,14 @@ function annotateWorkflowWithStableKeys(
   });
 
   if (!rootNodesChanged && !rootGroupsChanged && !subgraphsChanged)
-    return workflow;
+    return workflowWithStableFallbacks;
 
   return {
-    ...workflow,
+    ...workflowWithStableFallbacks,
     nodes: nextNodes,
     groups: nextGroups,
     definitions: {
-      ...(workflow.definitions ?? {}),
+      ...(workflowWithStableFallbacks.definitions ?? {}),
       subgraphs: nextSubgraphs,
     },
   };
@@ -1375,6 +1471,43 @@ function updateEmbedWorkflowFromExpandedNode(
   embedWorkflow: Workflow,
   expandedNode: WorkflowNode,
 ): Workflow {
+  const mergeNodeForEmbed = (targetNode: WorkflowNode): WorkflowNode => {
+    const nextProperties = { ...(targetNode.properties ?? {}) } as Record<
+      string,
+      unknown
+    >;
+    const expandedProperties = (expandedNode.properties ?? {}) as Record<
+      string,
+      unknown
+    >;
+    for (const [key, value] of Object.entries(expandedProperties)) {
+      if (key === MOBILE_ORIGIN_KEY) continue;
+      nextProperties[key] = value;
+    }
+
+    const nextNode = {
+      ...targetNode,
+      widgets_values: expandedNode.widgets_values ?? targetNode.widgets_values,
+      mode: expandedNode.mode ?? targetNode.mode,
+      flags: expandedNode.flags ?? targetNode.flags,
+      properties: nextProperties,
+    } as WorkflowNode & { title?: string; color?: string; bgcolor?: string };
+
+    if ("title" in expandedNode) {
+      (nextNode as WorkflowNode & { title?: string }).title = (
+        expandedNode as WorkflowNode & { title?: string }
+      ).title;
+    }
+    if ("color" in expandedNode) {
+      nextNode.color = expandedNode.color;
+    }
+    if ("bgcolor" in expandedNode) {
+      nextNode.bgcolor = expandedNode.bgcolor;
+    }
+
+    return nextNode as WorkflowNode;
+  };
+
   const origin = getMobileOrigin(expandedNode) ?? {
     scope: "root",
     nodeId: expandedNode.id,
@@ -1382,9 +1515,7 @@ function updateEmbedWorkflowFromExpandedNode(
 
   if (origin.scope === "root") {
     const nextNodes = embedWorkflow.nodes.map((node) =>
-      node.id === origin.nodeId
-        ? { ...node, widgets_values: expandedNode.widgets_values ?? [] }
-        : node,
+      node.id === origin.nodeId ? mergeNodeForEmbed(node) : node,
     );
     return { ...embedWorkflow, nodes: nextNodes };
   }
@@ -1395,9 +1526,7 @@ function updateEmbedWorkflowFromExpandedNode(
   const nextSubgraphs = subgraphs.map((subgraph) => {
     if (subgraph.id !== origin.subgraphId) return subgraph;
     const nextNodes = subgraph.nodes.map((node) =>
-      node.id === origin.nodeId
-        ? { ...node, widgets_values: expandedNode.widgets_values ?? [] }
-        : node,
+      node.id === origin.nodeId ? mergeNodeForEmbed(node) : node,
     );
     return { ...subgraph, nodes: nextNodes };
   });
@@ -1409,6 +1538,18 @@ function updateEmbedWorkflowFromExpandedNode(
       subgraphs: nextSubgraphs,
     },
   };
+}
+
+function syncEmbedWorkflowFromExpandedNodes(
+  embedWorkflow: Workflow | null,
+  nodes: WorkflowNode[],
+): Workflow | null {
+  if (!embedWorkflow) return null;
+  let next = embedWorkflow;
+  for (const node of nodes) {
+    next = updateEmbedWorkflowFromExpandedNode(next, node);
+  }
+  return next;
 }
 
 function inferSeedMode(
@@ -1786,6 +1927,7 @@ export const useWorkflowStore = create<WorkflowState>()(
 
         set({
           workflow: nextWorkflowWithStableKeys,
+          embedWorkflow: normalizeWorkflowForEmbed(nextWorkflowWithStableKeys),
           hiddenItems: nextHiddenNodes,
           connectionHighlightModes: nextHighlightModes,
           mobileLayout: nextMobileLayout,
@@ -1884,13 +2026,15 @@ export const useWorkflowStore = create<WorkflowState>()(
           return n;
         });
 
+        const nextWorkflow = {
+          ...workflow,
+          nodes: newNodes,
+          links: newLinks,
+          last_link_id: nextLastLinkId,
+        };
         set({
-          workflow: {
-            ...workflow,
-            nodes: newNodes,
-            links: newLinks,
-            last_link_id: nextLastLinkId,
-          },
+          workflow: nextWorkflow,
+          embedWorkflow: normalizeWorkflowForEmbed(nextWorkflow),
         });
       };
 
@@ -1936,8 +2080,10 @@ export const useWorkflowStore = create<WorkflowState>()(
           return n;
         });
 
+        const nextWorkflow = { ...workflow, nodes: newNodes, links: newLinks };
         set({
-          workflow: { ...workflow, nodes: newNodes, links: newLinks },
+          workflow: nextWorkflow,
+          embedWorkflow: normalizeWorkflowForEmbed(nextWorkflow),
         });
       };
 
@@ -2129,6 +2275,7 @@ export const useWorkflowStore = create<WorkflowState>()(
 
         set({
           workflow: nextWorkflowWithStableKeys,
+          embedWorkflow: normalizeWorkflowForEmbed(nextWorkflowWithStableKeys),
           mobileLayout: nextMobileLayout,
           stableKeyByPointer: reconciled.layoutToStable,
           pointerByStableKey: reconciled.stableToLayout,
@@ -2298,11 +2445,16 @@ export const useWorkflowStore = create<WorkflowState>()(
       ) => {
         if (!stableKey) return;
         set((state) => {
+          const canonicalStableKey =
+            state.stableKeyByPointer[stableKey] ?? stableKey;
+          const pointerKey = state.pointerByStableKey[canonicalStableKey];
           const next = { ...state.hiddenItems };
           if (hidden) {
-            next[stableKey] = true;
+            next[canonicalStableKey] = true;
           } else {
             delete next[stableKey];
+            delete next[canonicalStableKey];
+            if (pointerKey) delete next[pointerKey];
           }
           return { hiddenItems: next };
         });
@@ -2589,7 +2741,7 @@ export const useWorkflowStore = create<WorkflowState>()(
         stableKey,
         title,
       ) => {
-        const { workflow, pointerByStableKey } = get();
+        const { workflow, embedWorkflow, pointerByStableKey } = get();
         if (!workflow) return;
         const identity = resolveNodeIdentityFromStableKey(
           workflow,
@@ -2599,6 +2751,7 @@ export const useWorkflowStore = create<WorkflowState>()(
         if (!identity) return;
         const nodeId = identity.nodeId;
         const normalized = title?.trim() ?? "";
+        let changedNode: WorkflowNode | null = null;
         const nextNodes = workflow.nodes.map((node) => {
           if (node.id !== nodeId) return node;
           const nextProps = { ...(node.properties ?? {}) } as Record<
@@ -2616,13 +2769,21 @@ export const useWorkflowStore = create<WorkflowState>()(
             delete nextNode.title;
             delete nextProps.title;
           }
-          return nextNode;
+          changedNode = nextNode;
+          return nextNode as WorkflowNode;
         });
-        set({ workflow: { ...workflow, nodes: nextNodes } });
+        const nextWorkflow = { ...workflow, nodes: nextNodes };
+        set({
+          workflow: nextWorkflow,
+          embedWorkflow: syncEmbedWorkflowFromExpandedNodes(
+            embedWorkflow,
+            changedNode ? [changedNode] : [],
+          ),
+        });
       };
 
       const toggleBypass: WorkflowState["toggleBypass"] = (stableKey) => {
-        const { workflow, pointerByStableKey } = get();
+        const { workflow, embedWorkflow, pointerByStableKey } = get();
         if (!workflow) return;
         const identity = resolveNodeIdentityFromStableKey(
           workflow,
@@ -2631,17 +2792,25 @@ export const useWorkflowStore = create<WorkflowState>()(
         );
         if (!identity) return;
         const nodeId = identity.nodeId;
-
+        let changedNode: WorkflowNode | null = null;
         const newNodes = workflow.nodes.map((node) => {
           if (node.id === nodeId) {
             const currentMode = node.mode || 0;
             const newMode = currentMode === 4 ? 0 : 4;
-            return { ...node, mode: newMode };
+            const nextNode = { ...node, mode: newMode };
+            changedNode = nextNode;
+            return nextNode;
           }
           return node;
         });
 
-        set({ workflow: { ...workflow, nodes: newNodes } });
+        set({
+          workflow: { ...workflow, nodes: newNodes },
+          embedWorkflow: syncEmbedWorkflowFromExpandedNodes(
+            embedWorkflow,
+            changedNode ? [changedNode] : [],
+          ),
+        });
       };
 
       const scrollToNode: WorkflowState["scrollToNode"] = (
@@ -2892,7 +3061,13 @@ export const useWorkflowStore = create<WorkflowState>()(
         filename,
         options,
       ) => {
-        const { currentFilename, savedWorkflowStates, nodeTypes } = get();
+        const {
+          currentFilename,
+          savedWorkflowStates,
+          nodeTypes,
+          stableKeyByPointer,
+          pointerByStableKey,
+        } = get();
         const fresh = options?.fresh ?? false;
         const source = options?.source ?? { type: "other" as const };
         // Always reset workflow error/popover state when switching workflows.
@@ -2915,6 +3090,10 @@ export const useWorkflowStore = create<WorkflowState>()(
           last_link_id: expandedWorkflow.last_link_id ?? 0,
           version: expandedWorkflow.version ?? 0.4,
         };
+        const canonicalWorkflow = canonicalizeWorkflowStableKeys(
+          normalizedWorkflow,
+          stableKeyByPointer,
+        );
         const workflowKey = buildWorkflowCacheKey(
           normalizedWorkflow,
           nodeTypes,
@@ -2928,7 +3107,7 @@ export const useWorkflowStore = create<WorkflowState>()(
         }
         pinnedStore.restorePinnedWidgetForWorkflow(
           workflowKey,
-          normalizedWorkflow,
+          canonicalWorkflow,
         );
 
         // Save current workflow state before switching
@@ -2946,15 +3125,15 @@ export const useWorkflowStore = create<WorkflowState>()(
         // Initialize seed modes from workflow
         const seedModes: Record<number, SeedMode> = {};
         if (nodeTypes) {
-          for (const node of normalizedWorkflow.nodes) {
+          for (const node of canonicalWorkflow.nodes) {
             const seedWidgetIndex = findSeedWidgetIndex(
-              normalizedWorkflow,
+              canonicalWorkflow,
               nodeTypes,
               node,
             );
             if (seedWidgetIndex !== null) {
               seedModes[node.id] = inferSeedMode(
-                normalizedWorkflow,
+                canonicalWorkflow,
                 nodeTypes,
                 node,
               );
@@ -2979,30 +3158,13 @@ export const useWorkflowStore = create<WorkflowState>()(
           });
         }
 
-        let finalWorkflow = normalizedWorkflow;
+        let finalWorkflow = canonicalWorkflow;
 
         if (savedState) {
-          // Restore saved UI state
-          const restoredNodes = normalizedWorkflow.nodes.map((node) => {
-            const savedNodeState = savedState.nodes[node.id];
-            if (!savedNodeState) return node;
-
-            return {
-              ...node,
-              mode: savedNodeState.mode ?? node.mode,
-              flags: savedNodeState.flags ?? node.flags,
-              widgets_values:
-                savedNodeState.widgets_values ?? node.widgets_values,
-            };
-          });
-
-          const restoredWorkflow = {
-            ...normalizedWorkflow,
-            nodes: restoredNodes,
-          };
+          // Loaded workflow prompt/widget values are authoritative; only restore view/UI state from cache.
           const normalizedResult = nodeTypes
-            ? normalizeWorkflowComboValues(restoredWorkflow, nodeTypes)
-            : { workflow: restoredWorkflow, changed: false };
+            ? normalizeWorkflowComboValues(canonicalWorkflow, nodeTypes)
+            : { workflow: canonicalWorkflow, changed: false };
           finalWorkflow = normalizedResult.workflow;
           const normalizedHiddenNodes = normalizeManuallyHiddenNodeKeys(
             finalWorkflow,
@@ -3020,8 +3182,8 @@ export const useWorkflowStore = create<WorkflowState>()(
           );
           const reconciled = reconcileStableRegistry(
             restoredLayout,
-            get().stableKeyByPointer,
-            get().pointerByStableKey,
+            stableKeyByPointer,
+            pointerByStableKey,
           );
           const normalizedHiddenNodesStable = stableRecordFromLayoutRecord(
             normalizedHiddenNodes,
@@ -3092,9 +3254,8 @@ export const useWorkflowStore = create<WorkflowState>()(
             followQueue: false,
             workflowLoadedAt: Date.now(),
           });
-          useSeedStore
-            .getState()
-            .setSeedModes({ ...seedModes, ...savedState.seedModes });
+          // Intentional: always derive seed modes from the loaded workflow.
+          useSeedStore.getState().setSeedModes(seedModes);
           useSeedStore.getState().setSeedLastValues({});
           useNavigationStore.getState().setCurrentPanel("workflow");
           useImageViewerStore.getState().setViewerState({
@@ -3109,17 +3270,17 @@ export const useWorkflowStore = create<WorkflowState>()(
           const shouldCarryFoldState =
             currentState.currentWorkflowKey === workflowKey;
           const normalizedHiddenNodes = normalizeManuallyHiddenNodeKeys(
-            normalizedWorkflow,
+            canonicalWorkflow,
             get().hiddenItems,
           );
           const nextLayout = buildLayoutForWorkflow(
-            normalizedWorkflow,
+            canonicalWorkflow,
             normalizedHiddenNodes,
           );
           const reconciled = reconcileStableRegistry(
             nextLayout,
-            get().stableKeyByPointer,
-            get().pointerByStableKey,
+            stableKeyByPointer,
+            pointerByStableKey,
           );
           const normalizedHiddenNodesStable = stableRecordFromLayoutRecord(
             normalizedHiddenNodes,
@@ -3135,8 +3296,8 @@ export const useWorkflowStore = create<WorkflowState>()(
             : {};
           useWorkflowErrorsStore.getState().setError(null);
           const normalizedResult = nodeTypes
-            ? normalizeWorkflowComboValues(normalizedWorkflow, nodeTypes)
-            : { workflow: normalizedWorkflow, changed: false };
+            ? normalizeWorkflowComboValues(canonicalWorkflow, nodeTypes)
+            : { workflow: canonicalWorkflow, changed: false };
           finalWorkflow = normalizedResult.workflow;
           const normalizedWorkflowWithStableKeys =
             annotateWorkflowWithStableKeys(
@@ -3173,6 +3334,7 @@ export const useWorkflowStore = create<WorkflowState>()(
             followQueue: false,
             workflowLoadedAt: Date.now(),
           });
+          // Intentional: always derive seed modes from the loaded workflow.
           useSeedStore.getState().setSeedModes(seedModes);
           useSeedStore.getState().setSeedLastValues({});
           useNavigationStore.getState().setCurrentPanel("workflow");
@@ -3431,9 +3593,17 @@ export const useWorkflowStore = create<WorkflowState>()(
         collapsed,
       ) => {
         set((state) => {
+          const canonicalStableKey =
+            state.stableKeyByPointer[stableKey] ?? stableKey;
+          const pointerKey = state.pointerByStableKey[canonicalStableKey];
           const nextCollapsed = { ...state.collapsedItems };
-          if (collapsed) nextCollapsed[stableKey] = true;
-          else delete nextCollapsed[stableKey];
+          if (collapsed) {
+            nextCollapsed[canonicalStableKey] = true;
+          } else {
+            delete nextCollapsed[stableKey];
+            delete nextCollapsed[canonicalStableKey];
+            if (pointerKey) delete nextCollapsed[pointerKey];
+          }
           return { collapsedItems: nextCollapsed };
         });
       };
@@ -3442,7 +3612,7 @@ export const useWorkflowStore = create<WorkflowState>()(
         stableKey,
         bypass,
       ) => {
-        const { workflow, pointerByStableKey } = get();
+        const { workflow, embedWorkflow, pointerByStableKey } = get();
         if (!workflow) return;
         const resolved = resolveContainerIdentityFromStableKey(
           workflow,
@@ -3458,10 +3628,23 @@ export const useWorkflowStore = create<WorkflowState>()(
           );
           if (targetNodeIds.size === 0) return;
           const mode = bypass ? 4 : 0;
+          const changedNodes: WorkflowNode[] = [];
           const newNodes = (workflow.nodes ?? []).map((node) =>
-            targetNodeIds.has(node.id) ? { ...node, mode } : node,
+            targetNodeIds.has(node.id)
+              ? (() => {
+                  const nextNode = { ...node, mode };
+                  changedNodes.push(nextNode);
+                  return nextNode;
+                })()
+              : node
           );
-          set({ workflow: { ...workflow, nodes: newNodes } });
+          set({
+            workflow: { ...workflow, nodes: newNodes },
+            embedWorkflow: syncEmbedWorkflowFromExpandedNodes(
+              embedWorkflow,
+              changedNodes,
+            ),
+          });
           return;
         }
         if (resolved.type !== "subgraph") return;
@@ -3471,17 +3654,35 @@ export const useWorkflowStore = create<WorkflowState>()(
         );
         if (targetNodeIds.size === 0) return;
         const mode = bypass ? 4 : 0;
+        const changedNodes: WorkflowNode[] = [];
         const newNodes = (workflow.nodes ?? []).map((node) =>
-          targetNodeIds.has(node.id) ? { ...node, mode } : node,
+          targetNodeIds.has(node.id)
+            ? (() => {
+                const nextNode = { ...node, mode };
+                changedNodes.push(nextNode);
+                return nextNode;
+              })()
+            : node
         );
-        set({ workflow: { ...workflow, nodes: newNodes } });
+        set({
+          workflow: { ...workflow, nodes: newNodes },
+          embedWorkflow: syncEmbedWorkflowFromExpandedNodes(
+            embedWorkflow,
+            changedNodes,
+          ),
+        });
       };
 
       const deleteContainer: WorkflowState["deleteContainer"] = (
         stableKey,
         options,
       ) => {
-        const { workflow, stableKeyByPointer, pointerByStableKey } = get();
+        const {
+          workflow,
+          embedWorkflow,
+          stableKeyByPointer,
+          pointerByStableKey,
+        } = get();
         if (!workflow) return;
         const resolved = resolveContainerIdentityFromStableKey(
           workflow,
@@ -3625,6 +3826,10 @@ export const useWorkflowStore = create<WorkflowState>()(
 
           set({
             workflow: nextWorkflowWithStableKeys,
+            embedWorkflow:
+              embedWorkflow
+                ? normalizeWorkflowForEmbed(nextWorkflowWithStableKeys)
+                : embedWorkflow,
             hiddenItems: nextHiddenItems,
             connectionHighlightModes: nextHighlightModes,
             mobileLayout: nextMobileLayout,
@@ -3743,6 +3948,10 @@ export const useWorkflowStore = create<WorkflowState>()(
 
           set({
             workflow: nextWorkflowWithStableKeys,
+            embedWorkflow:
+              embedWorkflow
+                ? normalizeWorkflowForEmbed(nextWorkflowWithStableKeys)
+                : embedWorkflow,
             hiddenItems: nextHiddenSubgraphs,
             connectionHighlightModes: nextHighlightModes,
             mobileLayout: nextLayout,
@@ -3886,6 +4095,10 @@ export const useWorkflowStore = create<WorkflowState>()(
         );
         set(() => ({
           workflow: nextWorkflowWithStableKeys,
+          embedWorkflow:
+            embedWorkflow
+              ? normalizeWorkflowForEmbed(nextWorkflowWithStableKeys)
+              : embedWorkflow,
           mobileLayout: nextLayout,
           stableKeyByPointer: reconciled.layoutToStable,
           pointerByStableKey: reconciled.stableToLayout,
@@ -3920,21 +4133,27 @@ export const useWorkflowStore = create<WorkflowState>()(
               return { ...subgraph, groups: nextGroups };
             });
             useWorkflowErrorsStore.getState().setError(null);
-            set({
-              workflow: {
-                ...workflow,
-                definitions: {
-                  ...(workflow.definitions ?? {}),
-                  subgraphs: nextSubgraphs,
-                },
+            const nextWorkflow = {
+              ...workflow,
+              definitions: {
+                ...(workflow.definitions ?? {}),
+                subgraphs: nextSubgraphs,
               },
+            };
+            set({
+              workflow: nextWorkflow,
+              embedWorkflow: normalizeWorkflowForEmbed(nextWorkflow),
             });
             return;
           }
           const nextGroups = (workflow.groups ?? []).map((group) =>
             group.id === groupId ? { ...group, title: nextTitle } : group,
           );
-          set({ workflow: { ...workflow, groups: nextGroups } });
+          const nextWorkflow = { ...workflow, groups: nextGroups };
+          set({
+            workflow: nextWorkflow,
+            embedWorkflow: normalizeWorkflowForEmbed(nextWorkflow),
+          });
           return;
         }
         if (resolved.type === "subgraph") {
@@ -3945,14 +4164,16 @@ export const useWorkflowStore = create<WorkflowState>()(
               ? { ...subgraph, name: nextTitle }
               : subgraph,
           );
-          set({
-            workflow: {
-              ...workflow,
-              definitions: {
-                ...(workflow.definitions ?? {}),
-                subgraphs: nextSubgraphs,
-              },
+          const nextWorkflow = {
+            ...workflow,
+            definitions: {
+              ...(workflow.definitions ?? {}),
+              subgraphs: nextSubgraphs,
             },
+          };
+          set({
+            workflow: nextWorkflow,
+            embedWorkflow: normalizeWorkflowForEmbed(nextWorkflow),
           });
         }
       };
@@ -4108,6 +4329,9 @@ export const useWorkflowStore = create<WorkflowState>()(
               );
             return {
               workflow: restoredWorkflowWithStableKeys,
+              embedWorkflow: normalizeWorkflowForEmbed(
+                restoredWorkflowWithStableKeys,
+              ),
               mobileLayout: nextLayout,
               stableKeyByPointer: reconciled.layoutToStable,
               pointerByStableKey: reconciled.stableToLayout,
@@ -4118,10 +4342,80 @@ export const useWorkflowStore = create<WorkflowState>()(
         });
       };
 
+      const ensureStableKeysAndRepair: WorkflowState["ensureStableKeysAndRepair"] =
+        () => {
+          const {
+            workflow,
+            originalWorkflow,
+            stableKeyByPointer,
+            pointerByStableKey,
+            mobileLayout,
+            hiddenItems,
+            collapsedItems,
+            embedWorkflow,
+          } = get();
+          if (!workflow) return false;
+          if (!hasMissingStableKeys(workflow) && !hasLayoutGroupKeyMismatch(workflow, mobileLayout)) return false;
+
+          const workflowWithKeys = canonicalizeWorkflowStableKeys(
+            workflow,
+            stableKeyByPointer,
+          );
+          const nextLayout = buildLayoutForWorkflow(
+            workflowWithKeys,
+            layoutRecordFromStableRecord(hiddenItems, pointerByStableKey),
+          );
+          const reconciled = reconcileStableRegistry(
+            nextLayout,
+            stableKeyByPointer,
+            pointerByStableKey,
+          );
+          const nextWorkflow = annotateWorkflowWithStableKeys(
+            workflowWithKeys,
+            reconciled.layoutToStable,
+          );
+          const nextOriginalWorkflow = originalWorkflow
+            ? annotateWorkflowWithStableKeys(
+                originalWorkflow,
+                reconciled.layoutToStable,
+              )
+            : originalWorkflow;
+          const nextHiddenItems = normalizeStableBooleanRecord(
+            hiddenItems,
+            reconciled.layoutToStable,
+            reconciled.stableToLayout,
+          );
+          const nextCollapsedItems = normalizeStableCollapsedRecord(
+            collapsedItems,
+            reconciled.layoutToStable,
+            reconciled.stableToLayout,
+          );
+
+          // If, for any reason, a second pass still reports missing keys or layout mismatch, do not reload-loop.
+          if (hasMissingStableKeys(nextWorkflow)) return false;
+          if (hasLayoutGroupKeyMismatch(nextWorkflow, nextLayout)) return false;
+
+          set({
+            workflow: nextWorkflow,
+            originalWorkflow: nextOriginalWorkflow,
+            embedWorkflow:
+              embedWorkflow
+                ? normalizeWorkflowForEmbed(nextWorkflow)
+                : embedWorkflow,
+            mobileLayout:
+              mobileLayout === nextLayout ? mobileLayout : nextLayout,
+            stableKeyByPointer: reconciled.layoutToStable,
+            pointerByStableKey: reconciled.stableToLayout,
+            hiddenItems: nextHiddenItems,
+            collapsedItems: nextCollapsedItems,
+          });
+          return true;
+        };
+
       // updates PrimitiveNode widget values after a generation completes, based on that node's control_after_generate mode
       const applyControlAfterGenerate: WorkflowState["applyControlAfterGenerate"] =
         () => {
-          const { workflow } = get();
+          const { workflow, embedWorkflow } = get();
           if (!workflow) return;
 
           let hasChanges = false;
@@ -4183,7 +4477,14 @@ export const useWorkflowStore = create<WorkflowState>()(
           });
 
           if (hasChanges) {
-            set({ workflow: { ...workflow, nodes: newNodes } });
+            const changedNodes = newNodes.filter((node, index) => node !== workflow.nodes[index]);
+            set({
+              workflow: { ...workflow, nodes: newNodes },
+              embedWorkflow: syncEmbedWorkflowFromExpandedNodes(
+                embedWorkflow,
+                changedNodes,
+              ),
+            });
           }
         };
 
@@ -4504,6 +4805,7 @@ export const useWorkflowStore = create<WorkflowState>()(
         unloadWorkflow,
         setSavedWorkflow,
         clearWorkflowCache,
+        ensureStableKeysAndRepair,
         updateWorkflowDuration,
         saveCurrentWorkflowState,
       };
@@ -4537,30 +4839,38 @@ export const useWorkflowStore = create<WorkflowState>()(
       onRehydrateStorage: () => (state) => {
         if (!state) return;
         if (state.workflow) {
+          const normalizedWorkflow = canonicalizeWorkflowStableKeys(
+            state.workflow,
+            state.stableKeyByPointer ?? {},
+          );
           const normalizedLayout = state.mobileLayout
             ? normalizeMobileLayoutGroupKeys(state.mobileLayout)
             : null;
           const hiddenNodesLayout = normalizeManuallyHiddenNodeKeys(
-            state.workflow,
+            normalizedWorkflow,
             state.hiddenItems ?? {},
           );
           state.mobileLayout =
             normalizedLayout &&
-            layoutMatchesWorkflowNodes(normalizedLayout, state.workflow)
+            layoutMatchesWorkflowNodes(normalizedLayout, normalizedWorkflow)
               ? normalizedLayout
-              : buildLayoutForWorkflow(state.workflow, hiddenNodesLayout);
+              : buildLayoutForWorkflow(normalizedWorkflow, hiddenNodesLayout);
           const reconciled = reconcileStableRegistry(
             state.mobileLayout,
             state.stableKeyByPointer ?? {},
             state.pointerByStableKey ?? {},
           );
           state.workflow = annotateWorkflowWithStableKeys(
-            state.workflow,
+            normalizedWorkflow,
             reconciled.layoutToStable,
           );
           if (state.originalWorkflow) {
-            state.originalWorkflow = annotateWorkflowWithStableKeys(
+            const normalizedOriginalWorkflow = canonicalizeWorkflowStableKeys(
               state.originalWorkflow,
+              state.stableKeyByPointer ?? {},
+            );
+            state.originalWorkflow = annotateWorkflowWithStableKeys(
+              normalizedOriginalWorkflow,
               reconciled.layoutToStable,
             );
           }
@@ -4576,16 +4886,38 @@ export const useWorkflowStore = create<WorkflowState>()(
             reconciled.layoutToStable,
             reconciled.stableToLayout,
           );
-          state.hiddenItems = normalizeStableBooleanRecord(
-            state.hiddenItems,
-            reconciled.layoutToStable,
-            reconciled.stableToLayout,
-          );
-          state.hiddenItems = normalizeStableBooleanRecord(
-            state.hiddenItems,
-            reconciled.layoutToStable,
-            reconciled.stableToLayout,
-          );
+          const activeWorkflowKey = state.currentWorkflowKey;
+          if (
+            activeWorkflowKey &&
+            state.savedWorkflowStates &&
+            state.savedWorkflowStates[activeWorkflowKey]
+          ) {
+            const savedState = state.savedWorkflowStates[activeWorkflowKey];
+            const nextCollapsed = normalizeStableCollapsedRecord(
+              savedState.collapsedItems,
+              reconciled.layoutToStable,
+              reconciled.stableToLayout,
+            );
+            const nextHidden = normalizeStableBooleanRecord(
+              savedState.hiddenItems,
+              reconciled.layoutToStable,
+              reconciled.stableToLayout,
+            );
+            const nextBookmarks = normalizeStableBookmarkList(
+              savedState.bookmarkedItems,
+              reconciled.layoutToStable,
+              reconciled.stableToLayout,
+            );
+            state.savedWorkflowStates = {
+              ...state.savedWorkflowStates,
+              [activeWorkflowKey]: {
+                ...savedState,
+                collapsedItems: nextCollapsed,
+                hiddenItems: nextHidden,
+                bookmarkedItems: nextBookmarks,
+              },
+            };
+          }
         } else {
           state.mobileLayout = createEmptyMobileLayout();
           state.stableKeyByPointer = {};

@@ -173,7 +173,7 @@ export function GraphContainerHeader({
         buttonSize={8}
         iconSize={5}
         icon={isBookmarked ? (
-          <BookmarkIconSvg className="w-5 h-5 text-blue-500" />
+          <BookmarkIconSvg className="w-5 h-5 text-yellow-500" />
         ) : containerType === "subgraph" ? (
           <WorkflowIcon className="w-5 h-5 -scale-x-100 text-blue-500" />
         ) : (
@@ -247,7 +247,7 @@ export function GraphContainerHeader({
                   key: 'toggle-bookmark',
                   label: isBookmarked ? "Remove bookmark" : "Bookmark container",
                   icon: isBookmarked
-                    ? <BookmarkIconSvg className="w-4 h-4 text-blue-500" />
+                    ? <BookmarkIconSvg className="w-4 h-4 text-yellow-500" />
                     : <BookmarkOutlineIcon className="w-4 h-4" />,
                   onClick: (event) => {
                     event.stopPropagation();

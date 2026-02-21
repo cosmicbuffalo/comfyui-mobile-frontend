@@ -11,7 +11,11 @@ from importlib import import_module as _import_module
 import sys as _sys
 _sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 _file_utils = _import_module('file_utils')
+_mobile_metadata = _import_module('mobile_metadata')
 list_files = _file_utils.list_files
+resolve_metadata_path = _mobile_metadata.resolve_metadata_path
+extract_workflow_from_metadata = _mobile_metadata.extract_workflow_from_metadata
+MetadataPathError = _mobile_metadata.MetadataPathError
 
 # Define the path to the built frontend files
 EXTENSION_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -114,85 +118,48 @@ def setup_mobile_route():
     async def api_file_metadata(request):
         try:
             filepath = request.query.get('path', '')
-            if not filepath:
-                return web.json_response({"error": "No path provided"}, status=400)
-
             source = request.query.get('source', 'output')
-            base_dir = folder_paths.get_input_directory() if source == 'input' else folder_paths.get_output_directory()
-            target_path = os.path.abspath(os.path.join(base_dir, filepath))
-
-            if not target_path.startswith(os.path.abspath(base_dir)):
-                return web.json_response({"error": "Access denied"}, status=403)
-
-            if not os.path.exists(target_path):
-                return web.json_response({"error": "File not found"}, status=404)
-
-            if os.path.isdir(target_path):
-                return web.json_response({"error": "Folder metadata not supported"}, status=400)
-
-            ext = os.path.splitext(target_path)[1].lower()
-            image_extensions = ['.png', '.jpg', '.jpeg', '.webp', '.gif']
-            video_extensions = ['.mp4', '.mov', '.webm', '.mkv']
-
-            metadata_path = target_path
-            if ext in video_extensions:
-                base_name = os.path.splitext(os.path.basename(target_path))[0]
-                folder_path = os.path.dirname(target_path)
-                matching_image = None
-                for img_ext in image_extensions:
-                    candidate = os.path.join(folder_path, base_name + img_ext)
-                    if os.path.exists(candidate):
-                        matching_image = candidate
-                        break
-                if not matching_image:
-                    return web.json_response({"error": "No image metadata found for video"}, status=404)
-                metadata_path = matching_image
-            elif ext not in image_extensions:
-                return web.json_response({"error": "Unsupported file type"}, status=400)
+            metadata_path = resolve_metadata_path(
+                filepath,
+                source,
+                folder_paths.get_input_directory(),
+                folder_paths.get_output_directory(),
+            )
 
             img = Image.open(metadata_path)
             metadata = dict(img.info)
             if hasattr(img, 'text') and isinstance(img.text, dict):
                 metadata.update(img.text)
-            workflow = None
-
-            workflow_str = metadata.get('workflow') or metadata.get('Workflow')
-            if isinstance(workflow_str, bytes):
-                workflow_str = workflow_str.decode('utf-8', errors='ignore')
-            if workflow_str:
-                try:
-                    workflow = json.loads(workflow_str) if isinstance(workflow_str, str) else workflow_str
-                except Exception:
-                    workflow = None
-
-            if not workflow:
-                prompt_str = metadata.get('prompt') or metadata.get('Prompt')
-                if isinstance(prompt_str, bytes):
-                    prompt_str = prompt_str.decode('utf-8', errors='ignore')
-                if not prompt_str:
-                    return web.json_response({"error": "No prompt metadata found"}, status=404)
-
-                try:
-                    prompt_data = json.loads(prompt_str)
-                except Exception:
-                    return web.json_response({"error": "Invalid prompt metadata"}, status=400)
-
-                extra_pnginfo = prompt_data.get('extra_pnginfo', {})
-                if isinstance(extra_pnginfo, str):
-                    try:
-                        extra_pnginfo = json.loads(extra_pnginfo)
-                    except Exception:
-                        extra_pnginfo = {}
-                workflow = (
-                    extra_pnginfo.get('workflow')
-                    or prompt_data.get('workflow')
-                    or prompt_data.get('workflow_v2')
-                )
+            workflow = extract_workflow_from_metadata(metadata)
 
             if not workflow:
                 return web.json_response({"error": "No workflow metadata found"}, status=404)
 
             return web.json_response({"workflow": workflow})
+        except MetadataPathError as e:
+            return web.json_response({"error": str(e)}, status=e.status_code)
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=500)
+
+    async def api_workflow_availability(request):
+        try:
+            filepath = request.query.get('path', '')
+            source = request.query.get('source', 'output')
+            metadata_path = resolve_metadata_path(
+                filepath,
+                source,
+                folder_paths.get_input_directory(),
+                folder_paths.get_output_directory(),
+            )
+
+            img = Image.open(metadata_path)
+            metadata = dict(img.info)
+            if hasattr(img, 'text') and isinstance(img.text, dict):
+                metadata.update(img.text)
+            workflow = extract_workflow_from_metadata(metadata)
+            return web.json_response({"available": bool(workflow)})
+        except MetadataPathError as e:
+            return web.json_response({"error": str(e)}, status=e.status_code)
         except Exception as e:
             return web.json_response({"error": str(e)}, status=500)
 
@@ -421,6 +388,7 @@ def setup_mobile_route():
     mobile_app.router.add_delete('/api/files', api_delete_file)
     mobile_app.router.add_get('/api/thumbnail', api_get_thumbnail)
     mobile_app.router.add_get('/api/file-metadata', api_file_metadata)
+    mobile_app.router.add_get('/api/workflow-availability', api_workflow_availability)
     mobile_app.router.add_get('/api/image-metadata', api_image_metadata)
     mobile_app.router.add_post('/api/files/move', api_move_files)
     mobile_app.router.add_post('/api/files/mkdir', api_mkdir)

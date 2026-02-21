@@ -32,6 +32,7 @@ import {
 } from '@/utils/triggerWordToggle';
 import { themeColors } from '@/theme/colors';
 import { cssColorToHex, hexToHsl, normalizeColorTokens, normalizeHexColor } from '@/utils/colorUtils';
+import { requireStableKey } from '@/utils/stableKeys';
 
 interface WidgetDescriptor {
   widgetIndex: number;
@@ -84,7 +85,7 @@ export function NodeCardParameters({
   const bypassAllInContainer = useWorkflowStore((state) => state.bypassAllInContainer);
   const storedSeedMode = useSeedStore((state) => state.seedModes[node.id]);
   const lastSeedValue = useSeedStore((state) => state.seedLastValues[node.id] ?? null);
-  const isFastGroupsBypasser = node.type === 'Fast Groups Bypasser (rgthree)';
+  const isFastGroupsBypasser = /fast\s+groups/i.test(node.type) && /\(rgthree\)/i.test(node.type);
   const isLoraManagerNode = isLoraManagerNodeType(node.type);
   const isTriggerWordToggleNode = isTriggerWordToggleNodeType(node.type);
   const seedWidgetIndex = !isKSampler && workflowExists && nodeTypesExists
@@ -105,12 +106,27 @@ export function NodeCardParameters({
     if (!isFastGroupsBypasser || !workflow) return [];
 
     const props = (node.properties ?? {}) as Record<string, unknown>;
-    const matchColors = typeof props.matchColors === 'string' ? props.matchColors : '';
-    const matchTitle = typeof props.matchTitle === 'string' ? props.matchTitle : '';
-    const showAllGraphs = props.showAllGraphs !== false;
-    const sortMode = typeof props.sort === 'string' ? props.sort : 'position';
-    const customSortAlphabet =
-      typeof props.customSortAlphabet === 'string' ? props.customSortAlphabet : '';
+    const readString = (...keys: string[]) => {
+      for (const key of keys) {
+        const value = props[key];
+        if (typeof value === 'string') return value;
+      }
+      return '';
+    };
+    const readBoolean = (fallback: boolean, ...keys: string[]) => {
+      for (const key of keys) {
+        const value = props[key];
+        if (typeof value === 'boolean') return value;
+      }
+      return fallback;
+    };
+    // Support both camelCase and snake_case keys because serialized custom-node properties
+    // can vary across extension/backend versions and previously saved workflows.
+    const matchColors = readString('matchColors', 'match_colors');
+    const matchTitle = readString('matchTitle', 'match_title');
+    const showAllGraphs = readBoolean(true, 'showAllGraphs', 'show_all_graphs');
+    const sortMode = readString('sort', 'sort_mode') || 'position';
+    const customSortAlphabet = readString('customSortAlphabet', 'custom_sort_alphabet');
 
     const comfyGroupColors: Record<string, string> =
       themeColors.workflow.fastGroupBypassColors;
@@ -188,8 +204,10 @@ export function NodeCardParameters({
 
     const pushGroup = (group: WorkflowGroup, subgraphId: string | null) => {
       if (!shouldIncludeGroup(group)) return;
-      const stableKey = group.stableKey ?? null;
-      if (!stableKey) return;
+      const stableKey = requireStableKey(
+        group.stableKey,
+        `group ${group.id}${subgraphId ? ` in subgraph ${subgraphId}` : ' in root graph'}`
+      );
       const targetNodeIds = collectBypassGroupTargetNodeIds(workflow, group.id, subgraphId);
       let isEngaged = false;
       for (const nodeId of targetNodeIds) {

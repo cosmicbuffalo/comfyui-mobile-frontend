@@ -13,3 +13,7 @@ if (typeof globalThis.localStorage === 'undefined' || typeof globalThis.localSto
     key: (index: number) => [...store.keys()][index] ?? null
   } as Storage;
 }
+
+// React 19 act() environment hint for non-testing-library render tests.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;

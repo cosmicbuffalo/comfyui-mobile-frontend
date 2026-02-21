@@ -1,5 +1,23 @@
 # Changelog
 
+## 2.2.1 - 2026-02-20
+
+### Added
+
+- Load workflow from videos in the media viewer — the viewer checks for an associated image sidecar to extract embedded workflow metadata, and shows the Load Workflow button when one is found
+- New backend endpoint `GET /mobile/api/workflow-availability` to check whether a file has an associated workflow without fetching full metadata
+
+### Changed
+
+- Loading a workflow from the image/outputs viewer now first resolves against in-memory run history before falling back to a network fetch
+- Extracted shared path resolution and workflow extraction logic into helper functions in the backend, reused across file-metadata and workflow-availability endpoints
+
+### Fixed
+
+- Missing stable keys on nodes, groups, and subgraphs are now repaired on every workflow load, preventing crashes when loading externally-generated or older workflows
+- Hidden items, collapsed state, and bookmarks had various small but annoying bugs related to failed stable key mappings, causing bookmarks to disappear or groups to get stuck folded
+- Embed workflow sync now propagates the full node state (mode, flags, properties, title, color, bgcolor) back to the embed workflow, not just widget values
+
 ## 2.2.0 - 2026-02-17
 
 ### Added

@@ -7,6 +7,7 @@ import { loadTemplateWorkflow, loadUserWorkflow } from '@/api/client';
 import { CaretDownIcon, CaretRightIcon, EyeIcon, EyeOffIcon, ArrowRightIcon, ReloadIcon, SearchIcon, TrashIcon, PlusIcon, WorkflowIcon } from '@/components/icons';
 import { ContextMenuButton } from '@/components/buttons/ContextMenuButton';
 import { ContextMenuBuilder } from '@/components/menus/ContextMenuBuilder';
+import { requireStableKey } from '@/utils/stableKeys';
 
 interface WorkflowTopBarMenuProps {
   open: boolean;
@@ -59,8 +60,7 @@ export function WorkflowTopBarMenu({
   const hasWorkflow = Boolean(workflow);
   const allWorkflowNodeStableKeys = useMemo(() => (
     workflow?.nodes
-      .map((node) => node.stableKey ?? null)
-      .filter((key): key is string => key != null) ?? []
+      .map((node) => requireStableKey(node.stableKey, `node ${node.id}`)) ?? []
   ), [workflow]);
   const allGroupTargets = useMemo(() => {
     const groups = [
@@ -68,11 +68,10 @@ export function WorkflowTopBarMenu({
       ...((workflow?.definitions?.subgraphs ?? []).flatMap((subgraph) => subgraph.groups ?? [])),
     ];
     return groups
-      .map((group) => group.stableKey ?? null)
-      .filter((stableKey): stableKey is string => stableKey != null);
+      .map((group) => requireStableKey(group.stableKey, `group ${group.id}`));
   }, [workflow]);
   const allSubgraphStableKeys = useMemo(() => (
-    (workflow?.definitions?.subgraphs?.map((subgraph) => subgraph.stableKey ?? null) ?? []).filter((key): key is string => key != null)
+    (workflow?.definitions?.subgraphs?.map((subgraph) => requireStableKey(subgraph.stableKey, `subgraph ${subgraph.id}`)) ?? [])
   ), [workflow]);
 
   const bypassedNodes = useMemo(() => (
@@ -97,8 +96,8 @@ export function WorkflowTopBarMenu({
     () =>
       bypassedNodes.filter((node) =>
         (() => {
-          const stableKey = node.stableKey;
-          return stableKey ? hiddenItems[stableKey] : false;
+          const stableKey = requireStableKey(node.stableKey, `node ${node.id}`);
+          return hiddenItems[stableKey];
         })()
       ).length,
     [bypassedNodes, hiddenItems]
@@ -107,8 +106,8 @@ export function WorkflowTopBarMenu({
     () =>
       staticNodes.filter((node) =>
         (() => {
-          const stableKey = node.stableKey;
-          return stableKey ? hiddenItems[stableKey] : false;
+          const stableKey = requireStableKey(node.stableKey, `node ${node.id}`);
+          return hiddenItems[stableKey];
         })()
       ).length,
     [staticNodes, hiddenItems]
@@ -119,8 +118,8 @@ export function WorkflowTopBarMenu({
     return workflow.nodes.filter(
       (node) =>
         (() => {
-          const stableKey = node.stableKey;
-          return stableKey ? !hiddenItems[stableKey] : true;
+          const stableKey = requireStableKey(node.stableKey, `node ${node.id}`);
+          return !hiddenItems[stableKey];
         })()
     );
   }, [workflow, hiddenItems]);
@@ -128,16 +127,16 @@ export function WorkflowTopBarMenu({
   const hasFoldedVisibleNode = useMemo(
     () =>
       visibleNodes.some((node) => {
-        const stableKey = node.stableKey ?? null;
-        return stableKey ? collapsedItems[stableKey] === true : false;
+        const stableKey = requireStableKey(node.stableKey, `node ${node.id}`);
+        return collapsedItems[stableKey] === true;
       }),
     [collapsedItems, visibleNodes]
   );
   const hasUnfoldedVisibleNode = useMemo(
     () =>
       visibleNodes.some((node) => {
-        const stableKey = node.stableKey ?? null;
-        return stableKey ? collapsedItems[stableKey] !== true : true;
+        const stableKey = requireStableKey(node.stableKey, `node ${node.id}`);
+        return collapsedItems[stableKey] !== true;
       }),
     [collapsedItems, visibleNodes]
   );
@@ -383,14 +382,12 @@ export function WorkflowTopBarMenu({
                     onClick: () => {
                       if (hiddenStaticCount < staticNodeCount) {
                         staticNodes.forEach((node) => {
-                          const stableKey = node.stableKey ?? null;
-                          if (!stableKey) return;
+                          const stableKey = requireStableKey(node.stableKey, `node ${node.id}`);
                           setItemHidden(stableKey, true);
                         });
                       } else {
                         staticNodes.forEach((node) => {
-                          const stableKey = node.stableKey ?? null;
-                          if (!stableKey) return;
+                          const stableKey = requireStableKey(node.stableKey, `node ${node.id}`);
                           setItemHidden(stableKey, false);
                         });
                       }
@@ -408,14 +405,12 @@ export function WorkflowTopBarMenu({
                     onClick: () => {
                       if (hiddenBypassedCount > 0) {
                         bypassedNodes.forEach((node) => {
-                          const stableKey = node.stableKey ?? null;
-                          if (!stableKey) return;
+                          const stableKey = requireStableKey(node.stableKey, `node ${node.id}`);
                           setItemHidden(stableKey, false);
                         });
                       } else {
                         bypassedNodes.forEach((node) => {
-                          const stableKey = node.stableKey ?? null;
-                          if (!stableKey) return;
+                          const stableKey = requireStableKey(node.stableKey, `node ${node.id}`);
                           setItemHidden(stableKey, true);
                         });
                       }

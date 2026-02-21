@@ -75,6 +75,7 @@ function App() {
       !outputsSelectionActionOpen
   });
   const setNodeTypes = useWorkflowStore((s) => s.setNodeTypes);
+  const ensureStableKeysAndRepair = useWorkflowStore((s) => s.ensureStableKeysAndRepair);
   const theme = useThemeStore((s) => s.theme);
   const workflowLoadedAt = useWorkflowStore((s) => s.workflowLoadedAt);
   const fetchQueue = useQueueStore((s) => s.fetchQueue);
@@ -163,6 +164,11 @@ function App() {
       setFollowQueue(false);
     });
   }, [workflowLoadedAt, setFollowQueue]);
+
+  useEffect(() => {
+    if (!workflowLoadedAt) return;
+    ensureStableKeysAndRepair();
+  }, [workflowLoadedAt, ensureStableKeysAndRepair]);
 
   return (
     <div id="app-root" className="min-h-screen bg-gray-100">

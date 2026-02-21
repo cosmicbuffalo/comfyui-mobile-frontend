@@ -8,6 +8,7 @@ This guide walks through every feature in the mobile frontend as of `v2.0.0`
   - [How do I load a workflow?](#how-do-i-load-a-workflow)
   - [How do I save my workflow?](#how-do-i-save-my-workflow)
   - [How do I use an output image in my current workflow?](#how-do-i-use-an-output-image-in-my-current-workflow)
+  - [How do I load the workflow of one of my output images?](#how-do-i-load-the-workflow-of-one-of-my-output-images)
   - [How do I run my workflow multiple times?](#how-do-i-run-my-workflow-multiple-times)
   - [How do I watch outputs as they are generated?](#how-do-i-watch-outputs-as-they-are-generated)
   - [How do I find a specific node in my workflow?](#how-do-i-find-a-specific-node-in-my-workflow)
@@ -82,6 +83,16 @@ Open the [Main Menu](#main-menu) and look under **Save Workflow**. Use **Save** 
 ### How do I use an output image in my current workflow?
 
 There are two ways. From the [Outputs Page](#outputs-page), tap the `...` on any image and select "Use in workflow" — or open any image in the [Image Viewer](#image-viewer) and tap the [Use in Workflow](#use-in-workflow) action button (the arrow pointing right). Either way, a modal will list all LoadImage nodes in your current workflow. Tap the node you want to load the image into, and the app will switch to the [Workflow Page](#workflow-page) and scroll to that node with the image already set.
+
+<a id="how-do-i-load-the-workflow-of-one-of-my-output-images"></a>
+### How do I load the workflow of one of my output images?
+
+Click on the image you would like to load the workflow for in your outputs list, then click the small button with the workflow icon overlaid on top of the image viewer. This will load the workflow embedded in the image into the workflow panel, you will be prompted to confirm if your current loaded workflow has changes, since any unsaved changes will be lost.
+
+> [!NOTE]
+> It is currently possible to load workflows for videos too, but only if one of the following applies:
+> - An image with the same basename as the video exists in the same folder as the video (workflow will be loaded from this image)
+> - The video was recently generated and still present in the queue panel's history
 
 <a id="how-do-i-run-my-workflow-multiple-times"></a>
 ### How do I run my workflow multiple times?

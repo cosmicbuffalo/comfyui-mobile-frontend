@@ -2,6 +2,7 @@ import { getFileWorkflow, type AssetSource, type FileItem } from '@/api/client';
 import type { NodeTypes, Workflow, WorkflowNode } from '@/api/types';
 import { getWidgetIndexForInput } from '@/hooks/useWorkflow';
 import type { WorkflowSource } from '@/hooks/useWorkflow';
+import type { ViewerImage } from '@/utils/viewerImages';
 
 export type LoadWorkflowFn = (
   workflow: Workflow,
@@ -23,6 +24,28 @@ export function resolveFilePath(file: FileItem, source?: AssetSource): string {
 
 export function buildWorkflowFilename(filePath: string): string {
   return `output-${filePath.replace(/[\\/]/g, '_')}.json`;
+}
+
+export function resolveViewerItemWorkflowLoad(
+  item: ViewerImage,
+  historyWorkflowByFileId?: ReadonlyMap<string, { workflow: Workflow; promptId: string }>,
+): { workflow: Workflow; filename: string; source: WorkflowSource } | null {
+  const historyMatch =
+    item.file && historyWorkflowByFileId
+      ? historyWorkflowByFileId.get(item.file.id)
+      : null;
+  const workflowToLoad = item.workflow ?? historyMatch?.workflow;
+  const promptId = item.promptId ?? historyMatch?.promptId;
+  if (!workflowToLoad) return null;
+  const source: WorkflowSource = promptId
+    ? { type: 'history', promptId }
+    : { type: 'other' };
+  const filename = promptId
+    ? `history-${promptId}.json`
+    : (item.file
+      ? buildWorkflowFilename(resolveFilePath(item.file, resolveFileSource(item.file)))
+      : 'workflow.json');
+  return { workflow: workflowToLoad, filename, source };
 }
 
 export async function loadWorkflowFromFile(params: {

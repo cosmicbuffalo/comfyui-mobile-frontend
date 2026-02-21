@@ -5,6 +5,7 @@ import { MetadataButton } from "@/components/buttons/MetadataButton";
 
 interface MediaViewerActionsProps {
   isVideo: boolean;
+  canLoadWorkflow: boolean;
   showMetadataToggle?: boolean;
   canToggleMetadata: boolean;
   onDelete: () => void;
@@ -15,6 +16,7 @@ interface MediaViewerActionsProps {
 
 export function MediaViewerActions({
   isVideo,
+  canLoadWorkflow,
   showMetadataToggle,
   canToggleMetadata,
   onDelete,
@@ -28,9 +30,10 @@ export function MediaViewerActions({
       style={{ bottom: "calc(var(--bottom-bar-offset, 0px) + 4px)" }}
     >
       <DeleteButton onClick={onDelete} />
-      {!isVideo && (
-        <div className="flex items-center gap-2">
-          <LoadWorkflowButton onClick={onLoadWorkflow} />
+      <div className="flex items-center gap-2">
+        {canLoadWorkflow && <LoadWorkflowButton onClick={onLoadWorkflow} />}
+        {!isVideo && (
+          <>
           <UseInWorkflowButton onClick={onUseInWorkflow} />
           {showMetadataToggle && (
             <MetadataButton
@@ -38,8 +41,9 @@ export function MediaViewerActions({
               disabled={!canToggleMetadata}
             />
           )}
-        </div>
-      )}
+          </>
+        )}
+      </div>
     </div>
   );
 }

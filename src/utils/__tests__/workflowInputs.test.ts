@@ -1,6 +1,5 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import {
-  buildQueuePromptInputs,
   buildWorkflowPromptInputs,
   getWidgetValue,
   getWorkflowWidgetIndexMap,
@@ -12,6 +11,10 @@ import {
   resolveSource,
 } from '../workflowInputs';
 import type { NodeTypes, Workflow, WorkflowNode } from '@/api/types';
+
+afterEach(() => {
+  vi.useRealTimers();
+});
 
 function makeNode(id: number, type: string, overrides?: Partial<WorkflowNode>): WorkflowNode {
   return {
@@ -471,7 +474,7 @@ describe('trigger word prompt serialization', () => {
       widgets_values: [true, true, false, list, 'foo'],
     });
     const workflow = makeTriggerWorkflow(node);
-    const inputs = buildQueuePromptInputs(
+    const inputs = buildWorkflowPromptInputs(
       workflow,
       nodeTypes,
       node,
@@ -490,7 +493,7 @@ describe('trigger word prompt serialization', () => {
       widgets_values: [true, [], false, list, 'mapped'],
     });
     const workflow = makeTriggerWorkflow(node);
-    const inputs = buildQueuePromptInputs(
+    const inputs = buildWorkflowPromptInputs(
       workflow,
       nodeTypes,
       node,
@@ -502,4 +505,95 @@ describe('trigger word prompt serialization', () => {
     expect(inputs.toggle_trigger_words).toEqual(list);
     expect(inputs.originalMessage).toBe('mapped');
   });
+});
+
+describe('filename_prefix replacements', () => {
+  const nodeTypes: NodeTypes = {
+    EmptyLatentImage: {
+      input: {
+        required: {
+          width: ['INT', {}],
+          height: ['INT', {}],
+        },
+      },
+      input_order: {
+        required: ['width', 'height'],
+        optional: [],
+      },
+      output: [],
+      output_name: [],
+      name: 'EmptyLatentImage',
+      display_name: 'Empty Latent Image',
+      description: '',
+      python_module: '',
+      category: '',
+    },
+    SaveImage: {
+      input: {
+        required: {
+          images: ['IMAGE', {}],
+          filename_prefix: ['STRING', {}],
+        },
+      },
+      input_order: {
+        required: ['images', 'filename_prefix'],
+        optional: [],
+      },
+      output: [],
+      output_name: [],
+      name: 'SaveImage',
+      display_name: 'SaveImage',
+      description: '',
+      python_module: '',
+      category: '',
+    },
+  };
+
+  function createWorkflow(): { workflow: Workflow; saveNode: WorkflowNode } {
+    const sourceNode = makeNode(1, 'EmptyLatentImage', {
+      properties: {
+        'Node name for S&R': 'Empty Latent Image',
+      },
+      widgets_values: [768, 512],
+    });
+
+    const saveNode = makeNode(2, 'SaveImage', {
+      inputs: [{ name: 'images', type: 'IMAGE', link: null }],
+      widgets_values: ['video/%date:yyyy-MM-dd%/%date:hhmmss%_%Empty Latent Image.width%?bad'],
+    });
+
+    const workflow: Workflow = {
+      last_node_id: 2,
+      last_link_id: 0,
+      nodes: [sourceNode, saveNode],
+      links: [],
+      groups: [],
+      config: {},
+      version: 1,
+      widget_idx_map: {
+        '1': { width: 0, height: 1 },
+        '2': { filename_prefix: 0 },
+      },
+    };
+
+    return { workflow, saveNode };
+  }
+
+  it('applies %date and %Node.widget replacements in workflow prompt serialization', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-02-21T14:05:09'));
+
+    const { workflow, saveNode } = createWorkflow();
+    const inputs = buildWorkflowPromptInputs(
+      workflow,
+      nodeTypes,
+      saveNode,
+      'SaveImage',
+      new Set([1, 2]),
+      { filename_prefix: 0 },
+    );
+
+    expect(inputs.filename_prefix).toBe('video/2026-02-21/140509_768?bad');
+  });
+
 });
