@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { BypassToggleIcon, BookmarkIconSvg, BookmarkOutlineIcon, ChevronRightIcon, EyeOffIcon, MoveUpDownIcon, NodeConnectionsIcon, EditIcon, ExternalLinkIcon, PinIconSvg, PinOutlineIcon, TrashIcon } from '@/components/icons';
 import { useAnchoredMenuPosition } from '@/hooks/useAnchoredMenuPosition';
@@ -6,6 +6,7 @@ import { useDismissOnOutsideClick } from '@/hooks/useDismissOnOutsideClick';
 import { ContextMenuButton } from '@/components/buttons/ContextMenuButton';
 import { ContextMenuBuilder } from '@/components/menus/ContextMenuBuilder';
 import { openLoraManagerUiInNewTab } from '@/utils/loraManagerUi';
+import { resolveWorkflowColor, themeColors, workflowColorPickerOptions } from '@/theme/colors';
 
 interface PinnableWidget {
   widgetIndex: number;
@@ -20,6 +21,8 @@ interface NodeCardMenuProps {
   isLoraManagerNode: boolean;
   isBypassed: boolean;
   onEditLabel: () => void;
+  nodeColor?: string;
+  onChangeColor: (color: string) => void;
   pinnableWidgets: PinnableWidget[];
   singlePinnableWidget: PinnableWidget | null;
   isSingleWidgetPinned: boolean;
@@ -56,6 +59,8 @@ export function NodeCardMenu({
   isLoraManagerNode,
   isBypassed,
   onEditLabel,
+  nodeColor = '',
+  onChangeColor,
   pinnableWidgets,
   singlePinnableWidget,
   isSingleWidgetPinned,
@@ -74,12 +79,27 @@ export function NodeCardMenu({
   leftLineCount,
   rightLineCount
 }: NodeCardMenuProps) {
+  const resolvedNodeColor = resolveWorkflowColor(nodeColor);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [colorPopoverOpen, setColorPopoverOpen] = useState(false);
   const [pinSubmenuOpen, setPinSubmenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
+  const colorPopoverRef = useRef<HTMLDivElement>(null);
   const menuButtonRef = useRef<HTMLButtonElement>(null);
+  const [colorPopoverStyle, setColorPopoverStyle] = useState<{
+    bottom: number;
+    left: number;
+    width: number;
+    visibility: 'visible' | 'hidden';
+  }>({
+    bottom: -9999,
+    left: -9999,
+    width: 0,
+    visibility: 'hidden'
+  });
   const closeMenu = () => {
     setMenuOpen(false);
+    setColorPopoverOpen(false);
     setPinSubmenuOpen(false);
     resetMenuPosition();
   };
@@ -91,11 +111,47 @@ export function NodeCardMenu({
     repositionToken: pinSubmenuOpen
   });
 
+  useLayoutEffect(() => {
+    if (!colorPopoverOpen) return;
+
+    const updateColorPopoverPosition = () => {
+      const anchor = document.getElementById(`node-card-${nodeId}`);
+      if (!anchor) return;
+      const anchorRect = anchor.getBoundingClientRect();
+      const width = Math.min(anchorRect.width, 400);
+      setColorPopoverStyle({
+        bottom: Math.max(8, window.innerHeight - anchorRect.top + 6),
+        left: anchorRect.left,
+        width,
+        visibility: 'visible'
+      });
+    };
+
+    updateColorPopoverPosition();
+    const raf1 = requestAnimationFrame(updateColorPopoverPosition);
+    const raf2 = requestAnimationFrame(updateColorPopoverPosition);
+    window.addEventListener('resize', updateColorPopoverPosition);
+    window.addEventListener('scroll', updateColorPopoverPosition, true);
+    return () => {
+      cancelAnimationFrame(raf1);
+      cancelAnimationFrame(raf2);
+      window.removeEventListener('resize', updateColorPopoverPosition);
+      window.removeEventListener('scroll', updateColorPopoverPosition, true);
+    };
+  }, [colorPopoverOpen, nodeId]);
+
   useDismissOnOutsideClick({
     open: menuOpen,
     onDismiss: closeMenu,
     triggerRef: menuButtonRef,
     contentRef: menuRef,
+    ignoreScrollWithinContent: true
+  });
+  useDismissOnOutsideClick({
+    open: colorPopoverOpen,
+    onDismiss: () => setColorPopoverOpen(false),
+    triggerRef: menuButtonRef,
+    contentRef: colorPopoverRef,
     ignoreScrollWithinContent: true
   });
 
@@ -119,6 +175,7 @@ export function NodeCardMenu({
   const handleToggleMenu = (event: React.MouseEvent<HTMLButtonElement>) => {
     event.stopPropagation();
     resetMenuPosition();
+    setColorPopoverOpen(false);
     setMenuOpen((prev) => !prev);
   };
 
@@ -208,6 +265,38 @@ export function NodeCardMenu({
         iconSize={5}
         icon={isNodeBookmarked ? <BookmarkIconSvg className="w-5 h-5 text-yellow-500" /> : undefined}
       />
+      {colorPopoverOpen && createPortal(
+        <div
+          ref={colorPopoverRef}
+          className="fixed z-[1100] bg-white border border-gray-200 rounded-lg shadow-lg p-2"
+          style={colorPopoverStyle}
+          onClick={(event) => event.stopPropagation()}
+        >
+          <div className="flex items-center justify-between gap-2">
+            {workflowColorPickerOptions.map(({ key, label, color }, index) => {
+              const isSelected = color.toLowerCase() === resolvedNodeColor.toLowerCase();
+              return (
+                <button
+                  key={`${key}-${index}`}
+                  type="button"
+                  title={label}
+                  aria-label={`Set color: ${label}`}
+                  className={`w-9 h-9 rounded-full transition-transform active:scale-95 ${
+                    isSelected ? 'ring-2 ring-offset-1 ring-gray-400' : ''
+                  }`}
+                  style={{ backgroundColor: color }}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onChangeColor(color);
+                    setColorPopoverOpen(false);
+                  }}
+                />
+              );
+            })}
+          </div>
+        </div>,
+        document.body
+      )}
 
       {menuOpen && createPortal(
         <div
@@ -219,9 +308,30 @@ export function NodeCardMenu({
             items={[
               {
                 key: 'edit-label',
-                label: 'Edit Label',
+                label: 'Edit label',
                 icon: <EditIcon className="w-4 h-4" />,
                 onClick: handleEditLabelClick
+              },
+              {
+                key: 'change-color',
+                label: 'Change color',
+                icon: (
+                  <span
+                    className="inline-block w-3 h-3 rounded-full"
+                    style={{ backgroundColor: resolvedNodeColor || themeColors.workflow.defaultGroupDot }}
+                  />
+                ),
+                onClick: (event) => {
+                  event.stopPropagation();
+                  setMenuOpen(false);
+                  setPinSubmenuOpen(false);
+                  resetMenuPosition();
+                  setColorPopoverOpen(true);
+                }
+              },
+              {
+                type: 'divider',
+                key: 'divider-top-edit-color'
               },
               {
                 key: 'toggle-bookmark',

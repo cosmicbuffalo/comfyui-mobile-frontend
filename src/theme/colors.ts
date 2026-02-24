@@ -1,3 +1,43 @@
+const workflowColorPalette = {
+  nocolor: "#353535",
+  red: "#553333",
+  brown: "#593930",
+  green: "#335533",
+  blue: "#333355",
+  pale_blue: "#3f5159",
+  cyan: "#335555",
+  purple: "#553355",
+  yellow: "#665533",
+  black: "#000000",
+} as const;
+
+export const workflowColorPickerOptions = [
+  { key: "nocolor", label: "No color", color: workflowColorPalette.nocolor },
+  { key: "red", label: "Red", color: workflowColorPalette.red },
+  { key: "brown", label: "Brown", color: workflowColorPalette.brown },
+  { key: "green", label: "Green", color: workflowColorPalette.green },
+  { key: "blue", label: "Blue", color: workflowColorPalette.blue },
+  { key: "pale_blue", label: "Pale blue", color: workflowColorPalette.pale_blue },
+  { key: "cyan", label: "Cyan", color: workflowColorPalette.cyan },
+  { key: "purple", label: "Purple", color: workflowColorPalette.purple },
+  { key: "yellow", label: "Yellow", color: workflowColorPalette.yellow },
+  // Keep pure black available for workflow parsing, but omit from picker to avoid unreadable tints.
+] as const;
+
+export function resolveWorkflowColor(value: string | null | undefined): string {
+  if (!value) return workflowColorPalette.nocolor;
+  const normalized = value.trim().toLowerCase();
+  if (!normalized) return workflowColorPalette.nocolor;
+
+  if (normalized in workflowColorPalette) {
+    return workflowColorPalette[normalized as keyof typeof workflowColorPalette];
+  }
+  if (normalized === "pale blue") {
+    return workflowColorPalette.pale_blue;
+  }
+  return value.trim();
+}
+
 export const themeColors = {
   transparent: "transparent",
   transparentBlack: "rgba(0, 0, 0, 0)",
@@ -33,17 +73,6 @@ export const themeColors = {
   },
   workflow: {
     defaultGroupDot: "#9ca3af",
-    fastGroupBypassColors: {
-      nocolor: "#353535",
-      red: "#553333",
-      brown: "#593930",
-      green: "#335533",
-      blue: "#333355",
-      pale_blue: "#3f5159",
-      cyan: "#335555",
-      purple: "#553355",
-      yellow: "#665533",
-      black: "#000000",
-    },
+    fastGroupBypassColors: workflowColorPalette,
   },
 } as const;

@@ -19,6 +19,69 @@ function isConcreteToken(token: string): boolean {
   return true;
 }
 
+function buildAdjacency(workflow: Workflow): Map<number, number[]> {
+  const adjacency = new Map<number, number[]>();
+  for (const link of workflow.links) {
+    const [, sourceNodeId, , targetId] = link;
+    const next = adjacency.get(sourceNodeId) ?? [];
+    next.push(targetId);
+    adjacency.set(sourceNodeId, next);
+  }
+  return adjacency;
+}
+
+function collectReachableNodes(
+  adjacency: Map<number, number[]>,
+  startNodeId: number
+): Set<number> {
+  const visited = new Set<number>([startNodeId]);
+  const queue: number[] = [startNodeId];
+  let head = 0;
+  while (head < queue.length) {
+    const current = queue[head++];
+    const neighbors = adjacency.get(current) ?? [];
+    for (const neighbor of neighbors) {
+      if (visited.has(neighbor)) continue;
+      visited.add(neighbor);
+      queue.push(neighbor);
+    }
+  }
+  return visited;
+}
+
+function buildReverseAdjacency(
+  adjacency: Map<number, number[]>
+): Map<number, number[]> {
+  const reverseAdjacency = new Map<number, number[]>();
+  for (const [fromId, toIds] of adjacency.entries()) {
+    for (const toId of toIds) {
+      const incoming = reverseAdjacency.get(toId) ?? [];
+      incoming.push(fromId);
+      reverseAdjacency.set(toId, incoming);
+    }
+  }
+  return reverseAdjacency;
+}
+
+function collectNodesThatCanReach(
+  reverseAdjacency: Map<number, number[]>,
+  targetNodeId: number
+): Set<number> {
+  const visited = new Set<number>([targetNodeId]);
+  const queue: number[] = [targetNodeId];
+  let head = 0;
+  while (head < queue.length) {
+    const current = queue[head++];
+    const parents = reverseAdjacency.get(current) ?? [];
+    for (const parentId of parents) {
+      if (visited.has(parentId)) continue;
+      visited.add(parentId);
+      queue.push(parentId);
+    }
+  }
+  return visited;
+}
+
 /**
  * Check if two types are compatible.
  * Normalizes to uppercase, splits on commas, checks intersection.
@@ -48,7 +111,6 @@ export function areTypesCompatibleStrict(typeA: unknown, typeB: unknown): boolea
  */
 export function findCompatibleSourceNodes(
   workflow: Workflow,
-  nodeTypes: NodeTypes,
   targetNodeId: number,
   inputSlotIndex: number
 ): Array<{ node: WorkflowNode; outputIndex: number }> {
@@ -59,10 +121,14 @@ export function findCompatibleSourceNodes(
   if (!input) return [];
 
   const results: Array<{ node: WorkflowNode; outputIndex: number }> = [];
+  const adjacency = buildAdjacency(workflow);
+  const nodesReachableFromTarget = collectReachableNodes(adjacency, targetNodeId);
 
   for (const node of workflow.nodes) {
     if (node.id === targetNodeId) continue;
     if (node.mode === 4) continue; // Skip bypassed nodes
+    // Prevent cycle: target ... -> candidate, then candidate -> target.
+    if (nodesReachableFromTarget.has(node.id)) continue;
 
     for (let i = 0; i < node.outputs.length; i++) {
       const output = node.outputs[i];
@@ -174,9 +240,17 @@ export function findCompatibleTargetNodesForOutput(
   if (!output) return [];
 
   const results: Array<{ node: WorkflowNode; inputIndex: number }> = [];
+  const adjacency = buildAdjacency(workflow);
+  const reverseAdjacency = buildReverseAdjacency(adjacency);
+  const nodesThatCanReachSource = collectNodesThatCanReach(
+    reverseAdjacency,
+    sourceNodeId
+  );
   for (const node of workflow.nodes) {
     if (node.id === sourceNodeId) continue;
     if (node.mode === 4) continue;
+    // Prevent cycle: candidate target ... -> source, then source -> candidate target.
+    if (nodesThatCanReachSource.has(node.id)) continue;
     for (let i = 0; i < (node.inputs?.length ?? 0); i += 1) {
       const input = node.inputs[i];
       if (areTypesCompatibleStrict(output.type, input.type)) {

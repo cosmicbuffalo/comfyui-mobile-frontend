@@ -1,8 +1,7 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
   BookmarkIconSvg,
-  BookmarkOutlineIcon,
   BypassToggleIcon,
   CaretDownIcon,
   CaretRightIcon,
@@ -15,8 +14,11 @@ import {
 } from "@/components/icons";
 import { useAnchoredMenuPosition } from "@/hooks/useAnchoredMenuPosition";
 import { useDismissOnOutsideClick } from "@/hooks/useDismissOnOutsideClick";
+import { useWorkflowStore } from "@/hooks/useWorkflow";
 import { ContextMenuButton } from '@/components/buttons/ContextMenuButton';
 import { ContextMenuBuilder } from '@/components/menus/ContextMenuBuilder';
+import { resolveWorkflowColor, themeColors, workflowColorPickerOptions } from "@/theme/colors";
+import { hexToRgba } from "@/utils/grouping";
 
 type GraphContainerType = "group" | "subgraph";
 
@@ -30,8 +32,9 @@ interface GraphContainerHeaderProps {
   isBookmarked: boolean;
   canShowBookmarkAction: boolean;
   foldAllLabel: string;
-  backgroundColor: string;
-  borderColor: string;
+  color?: string;
+  backgroundColor?: string;
+  borderColor?: string;
   onToggleCollapse: () => void;
   onToggleFoldAll: () => void;
   onToggleBookmark: () => void;
@@ -42,6 +45,12 @@ interface GraphContainerHeaderProps {
   onShowHiddenNodes: () => void;
   onMove: () => void;
   onCommitTitle: (title: string) => void;
+  onChangeColor?: (color: string) => void;
+  containerColor?: string;
+  labelEditRequestId?: number | null;
+  labelEditInitialValue?: string;
+  onLabelEditRequestHandled?: () => void;
+  showUnbypassAllAction?: boolean;
 }
 
 export function GraphContainerHeader({
@@ -54,6 +63,7 @@ export function GraphContainerHeader({
   isBookmarked,
   canShowBookmarkAction,
   foldAllLabel,
+  color,
   backgroundColor,
   borderColor,
   onToggleCollapse,
@@ -66,12 +76,32 @@ export function GraphContainerHeader({
   onShowHiddenNodes,
   onMove,
   onCommitTitle,
+  onChangeColor,
+  containerColor = "",
+  labelEditRequestId = null,
+  labelEditInitialValue = "",
+  onLabelEditRequestHandled,
+  showUnbypassAllAction = true,
 }: GraphContainerHeaderProps) {
   const [menuOpen, setMenuOpen] = useState(false);
+  const [colorPopoverOpen, setColorPopoverOpen] = useState(false);
+  const [colorPopoverPlacement, setColorPopoverPlacement] = useState<"above" | "below">("below");
+  const [colorPopoverStyle, setColorPopoverStyle] = useState<{
+    top: number;
+    left: number;
+    width: number;
+    visibility: "hidden" | "visible";
+  }>({
+    top: -9999,
+    left: -9999,
+    width: 320,
+    visibility: "hidden",
+  });
   const [isEditingLabel, setIsEditingLabel] = useState(false);
   const [labelValue, setLabelValue] = useState("");
   const labelInputRef = useRef<HTMLInputElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
+  const colorPopoverRef = useRef<HTMLDivElement>(null);
   const menuButtonRef = useRef<HTMLButtonElement>(null);
   const { menuStyle, resetMenuPosition } = useAnchoredMenuPosition({
     open: menuOpen,
@@ -80,9 +110,48 @@ export function GraphContainerHeader({
   });
 
   const displayTitle = title.trim() || `${containerType} ${containerId}`;
+  const fallbackColor = color ?? containerColor ?? "";
+  const resolvedContainerColor = resolveWorkflowColor(containerColor || fallbackColor);
+  const resolvedColor = resolveWorkflowColor(fallbackColor);
+  const resolvedBackgroundColor =
+    containerType === "subgraph"
+      ? hexToRgba(resolvedColor, 0.22)
+      : hexToRgba(resolvedColor, 0.15);
   const hasHiddenNodes = hiddenNodeCount > 0;
   const showBookmarkAction = isBookmarked || canShowBookmarkAction;
+  const canChangeColor = containerType === "group";
   const countClassName = containerType === "subgraph" ? "text-blue-600" : "text-gray-500";
+  const handleChangeColor = (nextColor: string) => {
+    if (onChangeColor) {
+      onChangeColor(nextColor);
+      return;
+    }
+    if (containerType !== "group") return;
+    const numericContainerId =
+      typeof containerId === "number" ? containerId : Number(containerId);
+    if (!Number.isFinite(numericContainerId)) return;
+    useWorkflowStore.setState((state) => {
+      const currentWorkflow = state.workflow;
+      if (!currentWorkflow) return state;
+      const currentGroups = currentWorkflow.groups ?? [];
+      let changed = false;
+      const updatedGroups = currentGroups.map((group) => {
+        if (group.id !== numericContainerId) return group;
+        changed = true;
+        return {
+          ...group,
+          color: nextColor,
+        };
+      });
+      if (!changed) return state;
+      return {
+        workflow: {
+          ...currentWorkflow,
+          groups: updatedGroups,
+        },
+      };
+    });
+  };
   const closeMenu = () => {
     setMenuOpen(false);
     resetMenuPosition();
@@ -98,6 +167,59 @@ export function GraphContainerHeader({
     contentRef: menuRef,
     ignoreScrollWithinContent: true,
   });
+  useDismissOnOutsideClick({
+    open: colorPopoverOpen,
+    onDismiss: () => setColorPopoverOpen(false),
+    triggerRef: menuButtonRef,
+    contentRef: colorPopoverRef,
+    ignoreScrollWithinContent: true,
+  });
+  useLayoutEffect(() => {
+    if (!colorPopoverOpen) return;
+    const updateColorPopoverPosition = () => {
+      const button = menuButtonRef.current;
+      const popover = colorPopoverRef.current;
+      if (!button || !popover) return;
+      const buttonRect = button.getBoundingClientRect();
+      const header = button.closest('[id^="group-header-"], [id^="subgraph-header-"]') as HTMLElement | null;
+      const headerRect = header?.getBoundingClientRect();
+      const viewportPadding = 8;
+      const bottomBarReserve = 104;
+      const maxBottom = window.innerHeight - bottomBarReserve;
+      const maxWidth = window.innerWidth - viewportPadding * 2;
+      const width = Math.min(400, Math.max(220, Math.min(maxWidth, headerRect?.width ?? 320)));
+      const leftAnchor = headerRect ? headerRect.left : buttonRect.right - width;
+      const left = Math.max(
+        viewportPadding,
+        Math.min(leftAnchor, window.innerWidth - width - viewportPadding),
+      );
+      const popoverHeight = popover.getBoundingClientRect().height || 56;
+      const belowTop = buttonRect.bottom + 6;
+      const aboveTop = buttonRect.top - popoverHeight - 6;
+      const preferredTop = colorPopoverPlacement === "below" ? belowTop : aboveTop;
+      const top = Math.max(
+        viewportPadding,
+        Math.min(preferredTop, maxBottom - popoverHeight),
+      );
+      setColorPopoverStyle({
+        top,
+        left,
+        width,
+        visibility: "visible",
+      });
+    };
+    updateColorPopoverPosition();
+    const raf1 = requestAnimationFrame(updateColorPopoverPosition);
+    const raf2 = requestAnimationFrame(updateColorPopoverPosition);
+    window.addEventListener("resize", updateColorPopoverPosition);
+    window.addEventListener("scroll", updateColorPopoverPosition, true);
+    return () => {
+      cancelAnimationFrame(raf1);
+      cancelAnimationFrame(raf2);
+      window.removeEventListener("resize", updateColorPopoverPosition);
+      window.removeEventListener("scroll", updateColorPopoverPosition, true);
+    };
+  }, [colorPopoverOpen, colorPopoverPlacement]);
 
   useEffect(() => {
     if (!isEditingLabel) return;
@@ -107,6 +229,15 @@ export function GraphContainerHeader({
     input.select();
   }, [isEditingLabel]);
 
+  /* eslint-disable react-hooks/set-state-in-effect */
+  useEffect(() => {
+    if (labelEditRequestId == null) return;
+    setLabelValue(labelEditInitialValue);
+    setIsEditingLabel(true);
+    onLabelEditRequestHandled?.();
+  }, [labelEditRequestId, labelEditInitialValue, onLabelEditRequestHandled]);
+  /* eslint-enable react-hooks/set-state-in-effect */
+
   const handleHeaderClick = () => {
     if (isEditingLabel) return;
     onToggleCollapse();
@@ -115,10 +246,10 @@ export function GraphContainerHeader({
   return (
     <div
       id={`${containerType}-header-${containerId}`}
-      className={`flex items-center justify-between cursor-pointer gap-3 px-3 py-2 ${
-        isCollapsed ? "rounded-xl" : "rounded-t-xl mb-2"
+      className={`relative flex items-center justify-between cursor-pointer gap-3 px-2 py-2 ${
+        isCollapsed ? "" : "mb-2"
       }`}
-      style={{ backgroundColor, borderColor }}
+      style={{ backgroundColor: color ? resolvedBackgroundColor : backgroundColor, borderColor }}
       onClick={handleHeaderClick}
     >
       <div className="flex items-center gap-1 min-w-0 flex-1">
@@ -166,6 +297,7 @@ export function GraphContainerHeader({
         onClick={(event) => {
           event.stopPropagation();
           resetMenuPosition();
+          setColorPopoverOpen(false);
           setMenuOpen((prev) => !prev);
         }}
         ariaLabel={`${containerType} options`}
@@ -180,6 +312,39 @@ export function GraphContainerHeader({
           undefined
         )}
       />
+      {canChangeColor && colorPopoverOpen &&
+        createPortal(
+          <div
+            ref={colorPopoverRef}
+            className="fixed z-[1001] bg-white border border-gray-200 rounded-lg shadow-lg p-2"
+            style={colorPopoverStyle}
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="flex items-center justify-between gap-2">
+              {workflowColorPickerOptions.map(({ key, label, color }, index) => {
+                const isSelected = color.toLowerCase() === resolvedContainerColor.toLowerCase();
+                return (
+                  <button
+                    key={`${key}-${index}`}
+                    type="button"
+                    title={label}
+                    aria-label={`Set color: ${label}`}
+                    className={`w-9 h-9 rounded-full transition-transform active:scale-95 ${
+                      isSelected ? "ring-2 ring-offset-1 ring-gray-400" : ""
+                    }`}
+                    style={{ backgroundColor: color }}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      handleChangeColor(color);
+                      setColorPopoverOpen(false);
+                    }}
+                  />
+                );
+              })}
+            </div>
+          </div>,
+          document.body,
+        )}
 
       {menuOpen &&
         createPortal(
@@ -202,6 +367,51 @@ export function GraphContainerHeader({
                   }
                 },
                 {
+                  key: 'change-color',
+                  label: 'Change color',
+                  icon: (
+                    <span
+                      className="inline-block w-3 h-3 rounded-full"
+                      style={{
+                        backgroundColor:
+                          resolvedContainerColor || themeColors.workflow.defaultGroupDot,
+                      }}
+                    />
+                  ),
+                  onClick: (event) => {
+                    event.stopPropagation();
+                    const buttonRect = menuButtonRef.current?.getBoundingClientRect();
+                    if (buttonRect) {
+                      const estimatedPopoverHeight = 56;
+                      const viewportPadding = 8;
+                      const maxBottom = window.innerHeight - 104;
+                      const canOpenBelow =
+                        buttonRect.bottom + estimatedPopoverHeight <= maxBottom - viewportPadding;
+                      setColorPopoverPlacement(canOpenBelow ? "below" : "above");
+                    } else {
+                      setColorPopoverPlacement("below");
+                    }
+                    setColorPopoverOpen(true);
+                    closeMenu();
+                  },
+                  hidden: !canChangeColor
+                },
+                {
+                  type: 'divider',
+                  key: 'divider-top-edit-color'
+                },
+                {
+                  key: 'toggle-bookmark',
+                  label: isBookmarked ? "Remove bookmark" : "Bookmark",
+                  icon: <BookmarkIconSvg className="w-4 h-4 text-yellow-500" />,
+                  onClick: (event) => {
+                    event.stopPropagation();
+                    onToggleBookmark();
+                    closeMenu();
+                  },
+                  hidden: !showBookmarkAction
+                },
+                {
                   key: 'add-node',
                   label: 'Add node',
                   icon: <PlusIcon className="w-4 h-4" />,
@@ -221,7 +431,8 @@ export function GraphContainerHeader({
                     event.stopPropagation();
                     onToggleFoldAll();
                     closeMenu();
-                  }
+                  },
+                  hidden: isCollapsed && foldAllLabel === "Unfold all"
                 },
                 {
                   key: 'bypass-all',
@@ -235,26 +446,14 @@ export function GraphContainerHeader({
                 },
                 {
                   key: 'unbypass-all',
-                  label: 'Un-bypass all nodes',
+                  label: 'Engage all nodes',
                   icon: <BypassToggleIcon isBypassed={false} className="w-4 h-4" />,
                   onClick: (event) => {
                     event.stopPropagation();
                     onBypassAll(false);
                     closeMenu();
-                  }
-                },
-                {
-                  key: 'toggle-bookmark',
-                  label: isBookmarked ? "Remove bookmark" : "Bookmark container",
-                  icon: isBookmarked
-                    ? <BookmarkIconSvg className="w-4 h-4 text-yellow-500" />
-                    : <BookmarkOutlineIcon className="w-4 h-4" />,
-                  onClick: (event) => {
-                    event.stopPropagation();
-                    onToggleBookmark();
-                    closeMenu();
                   },
-                  hidden: !showBookmarkAction
+                  hidden: !showUnbypassAllAction
                 },
                 {
                   key: 'show-hidden-nodes',

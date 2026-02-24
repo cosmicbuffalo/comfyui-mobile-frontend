@@ -120,7 +120,7 @@ export function ConnectionModal(props: ConnectionModalProps) {
 
   const compatibleNodes = useMemo(() => {
     if (mode !== 'input' || !workflow || !nodeTypes) return [];
-    return findCompatibleSourceNodes(workflow, nodeTypes, nodeId, props.inputIndex);
+    return findCompatibleSourceNodes(workflow, nodeId, props.inputIndex);
   }, [mode, workflow, nodeTypes, nodeId, props]);
 
   const filteredNodes = useMemo(() => {
