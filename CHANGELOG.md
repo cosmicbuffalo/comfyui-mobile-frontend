@@ -1,5 +1,21 @@
 # Changelog
 
+## 2.2.2 - 2026-02-24
+
+### Added
+
+- Color picker for nodes and groups, tap "Change color" from the node/group context menu to choose from the standard ComfyUI palette
+
+### Changed
+
+- Cosmetic changes to the outputs panel and filter modal, moved some things around, changed some colors
+- Cosmetic tweaks to node/container menus and fold animations
+
+### Fixed
+
+- Cycle detection in connection suggestions, results now filter out nodes that would create a cycle in the workflow graph
+- Default sort and direction arrows in the outputs panel now look more intuitive
+
 ## 2.2.1 - 2026-02-20
 
 ### Added

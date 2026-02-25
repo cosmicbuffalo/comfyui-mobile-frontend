@@ -18,6 +18,7 @@ interface NodeCardHeaderProps {
   errorPopoverOpen: boolean;
   setErrorPopoverOpen: (next: boolean) => void;
   toggleNodeFold: () => void;
+  expandedBorderColor?: string;
   rightSlot?: ReactNode;
 }
 
@@ -38,6 +39,7 @@ export function NodeCardHeader({
   errorPopoverOpen,
   setErrorPopoverOpen,
   toggleNodeFold,
+  expandedBorderColor,
   rightSlot,
 }: NodeCardHeaderProps) {
   const handleHeaderClick = () => {
@@ -58,11 +60,12 @@ export function NodeCardHeader({
   return (
     <div
       id={`node-header-${nodeId}`}
-      className={`node-header flex items-center justify-between cursor-pointer gap-3 ${
-        !isCollapsed ? 'mb-3 pb-2 border-b' : ''
+      className={`node-header flex items-center justify-between px-3 -mx-3 cursor-pointer gap-3 border-b-[3px] transition-[margin,padding,border-color] duration-200 ease-out ${
+        !isCollapsed ? 'mb-3 pb-2' : 'mb-0 pb-0 border-transparent'
       } ${
-        isBypassed ? `bg-purple-200 border-purple-300 px-3 -mx-3 -mt-1 pt-1 rounded-t-xl ${isCollapsed ? 'pb-1 -mb-1 rounded-b-xl' : ''}` : !isCollapsed ? 'border-gray-100' : ''
+        isBypassed ? `bg-purple-200 border-purple-300  -mt-1 pt-1 rounded-t-xl ${isCollapsed ? 'pb-1 -mb-1 rounded-b-xl' : ''}` : !isCollapsed ? 'border-gray-100' : ''
       }`}
+      style={!isCollapsed && expandedBorderColor ? { borderBottomColor: expandedBorderColor } : undefined}
       onClick={handleHeaderClick}
     >
       <div id={`node-title-container-${nodeId}`} className="flex items-center gap-1 min-w-0">

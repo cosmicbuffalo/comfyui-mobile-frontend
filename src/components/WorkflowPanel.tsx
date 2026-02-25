@@ -1251,7 +1251,7 @@ export function WorkflowPanel({
         return (
           <div
             key={`group-${item.group.id}-${keyBase}`}
-            className="group-wrapper shadow-md rounded-xl border mb-3"
+            className="group-wrapper shadow-md rounded-xl border mb-3 overflow-hidden"
             style={{
               backgroundColor,
               borderColor,

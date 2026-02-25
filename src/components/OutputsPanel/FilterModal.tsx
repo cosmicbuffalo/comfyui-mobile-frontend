@@ -34,18 +34,12 @@ export function FilterModal({
   const handleSortChange = (field: 'name' | 'date' | 'size', order: 'asc' | 'desc') => {
     let mode: SortMode;
     if (field === 'name') {
-      // name: A-Z (asc), name-reverse: Z-A (desc)
-      // BUT API conventions: 'name' usually means A-Z.
-      // Let's check typical ComfyUI API or OS behavior. 
-      // Typically 'name' is A-Z. 'name-reverse' is Z-A.
-      // So 'asc' -> 'name', 'desc' -> 'name-reverse'
+      // API: 'name' = A-Z, 'name-reverse' = Z-A
       mode = order === 'asc' ? 'name' : 'name-reverse';
     } else if (field === 'size') {
       mode = order === 'asc' ? 'size' : 'size-reverse';
     } else {
-      // date:
-      // modified: newest first (desc)
-      // modified-reverse: oldest first (asc)
+      // API: 'modified' = newest first, 'modified-reverse' = oldest first
       mode = order === 'desc' ? 'modified' : 'modified-reverse';
     }
     onChangeSort({ mode });
@@ -60,34 +54,16 @@ export function FilterModal({
         </div>
 
         <div id="filter-modal-body" className="p-4 space-y-6">
-          <OptionSection<'name' | 'date' | 'size'>
-            idPrefix="sort-group"
-            title="Sort By"
-            items={[
-              {
-                value: 'name',
-                label: 'Name',
-                suffix: currentField === 'name' ? (currentOrder === 'asc' ? ' ↓' : ' ↑') : undefined
-              },
-              {
-                value: 'date',
-                label: 'Date',
-                suffix: currentField === 'date' ? (currentOrder === 'asc' ? ' ↓' : ' ↑') : undefined
-              },
-              {
-                value: 'size',
-                label: 'Size',
-                suffix: currentField === 'size' ? (currentOrder === 'asc' ? ' ↓' : ' ↑') : undefined
-              }
-            ]}
-            selectedValue={currentField}
-            onSelect={(field) => {
-              const nextOrder = currentField === field
-                ? (currentOrder === 'asc' ? 'desc' : 'asc')
-                : (field === 'name' ? 'asc' : 'desc');
-              handleSortChange(field, nextOrder);
-            }}
-          />
+          <div id="search-input-container">
+            <label id="search-input-label" className="block text-sm font-medium text-gray-700 mb-1">
+              Search
+            </label>
+            <SearchBar
+              placeholder="Search by filename..."
+              value={filter.search}
+              onChange={(search) => onChangeFilter({ search })}
+            />
+          </div>
           <OptionSection<FilterState['type']>
             idPrefix="filter-type-group"
             title="File Type"
@@ -101,19 +77,37 @@ export function FilterModal({
             gridClassName="flex gap-2"
             buttonClassName="flex-1"
           />
-          <div id="search-input-container">
-            <label id="search-input-label" className="block text-sm font-medium text-gray-700 mb-1">
-              Search
-            </label>
-            <SearchBar
-              placeholder="Search by filename..."
-              value={filter.search}
-              onChange={(search) => onChangeFilter({ search })}
-            />
-          </div>
           <FavoritesSection
             checked={filter.favoritesOnly}
             onChange={(favoritesOnly) => onChangeFilter({ favoritesOnly })}
+          />
+          <OptionSection<'name' | 'date' | 'size'>
+            idPrefix="sort-group"
+            title="Sort By"
+            items={[
+              {
+                value: 'name',
+                label: 'Name',
+                suffix: currentField === 'name' ? (currentOrder === 'asc' ? ' ↓' : ' ↑') : undefined
+              },
+              {
+                value: 'date',
+                label: 'Date',
+                suffix: currentField === 'date' ? (currentOrder === 'desc' ? ' ↓' : ' ↑') : undefined
+              },
+              {
+                value: 'size',
+                label: 'Size',
+                suffix: currentField === 'size' ? (currentOrder === 'desc' ? ' ↓' : ' ↑') : undefined
+              }
+            ]}
+            selectedValue={currentField}
+            onSelect={(field) => {
+              const nextOrder = currentField === field
+                ? (currentOrder === 'asc' ? 'desc' : 'asc')
+                : (field === 'name' ? 'asc' : 'desc');
+              handleSortChange(field, nextOrder);
+            }}
           />
         </div>
 
@@ -122,7 +116,7 @@ export function FilterModal({
              className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700"
              onClick={onClose}
           >
-            Apply
+            Close
           </button>
         </div>
       </div>

@@ -273,7 +273,7 @@ export function applyLoraValuesToText(
 
   const updated = baseText.replace(
     LORA_PATTERN,
-    (match, name, strength, clipStrength) => {
+    (_match, name, strength, clipStrength) => {
       const lora = loraMap.get(name);
       if (!lora) {
         return '';

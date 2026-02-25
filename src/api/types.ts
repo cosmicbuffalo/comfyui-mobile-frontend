@@ -21,6 +21,7 @@ export interface WorkflowOutput {
 export interface WorkflowNode {
   id: number;
   stableKey?: string;
+  title?: string;
   type: string;
   pos: [number, number];
   size: [number, number];

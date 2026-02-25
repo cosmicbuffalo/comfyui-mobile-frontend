@@ -1,10 +1,13 @@
+import { hexToRgba } from "@/utils/grouping";
+
 interface ContainerFooterProps {
   id: string;
   headerId: string;
   title: string;
   nodeCount?: number;
-  backgroundColor: string;
-  borderColor: string;
+  color?: string;
+  backgroundColor?: string;
+  borderColor?: string;
   textClassName: string;
   className?: string;
 }
@@ -14,6 +17,7 @@ export function ContainerFooter({
   headerId,
   title,
   nodeCount,
+  color,
   backgroundColor,
   borderColor,
   textClassName,
@@ -25,13 +29,14 @@ export function ContainerFooter({
   };
 
   return (
-    <div
+    <button
+      type="button"
       id={id}
-      className={`px-3 py-1.5 -mx-1 rounded-b-xl cursor-pointer ${className}`}
+      className={`p-3 -mx-1 w-full text-left ${className}`}
       onClick={handleClick}
       style={{
-        backgroundColor,
-        borderColor
+        backgroundColor: color ? hexToRgba(color, 0.15) : backgroundColor,
+        borderColor: color ? hexToRgba(color, 0.3) : borderColor,
       }}
     >
       <div className="flex items-center justify-between gap-3">
@@ -44,6 +49,6 @@ export function ContainerFooter({
           </span>
         )}
       </div>
-    </div>
+    </button>
   );
 }

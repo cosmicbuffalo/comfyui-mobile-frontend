@@ -4,7 +4,8 @@ import {
   areTypesCompatible,
   areTypesCompatibleStrict,
   findCompatibleNodeTypesForInput,
-  findCompatibleSourceNodes
+  findCompatibleSourceNodes,
+  findCompatibleTargetNodesForOutput
 } from '../connectionUtils';
 
 function makeNode(id: number, type: string, overrides?: Partial<WorkflowNode>): WorkflowNode {
@@ -71,9 +72,7 @@ describe('findCompatibleSourceNodes', () => {
       inputs: [{ name: 'model', type: 'MODEL', link: null }]
     });
     const wf = makeWorkflow([sourceA, sourceB, target], []);
-    const nodeTypes = {} as NodeTypes;
-
-    const result = findCompatibleSourceNodes(wf, nodeTypes, 3, 0);
+    const result = findCompatibleSourceNodes(wf, 3, 0);
     expect(result.map((r) => r.node.id)).toEqual([1]);
     expect(result[0].outputIndex).toBe(0);
   });
@@ -93,8 +92,99 @@ describe('findCompatibleSourceNodes', () => {
     });
 
     const wf = makeWorkflow([wildcardNode, optConnectionNode, imageNode, target], []);
-    const result = findCompatibleSourceNodes(wf, {} as NodeTypes, 4, 0);
+    const result = findCompatibleSourceNodes(wf, 4, 0);
     expect(result.map((r) => r.node.id)).toEqual([3]);
+  });
+
+  it('excludes downstream nodes that would create circular connections', () => {
+    const target = makeNode(1, 'Target', {
+      inputs: [{ name: 'in', type: 'MODEL', link: null }],
+      outputs: [{ name: 'out', type: 'MODEL', links: [1] }]
+    });
+    const downstreamA = makeNode(2, 'DownstreamA', {
+      inputs: [{ name: 'in', type: 'MODEL', link: 1 }],
+      outputs: [{ name: 'out', type: 'MODEL', links: [2] }]
+    });
+    const downstreamB = makeNode(3, 'DownstreamB', {
+      inputs: [{ name: 'in', type: 'MODEL', link: 2 }],
+      outputs: [{ name: 'out', type: 'MODEL', links: null }]
+    });
+    const upstream = makeNode(4, 'Upstream', {
+      outputs: [{ name: 'out', type: 'MODEL', links: null }]
+    });
+    const wf = makeWorkflow([
+      target,
+      downstreamA,
+      downstreamB,
+      upstream
+    ], [
+      [1, 1, 0, 2, 0, 'MODEL'],
+      [2, 2, 0, 3, 0, 'MODEL']
+    ]);
+
+    const result = findCompatibleSourceNodes(wf, 1, 0);
+    expect(result.map((r) => r.node.id)).toEqual([4]);
+  });
+
+  it('excludes bypassed candidate source nodes', () => {
+    const bypassed = makeNode(1, 'Bypassed', {
+      mode: 4,
+      outputs: [{ name: 'out', type: 'MODEL', links: null }]
+    });
+    const active = makeNode(2, 'Active', {
+      outputs: [{ name: 'out', type: 'MODEL', links: null }]
+    });
+    const target = makeNode(3, 'Target', {
+      inputs: [{ name: 'in', type: 'MODEL', link: null }]
+    });
+    const wf = makeWorkflow([bypassed, active, target], []);
+    const result = findCompatibleSourceNodes(wf, 3, 0);
+    expect(result.map((r) => r.node.id)).toEqual([2]);
+  });
+});
+
+describe('findCompatibleTargetNodesForOutput', () => {
+  it('excludes upstream targets that would create circular connections', () => {
+    const source = makeNode(1, 'Source', {
+      inputs: [{ name: 'in', type: 'MODEL', link: 1 }],
+      outputs: [{ name: 'out', type: 'MODEL', links: null }]
+    });
+    const upstream = makeNode(2, 'Upstream', {
+      inputs: [{ name: 'in', type: 'MODEL', link: null }],
+      outputs: [{ name: 'out', type: 'MODEL', links: [1] }]
+    });
+    const validTarget = makeNode(3, 'ValidTarget', {
+      inputs: [{ name: 'in', type: 'MODEL', link: null }],
+      outputs: []
+    });
+    const wf = makeWorkflow([
+      source,
+      upstream,
+      validTarget
+    ], [
+      [1, 2, 0, 1, 0, 'MODEL']
+    ]);
+
+    const result = findCompatibleTargetNodesForOutput(wf, 1, 0);
+    expect(result.map((r) => r.node.id)).toEqual([3]);
+  });
+
+  it('returns all compatible inputs for a single target node', () => {
+    const source = makeNode(1, 'Source', {
+      outputs: [{ name: 'out', type: 'MODEL', links: null }]
+    });
+    const multiInputTarget = makeNode(2, 'MultiInputTarget', {
+      inputs: [
+        { name: 'a', type: 'MODEL', link: null },
+        { name: 'b', type: 'MODEL', link: null }
+      ],
+      outputs: []
+    });
+    const wf = makeWorkflow([source, multiInputTarget], []);
+
+    const result = findCompatibleTargetNodesForOutput(wf, 1, 0);
+    expect(result.filter((r) => r.node.id === 2)).toHaveLength(2);
+    expect(result.map((r) => r.inputIndex)).toEqual([0, 1]);
   });
 });
 

@@ -22,6 +22,8 @@ import { NodeCardConnectionsSection } from './NodeCard/ConnectionsSection';
 import { NodeCardParameters } from './NodeCard/Parameters';
 import { resolveLoadImagePreview } from '@/utils/loadImagePreview';
 import { requireStableKey } from '@/utils/stableKeys';
+import { hexToRgba } from '@/utils/grouping';
+import { resolveWorkflowColor } from '@/theme/colors';
 
 const EMPTY_IMAGES: Array<{ filename: string; subfolder: string; type: string }> = [];
 type ImageLike = (typeof EMPTY_IMAGES)[number];
@@ -160,10 +162,7 @@ export const NodeCard = memo(function NodeCard({
 
   const typeDef = nodeTypes?.[node.type];
   const nodeTitle = useMemo(() => {
-    const directTitle = (node as { title?: unknown }).title;
-    return typeof directTitle === 'string' && directTitle.trim()
-      ? directTitle.trim()
-      : null;
+    return node.title?.trim() || null;
   }, [node]);
   const displayName: string = nodeTitle || typeDef?.display_name || node.type;
   const isKSampler = node.type === 'KSampler';
@@ -448,8 +447,43 @@ export const NodeCard = memo(function NodeCard({
     },
     [nodeStableKey, updateNodeWidgets]
   );
+  const handleChangeNodeColor = useCallback((color: string) => {
+    useWorkflowStore.setState((state) => {
+      const currentWorkflow = state.workflow;
+      if (!currentWorkflow) return state;
+      let changed = false;
+      const updatedNodes = currentWorkflow.nodes.map((candidate) => {
+        if (candidate.id !== node.id) return candidate;
+        changed = true;
+        return {
+          ...candidate,
+          color,
+          bgcolor: color,
+        };
+      });
+      if (!changed) return state;
+      return {
+        workflow: {
+          ...currentWorkflow,
+          nodes: updatedNodes,
+        },
+      };
+    });
+  }, [node.id]);
 
   const showHighlightLabel = Boolean(highlightLabel && !/^error\b/i.test(highlightLabel));
+  const rawNodeColor = (typeof node.bgcolor === 'string' && node.bgcolor.trim())
+    ? node.bgcolor.trim()
+    : (typeof node.color === 'string' ? node.color.trim() : '');
+  const nodeColor = resolveWorkflowColor(rawNodeColor);
+  const nodeTintColor = hexToRgba(nodeColor, 0.4);
+  const nodeHeaderBorderColor = 'rgba(0, 0, 0, 0.24)';
+  const canUseNodeTint =
+    !isBypassed &&
+    !hasErrors &&
+    !isConnectionHighlighted &&
+    !isExecuting &&
+    rawNodeColor.length > 0;
   return (
     <div
       id={`node-card-wrapper-${node.id}`}
@@ -475,11 +509,16 @@ export const NodeCard = memo(function NodeCard({
         node-card-inner
         ${inGroup ? 'rounded-lg shadow-sm py-1' : 'rounded-xl shadow-md px-2 py-1 mb-3'}
         border-2
-        ${hasErrors ? 'border-red-700 shadow-red-200' : (isConnectionHighlighted ? 'border-orange-500 shadow-orange-200' : (isExecuting ? 'border-green-500 shadow-green-200' : (isBypassed ? 'border-purple-300' : 'border-transparent')))}
-        ${isBypassed ? (isCollapsed ? 'bg-purple-200' : 'bg-purple-100/50') : 'bg-white'}
+        ${hasErrors ? 'border-red-700 shadow-red-200' : (isConnectionHighlighted ? 'border-orange-500 shadow-orange-200' : (isExecuting ? 'border-green-500 shadow-green-200' : 'border-transparent'))}
+        ${isBypassed ? 'bg-purple-100/50' : 'bg-white'}
       `}
         style={{
-          overflow: 'visible',
+          overflow: 'hidden',
+          ...(canUseNodeTint
+            ? {
+                backgroundColor: nodeTintColor,
+              }
+            : {}),
         }}
       >
       <NodeCardHeader
@@ -501,6 +540,7 @@ export const NodeCard = memo(function NodeCard({
         toggleNodeFold={() => {
           setItemCollapsed(nodeStableKey, !isCollapsed);
         }}
+        expandedBorderColor={canUseNodeTint ? nodeHeaderBorderColor : undefined}
         rightSlot={(
           <NodeCardMenu
             nodeId={node.id}
@@ -508,6 +548,8 @@ export const NodeCard = memo(function NodeCard({
             isLoraManagerNode={isLoraManagerNode}
             isBypassed={isBypassed}
             onEditLabel={handleEditLabel}
+            nodeColor={nodeColor}
+            onChangeColor={handleChangeNodeColor}
             pinnableWidgets={pinnableWidgets}
             singlePinnableWidget={singlePinnableWidget}
             isSingleWidgetPinned={isSingleWidgetPinned}

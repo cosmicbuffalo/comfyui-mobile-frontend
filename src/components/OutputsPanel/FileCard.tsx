@@ -30,6 +30,8 @@ export function FileCard({
   onToggleSelection
 }: FileCardProps) {
   const isFolder = file.type === 'folder';
+  const isHiddenFolder = isFolder && file.name.startsWith('.');
+  const folderIconClass = isHiddenFolder ? 'text-gray-400' : 'text-amber-500';
   const [previewError, setPreviewError] = useState(false);
 
   /* eslint-disable react-hooks/set-state-in-effect */
@@ -66,7 +68,7 @@ export function FileCard({
         )}
         <div className={`file-preview-container w-10 h-10 flex-shrink-0 flex items-center justify-center rounded text-gray-500 overflow-hidden relative ${isFolder ? '' : 'bg-gray-100'}`}>
           {isFolder ? (
-            <FolderIcon className="w-6 h-6 text-amber-500" />
+            <FolderIcon className={`w-6 h-6 ${folderIconClass}`} />
           ) : file.previewUrl && !previewError ? (
             <img
               src={file.previewUrl}
@@ -108,7 +110,7 @@ export function FileCard({
       >
         {isFolder ? (
           <div className="folder-grid-content w-full h-full flex flex-col items-center justify-center text-gray-500">
-            <FolderIcon className="w-12 h-12 mb-2 text-amber-500" />
+            <FolderIcon className={`w-12 h-12 mb-2 ${folderIconClass}`} />
           </div>
         ) : file.previewUrl && !previewError ? (
           <img

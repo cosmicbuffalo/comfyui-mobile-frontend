@@ -34,7 +34,6 @@ export type { QueueStackIconProps } from './QueueStackIcon';
 export { ProgressRing } from './ProgressRing';
 export type { ProgressRingProps } from './ProgressRing';
 export { MenuIcon } from './MenuIcon';
-export { XIconSolid } from './XIconSolid';
 export { PlusIcon } from './PlusIcon';
 export { MinusIcon } from './MinusIcon';
 export { SearchIcon } from './SearchIcon';
