@@ -3442,6 +3442,7 @@ export const useWorkflowStore = create<WorkflowState>()(
           originalWorkflow: JSON.parse(JSON.stringify(workflowWithStableKeys)),
           currentFilename: filename,
           currentWorkflowKey: workflowKey,
+          workflowSource: { type: 'user', filename },
           mobileLayout: nextLayout,
           stableKeyByPointer: reconciled.layoutToStable,
           pointerByStableKey: reconciled.stableToLayout,

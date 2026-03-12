@@ -109,7 +109,9 @@ function encodeUserDataPath(path: string): string {
 }
 
 export async function loadUserWorkflow(filename: string): Promise<Workflow> {
-  const response = await fetch(`${API_BASE}/api/userdata/${encodeUserDataPath('workflows/' + filename)}`);
+  const response = await fetch(`${API_BASE}/api/userdata/${encodeUserDataPath('workflows/' + filename)}`, {
+    cache: 'no-store',
+  });
   if (!response.ok) throw new Error('Failed to load workflow');
   return response.json();
 }
