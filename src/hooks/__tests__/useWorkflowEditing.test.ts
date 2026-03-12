@@ -881,3 +881,55 @@ describe('useWorkflow editing actions', () => {
     expect(subgraph?.nodes.find((n) => n.id === 7)?.widgets_values).toEqual([33]);
   });
 });
+
+describe('setSavedWorkflow', () => {
+  it('sets workflowSource to user type with the saved filename', () => {
+    const wf = makeWorkflow([makeNode(1, { widgets_values: [42] })], []);
+    useWorkflowStore.getState().loadWorkflow(wf, 'original.json', {
+      source: { type: 'template', moduleName: 'default', templateName: 'basic' }
+    });
+
+    useWorkflowStore.getState().setSavedWorkflow(wf, 'saved.json');
+
+    const state = useWorkflowStore.getState();
+    expect(state.workflowSource).toEqual({ type: 'user', filename: 'saved.json' });
+    expect(state.currentFilename).toBe('saved.json');
+  });
+
+  it('clears isDirty after saving (originalWorkflow matches workflow)', () => {
+    const wf = makeWorkflow([makeNode(1, { widgets_values: [10] })], []);
+    useWorkflowStore.getState().loadWorkflow(wf, 'foo.json');
+
+    // Simulate an edit
+    useWorkflowStore.setState((state) => ({
+      workflow: state.workflow
+        ? {
+            ...state.workflow,
+            nodes: state.workflow.nodes.map((n) =>
+              n.id === 1 ? { ...n, widgets_values: [99] } : n
+            )
+          }
+        : state.workflow
+    }));
+
+    const editedWorkflow = useWorkflowStore.getState().workflow!;
+    useWorkflowStore.getState().setSavedWorkflow(editedWorkflow, 'foo.json');
+
+    const state = useWorkflowStore.getState();
+    expect(JSON.stringify(state.workflow)).toBe(JSON.stringify(state.originalWorkflow));
+  });
+
+  it('preserves edited widget values after saving', () => {
+    const wf = makeWorkflow([makeNode(1, { widgets_values: [10] })], []);
+    useWorkflowStore.getState().loadWorkflow(wf, 'foo.json');
+
+    const editedWf = {
+      ...wf,
+      nodes: wf.nodes.map((n) => n.id === 1 ? { ...n, widgets_values: [99] } : n)
+    };
+    useWorkflowStore.getState().setSavedWorkflow(editedWf, 'foo.json');
+
+    const state = useWorkflowStore.getState();
+    expect(state.workflow?.nodes.find((n) => n.id === 1)?.widgets_values).toEqual([99]);
+  });
+});
