@@ -51,6 +51,8 @@ interface GraphContainerHeaderProps {
   labelEditInitialValue?: string;
   onLabelEditRequestHandled?: () => void;
   showUnbypassAllAction?: boolean;
+  bypassState?: 'none' | 'partial' | 'all';
+  bypassedNodeCount?: number;
 }
 
 export function GraphContainerHeader({
@@ -82,6 +84,8 @@ export function GraphContainerHeader({
   labelEditInitialValue = "",
   onLabelEditRequestHandled,
   showUnbypassAllAction = true,
+  bypassState = 'none',
+  bypassedNodeCount = 0,
 }: GraphContainerHeaderProps) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [colorPopoverOpen, setColorPopoverOpen] = useState(false);
@@ -249,7 +253,12 @@ export function GraphContainerHeader({
       className={`relative flex items-center justify-between cursor-pointer gap-3 px-2 py-2 ${
         isCollapsed ? "" : "mb-2"
       }`}
-      style={{ backgroundColor: color ? resolvedBackgroundColor : backgroundColor, borderColor }}
+      style={{
+        backgroundColor: bypassState === 'all'
+          ? hexToRgba('#9333ea', 0.12)
+          : color ? resolvedBackgroundColor : backgroundColor,
+        borderColor,
+      }}
       onClick={handleHeaderClick}
     >
       <div className="flex items-center gap-1 min-w-0 flex-1">
@@ -284,12 +293,25 @@ export function GraphContainerHeader({
             className="font-semibold text-gray-900 flex-1 min-w-0 text-sm bg-white border border-gray-200 rounded px-2 py-1"
           />
         ) : (
-          <h3 className="font-semibold text-gray-900 select-none flex-1 min-w-0 whitespace-nowrap overflow-hidden text-ellipsis">
+          <h3 className={`font-semibold text-gray-900 select-none flex-1 min-w-0 whitespace-nowrap overflow-hidden text-ellipsis${bypassState === 'all' ? ' opacity-60' : ''}`}>
             {displayTitle}
           </h3>
         )}
-        <span className={`text-sm shrink-0 ${countClassName}`}>
-          {nodeCount} node{nodeCount !== 1 ? "s" : ""}
+        <span className={`text-sm shrink-0 inline-flex items-center gap-1 ${countClassName}`}>
+          {bypassState === 'all' ? (
+            <>
+              <BypassToggleIcon isBypassed className="w-3.5 h-3.5 text-purple-500" />
+              <span className="text-purple-600">{nodeCount} node{nodeCount !== 1 ? "s" : ""}</span>
+            </>
+          ) : isCollapsed && bypassState === 'partial' ? (
+            <>
+              <span>{nodeCount} node{nodeCount !== 1 ? "s" : ""}</span>
+              <BypassToggleIcon isBypassed className="w-3.5 h-3.5 text-purple-400" />
+              <span className="text-purple-500 text-xs">{bypassedNodeCount}</span>
+            </>
+          ) : (
+            <>{nodeCount} node{nodeCount !== 1 ? "s" : ""}</>
+          )}
         </span>
       </div>
 

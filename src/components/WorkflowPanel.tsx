@@ -1248,13 +1248,18 @@ export function WorkflowPanel({
           setNestedCollapsed(item.children, hasExpandedChildren);
         };
 
+        const bypassState: 'none' | 'partial' | 'all' =
+          item.bypassedNodeCount === 0 ? 'none'
+          : item.bypassedNodeCount >= item.nodeCount ? 'all'
+          : 'partial';
+
         return (
           <div
             key={`group-${item.group.id}-${keyBase}`}
             className="group-wrapper shadow-md rounded-xl border mb-3 overflow-hidden"
             style={{
-              backgroundColor,
-              borderColor,
+              backgroundColor: bypassState === 'all' ? hexToRgba('#9333ea', 0.08) : backgroundColor,
+              borderColor: bypassState === 'all' ? hexToRgba('#9333ea', 0.3) : borderColor,
             }}
             data-reposition-item={`group-${groupStableKey}`}
             data-stable-key={groupStableKey}
@@ -1265,6 +1270,8 @@ export function WorkflowPanel({
               title={group.title?.trim() || `Group ${group.id}`}
               nodeCount={item.nodeCount}
               isCollapsed={item.isCollapsed}
+              bypassState={bypassState}
+              bypassedNodeCount={item.bypassedNodeCount}
               backgroundColor={hexToRgba(group.color, 0.22)}
               borderColor={hexToRgba(group.color, 0.4)}
               hiddenNodeCount={hiddenNodeCount}
@@ -1385,6 +1392,11 @@ export function WorkflowPanel({
           setNestedCollapsed(item.children, subgraphHasExpandedChildren);
         };
 
+        const subgraphBypassState: 'none' | 'partial' | 'all' =
+          item.bypassedNodeCount === 0 ? 'none'
+          : item.bypassedNodeCount >= item.nodeCount ? 'all'
+          : 'partial';
+
         return (
           <div
             key={`subgraph-${item.subgraph.id}-${keyBase}`}
@@ -1404,6 +1416,8 @@ export function WorkflowPanel({
               title={(item.subgraph.name || item.subgraph.id).trim()}
               nodeCount={item.nodeCount}
               isCollapsed={item.isCollapsed}
+              bypassState={subgraphBypassState}
+              bypassedNodeCount={item.bypassedNodeCount}
               backgroundColor={themeColors.brand.subgraphBackground14}
               borderColor={themeColors.brand.subgraphBorder25}
               hiddenNodeCount={subgraphHiddenNodeCount}
