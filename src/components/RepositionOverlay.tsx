@@ -1668,7 +1668,7 @@ export function RepositionOverlay({
             isDragging={isDragging}
             isDropTarget={isDropTarget}
             isHighlighted={highlightKey === dataKey}
-            color="#3b82f6"
+            color={themeColors.brand.blue500}
             onToggleCollapse={() => toggleSubgraphCollapse(ref.id)}
             childrenContent={
               !isCollapsed && children.length > 0 ? (
