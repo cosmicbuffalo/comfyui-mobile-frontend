@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import { CaretDownIcon, CaretRightIcon, MenuIcon } from "@/components/icons";
+import { hexToRgba } from "@/utils/grouping";
 
 interface ContainerItemCardProps {
   containerType: "group" | "subgraph";
@@ -13,9 +14,7 @@ interface ContainerItemCardProps {
   isDragging: boolean;
   isDropTarget: boolean;
   isHighlighted: boolean;
-  backgroundColor: string;
-  borderColor?: string;
-  headerBackgroundColor: string;
+  color: string;
   onToggleCollapse: () => void;
   childrenContent: ReactNode;
 }
@@ -32,12 +31,13 @@ export function ContainerItemCard({
   isDragging,
   isDropTarget,
   isHighlighted,
-  backgroundColor,
-  borderColor,
-  headerBackgroundColor,
+  color,
   onToggleCollapse,
   childrenContent,
 }: ContainerItemCardProps) {
+  const backgroundColor = hexToRgba(color, 0.15);
+  const borderColor = hexToRgba(color, 0.4);
+  const headerBackgroundColor = hexToRgba(color, 0.4);
   const nodeCountLabel = `${nodeCount} node${nodeCount !== 1 ? "s" : ""}${
     containerType === "subgraph" ? " (subgraph)" : ""
   }`;

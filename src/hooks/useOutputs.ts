@@ -285,7 +285,7 @@ export const useOutputsStore = create<OutputsState>()(
         } else if (sort.mode.startsWith('size')) {
           result.sort((a, b) => ((a.size ?? 0) - (b.size ?? 0)) * direction);
         } else {
-          result.sort((a, b) => ((a.date ?? 0) - (b.date ?? 0)) * direction);
+          result.sort((a, b) => ((a.date ?? 0) - (b.date ?? 0)) * -1 * direction);
         }
 
         return result;
