@@ -1361,6 +1361,7 @@ export function WorkflowPanel({
                   borderColor={hexToRgba(item.group.color, 0.3)}
                   textClassName="text-gray-500 dark:text-gray-400"
                   className="group-footer"
+                  allBypassed={bypassState === 'all'}
                 />
               </div>
             </div>
@@ -1511,6 +1512,7 @@ export function WorkflowPanel({
                   borderColor={themeColors.brand.subgraphBorder20}
                   textClassName="text-blue-600 dark:text-blue-500"
                   className="subgraph-footer"
+                  allBypassed={subgraphBypassState === 'all'}
                 />
               </div>
             </div>
