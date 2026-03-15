@@ -507,7 +507,7 @@ export const NodeCard = memo(function NodeCard({
         id={`node-card-${node.id}`}
         className={`
         node-card-inner
-        ${inGroup ? 'rounded-lg shadow-sm py-1' : 'rounded-xl shadow-md px-2 py-1 mb-3'}
+        ${inGroup ? `rounded-lg shadow-sm ${isCollapsed && isBypassed ? 'pt-1 pb-0' : 'py-1'}` : `rounded-xl shadow-md px-2 ${isCollapsed && isBypassed ? 'pt-1 pb-0' : 'py-1'} mb-3`}
         border-2
         ${hasErrors ? 'border-red-700 shadow-red-200' : (isConnectionHighlighted ? 'border-orange-500 shadow-orange-200' : (isExecuting ? 'border-green-500 shadow-green-200' : 'border-transparent'))}
         ${isBypassed ? 'bg-purple-100/50' : 'bg-white'}

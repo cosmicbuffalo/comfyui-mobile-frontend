@@ -614,7 +614,7 @@ export function NodeCardParameters({
             {fastGroupToggles.map((entry) => (
               <div
                 key={entry.key}
-                className={`flex items-center justify-between gap-3 rounded-lg border px-3 py-2 bg-gray-50/40 dark:bg-gray-900/60 ${entry.isDisabled ? 'border-gray-200 dark:border-white/10 opacity-60' : 'border-gray-200 dark:border-white/15'}`}
+                className={`flex items-center justify-between gap-3 rounded-lg border px-3 py-2 ${!entry.isEngaged && !entry.isDisabled ? 'bg-purple-50/60 dark:bg-purple-900/20 border-purple-300 dark:border-purple-400/30' : `bg-gray-50/40 dark:bg-gray-900/60 ${entry.isDisabled ? 'border-gray-200 dark:border-white/10 opacity-60' : 'border-gray-200 dark:border-white/15'}`}`}
               >
                 <div className="flex items-center gap-2 min-w-0">
                   <span

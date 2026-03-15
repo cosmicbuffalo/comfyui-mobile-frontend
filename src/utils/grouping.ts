@@ -11,6 +11,7 @@ export type NestedItem =
       group: WorkflowGroup;
       stableKey?: string;
       nodeCount: number;
+      bypassedNodeCount: number;
       isCollapsed: boolean;
       subgraphId: string | null;
       children: NestedItem[];
@@ -19,6 +20,7 @@ export type NestedItem =
       type: 'subgraph';
       subgraph: WorkflowSubgraphDefinition;
       nodeCount: number;
+      bypassedNodeCount: number;
       isCollapsed: boolean;
       groupId: number | null;
       children: NestedItem[];
@@ -260,6 +262,20 @@ export function buildNestedList(
     return nodesInSubgraph.get(entry.subgraphId)?.length ?? 0;
   };
 
+  const countBypassedEntryNodes = (entries: Entry[]): number => {
+    let count = 0;
+    for (const entry of entries) {
+      if (entry.kind === 'node') {
+        if (entry.node.mode === 4) count++;
+      } else {
+        if (hasStableFlag(hiddenItems, makeLocationPointer({ type: 'subgraph', subgraphId: entry.subgraphId }))) continue;
+        const nodes = nodesInSubgraph.get(entry.subgraphId) ?? [];
+        count += nodes.filter((n) => n.mode === 4).length;
+      }
+    }
+    return count;
+  };
+
   const buildNodeItem = (
     node: WorkflowNode,
     groupId: number | null,
@@ -334,6 +350,7 @@ export function buildNestedList(
             type: 'group',
             group,
             nodeCount,
+            bypassedNodeCount: countBypassedEntryNodes(groupEntries),
             isCollapsed,
             subgraphId,
             children: childItems
@@ -352,6 +369,7 @@ export function buildNestedList(
         type: 'group',
         group,
         nodeCount: 0,
+        bypassedNodeCount: 0,
         isCollapsed: getStableFlag(collapsedItems, groupStateKey(subgraphId, group.id), false),
         subgraphId,
         children: []
@@ -380,6 +398,7 @@ export function buildNestedList(
       type: 'subgraph',
       subgraph,
       nodeCount: subgraphNodes.length,
+      bypassedNodeCount: subgraphNodes.filter((n) => n.mode === 4).length,
       isCollapsed,
       groupId,
       children
@@ -416,6 +435,7 @@ export function buildNestedList(
       type: 'group',
       group,
       nodeCount,
+      bypassedNodeCount: countBypassedEntryNodes(entriesInGroup),
       isCollapsed,
       subgraphId,
       children
@@ -567,6 +587,48 @@ export function buildNestedListFromLayout(
     return count;
   };
 
+  const countBypassedNodesInRefs = (
+    refs: ItemRef[],
+    currentSubgraphId: string | null,
+    visitedGroups = new Set<string>(),
+    visitedSubgraphs = new Set<string>()
+  ): number => {
+    let count = 0;
+    for (const ref of refs) {
+      if (ref.type === 'node') {
+        const node = nodeById.get(ref.id);
+        if (node && node.mode === 4) count++;
+      } else if (ref.type === 'hiddenBlock') {
+        const blockNodes = layout.hiddenBlocks[ref.blockId] ?? [];
+        for (const nodeId of blockNodes) {
+          const node = nodeById.get(nodeId);
+          if (node && node.mode === 4) count++;
+        }
+      } else if (ref.type === 'group') {
+        if (visitedGroups.has(ref.stableKey)) continue;
+        visitedGroups.add(ref.stableKey);
+        count += countBypassedNodesInRefs(
+          layout.groups[ref.stableKey] ?? [],
+          currentSubgraphId,
+          visitedGroups,
+          visitedSubgraphs
+        );
+        visitedGroups.delete(ref.stableKey);
+      } else if (ref.type === 'subgraph') {
+        if (visitedSubgraphs.has(ref.id)) continue;
+        visitedSubgraphs.add(ref.id);
+        count += countBypassedNodesInRefs(
+          layout.subgraphs[ref.id] ?? [],
+          ref.id,
+          visitedGroups,
+          visitedSubgraphs
+        );
+        visitedSubgraphs.delete(ref.id);
+      }
+    }
+    return count;
+  };
+
   const buildItems = (
     refs: ItemRef[],
     parentGroupId: number | null,
@@ -641,6 +703,7 @@ export function buildNestedListFromLayout(
           group,
           stableKey: ref.stableKey,
           nodeCount: countNodesInRefs(childRefs, parentSubgraphId),
+          bypassedNodeCount: countBypassedNodesInRefs(childRefs, parentSubgraphId),
           isCollapsed,
           subgraphId: parentSubgraphId,
           children
@@ -670,6 +733,7 @@ export function buildNestedListFromLayout(
         type: 'subgraph',
         subgraph,
         nodeCount: countNodesInRefs(childRefs, ref.id),
+        bypassedNodeCount: countBypassedNodesInRefs(childRefs, ref.id),
         isCollapsed,
         groupId: parentGroupId,
         children
