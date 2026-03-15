@@ -1,5 +1,17 @@
 # Changelog
 
+## 2.2.3 - 2026-03-15
+
+### Added
+
+- Visual bypass indicators for groups — groups with all nodes bypassed turn purple, collapsed groups with some bypassed nodes show a bypass icon with count badge
+- Purple card outline on the Fast Groups Bypasser (rgthree) node for fully bypassed groups
+
+### Fixed
+
+- Collapsed bypassed nodes no longer show a bottom border color bleed
+- Workflow saves not persisting across sessions — browser cache and workflow source tracking now update correctly after saving
+
 ## 2.2.2 - 2026-02-24
 
 ### Added
