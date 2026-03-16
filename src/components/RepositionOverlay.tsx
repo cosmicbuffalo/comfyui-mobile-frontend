@@ -15,7 +15,6 @@ import type {
   WorkflowGroup,
   WorkflowSubgraphDefinition,
 } from "@/api/types";
-import { hexToRgba } from "@/utils/grouping";
 import type { MobileLayout, ItemRef, ContainerId } from "@/utils/mobileLayout";
 import {
   makeLocationPointer,
@@ -1599,8 +1598,7 @@ export function RepositionOverlay({
         const isCollapsed = collapsedItems[ref.stableKey] ?? false;
         const isAncestorOfTarget = targetAncestors.groupIds.has(ref.stableKey);
         const canToggleCollapse = !isTarget && !isAncestorOfTarget;
-        const bgColor = hexToRgba(group.color, 0.15);
-        const borderColor = isTarget ? undefined : hexToRgba(group.color, 0.4);
+        const color = group.color;
         const displayTitle = group.title?.trim() || `Group ${ref.id}`;
         const children = workingLayout.groups[ref.stableKey] ?? [];
         const nodeCount = countNodesInItems(children);
@@ -1620,9 +1618,7 @@ export function RepositionOverlay({
             isDragging={isDragging}
             isDropTarget={isDropTarget}
             isHighlighted={highlightKey === dataKey}
-            backgroundColor={bgColor}
-            borderColor={borderColor}
-            headerBackgroundColor={hexToRgba(group.color, 0.22)}
+            color={color}
             onToggleCollapse={() => toggleGroupCollapse(ref.stableKey)}
             childrenContent={
               !isCollapsed && children.length > 0 ? (
@@ -1672,9 +1668,7 @@ export function RepositionOverlay({
             isDragging={isDragging}
             isDropTarget={isDropTarget}
             isHighlighted={highlightKey === dataKey}
-            backgroundColor={themeColors.brand.subgraphBackground08}
-            borderColor={isTarget ? undefined : themeColors.brand.subgraphBorder25}
-            headerBackgroundColor={themeColors.brand.subgraphBackground14}
+            color={themeColors.brand.blue500}
             onToggleCollapse={() => toggleSubgraphCollapse(ref.id)}
             childrenContent={
               !isCollapsed && children.length > 0 ? (

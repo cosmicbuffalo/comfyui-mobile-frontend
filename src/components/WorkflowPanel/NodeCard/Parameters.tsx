@@ -43,6 +43,10 @@ interface WidgetDescriptor {
   connected?: boolean;
 }
 
+interface RenderWidgetDescriptor extends WidgetDescriptor {
+  source: 'input' | 'widget';
+}
+
 interface NodeCardParametersProps {
   node: WorkflowNode;
   isBypassed: boolean;
@@ -86,6 +90,7 @@ export function NodeCardParameters({
   const storedSeedMode = useSeedStore((state) => state.seedModes[node.id]);
   const lastSeedValue = useSeedStore((state) => state.seedLastValues[node.id] ?? null);
   const isFastGroupsBypasser = /fast\s+groups/i.test(node.type) && /\(rgthree\)/i.test(node.type);
+  const isCrLoraStackNode = /cr\s*lora\s*stack/i.test(node.type);
   const isLoraManagerNode = isLoraManagerNodeType(node.type);
   const isTriggerWordToggleNode = isTriggerWordToggleNodeType(node.type);
   const seedWidgetIndex = !isKSampler && workflowExists && nodeTypesExists
@@ -601,6 +606,99 @@ export function NodeCardParameters({
     return `${prefix}-${widget.widgetIndex}-${widget.type}-${keySuffix}`;
   };
 
+  const getCrLoraStackGroupMeta = (name: string): { index: number; base: string } | null => {
+    const match = name.match(/^(.*?)[_\s-]?(\d+)$/);
+    if (!match) return null;
+    const index = Number.parseInt(match[2], 10);
+    if (!Number.isFinite(index)) return null;
+    const base = match[1].trim().replace(/[_\s-]+$/, '').toLowerCase();
+    if (!base) return null;
+    return { index, base };
+  };
+
+  const getCrSwitchValue = (value: unknown): boolean => {
+    if (typeof value === 'boolean') return value;
+    if (typeof value === 'number') return value !== 0;
+    if (typeof value === 'string') {
+      const normalized = value.trim().toLowerCase();
+      if (['on', 'true', 'yes', '1'].includes(normalized)) return true;
+      if (['off', 'false', 'no', '0'].includes(normalized)) return false;
+    }
+    return Boolean(value);
+  };
+
+  const buildCrSwitchValue = (current: unknown, enabled: boolean): unknown => {
+    if (typeof current === 'boolean') return enabled;
+    if (typeof current === 'number') return enabled ? 1 : 0;
+    if (typeof current === 'string') {
+      const normalized = current.trim().toLowerCase();
+      if (normalized === 'on' || normalized === 'off') {
+        return enabled ? 'On' : 'Off';
+      }
+      if (normalized === 'true' || normalized === 'false') {
+        return enabled ? 'true' : 'false';
+      }
+      if (normalized === 'yes' || normalized === 'no') {
+        return enabled ? 'Yes' : 'No';
+      }
+    }
+    return enabled;
+  };
+
+  const applyCrLoraComboDisplayOptions = (widget: RenderWidgetDescriptor): Record<string, unknown> | unknown[] | undefined => {
+    if (!isCrLoraStackNode) return widget.options;
+    const groupMeta = getCrLoraStackGroupMeta(widget.name);
+    const isLoraField = Boolean(groupMeta && groupMeta.base.includes('lora'));
+    if (!isLoraField) return widget.options;
+    if (Array.isArray(widget.options)) {
+      return {
+        options: widget.options,
+        stripSafetensorsSuffix: true
+      };
+    }
+    if (widget.options && typeof widget.options === 'object') {
+      return {
+        ...widget.options,
+        stripSafetensorsSuffix: true
+      };
+    }
+    return { stripSafetensorsSuffix: true };
+  };
+
+  const crStackWidgets = useMemo<RenderWidgetDescriptor[]>(() => (
+    [
+      ...inputWidgetsToRender.map((widget) => ({ ...widget, source: 'input' as const })),
+      ...widgetsToRender.map((widget) => ({ ...widget, source: 'widget' as const }))
+    ]
+  ), [inputWidgetsToRender, widgetsToRender]);
+
+  const crStackGroupedWidgets = useMemo(() => {
+    const grouped = new Map<number, RenderWidgetDescriptor[]>();
+    const ungrouped: RenderWidgetDescriptor[] = [];
+    for (const widget of crStackWidgets) {
+      const meta = getCrLoraStackGroupMeta(widget.name);
+      if (!meta) {
+        ungrouped.push(widget);
+        continue;
+      }
+      const current = grouped.get(meta.index) ?? [];
+      current.push(widget);
+      grouped.set(meta.index, current);
+    }
+    const orderedGroups = Array.from(grouped.entries())
+      .sort((a, b) => a[0] - b[0])
+      .map(([index, widgets]) => ({ index, widgets }));
+    return { groups: orderedGroups, ungrouped };
+  }, [crStackWidgets]);
+
+  const handleCrWidgetChange = (widget: RenderWidgetDescriptor) => (newValue: unknown) => {
+    if (widget.source === 'input') {
+      handleInputWidgetChange(widget)(newValue);
+      return;
+    }
+    handleWidgetChange(widget)(newValue);
+  };
+
   if (!showParameters && fastGroupToggles.length === 0) return null;
 
   return (
@@ -775,36 +873,130 @@ export function NodeCardParameters({
               </div>
             );
           })()}
-          {inputWidgetsToRender.map((inputWidget) => (
-            <div key={getWidgetKey(inputWidget, 'input-widget')} className={isBypassed ? 'opacity-80' : ''}>
-              <WidgetControl
-                name={inputWidget.name}
-                type={inputWidget.type}
-                value={inputWidget.value}
-                options={inputWidget.options}
-                onChange={handleInputWidgetChange(inputWidget)}
-                disabled={isBypassed}
-                isPinned={canPinWidget(inputWidget.type, inputWidget.name) ? isWidgetPinned(inputWidget.widgetIndex) : false}
-                onTogglePin={canPinWidget(inputWidget.type, inputWidget.name) ? () => toggleWidgetPin(inputWidget.widgetIndex, inputWidget.name, inputWidget.type, inputWidget.options) : undefined}
-                hasError={errorInputNames.has(inputWidget.name)}
-              />
-            </div>
-          ))}
-          {widgetsToRender.map((widget) => (
-            <div key={getWidgetKey(widget, 'widget')} className={isBypassed ? 'opacity-80' : ''}>
-              <WidgetControl
-                name={widget.name}
-                type={widget.type}
-                value={widget.value}
-                options={widget.options}
-                onChange={handleWidgetChange(widget)}
-                disabled={isBypassed}
-                isPinned={canPinWidget(widget.type, widget.name) ? isWidgetPinned(widget.widgetIndex) : false}
-                onTogglePin={canPinWidget(widget.type, widget.name) ? () => toggleWidgetPin(widget.widgetIndex, widget.name, widget.type, widget.options) : undefined}
-                hasError={errorInputNames.has(widget.name)}
-              />
-            </div>
-          ))}
+          {isCrLoraStackNode ? (
+            <>
+              <div className="space-y-3">
+                {crStackGroupedWidgets.groups.map(({ index, widgets }) => (
+                  <div
+                    key={`cr-lora-stack-group-${index}`}
+                    className={`p-3 border border-gray-200 dark:border-gray-800 rounded-lg bg-gray-50/50 dark:bg-gray-900/50 ${isBypassed ? 'opacity-80' : ''}`}
+                  >
+                    <div className="text-xs text-blue-900 dark:text-blue-100 font-semibold uppercase tracking-wider mb-2">
+                      LoRA {index}
+                    </div>
+                    <div className="space-y-2">
+                      {(() => {
+                        const switchWidget = widgets.find((widget) => {
+                          const groupMeta = getCrLoraStackGroupMeta(widget.name);
+                          return groupMeta?.base === 'switch';
+                        });
+                        const groupEnabled = switchWidget ? getCrSwitchValue(switchWidget.value) : true;
+                        const widgetsToShow = groupEnabled || !switchWidget
+                          ? widgets
+                          : [switchWidget];
+
+                        return widgetsToShow.map((widget) => {
+                          const groupMeta = getCrLoraStackGroupMeta(widget.name);
+                          const isSwitch = groupMeta?.base === 'switch';
+                          if (isSwitch) {
+                            const enabled = getCrSwitchValue(widget.value);
+                            return (
+                              <button
+                                type="button"
+                                aria-pressed={enabled}
+                                onClick={() => handleCrWidgetChange(widget)(buildCrSwitchValue(widget.value, !enabled))}
+                                key={getWidgetKey(widget, 'cr-lora-widget')}
+                                className={`w-full py-2 rounded-lg text-sm font-semibold transition-colors ${enabled ? 'bg-blue-600 text-white' : 'bg-gray-500 text-white'} ${isBypassed ? 'opacity-60 cursor-not-allowed' : ''}`}
+                                disabled={isBypassed}
+                              >
+                                {enabled ? 'Enabled' : 'Disabled'}
+                              </button>
+                            );
+                          }
+                          const pinAllowed = canPinWidget(widget.type, widget.name);
+                          const widgetOptions = applyCrLoraComboDisplayOptions(widget);
+                          const displayName = (() => {
+                            const base = groupMeta?.base ?? '';
+                            if (base.includes('lora_name')) return 'Selected LoRA';
+                            if (base.includes('model_weight')) return 'Model Strength';
+                            if (base.includes('clip_weight')) return 'Clip Strength';
+                            return widget.name;
+                          })();
+                          return (
+                            <div key={getWidgetKey(widget, 'cr-lora-widget')}>
+                              <WidgetControl
+                                name={displayName}
+                                type={widget.type}
+                                value={widget.value}
+                                options={widgetOptions}
+                                onChange={handleCrWidgetChange(widget)}
+                                disabled={isBypassed}
+                                isPinned={pinAllowed ? isWidgetPinned(widget.widgetIndex) : false}
+                                onTogglePin={pinAllowed ? () => toggleWidgetPin(widget.widgetIndex, widget.name, widget.type, widgetOptions) : undefined}
+                                hasError={errorInputNames.has(widget.name)}
+                              />
+                            </div>
+                          );
+                        });
+                      })()}
+                    </div>
+                  </div>
+                ))}
+              </div>
+              {crStackGroupedWidgets.ungrouped.map((widget) => {
+                const pinAllowed = canPinWidget(widget.type, widget.name);
+                const widgetOptions = applyCrLoraComboDisplayOptions(widget);
+                return (
+                  <div key={getWidgetKey(widget, 'cr-lora-ungrouped')} className={isBypassed ? 'opacity-80' : ''}>
+                    <WidgetControl
+                      name={widget.name}
+                      type={widget.type}
+                      value={widget.value}
+                      options={widgetOptions}
+                      onChange={handleCrWidgetChange(widget)}
+                      disabled={isBypassed}
+                      isPinned={pinAllowed ? isWidgetPinned(widget.widgetIndex) : false}
+                      onTogglePin={pinAllowed ? () => toggleWidgetPin(widget.widgetIndex, widget.name, widget.type, widgetOptions) : undefined}
+                      hasError={errorInputNames.has(widget.name)}
+                    />
+                  </div>
+                );
+              })}
+            </>
+          ) : (
+            <>
+              {inputWidgetsToRender.map((inputWidget) => (
+                <div key={getWidgetKey(inputWidget, 'input-widget')} className={isBypassed ? 'opacity-80' : ''}>
+                  <WidgetControl
+                    name={inputWidget.name}
+                    type={inputWidget.type}
+                    value={inputWidget.value}
+                    options={inputWidget.options}
+                    onChange={handleInputWidgetChange(inputWidget)}
+                    disabled={isBypassed}
+                    isPinned={canPinWidget(inputWidget.type, inputWidget.name) ? isWidgetPinned(inputWidget.widgetIndex) : false}
+                    onTogglePin={canPinWidget(inputWidget.type, inputWidget.name) ? () => toggleWidgetPin(inputWidget.widgetIndex, inputWidget.name, inputWidget.type, inputWidget.options) : undefined}
+                    hasError={errorInputNames.has(inputWidget.name)}
+                  />
+                </div>
+              ))}
+              {widgetsToRender.map((widget) => (
+                <div key={getWidgetKey(widget, 'widget')} className={isBypassed ? 'opacity-80' : ''}>
+                  <WidgetControl
+                    name={widget.name}
+                    type={widget.type}
+                    value={widget.value}
+                    options={widget.options}
+                    onChange={handleWidgetChange(widget)}
+                    disabled={isBypassed}
+                    isPinned={canPinWidget(widget.type, widget.name) ? isWidgetPinned(widget.widgetIndex) : false}
+                    onTogglePin={canPinWidget(widget.type, widget.name) ? () => toggleWidgetPin(widget.widgetIndex, widget.name, widget.type, widget.options) : undefined}
+                    hasError={errorInputNames.has(widget.name)}
+                  />
+                </div>
+              ))}
+            </>
+          )}
           {node.type === 'PrimitiveNode' && (() => {
             const outputType = node.outputs?.[0]?.type;
             const normalizedType = String(outputType).toUpperCase();

@@ -10,6 +10,7 @@ interface ContainerFooterProps {
   borderColor?: string;
   textClassName: string;
   className?: string;
+  allBypassed?: boolean;
 }
 
 export function ContainerFooter({
@@ -21,7 +22,8 @@ export function ContainerFooter({
   backgroundColor,
   borderColor,
   textClassName,
-  className = ''
+  className = '',
+  allBypassed = false
 }: ContainerFooterProps) {
   const handleClick = () => {
     const header = document.getElementById(headerId);
@@ -35,8 +37,8 @@ export function ContainerFooter({
       className={`p-3 -mx-1 w-full text-left ${className}`}
       onClick={handleClick}
       style={{
-        backgroundColor: color ? hexToRgba(color, 0.15) : backgroundColor,
-        borderColor: color ? hexToRgba(color, 0.3) : borderColor,
+        backgroundColor: allBypassed ? hexToRgba('#9333ea', 0.12) : color ? hexToRgba(color, 0.15) : backgroundColor,
+        borderColor: allBypassed ? hexToRgba('#9333ea', 0.3) : color ? hexToRgba(color, 0.3) : borderColor,
       }}
     >
       <div className="flex items-center justify-between gap-3">

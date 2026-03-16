@@ -122,16 +122,16 @@ describe('getDisplayedFiles', () => {
     expect(sizes).toEqual([300, 200, 100]);
   });
 
-  it('sorts by modified date ascending', () => {
+  it('sorts by modified date descending (newest first)', () => {
     useOutputsStore.setState({ files, sort: { mode: 'modified' } });
     const dates = useOutputsStore.getState().getDisplayedFiles().map(f => f.date);
-    expect(dates).toEqual([1, 2, 3]);
+    expect(dates).toEqual([3, 2, 1]);
   });
 
-  it('sorts by modified date descending', () => {
+  it('sorts by modified date ascending (oldest first)', () => {
     useOutputsStore.setState({ files, sort: { mode: 'modified-reverse' } });
     const dates = useOutputsStore.getState().getDisplayedFiles().map(f => f.date);
-    expect(dates).toEqual([3, 2, 1]);
+    expect(dates).toEqual([1, 2, 3]);
   });
 });
 
