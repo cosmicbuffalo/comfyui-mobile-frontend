@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.3.1 - 2026-03-17
+
+### Fixed
+
+- Bookmark repositioning works again
+- Also fixes resolution of bookmarks for nodes with repeated IDs in root/subgraph scopes
+
 ## 2.3.0 - 2026-03-17
 
 ### Added
