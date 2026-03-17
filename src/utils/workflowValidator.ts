@@ -64,7 +64,7 @@ function repairRootLinkSlots(workflow: Workflow): Workflow {
 
     const originNode = nodeById.get(originId);
     if (originNode) {
-      const output = originNode.outputs[originSlot];
+      const output = originNode.outputs?.[originSlot];
       if (output) {
         const currentLinks = output.links ?? [];
         if (!currentLinks.includes(linkId)) {
@@ -75,7 +75,7 @@ function repairRootLinkSlots(workflow: Workflow): Workflow {
 
     const targetNode = nodeById.get(targetId);
     if (targetNode) {
-      const input = targetNode.inputs[targetSlot];
+      const input = targetNode.inputs?.[targetSlot];
       if (input && input.link !== linkId) {
         inputFixes.push({ nodeId: targetId, slot: targetSlot, linkId });
       }
@@ -108,7 +108,7 @@ function repairRootLinkSlots(workflow: Workflow): Workflow {
 
     let nextInputs: WorkflowInput[] | undefined;
     const iFixList = inputFixesByNode.get(node.id);
-    if (iFixList) {
+    if (iFixList && node.inputs) {
       nextInputs = [...node.inputs];
       for (const { slot, linkId } of iFixList) {
         if (nextInputs[slot]) {
@@ -119,7 +119,7 @@ function repairRootLinkSlots(workflow: Workflow): Workflow {
 
     let nextOutputs: WorkflowOutput[] | undefined;
     const oFixList = outputFixesByNode.get(node.id);
-    if (oFixList) {
+    if (oFixList && node.outputs) {
       nextOutputs = [...node.outputs];
       for (const { slot, linkId } of oFixList) {
         const out = nextOutputs[slot];

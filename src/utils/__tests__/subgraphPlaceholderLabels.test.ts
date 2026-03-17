@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import type { Workflow, WorkflowNode, WorkflowSubgraphDefinition } from '@/api/types';
 import {
-  findWorkflowNodeById,
+  findRootWorkflowNodeById,
+  findWorkflowNodeInScope,
   resolveSubgraphPlaceholderConnectionLabel,
   resolveWorkflowNodeDisplayName
 } from '../subgraphPlaceholderLabels';
@@ -136,8 +137,8 @@ describe('resolveSubgraphPlaceholderConnectionLabel', () => {
       ]
     );
 
-    expect(resolveSubgraphPlaceholderConnectionLabel(wf, 42, 'input', 0, 'fallback')).toBe('model_1_in');
-    expect(resolveSubgraphPlaceholderConnectionLabel(wf, 42, 'output', 0, 'fallback')).toBe('model_1_out');
+    expect(resolveSubgraphPlaceholderConnectionLabel(wf, 42, 'input', 0, 'fallback', 'sg-outer')).toBe('model_1_in');
+    expect(resolveSubgraphPlaceholderConnectionLabel(wf, 42, 'output', 0, 'fallback', 'sg-outer')).toBe('model_1_out');
   });
 
   it('prefers localized_name when label is absent', () => {
@@ -257,8 +258,8 @@ describe('resolveWorkflowNodeDisplayName', () => {
   });
 });
 
-describe('findWorkflowNodeById', () => {
-  it('finds placeholder nodes nested inside subgraphs', () => {
+describe('findWorkflowNodeInScope', () => {
+  it('finds placeholder nodes nested inside subgraphs when scope is provided', () => {
     const nestedPlaceholder = makeNode(42, 'sg-backend', { title: 'Nested Placeholder' });
     const wf = makeWorkflow(
       [makeNode(1, 'OuterRoot')],
@@ -282,6 +283,27 @@ describe('findWorkflowNodeById', () => {
       ]
     );
 
-    expect(findWorkflowNodeById(wf, 42)).toEqual(nestedPlaceholder);
+    expect(findWorkflowNodeInScope(wf, 42, 'sg-outer')).toEqual(nestedPlaceholder);
+  });
+
+  it('keeps root and subgraph node id collisions distinct', () => {
+    const rootNode = makeNode(42, 'RootNode', { title: 'Root 42' });
+    const nestedNode = makeNode(42, 'InnerNode', { title: 'Inner 42' });
+    const wf = makeWorkflow(
+      [rootNode],
+      [
+        {
+          id: 'sg-outer',
+          name: 'Outer',
+          nodes: [nestedNode],
+          links: [],
+          inputs: [],
+          outputs: [],
+        },
+      ]
+    );
+
+    expect(findRootWorkflowNodeById(wf, 42)).toEqual(rootNode);
+    expect(findWorkflowNodeInScope(wf, 42, 'sg-outer')).toEqual(nestedNode);
   });
 });

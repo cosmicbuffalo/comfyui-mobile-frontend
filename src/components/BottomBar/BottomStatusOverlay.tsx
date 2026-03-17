@@ -7,72 +7,7 @@ import { useWorkflowErrorsStore } from '@/hooks/useWorkflowErrors';
 import { useImageViewerStore } from '@/hooks/useImageViewer';
 import { useQueueStore } from '@/hooks/useQueue';
 import { useOverallProgress } from '@/hooks/useOverallProgress';
-
-function resolveExecutingNodeLabel(
-  executingNodePath: string | null,
-  executingNodeId: string | null,
-  workflow: ReturnType<typeof useWorkflowStore.getState>['workflow'],
-  nodeTypes: ReturnType<typeof useWorkflowStore.getState>['nodeTypes'],
-): string | null {
-  if (!workflow) return null;
-
-  const toDisplayName = (
-    node: { type: string; title?: unknown },
-    fallback: string,
-  ): string => {
-    const nodeTitle =
-      typeof node.title === "string" ? node.title.trim() : "";
-    if (nodeTitle) return nodeTitle;
-    const subgraphName = workflow.definitions?.subgraphs?.find(
-      (sg) => sg.id === node.type,
-    )?.name;
-    if (typeof subgraphName === "string" && subgraphName.trim()) {
-      return subgraphName.trim();
-    }
-    const typeDef = nodeTypes?.[node.type];
-    return typeDef?.display_name || node.type || fallback;
-  };
-
-  if (executingNodePath) {
-    const parts = executingNodePath
-      .split(':')
-      .map((part) => Number(part))
-      .filter((value) => Number.isFinite(value));
-    if (parts.length > 0) {
-      if (parts.length === 1) {
-        const rootNode = workflow.nodes.find((n) => n.id === parts[0]);
-        if (rootNode) return toDisplayName(rootNode, `Node ${parts[0]}`);
-      } else {
-        let subgraphId: string | null = null;
-        const rootPlaceholder = workflow.nodes.find((n) => n.id === parts[0]);
-        if (rootPlaceholder) subgraphId = rootPlaceholder.type;
-
-        for (let i = 1; i < parts.length; i += 1) {
-          if (!subgraphId) break;
-          const subgraph = workflow.definitions?.subgraphs?.find(
-            (sg) => sg.id === subgraphId,
-          );
-          if (!subgraph) break;
-          const nodeId = parts[i];
-          const node = (subgraph.nodes ?? []).find((n) => n.id === nodeId);
-          if (!node) break;
-          if (i === parts.length - 1) {
-            return toDisplayName(node, `Node ${nodeId}`);
-          }
-          subgraphId = node.type;
-        }
-      }
-      const leaf = parts[parts.length - 1];
-      return Number.isFinite(leaf) ? `Node ${leaf}` : `Node ${executingNodePath}`;
-    }
-    return `Node ${executingNodePath}`;
-  }
-
-  if (!executingNodeId) return null;
-  const node = workflow.nodes.find((n) => String(n.id) === executingNodeId);
-  if (!node) return `Node ${executingNodeId}`;
-  return toDisplayName(node, `Node ${executingNodeId}`);
-}
+import { resolveExecutingNodeLabel } from '@/utils/executionLabels';
 
 export function BottomStatusOverlay() {
   const currentPanel = useNavigationStore((s) => s.currentPanel);

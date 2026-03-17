@@ -6,7 +6,7 @@ import { findConnectedNode, findConnectedOutputNodes } from '@/utils/nodeOrderin
 import { ConnectionModal } from '@/components/modals/ConnectionModal';
 import { resolveRerouteConnectionLabel } from '@/utils/rerouteLabels';
 import {
-  findWorkflowNodeById,
+  findWorkflowNodeInScope,
   resolveSubgraphPlaceholderConnectionLabel,
   resolveWorkflowNodeDisplayName
 } from '@/utils/subgraphPlaceholderLabels';
@@ -58,6 +58,8 @@ export const ConnectionButton = memo(function ConnectionButton({
   const revealNodeWithParents = useWorkflowStore((s) => s.revealNodeWithParents);
   const nodeTypes = useWorkflowStore((s) => s.nodeTypes);
   const hiddenItems = useWorkflowStore((s) => s.hiddenItems);
+  const topScopeFrame = scopeStack[scopeStack.length - 1];
+  const currentSubgraphId = topScopeFrame?.type === 'subgraph' ? topScopeFrame.id : null;
 
   // When inside a subgraph scope, use the subgraph's nodes and links for connection lookups.
   // Subgraph links are objects; convert to tuple format for findConnectedNode compatibility.
@@ -104,7 +106,7 @@ export const ConnectionButton = memo(function ConnectionButton({
   const longPressTriggeredRef = useRef(false);
 
   const resolvedLabel = useMemo(() => {
-    const node = findWorkflowNodeById(workflow, nodeId);
+    const node = findWorkflowNodeInScope(workflow, nodeId, currentSubgraphId);
     const isSubgraphPlaceholder = Boolean(
       node &&
       workflow?.definitions?.subgraphs?.some((sg) => sg.id === node.type)
@@ -117,11 +119,12 @@ export const ConnectionButton = memo(function ConnectionButton({
       nodeId,
       direction,
       slotIndex,
-      fallback
+      fallback,
+      currentSubgraphId,
     );
     if (!scopedWorkflow) return placeholderLabel;
     return resolveRerouteConnectionLabel(scopedWorkflow, nodeId, direction, placeholderLabel);
-  }, [workflow, scopedWorkflow, direction, slot.label, slot.localized_name, slot.name, slotIndex, nodeId]);
+  }, [workflow, currentSubgraphId, scopedWorkflow, direction, slot.label, slot.localized_name, slot.name, slotIndex, nodeId]);
 
   // Find connected node(s) using the scope-aware workflow.
   const connectedNodes = useMemo(() => {
@@ -257,7 +260,13 @@ export const ConnectionButton = memo(function ConnectionButton({
   const handleBoundaryClick = useCallback(() => {
     const top = scopeStack[scopeStack.length - 1];
     if (top?.type !== 'subgraph') return;
-    const placeholderNode = workflow?.nodes.find((n) => n.id === top.placeholderNodeId);
+    const parentFrame = scopeStack[scopeStack.length - 2];
+    const parentSubgraphId = parentFrame?.type === 'subgraph' ? parentFrame.id : null;
+    const placeholderNode = findWorkflowNodeInScope(
+      workflow,
+      top.placeholderNodeId,
+      parentSubgraphId,
+    );
     exitSubgraph();
     if (placeholderNode?.itemKey) {
       const itemKey = placeholderNode.itemKey;

@@ -1,15 +1,26 @@
 import type { NodeTypes, Workflow, WorkflowNode } from '@/api/types';
 
-export function findWorkflowNodeById(
+export function findRootWorkflowNodeById(
   canonicalWorkflow: Workflow | null,
   nodeId: number
 ): WorkflowNode | null {
   if (!canonicalWorkflow) return null;
+  return canonicalWorkflow.nodes.find((entry) => entry.id === nodeId) ?? null;
+}
 
-  return [
-    ...canonicalWorkflow.nodes,
-    ...(canonicalWorkflow.definitions?.subgraphs ?? []).flatMap((subgraph) => subgraph.nodes ?? [])
-  ].find((entry) => entry.id === nodeId) ?? null;
+export function findWorkflowNodeInScope(
+  canonicalWorkflow: Workflow | null,
+  nodeId: number,
+  subgraphId: string | null,
+): WorkflowNode | null {
+  if (!canonicalWorkflow) return null;
+  if (subgraphId == null) {
+    return findRootWorkflowNodeById(canonicalWorkflow, nodeId);
+  }
+  const subgraph = canonicalWorkflow.definitions?.subgraphs?.find(
+    (entry) => entry.id === subgraphId,
+  );
+  return (subgraph?.nodes ?? []).find((entry) => entry.id === nodeId) ?? null;
 }
 
 export function resolveWorkflowNodeDisplayName(
@@ -42,11 +53,12 @@ export function resolveSubgraphPlaceholderConnectionLabel(
   nodeId: number,
   direction: 'input' | 'output',
   slotIndex: number,
-  fallback: string
+  fallback: string,
+  subgraphId: string | null = null,
 ): string {
   if (!canonicalWorkflow) return fallback;
 
-  const node = findWorkflowNodeById(canonicalWorkflow, nodeId);
+  const node = findWorkflowNodeInScope(canonicalWorkflow, nodeId, subgraphId);
   if (!node) return fallback;
 
   const subgraph = canonicalWorkflow.definitions?.subgraphs?.find(
