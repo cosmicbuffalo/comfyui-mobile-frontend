@@ -9,6 +9,7 @@ import { RepositionOverlay } from "@/components/RepositionOverlay";
 import {
   flattenLayoutToNodeOrder,
   getGroupKey,
+  scopedNodeKey,
   type ItemRef,
 } from "@/utils/mobileLayout";
 import { findLayoutPath } from "@/utils/layoutTraversal";
@@ -165,27 +166,30 @@ export function WorkflowPanel({
   >({});
   const errorBadgeTimeoutsRef = useRef<Map<number, number>>(new Map());
   const bookmarkLongPressRef = useRef<number | null>(null);
+  const bookmarkLongPressTriggeredRef = useRef(false);
   const previousTopBarHeightRef = useRef<number | null>(null);
   const bookmarkPointerRef = useRef<{
     startX: number;
     startY: number;
     startTime: number;
     pointerId: number;
+    isButtonPress: boolean;
   } | null>(null);
   const bookmarkDragOffsetRef = useRef<{ x: number; y: number } | null>(null);
   const handledAddNodeModalRequestIdRef = useRef<number | null>(null);
-  const nodeItemKeyById = useMemo(() => {
-    const map = new Map<number, string>();
+  const nodeItemKeyByScopedKey = useMemo(() => {
+    const map = new Map<string, string>();
     for (const node of workflow?.nodes ?? []) {
-      map.set(node.id, requireHierarchicalKey(node.itemKey, `node ${node.id}`));
+      map.set(
+        scopedNodeKey(node.id, null),
+        requireHierarchicalKey(node.itemKey, `node ${node.id}`),
+      );
     }
-    // Inner subgraph nodes are not in workflow.nodes; include them so that
-    // any layout traversal that visits mobileLayout.subgraphs[*] node refs
-    // can resolve their item keys. Only add if not already claimed by a
-    // root node (IDs can collide across scopes).
     for (const sg of workflow?.definitions?.subgraphs ?? []) {
       for (const node of sg.nodes ?? []) {
-        if (node.itemKey && !map.has(node.id)) map.set(node.id, node.itemKey);
+        if (node.itemKey) {
+          map.set(scopedNodeKey(node.id, sg.id), node.itemKey);
+        }
       }
     }
     return map;
@@ -312,7 +316,7 @@ export function WorkflowPanel({
       refs.forEach((ref) => {
         if (ref.type === "node") {
           const itemKey = requireHierarchicalKey(
-            nodeItemKeyById.get(ref.id),
+            nodeItemKeyByScopedKey.get(scopedNodeKey(ref.id, currentSubgraphId)),
             `layout node ref ${ref.id}`,
           );
           byHierarchicalKey.set(itemKey, {
@@ -360,7 +364,7 @@ export function WorkflowPanel({
     };
     visit(mobileLayout.root, null);
     return byHierarchicalKey;
-  }, [mobileLayout, nodeItemKeyById, subgraphItemKeyById]);
+  }, [mobileLayout, nodeItemKeyByScopedKey, subgraphItemKeyById]);
 
   const bookmarkEntries = useMemo<BookmarkEntry[]>(
     () =>
@@ -372,11 +376,11 @@ export function WorkflowPanel({
 
   const findPathToBookmarkedHierarchicalKey = useCallback(
     (itemKey: string): { groupKeys: string[]; subgraphIds: string[] } | null => {
-      const path = findLayoutPath(mobileLayout, ({ ref }) => {
+      const path = findLayoutPath(mobileLayout, ({ ref, currentSubgraphId }) => {
         if (ref.type === "node") {
           return (
             requireHierarchicalKey(
-              nodeItemKeyById.get(ref.id),
+              nodeItemKeyByScopedKey.get(scopedNodeKey(ref.id, currentSubgraphId)),
               `layout node ref ${ref.id}`,
             ) === itemKey
           );
@@ -400,7 +404,7 @@ export function WorkflowPanel({
         subgraphIds: path.subgraphIds,
       };
     },
-    [mobileLayout, nodeItemKeyById, subgraphItemKeyById],
+    [mobileLayout, nodeItemKeyByScopedKey, subgraphItemKeyById],
   );
 
   const jumpToBookmarkedNode = useCallback(
@@ -586,10 +590,12 @@ export function WorkflowPanel({
 
   const handleBookmarkButtonClick = useCallback(
     (entry: BookmarkEntry, index: number) => () => {
+      if (bookmarkLongPressTriggeredRef.current) {
+        bookmarkLongPressTriggeredRef.current = false;
+        return;
+      }
       if (isBookmarkRepositioning) {
-        setIsBookmarkRepositioning(false);
-        setIsBookmarkDragging(false);
-        setBookmarkDragPosition(null);
+        stopBookmarkRepositioning();
         return;
       }
       setBookmarkCycleIndex(index);
@@ -598,14 +604,13 @@ export function WorkflowPanel({
     [
       isBookmarkRepositioning,
       navigateToBookmarkEntry,
+      stopBookmarkRepositioning,
     ],
   );
 
   const handleBookmarkCycleClick = useCallback(() => {
     if (isBookmarkRepositioning) {
-      setIsBookmarkRepositioning(false);
-      setIsBookmarkDragging(false);
-      setBookmarkDragPosition(null);
+      stopBookmarkRepositioning();
       return;
     }
     const nextIndex = (bookmarkCycleIndex + 1) % bookmarkEntries.length;
@@ -618,6 +623,7 @@ export function WorkflowPanel({
     bookmarkCycleIndex,
     isBookmarkRepositioning,
     navigateToBookmarkEntry,
+    stopBookmarkRepositioning,
   ]);
 
   const clearBookmarkLongPress = useCallback(() => {
@@ -626,6 +632,13 @@ export function WorkflowPanel({
       bookmarkLongPressRef.current = null;
     }
   }, []);
+
+  function stopBookmarkRepositioning() {
+    bookmarkLongPressTriggeredRef.current = false;
+    setIsBookmarkRepositioning(false);
+    setIsBookmarkDragging(false);
+    setBookmarkDragPosition(null);
+  }
 
   const getBottomBarOffset = useCallback(() => {
     const value = getComputedStyle(document.documentElement).getPropertyValue(
@@ -718,26 +731,34 @@ export function WorkflowPanel({
     (event: React.PointerEvent<HTMLDivElement>) => {
       if (event.pointerType === "mouse" && event.button !== 0) return;
       const isButtonPress = (event.target as HTMLElement).closest("button");
-      if (isButtonPress && !isBookmarkRepositioning) {
-        // Let bookmark buttons handle normal activation without drag interception.
-        return;
-      }
-      event.preventDefault();
+      const pointerTarget = event.currentTarget;
       bookmarkPointerRef.current = {
         startX: event.clientX,
         startY: event.clientY,
         startTime: Date.now(),
         pointerId: event.pointerId,
+        isButtonPress: Boolean(isButtonPress),
       };
       if (isBookmarkRepositioning) {
+        event.preventDefault();
         startBookmarkDrag(event.clientX, event.clientY);
-      } else {
+        pointerTarget.setPointerCapture(event.pointerId);
+      } else if (isButtonPress) {
         bookmarkLongPressRef.current = window.setTimeout(() => {
+          bookmarkLongPressTriggeredRef.current = true;
+          setIsBookmarkRepositioning(true);
+          startBookmarkDrag(event.clientX, event.clientY);
+          pointerTarget.setPointerCapture(event.pointerId);
+        }, 500);
+      } else {
+        event.preventDefault();
+        bookmarkLongPressRef.current = window.setTimeout(() => {
+          bookmarkLongPressTriggeredRef.current = true;
           setIsBookmarkRepositioning(true);
           startBookmarkDrag(event.clientX, event.clientY);
         }, 500);
+        pointerTarget.setPointerCapture(event.pointerId);
       }
-      event.currentTarget.setPointerCapture(event.pointerId);
     },
     [isBookmarkRepositioning, startBookmarkDrag],
   );
@@ -780,7 +801,13 @@ export function WorkflowPanel({
       if (isBookmarkDragging) {
         finalizeBookmarkPosition();
         setIsBookmarkDragging(false);
+        if (!pointerState?.isButtonPress) {
+          bookmarkLongPressTriggeredRef.current = false;
+        }
         return;
+      }
+      if (bookmarkLongPressTriggeredRef.current && !pointerState?.isButtonPress) {
+        bookmarkLongPressTriggeredRef.current = false;
       }
       if (isBookmarkRepositioning || !pointerState) return;
       const dx = event.clientX - pointerState.startX;
@@ -804,6 +831,7 @@ export function WorkflowPanel({
   const handleBookmarkPointerCancel = useCallback(() => {
     clearBookmarkLongPress();
     bookmarkPointerRef.current = null;
+    bookmarkLongPressTriggeredRef.current = false;
     setIsBookmarkDragging(false);
     setBookmarkDragPosition(null);
   }, [clearBookmarkLongPress]);
@@ -1275,16 +1303,14 @@ export function WorkflowPanel({
       const bar = bookmarkBarRef.current;
       if (!bar || !event.target) return;
       if (bar.contains(event.target as Node)) return;
-      setIsBookmarkRepositioning(false);
-      setIsBookmarkDragging(false);
-      setBookmarkDragPosition(null);
+      stopBookmarkRepositioning();
       clearBookmarkLongPress();
     };
     document.addEventListener("pointerdown", handleOutsidePointerDown);
     return () => {
       document.removeEventListener("pointerdown", handleOutsidePointerDown);
     };
-  }, [clearBookmarkLongPress, isBookmarkRepositioning]);
+  }, [clearBookmarkLongPress, isBookmarkRepositioning, stopBookmarkRepositioning]);
 
   useEffect(() => {
     if (!addNodeModalRequest) return;
