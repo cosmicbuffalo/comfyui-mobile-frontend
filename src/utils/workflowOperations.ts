@@ -2,6 +2,7 @@ import { getFileWorkflow, type AssetSource, type FileItem } from '@/api/client';
 import type { NodeTypes, Workflow, WorkflowNode } from '@/api/types';
 import { getWidgetIndexForInput } from '@/hooks/useWorkflow';
 import type { WorkflowSource } from '@/hooks/useWorkflow';
+import { resolveWorkflowNodeDisplayName } from '@/utils/subgraphPlaceholderLabels';
 import type { ViewerImage } from '@/utils/viewerImages';
 
 export type LoadWorkflowFn = (
@@ -87,12 +88,10 @@ export function resolveInputWidget(params: {
   return null;
 }
 
-export function getNodeLabel(node: WorkflowNode, nodeTypes: NodeTypes | null): string {
-  const directTitle = (node as { title?: unknown }).title;
-  const nodeTitle =
-    typeof directTitle === 'string' && directTitle.trim()
-      ? directTitle.trim()
-      : null;
-  const typeDef = nodeTypes?.[node.type];
-  return nodeTitle || typeDef?.display_name || node.type;
+export function getNodeLabel(
+  node: WorkflowNode,
+  nodeTypes: NodeTypes | null,
+  workflow?: Workflow | null
+): string {
+  return resolveWorkflowNodeDisplayName(workflow ?? null, node, nodeTypes);
 }

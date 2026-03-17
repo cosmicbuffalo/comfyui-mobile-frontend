@@ -4,6 +4,7 @@ export interface WorkflowInput {
   name: string;
   type: string;
   link: number | null;
+  label?: string;
   localized_name?: string;
   widget?: {
     name: string;
@@ -15,12 +16,13 @@ export interface WorkflowOutput {
   type: string;
   links: number[] | null;
   slot_index?: number;
+  label?: string;
   localized_name?: string;
 }
 
 export interface WorkflowNode {
   id: number;
-  stableKey?: string;
+  itemKey?: string;
   title?: string;
   type: string;
   pos: [number, number];
@@ -41,7 +43,7 @@ export type WorkflowLink = [number, number, number, number, number, string];
 
 export interface WorkflowGroup {
   id: number;
-  stableKey?: string;
+  itemKey?: string;
   title: string;
   bounding: [number, number, number, number]; // [x, y, width, height]
   color: string;
@@ -60,7 +62,7 @@ export interface WorkflowSubgraphLink {
 
 export interface WorkflowSubgraphDefinition {
   id: string;
-  stableKey?: string;
+  itemKey?: string;
   name?: string;
   version?: number;
   state?: Record<string, unknown>;
@@ -74,6 +76,7 @@ export interface WorkflowSubgraphDefinition {
     type?: string;
     linkIds?: number[];
     label?: string;
+    localized_name?: string;
     pos?: [number, number];
   }>;
   outputs?: Array<{
@@ -82,6 +85,7 @@ export interface WorkflowSubgraphDefinition {
     type?: string;
     linkIds?: number[];
     label?: string;
+    localized_name?: string;
     pos?: [number, number];
   }>;
   widgets?: unknown[];

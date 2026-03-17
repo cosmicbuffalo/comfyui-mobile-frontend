@@ -115,6 +115,13 @@ export function QueueCard({
   const placeholderClass = 'aspect-square w-full bg-gray-100 flex flex-col items-center justify-center text-gray-400';
   const durationSeconds = historyData?.durationSeconds;
   const success = historyData ? historyData.success !== false : true;
+  const isFailedDoneItem = isDone && historyData?.success === false;
+  const donePlaceholderMessage = isFailedDoneItem
+    ? historyData?.errorMessage || 'Execution failed'
+    : 'No images saved';
+  const donePlaceholderClass = isFailedDoneItem
+    ? 'text-sm text-red-600 px-4 text-center'
+    : 'text-sm';
   const durationLabel = formatDuration(durationSeconds);
   const displayNodeProgress = overallProgress === 100 ? 100 : progress;
 
@@ -359,7 +366,9 @@ export function QueueCard({
               })()}
             </div>
           ) : isDone ? (
-            <div className={placeholderClass}><span className="text-sm">No images saved</span></div>
+            <div className={placeholderClass}>
+              <span className={donePlaceholderClass}>{donePlaceholderMessage}</span>
+            </div>
           ) : isRunning ? (
             <div className={placeholderClass} style={{ minHeight: '300px' }}>
               {isActuallyRunning && overallProgress != null ? (

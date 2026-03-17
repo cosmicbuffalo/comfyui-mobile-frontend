@@ -5,8 +5,8 @@ import { computeNodeGroupsFor } from '@/utils/nodeGroups';
 
 export type ItemRef =
   | { type: 'node'; id: number }
-  | { type: 'group'; id: number; subgraphId: string | null; stableKey: string }
-  | { type: 'subgraph'; id: string }
+  | { type: 'group'; id: number; subgraphId: string | null; itemKey: string }
+  | { type: 'subgraph'; id: string; nodeId?: number }
   | { type: 'hiddenBlock'; blockId: string };
 
 export interface MobileLayout {
@@ -24,7 +24,7 @@ export type GroupParentRef =
 
 export type LocationPointer =
   | { type: 'node'; nodeId: number; subgraphId: string | null }
-  | { type: 'group'; groupId: number; subgraphId: string | null; groupKey?: string }
+  | { type: 'group'; groupId: number; subgraphId: string | null }
   | { type: 'subgraph'; subgraphId: string };
 
 export function createEmptyMobileLayout(): MobileLayout {
@@ -41,6 +41,59 @@ export type ContainerId =
   | { scope: 'root' }
   | { scope: 'group'; groupKey: string }
   | { scope: 'subgraph'; subgraphId: string };
+
+export interface NodeLayoutMembership {
+  scope: 'root' | 'subgraph';
+  subgraphId: string | null;
+  groupKey: string | null;
+}
+
+export function scopedNodeKey(nodeId: number, subgraphId: string | null): string {
+  return `${subgraphId ?? 'root'}:${nodeId}`;
+}
+
+export function collectScopedMembership(
+  layout: MobileLayout
+): Map<string, NodeLayoutMembership> {
+  const membership = new Map<string, NodeLayoutMembership>();
+  const visitingGroups = new Set<string>();
+  const visitingSubgraphs = new Set<string>();
+
+  const visit = (
+    refs: ItemRef[],
+    subgraphId: string | null,
+    currentGroupKey: string | null
+  ) => {
+    const scope: 'root' | 'subgraph' = subgraphId != null ? 'subgraph' : 'root';
+    for (const ref of refs) {
+      if (ref.type === 'node') {
+        membership.set(scopedNodeKey(ref.id, subgraphId), { scope, subgraphId, groupKey: currentGroupKey });
+        continue;
+      }
+      if (ref.type === 'hiddenBlock') {
+        for (const nodeId of layout.hiddenBlocks[ref.blockId] ?? []) {
+          membership.set(scopedNodeKey(nodeId, subgraphId), { scope, subgraphId, groupKey: currentGroupKey });
+        }
+        continue;
+      }
+      if (ref.type === 'group') {
+        const groupKey = getGroupKey(ref.id, ref.subgraphId);
+        if (visitingGroups.has(groupKey)) continue;
+        visitingGroups.add(groupKey);
+        visit(layout.groups[groupKey] ?? [], subgraphId, groupKey);
+        visitingGroups.delete(groupKey);
+        continue;
+      }
+      if (visitingSubgraphs.has(ref.id)) continue;
+      visitingSubgraphs.add(ref.id);
+      visit(layout.subgraphs[ref.id] ?? [], ref.id, null);
+      visitingSubgraphs.delete(ref.id);
+    }
+  };
+
+  visit(layout.root, null, null);
+  return membership;
+}
 
 export function parseLocationPointer(pointer: string): LocationPointer | null {
   const rawSegments = pointer.split('/').filter(Boolean);
@@ -84,9 +137,6 @@ export function parseLocationPointer(pointer: string): LocationPointer | null {
 }
 
 export function makeLocationPointer(pointer: LocationPointer): string {
-  if (pointer.type === 'group' && pointer.groupKey) {
-    return pointer.groupKey;
-  }
   const base = pointer.subgraphId == null ? 'root' : `root/subgraph:${pointer.subgraphId}`;
   if (pointer.type === 'group') {
     return `${base}/group:${pointer.groupId}`;
@@ -97,33 +147,50 @@ export function makeLocationPointer(pointer: LocationPointer): string {
   return `root/subgraph:${pointer.subgraphId}`;
 }
 
+export function getGroupKey(groupId: number, subgraphId: string | null): string {
+  return makeLocationPointer({ type: 'group', groupId, subgraphId });
+}
+
+export function extractLayoutNodeMembership(layout: MobileLayout): Map<number, string> {
+  const membership = collectScopedMembership(layout);
+  const result = new Map<number, string>();
+  for (const [key, member] of membership.entries()) {
+    if (member.subgraphId !== null) continue;
+    if (!member.groupKey) continue;
+    const nodeId = Number(key.split(':').pop() ?? NaN);
+    if (!Number.isFinite(nodeId)) continue;
+    result.set(nodeId, member.groupKey);
+  }
+  return result;
+}
+
+export function extractLayoutSubgraphNodeMembership(layout: MobileLayout): Map<number, string> {
+  const membership = collectScopedMembership(layout);
+  const result = new Map<number, string>();
+  for (const [key, member] of membership.entries()) {
+    if (member.subgraphId === null) continue;
+    if (!member.groupKey) continue;
+    const nodeId = Number(key.split(':').pop() ?? NaN);
+    if (!Number.isFinite(nodeId)) continue;
+    result.set(nodeId, member.groupKey);
+  }
+  return result;
+}
+
 // --- Helpers ---
 
 function itemRefEquals(a: ItemRef, b: ItemRef): boolean {
   if (a.type !== b.type) return false;
   if (a.type === 'node' && b.type === 'node') return a.id === b.id;
-  if (a.type === 'group' && b.type === 'group') return a.stableKey === b.stableKey;
-  if (a.type === 'subgraph' && b.type === 'subgraph') return a.id === b.id;
+  if (a.type === 'group' && b.type === 'group') return a.id === b.id && a.subgraphId === b.subgraphId;
+  if (a.type === 'subgraph' && b.type === 'subgraph') {
+    // If both refs carry an instance nodeId, compare by that — two placeholder
+    // nodes for the same definition are distinct layout items.
+    if (a.nodeId !== undefined && b.nodeId !== undefined) return a.nodeId === b.nodeId;
+    return a.id === b.id;
+  }
   if (a.type === 'hiddenBlock' && b.type === 'hiddenBlock') return a.blockId === b.blockId;
   return false;
-}
-
-function getMobileOrigin(node: WorkflowNode): { scope: 'root' | 'subgraph'; subgraphId?: string } | null {
-  const props = node.properties as Record<string, unknown> | undefined;
-  const origin = props?.['__mobile_origin'];
-  if (!origin || typeof origin !== 'object') return null;
-  const scope = (origin as { scope?: string }).scope;
-  if (scope === 'root') return { scope: 'root' };
-  if (scope === 'subgraph') {
-    const subgraphId = (origin as { subgraphId?: string }).subgraphId;
-    if (typeof subgraphId === 'string') return { scope: 'subgraph', subgraphId };
-  }
-  return null;
-}
-
-export function getNodeSubgraphId(node: WorkflowNode): string | null {
-  const origin = getMobileOrigin(node);
-  return origin?.scope === 'subgraph' ? origin.subgraphId ?? null : null;
 }
 
 // --- Builders ---
@@ -139,37 +206,16 @@ export function buildDefaultLayout(
   const groups = workflow.groups ?? [];
   const subgraphs = workflow.definitions?.subgraphs ?? [];
 
-  // Determine which container each node belongs to
-  const nodeToSubgraph = new Map<number, string>();
-  for (const node of orderedNodes) {
-    const origin = getMobileOrigin(node);
-    if (origin?.scope === 'subgraph' && origin.subgraphId) {
-      nodeToSubgraph.set(node.id, origin.subgraphId);
-    }
-  }
+  const subgraphIds = new Set(subgraphs.map((sg) => sg.id));
+  const nodeToGroup = computeNodeGroupsFor(orderedNodes, groups);
 
-  const topLevelNodes = orderedNodes.filter((n) => !nodeToSubgraph.has(n.id));
-  const nodeToGroup = computeNodeGroupsFor(topLevelNodes, groups);
-
-  // Build subgraph group maps
+  // Build subgraph inner node group maps (inner nodes live in sg.nodes, not orderedNodes)
   const subgraphNodeToGroup = new Map<string, Map<number, number>>();
   for (const sg of subgraphs) {
-    const sgNodes = orderedNodes.filter((n) => nodeToSubgraph.get(n.id) === sg.id);
+    const sgNodes = sg.nodes ?? [];
     const sgGroups = sg.groups ?? [];
     if (sgGroups.length > 0) {
       subgraphNodeToGroup.set(sg.id, computeNodeGroupsFor(sgNodes, sgGroups));
-    }
-  }
-
-  // Subgraph-to-group mapping from workflow.extra
-  const rawSubgraphGroupMap =
-    (workflow.extra as Record<string, unknown> | undefined)?.['__mobile_subgraph_group_map'];
-  const subgraphGroupMap = new Map<string, number | null>();
-  if (rawSubgraphGroupMap && typeof rawSubgraphGroupMap === 'object') {
-    for (const [key, value] of Object.entries(rawSubgraphGroupMap as Record<string, unknown>)) {
-      if (typeof value === 'number' || value === null) {
-        subgraphGroupMap.set(key, value);
-      }
     }
   }
 
@@ -256,18 +302,14 @@ export function buildDefaultLayout(
   }
 
   // Build subgraph contents with nested group hierarchy.
+  // Inner nodes come from sg.nodes (canonical model — not from orderedNodes).
   for (const sg of subgraphs) {
-    const sgNodes = orderedNodes.filter((n) => nodeToSubgraph.get(n.id) === sg.id);
-    const sgNodeToGroup = subgraphNodeToGroup.get(sg.id);
+    const sgNodes = sg.nodes ?? [];
     const sgGroups = sg.groups ?? [];
     const sgGroupParentMap = getGroupParentMap(sgGroups);
-    const sgGroupKeyById = new Map<number, string>();
-    const sgGroupById = new Map((sg.groups ?? []).map((group) => [group.id, group]));
     const sgEmittedGroups = new Set<number>();
     const sgRootItems: ItemRef[] = [];
-    const groupKey = (groupId: number) =>
-      sgGroupKeyById.get(groupId) ??
-      `legacy-group-${sg.id}-${groupId}`;
+    const groupKey = (groupId: number) => getGroupKey(groupId, sg.id);
     const emitGroupChain = (groupId: number) => {
       const chain: number[] = [];
       const seen = new Set<number>();
@@ -281,26 +323,24 @@ export function buildDefaultLayout(
       for (const id of chain) {
         if (sgEmittedGroups.has(id)) continue;
         const parentId = sgGroupParentMap.get(id) ?? null;
-        const stableKey =
-          sgGroupById.get(id)?.stableKey ??
-          `legacy-group-${sg.id}-${id}`;
-        sgGroupKeyById.set(id, stableKey);
-        const ref: ItemRef = { type: 'group', id, subgraphId: sg.id, stableKey };
+        const currentGroupKey = groupKey(id);
+        const ref: ItemRef = { type: 'group', id, subgraphId: sg.id, itemKey: currentGroupKey };
         if (parentId == null) {
           sgRootItems.push(ref);
-          layout.groupParents![stableKey] = { scope: 'subgraph', subgraphId: sg.id };
+          layout.groupParents![currentGroupKey] = { scope: 'subgraph', subgraphId: sg.id };
         } else {
-          const parentStableKey = groupKey(parentId);
-          layout.groups[parentStableKey] ??= [];
-          layout.groups[parentStableKey].push(ref);
-          layout.groupParents![stableKey] = { scope: 'group', groupKey: parentStableKey };
+          const parentGroupKey = groupKey(parentId);
+          layout.groups[parentGroupKey] ??= [];
+          layout.groups[parentGroupKey].push(ref);
+          layout.groupParents![currentGroupKey] = { scope: 'group', groupKey: parentGroupKey };
         }
         sgEmittedGroups.add(id);
       }
     };
 
+    const sgNodeToGroupForSg = subgraphNodeToGroup.get(sg.id);
     for (const node of sgNodes) {
-      const assignedGroupId = sgNodeToGroup?.get(node.id);
+      const assignedGroupId = sgNodeToGroupForSg?.get(node.id);
       if (assignedGroupId === undefined) {
         sgRootItems.push({ type: 'node', id: node.id });
         continue;
@@ -323,15 +363,12 @@ export function buildDefaultLayout(
   }
 
   // Build root contents with nested group hierarchy.
+  // orderedNodes = root-level nodes; placeholder nodes (subgraphIds.has(node.type)) become
+  // { type: 'subgraph' } items at the position the placeholder occupies in the root order.
   const rootGroupParentMap = getGroupParentMap(groups);
   const rootEmittedGroups = new Set<number>();
-  const emittedSubgraphs = new Set<string>();
   const rootItems: ItemRef[] = [];
-    const rootGroupKeyById = new Map<number, string>();
-    const rootGroupById = new Map(groups.map((group) => [group.id, group]));
-  const rootGroupKey = (groupId: number) =>
-    rootGroupKeyById.get(groupId) ??
-    `legacy-group-root-${groupId}`;
+  const rootGroupKey = (groupId: number) => getGroupKey(groupId, null);
   const emitRootGroupChain = (groupId: number) => {
     const chain: number[] = [];
     const seen = new Set<number>();
@@ -345,46 +382,34 @@ export function buildDefaultLayout(
     for (const id of chain) {
       if (rootEmittedGroups.has(id)) continue;
       const parentId = rootGroupParentMap.get(id) ?? null;
-      const stableKey =
-        rootGroupById.get(id)?.stableKey ??
-        `legacy-group-root-${id}`;
-      rootGroupKeyById.set(id, stableKey);
-      const ref: ItemRef = { type: 'group', id, subgraphId: null, stableKey };
+      const currentGroupKey = rootGroupKey(id);
+      const ref: ItemRef = { type: 'group', id, subgraphId: null, itemKey: currentGroupKey };
       if (parentId == null) {
         rootItems.push(ref);
-        layout.groupParents![stableKey] = { scope: 'root' };
+        layout.groupParents![currentGroupKey] = { scope: 'root' };
       } else {
-        const parentStableKey = rootGroupKey(parentId);
-        layout.groups[parentStableKey] ??= [];
-        layout.groups[parentStableKey].push(ref);
-        layout.groupParents![stableKey] = { scope: 'group', groupKey: parentStableKey };
+        const parentGroupKey = rootGroupKey(parentId);
+        layout.groups[parentGroupKey] ??= [];
+        layout.groups[parentGroupKey].push(ref);
+        layout.groupParents![currentGroupKey] = { scope: 'group', groupKey: parentGroupKey };
       }
       rootEmittedGroups.add(id);
     }
   };
 
-  for (const node of topLevelNodes) {
+  for (const node of orderedNodes) {
     const assignedGroupId = nodeToGroup.get(node.id);
+    // Placeholder nodes (type matches a subgraph UUID) become { type: 'subgraph' } items.
+    const item: ItemRef = subgraphIds.has(node.type)
+      ? { type: 'subgraph', id: node.type, nodeId: node.id }
+      : { type: 'node', id: node.id };
     if (assignedGroupId === undefined) {
-      rootItems.push({ type: 'node', id: node.id });
+      rootItems.push(item);
       continue;
     }
     emitRootGroupChain(assignedGroupId);
     layout.groups[rootGroupKey(assignedGroupId)] ??= [];
-    layout.groups[rootGroupKey(assignedGroupId)].push({ type: 'node', id: node.id });
-  }
-
-  for (const sg of subgraphs) {
-    if (emittedSubgraphs.has(sg.id)) continue;
-    const assignedGroupId = subgraphGroupMap.get(sg.id);
-    if (assignedGroupId != null) {
-      emitRootGroupChain(assignedGroupId);
-      layout.groups[rootGroupKey(assignedGroupId)] ??= [];
-      layout.groups[rootGroupKey(assignedGroupId)].push({ type: 'subgraph', id: sg.id });
-    } else {
-      rootItems.push({ type: 'subgraph', id: sg.id });
-    }
-    emittedSubgraphs.add(sg.id);
+    layout.groups[rootGroupKey(assignedGroupId)].push(item);
   }
 
   for (const g of groups) {
@@ -401,131 +426,38 @@ export function buildDefaultLayout(
   return layout;
 }
 
-/**
- * Migrate old flat mobileNodeOrder + mobileNodeGroupOverrides to MobileLayout.
- */
-export function migrateFlatToLayout(
-  mobileNodeOrder: number[],
-  mobileNodeGroupOverrides: Record<number, number | null>,
-  workflow: Workflow,
-  hiddenItems: Record<string, boolean>
-): MobileLayout {
-  const groups = workflow.groups ?? [];
-  const subgraphs = workflow.definitions?.subgraphs ?? [];
-  const makeLegacyGroupStableKey = (groupId: number, subgraphId: string | null): string =>
-    subgraphId == null ? `legacy-group-root-${groupId}` : `legacy-group-${subgraphId}-${groupId}`;
-  const resolveGroupStableKey = (groupId: number, subgraphId: string | null): string => {
-    if (subgraphId == null) {
-      const rootGroup = groups.find((group) => group.id === groupId);
-      return rootGroup?.stableKey ?? makeLegacyGroupStableKey(groupId, null);
-    }
-    const subgraph = subgraphs.find((sg) => sg.id === subgraphId);
-    const scopedGroup = subgraph?.groups?.find((group) => group.id === groupId);
-    return scopedGroup?.stableKey ?? makeLegacyGroupStableKey(groupId, subgraphId);
-  };
-
-  const layout: MobileLayout = createEmptyMobileLayout();
-
-  // Initialize containers
-  for (const g of groups) {
-    const stableKey = g.stableKey ?? makeLegacyGroupStableKey(g.id, null);
-    layout.groups[stableKey] = [];
-    layout.groupParents![stableKey] = { scope: 'root' };
-  }
-  for (const sg of subgraphs) {
-    layout.subgraphs[sg.id] = [];
-    for (const g of (sg.groups ?? [])) {
-      const stableKey = g.stableKey ?? makeLegacyGroupStableKey(g.id, sg.id);
-      layout.groups[stableKey] = [];
-      layout.groupParents![stableKey] = { scope: 'subgraph', subgraphId: sg.id };
-    }
-  }
-
-  // Determine node-to-subgraph mapping
-  const nodeToSubgraph = new Map<number, string>();
-  for (const node of workflow.nodes) {
-    const origin = getMobileOrigin(node);
-    if (origin?.scope === 'subgraph' && origin.subgraphId) {
-      nodeToSubgraph.set(node.id, origin.subgraphId);
-    }
-  }
-
-  // Use the flat order to build the layout
-  const topLevelNodes = workflow.nodes.filter((n) => !nodeToSubgraph.has(n.id));
-  const nodeToGroup = computeNodeGroupsFor(topLevelNodes, groups);
-
-  // Apply overrides
-  for (const [nodeIdStr, groupId] of Object.entries(mobileNodeGroupOverrides)) {
-    const nodeId = Number(nodeIdStr);
-    if (!Number.isFinite(nodeId)) continue;
-    if (groupId === null) {
-      nodeToGroup.delete(nodeId);
-    } else {
-      nodeToGroup.set(nodeId, groupId);
-    }
-  }
-
-  const emittedGroups = new Set<number>();
-  const emittedSubgraphs = new Set<string>();
-  let blockIndex = 0;
-
-  for (const nodeId of mobileNodeOrder) {
-    const subgraphId = nodeToSubgraph.get(nodeId);
-    if (subgraphId) {
-      if (!emittedSubgraphs.has(subgraphId)) {
-        layout.root.push({ type: 'subgraph', id: subgraphId });
-        emittedSubgraphs.add(subgraphId);
-        // Add all subgraph nodes in order
-        const sgNodeIds = mobileNodeOrder.filter((id) => nodeToSubgraph.get(id) === subgraphId);
-        layout.subgraphs[subgraphId] = sgNodeIds.map((id) => ({ type: 'node', id }));
-      }
-      continue;
-    }
-
-    const groupId = nodeToGroup.get(nodeId);
-    if (groupId !== undefined) {
-      if (!emittedGroups.has(groupId)) {
-        const stableKey = resolveGroupStableKey(groupId, null);
-        layout.root.push({ type: 'group', id: groupId, subgraphId: null, stableKey });
-        layout.groupParents![stableKey] = { scope: 'root' };
-        emittedGroups.add(groupId);
-        // Add all group nodes in order
-        const groupNodeIds = mobileNodeOrder.filter(
-          (id) => !nodeToSubgraph.has(id) && nodeToGroup.get(id) === groupId
-        );
-        layout.groups[stableKey] = groupNodeIds.map((id) => ({ type: 'node', id }));
-      }
-    } else {
-      if (
-        hiddenItems[
-          makeLocationPointer({ type: 'node', nodeId, subgraphId: null })
-        ]
-      ) {
-        // Hidden ungrouped node - create a block
-        const blockId = `hidden-root-${blockIndex}`;
-        blockIndex++;
-        layout.hiddenBlocks[blockId] = [nodeId];
-        layout.root.push({ type: 'hiddenBlock', blockId });
-      } else {
-        layout.root.push({ type: 'node', id: nodeId });
-      }
-    }
-  }
-
-  return layout;
-}
 
 /**
  * Remove a node from the layout (e.g., on delete).
  */
-export function removeNodeFromLayout(layout: MobileLayout, nodeId: number): MobileLayout {
-  const removeFromList = (items: ItemRef[]): ItemRef[] => {
+export function removeNodeFromLayout(
+  layout: MobileLayout,
+  nodeId: number,
+  subgraphId: string | null = null
+): MobileLayout {
+  const touchedHiddenBlocks = new Set<string>();
+  const resolveGroupScopeSubgraphId = (groupKey: string): string | null => {
+    const visited = new Set<string>();
+    let current = groupKey;
+    while (!visited.has(current)) {
+      visited.add(current);
+      const parent = layout.groupParents?.[current];
+      if (!parent) return null;
+      if (parent.scope === 'root') return null;
+      if (parent.scope === 'subgraph') return parent.subgraphId;
+      current = parent.groupKey;
+    }
+    return null;
+  };
+
+  const removeFromList = (items: ItemRef[], currentSubgraphId: string | null): ItemRef[] => {
     const result: ItemRef[] = [];
     for (const item of items) {
-      if (item.type === 'node' && item.id === nodeId) continue;
+      if (item.type === 'node' && item.id === nodeId && currentSubgraphId === subgraphId) continue;
       if (item.type === 'hiddenBlock') {
         const blockNodes = layout.hiddenBlocks[item.blockId];
-        if (blockNodes) {
+        if (blockNodes && currentSubgraphId === subgraphId) {
+          touchedHiddenBlocks.add(item.blockId);
           const filtered = blockNodes.filter((id) => id !== nodeId);
           if (filtered.length === 0) continue; // Remove empty block
           // Update will be done in hiddenBlocks below
@@ -536,26 +468,33 @@ export function removeNodeFromLayout(layout: MobileLayout, nodeId: number): Mobi
     return result;
   };
 
+  const nextGroups: Record<string, ItemRef[]> = {};
+  for (const [groupId, items] of Object.entries(layout.groups)) {
+    const scopeSubgraphId = resolveGroupScopeSubgraphId(groupId);
+    nextGroups[groupId] = removeFromList(items, scopeSubgraphId);
+  }
+
+  const nextSubgraphs: Record<string, ItemRef[]> = {};
+  for (const [subgraphId, items] of Object.entries(layout.subgraphs)) {
+    nextSubgraphs[subgraphId] = removeFromList(items, subgraphId);
+  }
+
+  const nextRoot = removeFromList(layout.root, null);
+
   const nextHiddenBlocks: Record<string, number[]> = {};
   for (const [blockId, nodeIds] of Object.entries(layout.hiddenBlocks)) {
+    if (!touchedHiddenBlocks.has(blockId)) {
+      nextHiddenBlocks[blockId] = nodeIds;
+      continue;
+    }
     const filtered = nodeIds.filter((id) => id !== nodeId);
     if (filtered.length > 0) {
       nextHiddenBlocks[blockId] = filtered;
     }
   }
 
-  const nextGroups: Record<string, ItemRef[]> = {};
-  for (const [groupId, items] of Object.entries(layout.groups)) {
-    nextGroups[groupId] = removeFromList(items);
-  }
-
-  const nextSubgraphs: Record<string, ItemRef[]> = {};
-  for (const [subgraphId, items] of Object.entries(layout.subgraphs)) {
-    nextSubgraphs[subgraphId] = removeFromList(items);
-  }
-
   return {
-    root: removeFromList(layout.root),
+    root: nextRoot,
     groups: nextGroups,
     groupParents: layout.groupParents ?? {},
     subgraphs: nextSubgraphs,
@@ -572,7 +511,7 @@ export function addNodeToLayout(
   container?: { groupId?: number; subgraphId?: string | null }
 ): MobileLayout {
   const ref: ItemRef = { type: 'node', id: nodeId };
-  const findGroupStableKey = (
+  const findGroupKey = (
     groupId: number,
     subgraphId: string | null
   ): string | null => {
@@ -582,10 +521,10 @@ export function addNodeToLayout(
     ): string | null => {
       for (const item of refs) {
         if (item.type === 'group' && item.id === groupId && currentSubgraphId === subgraphId) {
-          return item.stableKey;
+          return getGroupKey(item.id, item.subgraphId);
         }
         if (item.type === 'group') {
-          const nested = scan(layout.groups[item.stableKey] ?? [], currentSubgraphId);
+          const nested = scan(layout.groups[getGroupKey(item.id, item.subgraphId)] ?? [], currentSubgraphId);
           if (nested) return nested;
           continue;
         }
@@ -602,17 +541,17 @@ export function addNodeToLayout(
   if (container?.subgraphId) {
     const subgraphItems = layout.subgraphs[container.subgraphId] ?? [];
     if (container.groupId != null) {
-      const groupStableKey = findGroupStableKey(container.groupId, container.subgraphId);
-      if (!groupStableKey) {
+      const groupKey = findGroupKey(container.groupId, container.subgraphId);
+      if (!groupKey) {
         return {
           ...layout,
           subgraphs: { ...layout.subgraphs, [container.subgraphId]: [...subgraphItems, ref] }
         };
       }
-      const groupItems = layout.groups[groupStableKey] ?? [];
+      const groupItems = layout.groups[groupKey] ?? [];
       return {
         ...layout,
-        groups: { ...layout.groups, [groupStableKey]: [...groupItems, ref] }
+        groups: { ...layout.groups, [groupKey]: [...groupItems, ref] }
       };
     }
     return {
@@ -622,17 +561,17 @@ export function addNodeToLayout(
   }
 
   if (container?.groupId != null) {
-    const groupStableKey = findGroupStableKey(container.groupId, container.subgraphId ?? null);
-    if (!groupStableKey) {
+    const groupKey = findGroupKey(container.groupId, container.subgraphId ?? null);
+    if (!groupKey) {
       return {
         ...layout,
         root: [...layout.root, ref]
       };
     }
-    const groupItems = layout.groups[groupStableKey] ?? [];
+    const groupItems = layout.groups[groupKey] ?? [];
     return {
       ...layout,
-      groups: { ...layout.groups, [groupStableKey]: [...groupItems, ref] }
+      groups: { ...layout.groups, [groupKey]: [...groupItems, ref] }
     };
   }
 
@@ -650,42 +589,42 @@ export function removeGroupFromLayout(
   groupId: number,
   subgraphId: string | null = null
 ): MobileLayout {
-  const findGroupStableKey = (
+  const findGroupKey = (
     refs: ItemRef[],
     currentSubgraphId: string | null
   ): string | null => {
     for (const ref of refs) {
       if (ref.type === 'group') {
         if (ref.id === groupId && currentSubgraphId === subgraphId) {
-          return ref.stableKey;
+          return getGroupKey(ref.id, ref.subgraphId);
         }
-        const nested = findGroupStableKey(layout.groups[ref.stableKey] ?? [], currentSubgraphId);
+        const nested = findGroupKey(layout.groups[getGroupKey(ref.id, ref.subgraphId)] ?? [], currentSubgraphId);
         if (nested) return nested;
         continue;
       }
       if (ref.type === 'subgraph') {
-        const nested = findGroupStableKey(layout.subgraphs[ref.id] ?? [], ref.id);
+        const nested = findGroupKey(layout.subgraphs[ref.id] ?? [], ref.id);
         if (nested) return nested;
       }
     }
     return null;
   };
-  const stableKey = findGroupStableKey(layout.root, null);
-  if (!stableKey) return layout;
-  return removeGroupFromLayoutByKey(layout, stableKey);
+  const groupKey = findGroupKey(layout.root, null);
+  if (!groupKey) return layout;
+  return removeGroupFromLayoutByKey(layout, groupKey);
 }
 
 export function removeGroupFromLayoutByKey(
   layout: MobileLayout,
-  groupStableKey: string
+  groupKey: string
 ): MobileLayout {
-  const groupChildren = layout.groups[groupStableKey] ?? [];
+  const groupChildren = layout.groups[groupKey] ?? [];
 
   // Find where the group ref is and replace it with children
   const replaceGroupRef = (items: ItemRef[]): ItemRef[] => {
     const result: ItemRef[] = [];
     for (const item of items) {
-      if (item.type === 'group' && item.stableKey === groupStableKey) {
+      if (item.type === 'group' && getGroupKey(item.id, item.subgraphId) === groupKey) {
         result.push(...groupChildren);
       } else {
         result.push(item);
@@ -696,19 +635,19 @@ export function removeGroupFromLayoutByKey(
 
   const nextGroups = { ...layout.groups };
   const nextGroupParents = { ...(layout.groupParents ?? {}) };
-  const removedParent = nextGroupParents[groupStableKey];
-  delete nextGroups[groupStableKey];
-  delete nextGroupParents[groupStableKey];
+  const removedParent = nextGroupParents[groupKey];
+  delete nextGroups[groupKey];
+  delete nextGroupParents[groupKey];
 
   // Check root
   let nextRoot = layout.root;
-  if (layout.root.some((item) => item.type === 'group' && item.stableKey === groupStableKey)) {
+  if (layout.root.some((item) => item.type === 'group' && getGroupKey(item.id, item.subgraphId) === groupKey)) {
     nextRoot = replaceGroupRef(layout.root);
   }
 
   // Check other groups
   for (const [gId, items] of Object.entries(nextGroups)) {
-    if (items.some((item) => item.type === 'group' && item.stableKey === groupStableKey)) {
+    if (items.some((item) => item.type === 'group' && getGroupKey(item.id, item.subgraphId) === groupKey)) {
       nextGroups[gId] = replaceGroupRef(items);
     }
   }
@@ -716,17 +655,18 @@ export function removeGroupFromLayoutByKey(
   // Check subgraphs
   const nextSubgraphs = { ...layout.subgraphs };
   for (const [sgId, items] of Object.entries(nextSubgraphs)) {
-    if (items.some((item) => item.type === 'group' && item.stableKey === groupStableKey)) {
+    if (items.some((item) => item.type === 'group' && getGroupKey(item.id, item.subgraphId) === groupKey)) {
       nextSubgraphs[sgId] = replaceGroupRef(items);
     }
   }
 
   for (const child of groupChildren) {
     if (child.type !== 'group') continue;
+    const childGroupKey = getGroupKey(child.id, child.subgraphId);
     if (removedParent) {
-      nextGroupParents[child.stableKey] = removedParent;
+      nextGroupParents[childGroupKey] = removedParent;
     } else {
-      delete nextGroupParents[child.stableKey];
+      delete nextGroupParents[childGroupKey];
     }
   }
 
@@ -793,11 +733,12 @@ export function moveItemInLayout(
   next = setList(next, toContainerId, toList);
 
   if (item.type === 'group') {
+    const groupKey = getGroupKey(item.id, item.subgraphId);
     next = {
       ...next,
       groupParents: {
         ...(next.groupParents ?? currentGroupParents),
-        [item.stableKey]: parentRefFromContainer(toContainerId)
+        [groupKey]: parentRefFromContainer(toContainerId)
       }
     };
   }
@@ -816,7 +757,7 @@ export function flattenLayoutToNodeOrder(layout: MobileLayout): number[] {
       if (item.type === 'node') {
         result.push(item.id);
       } else if (item.type === 'group') {
-        const groupItems = layout.groups[item.stableKey];
+        const groupItems = layout.groups[getGroupKey(item.id, item.subgraphId)];
         if (groupItems) collectFromList(groupItems);
       } else if (item.type === 'subgraph') {
         const sgItems = layout.subgraphs[item.id];

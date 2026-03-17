@@ -1,6 +1,6 @@
 import type { Workflow, WorkflowGroup, WorkflowNode, WorkflowSubgraphDefinition } from '@/api/types';
 import type { ItemRef, MobileLayout } from '@/utils/mobileLayout';
-import { makeLocationPointer } from '@/utils/mobileLayout';
+import { getGroupKey, makeLocationPointer } from '@/utils/mobileLayout';
 import { computeNodeGroupsFor } from '@/utils/nodeGroups';
 import { normalizeHexColor } from '@/utils/colorUtils';
 import { themeColors } from '@/theme/colors';
@@ -9,7 +9,6 @@ export type NestedItem =
   | {
       type: 'group';
       group: WorkflowGroup;
-      stableKey?: string;
       nodeCount: number;
       bypassedNodeCount: number;
       isCollapsed: boolean;
@@ -53,18 +52,11 @@ export function computeNodeGroupsIncludingSubgraphs(
   const groups = workflow.groups ?? [];
   const subgraphs = workflow.definitions?.subgraphs ?? [];
 
-  const nodeToSubgraph = new Map<number, string>();
-  for (const node of workflow.nodes) {
-    const origin = getMobileOrigin(node);
-    if (origin?.scope === 'subgraph' && origin.subgraphId) {
-      nodeToSubgraph.set(node.id, origin.subgraphId);
-    }
-  }
-
-  const topLevelNodes = workflow.nodes.filter((node) => !nodeToSubgraph.has(node.id));
+  // Canonical model: workflow.nodes contains only root-level nodes (+ placeholders).
+  // Inner subgraph nodes live in definitions.subgraphs[*].nodes.
   const combined = new Map<number, number>();
 
-  const topLevelMap = computeNodeGroupsFor(topLevelNodes, groups);
+  const topLevelMap = computeNodeGroupsFor(workflow.nodes, groups);
   for (const [nodeId, groupId] of topLevelMap.entries()) {
     combined.set(nodeId, groupId);
   }
@@ -72,10 +64,7 @@ export function computeNodeGroupsIncludingSubgraphs(
   for (const subgraph of subgraphs) {
     const subgraphGroups = subgraph.groups ?? [];
     if (subgraphGroups.length === 0) continue;
-    const subgraphNodes = workflow.nodes.filter((node) => {
-      const assigned = nodeToSubgraph.get(node.id);
-      return assigned === subgraph.id;
-    });
+    const subgraphNodes = subgraph.nodes ?? [];
     const subgraphMap = computeNodeGroupsFor(subgraphNodes, subgraphGroups);
     for (const [nodeId, groupId] of subgraphMap.entries()) {
       combined.set(nodeId, groupId);
@@ -103,31 +92,6 @@ function applyGroupOverrides(
   return next;
 }
 
-interface MobileOrigin {
-  scope: 'root' | 'subgraph';
-  subgraphId?: string;
-  nodeId: number;
-}
-
-function getMobileOrigin(node: WorkflowNode): MobileOrigin | null {
-  const props = node.properties as Record<string, unknown> | undefined;
-  const origin = props?.['__mobile_origin'];
-  if (!origin || typeof origin !== 'object') return null;
-  const scope = (origin as { scope?: string }).scope;
-  if (scope === 'root') {
-    const nodeId = (origin as { nodeId?: number }).nodeId;
-    return typeof nodeId === 'number' ? { scope: 'root', nodeId } : null;
-  }
-  if (scope === 'subgraph') {
-    const nodeId = (origin as { nodeId?: number }).nodeId;
-    const subgraphId = (origin as { subgraphId?: string }).subgraphId;
-    if (typeof nodeId === 'number' && typeof subgraphId === 'string') {
-      return { scope: 'subgraph', subgraphId, nodeId };
-    }
-  }
-  return null;
-}
-
 /**
  * Builds a list of items to render, including group headers, footers, placeholders,
  * subgraph headers/footers, and nodes.
@@ -145,27 +109,16 @@ export function buildNestedList(
   workflow: Workflow,
   collapsedItems: Record<string, boolean>,
   hiddenItems: Record<string, boolean> = {},
-  stableKeyByPointer: Record<string, string> = {},
   groupOverrides?: Record<number, number | null>
 ): NestedItem[] {
-  const hasStableFlag = (state: Record<string, boolean>, stableOrPointerKey: string): boolean => {
-    if (stableOrPointerKey in state) return Boolean(state[stableOrPointerKey]);
-    const stableKey = stableKeyByPointer[stableOrPointerKey];
-    if (stableKey) return Boolean(state[stableKey]);
-    return Boolean(state[stableOrPointerKey]);
-  };
-  const getStableFlag = (
+  const hasFlag = (state: Record<string, boolean>, key: string): boolean => Boolean(state[key]);
+  const getFlag = (
     state: Record<string, boolean>,
-    stableOrPointerKey: string,
+    key: string,
     fallback: boolean
-  ): boolean => {
-    if (stableOrPointerKey in state) return state[stableOrPointerKey] ?? fallback;
-    const stableKey = stableKeyByPointer[stableOrPointerKey];
-    if (!stableKey) return state[stableOrPointerKey] ?? fallback;
-    return state[stableKey] ?? fallback;
-  };
+  ): boolean => state[key] ?? fallback;
   const groupStateKey = (subgraphId: string | null, groupId: number): string =>
-    subgraphId == null ? `legacy-group-root-${groupId}` : `legacy-group-${subgraphId}-${groupId}`;
+    makeLocationPointer({ type: 'group', groupId, subgraphId });
 
   const groups = workflow.groups ?? [];
   const subgraphs = workflow.definitions?.subgraphs ?? [];
@@ -191,28 +144,15 @@ export function buildNestedList(
     }
   }
 
-  const nodeToSubgraph = new Map<number, string>();
-  for (const node of orderedNodes) {
-    const origin = getMobileOrigin(node);
-    if (origin?.scope === 'subgraph' && origin.subgraphId) {
-      nodeToSubgraph.set(node.id, origin.subgraphId);
-    }
-  }
-
+  // Canonical model: orderedNodes only contains root-level nodes (+ placeholders).
+  // Inner subgraph nodes live in definitions.subgraphs[*].nodes.
+  const subgraphIds = new Set(subgraphs.map((sg) => sg.id));
   const nodesInSubgraph = new Map<string, WorkflowNode[]>();
   for (const sg of subgraphs) {
-    nodesInSubgraph.set(sg.id, []);
-  }
-  for (const node of orderedNodes) {
-    const subgraphId = nodeToSubgraph.get(node.id);
-    if (subgraphId) {
-      nodesInSubgraph.get(subgraphId)?.push(node);
-    }
+    nodesInSubgraph.set(sg.id, sg.nodes ?? []);
   }
 
-  const topLevelNodes = orderedNodes.filter(
-    (node) => !nodeToSubgraph.has(node.id)
-  );
+  const topLevelNodes = orderedNodes;
   const nodeToGroup = applyGroupOverrides(
     computeNodeGroupsFor(topLevelNodes, groups),
     groupOverrides
@@ -226,11 +166,11 @@ export function buildNestedList(
   const entries: Entry[] = [];
   const subgraphEmitted = new Set<string>();
   for (const node of orderedNodes) {
-    const subgraphId = nodeToSubgraph.get(node.id);
-    if (subgraphId) {
-      if (!subgraphEmitted.has(subgraphId)) {
-        entries.push({ kind: 'subgraph', subgraphId });
-        subgraphEmitted.add(subgraphId);
+    // Placeholder nodes (type matches a subgraph UUID) become subgraph entries.
+    if (subgraphIds.has(node.type)) {
+      if (!subgraphEmitted.has(node.type)) {
+        entries.push({ kind: 'subgraph', subgraphId: node.type });
+        subgraphEmitted.add(node.type);
       }
       continue;
     }
@@ -255,11 +195,11 @@ export function buildNestedList(
   const countEntryNodes = (entry: Entry): number => {
     if (entry.kind === 'node') return 1;
     if (
-      hasStableFlag(hiddenItems, makeLocationPointer({ type: 'subgraph', subgraphId: entry.subgraphId }))
+      hasFlag(hiddenItems, makeLocationPointer({ type: 'subgraph', subgraphId: entry.subgraphId }))
     ) {
       return 0;
     }
-    return nodesInSubgraph.get(entry.subgraphId)?.length ?? 0;
+    return 1;
   };
 
   const countBypassedEntryNodes = (entries: Entry[]): number => {
@@ -268,9 +208,9 @@ export function buildNestedList(
       if (entry.kind === 'node') {
         if (entry.node.mode === 4) count++;
       } else {
-        if (hasStableFlag(hiddenItems, makeLocationPointer({ type: 'subgraph', subgraphId: entry.subgraphId }))) continue;
+        if (hasFlag(hiddenItems, makeLocationPointer({ type: 'subgraph', subgraphId: entry.subgraphId }))) continue;
         const nodes = nodesInSubgraph.get(entry.subgraphId) ?? [];
-        count += nodes.filter((n) => n.mode === 4).length;
+        if (nodes.length > 0 && nodes.every((n) => n.mode === 4)) count += 1;
       }
     }
     return count;
@@ -331,12 +271,12 @@ export function buildNestedList(
         if (emittedSubgraphGroups.has(groupId)) continue;
         const group = subgraphGroupById.get(groupId);
         const groupEntries = subgraphGroupEntries.get(groupId) ?? [];
-        if (group && !hasStableFlag(hiddenItems, groupStateKey(subgraphId, group.id))) {
+        if (group && !hasFlag(hiddenItems, groupStateKey(subgraphId, group.id))) {
           const nodeCount = groupEntries.reduce(
             (count, item) => count + countEntryNodes(item),
             0
           );
-          const isCollapsed = getStableFlag(
+          const isCollapsed = getFlag(
             collapsedItems,
             groupStateKey(subgraphId, group.id),
             false
@@ -363,14 +303,14 @@ export function buildNestedList(
     }
 
     for (const group of subgraphGroups) {
-      if (hasStableFlag(hiddenItems, groupStateKey(subgraphId, group.id))) continue;
+      if (hasFlag(hiddenItems, groupStateKey(subgraphId, group.id))) continue;
       if (emittedSubgraphGroups.has(group.id)) continue;
       children.push({
         type: 'group',
         group,
         nodeCount: 0,
         bypassedNodeCount: 0,
-        isCollapsed: getStableFlag(collapsedItems, groupStateKey(subgraphId, group.id), false),
+        isCollapsed: getFlag(collapsedItems, groupStateKey(subgraphId, group.id), false),
         subgraphId,
         children: []
       });
@@ -383,11 +323,11 @@ export function buildNestedList(
     subgraphId: string,
     groupId: number | null
   ): NestedItem | null => {
-    if (hasStableFlag(hiddenItems, makeLocationPointer({ type: 'subgraph', subgraphId }))) return null;
+    if (hasFlag(hiddenItems, makeLocationPointer({ type: 'subgraph', subgraphId }))) return null;
     const subgraph = subgraphById.get(subgraphId);
     if (!subgraph) return null;
     const subgraphNodes = nodesInSubgraph.get(subgraphId) ?? [];
-    const isCollapsed = getStableFlag(
+    const isCollapsed = getFlag(
       collapsedItems,
       makeLocationPointer({ type: 'subgraph', subgraphId }),
       false
@@ -410,12 +350,12 @@ export function buildNestedList(
     entriesInGroup: Entry[],
     subgraphId: string | null
   ): NestedItem | null => {
-    if (hasStableFlag(hiddenItems, groupStateKey(subgraphId, group.id))) return null;
+    if (hasFlag(hiddenItems, groupStateKey(subgraphId, group.id))) return null;
     const nodeCount = entriesInGroup.reduce(
       (count, entry) => count + countEntryNodes(entry),
       0
     );
-    const isCollapsed = getStableFlag(
+    const isCollapsed = getFlag(
       collapsedItems,
       groupStateKey(subgraphId, group.id),
       false
@@ -503,37 +443,47 @@ export function buildNestedListFromLayout(
   workflow: Workflow,
   collapsedItems: Record<string, boolean>,
   hiddenItems: Record<string, boolean> = {},
-  stableKeyByPointer: Record<string, string> = {}
+  /** When navigated inside a subgraph, pass its ID so node/group lookups use the correct scope. */
+  currentScopeSubgraphId: string | null = null
 ): NestedItem[] {
-  const hasStableFlag = (state: Record<string, boolean>, stableOrPointerKey: string): boolean => {
-    if (stableOrPointerKey in state) return Boolean(state[stableOrPointerKey]);
-    const stableKey = stableKeyByPointer[stableOrPointerKey];
-    if (stableKey) return Boolean(state[stableKey]);
-    return Boolean(state[stableOrPointerKey]);
-  };
-  const getStableFlag = (
+  const hasFlag = (state: Record<string, boolean>, key: string): boolean => Boolean(state[key]);
+  const getFlag = (
     state: Record<string, boolean>,
-    stableOrPointerKey: string,
+    key: string,
     fallback: boolean
-  ): boolean => {
-    if (stableOrPointerKey in state) return state[stableOrPointerKey] ?? fallback;
-    const stableKey = stableKeyByPointer[stableOrPointerKey];
-    if (!stableKey) return state[stableOrPointerKey] ?? fallback;
-    return state[stableKey] ?? fallback;
-  };
-  const nodeById = new Map(workflow.nodes.map((node) => [node.id, node]));
+  ): boolean => state[key] ?? fallback;
+  // Scope-aware node lookup: node IDs can collide between root and subgraph
+  // scopes (e.g. root has MarkdownNote #961, subgraph has KSampler #961).
+  // Each scope gets its own map; lookups fall back to root for placeholder nodes.
+  const rootNodeById = new Map(workflow.nodes.map((node) => [node.id, node]));
   const rootGroups = workflow.groups ?? [];
   const subgraphs = workflow.definitions?.subgraphs ?? [];
   const subgraphById = new Map(subgraphs.map((sg) => [sg.id, sg]));
   const rootGroupById = new Map(rootGroups.map((group) => [group.id, group]));
   const subgraphGroupBySubgraph = new Map<string, Map<number, WorkflowGroup>>();
+  const subgraphNodeById = new Map<string, Map<number, WorkflowNode>>();
   for (const subgraph of subgraphs) {
     const groupMap = new Map<number, WorkflowGroup>();
     for (const group of subgraph.groups ?? []) {
       groupMap.set(group.id, group);
     }
     subgraphGroupBySubgraph.set(subgraph.id, groupMap);
+    subgraphNodeById.set(
+      subgraph.id,
+      new Map((subgraph.nodes ?? []).map((node) => [node.id, node]))
+    );
   }
+
+  /** Resolve a node by ID within the correct scope. */
+  const resolveNode = (nodeId: number, scopeSubgraphId: string | null): WorkflowNode | undefined => {
+    if (scopeSubgraphId) {
+      const sgMap = subgraphNodeById.get(scopeSubgraphId);
+      if (sgMap?.has(nodeId)) return sgMap.get(nodeId);
+      // Fall back to root for placeholder nodes that live in workflow.nodes
+      return rootNodeById.get(nodeId);
+    }
+    return rootNodeById.get(nodeId);
+  };
 
   const countNodesInRefs = (
     refs: ItemRef[],
@@ -549,7 +499,7 @@ export function buildNestedListFromLayout(
           nodeId: ref.id,
           subgraphId: currentSubgraphId
         });
-        if (!hasStableFlag(hiddenItems, nodePointer)) {
+        if (!hasFlag(hiddenItems, nodePointer)) {
           count += 1;
         }
       } else if (ref.type === 'hiddenBlock') {
@@ -560,28 +510,23 @@ export function buildNestedListFromLayout(
             nodeId,
             subgraphId: currentSubgraphId
           });
-          return !hasStableFlag(hiddenItems, nodePointer);
+          return !hasFlag(hiddenItems, nodePointer);
         }).length;
       } else if (ref.type === 'group') {
-        if (visitedGroups.has(ref.stableKey)) continue;
-        visitedGroups.add(ref.stableKey);
+        const groupKey = getGroupKey(ref.id, ref.subgraphId);
+        if (visitedGroups.has(groupKey)) continue;
+        visitedGroups.add(groupKey);
         count += countNodesInRefs(
-          layout.groups[ref.stableKey] ?? [],
+          layout.groups[groupKey] ?? [],
           currentSubgraphId,
           visitedGroups,
           visitedSubgraphs
         );
-        visitedGroups.delete(ref.stableKey);
+        visitedGroups.delete(groupKey);
       } else if (ref.type === 'subgraph') {
         if (visitedSubgraphs.has(ref.id)) continue;
+        count += 1;
         visitedSubgraphs.add(ref.id);
-        count += countNodesInRefs(
-          layout.subgraphs[ref.id] ?? [],
-          ref.id,
-          visitedGroups,
-          visitedSubgraphs
-        );
-        visitedSubgraphs.delete(ref.id);
       }
     }
     return count;
@@ -596,34 +541,34 @@ export function buildNestedListFromLayout(
     let count = 0;
     for (const ref of refs) {
       if (ref.type === 'node') {
-        const node = nodeById.get(ref.id);
+        const node = resolveNode(ref.id, currentSubgraphId);
         if (node && node.mode === 4) count++;
       } else if (ref.type === 'hiddenBlock') {
         const blockNodes = layout.hiddenBlocks[ref.blockId] ?? [];
         for (const nodeId of blockNodes) {
-          const node = nodeById.get(nodeId);
+          const node = resolveNode(nodeId, currentSubgraphId);
           if (node && node.mode === 4) count++;
         }
       } else if (ref.type === 'group') {
-        if (visitedGroups.has(ref.stableKey)) continue;
-        visitedGroups.add(ref.stableKey);
+        const groupKey = getGroupKey(ref.id, ref.subgraphId);
+        if (visitedGroups.has(groupKey)) continue;
+        visitedGroups.add(groupKey);
         count += countBypassedNodesInRefs(
-          layout.groups[ref.stableKey] ?? [],
+          layout.groups[groupKey] ?? [],
           currentSubgraphId,
           visitedGroups,
           visitedSubgraphs
         );
-        visitedGroups.delete(ref.stableKey);
+        visitedGroups.delete(groupKey);
       } else if (ref.type === 'subgraph') {
         if (visitedSubgraphs.has(ref.id)) continue;
         visitedSubgraphs.add(ref.id);
-        count += countBypassedNodesInRefs(
-          layout.subgraphs[ref.id] ?? [],
-          ref.id,
-          visitedGroups,
-          visitedSubgraphs
-        );
-        visitedSubgraphs.delete(ref.id);
+        // Count subgraph as 1 bypassed if all its inner nodes are bypassed
+        const subgraph = subgraphById.get(ref.id);
+        const innerNodes = subgraph?.nodes ?? [];
+        if (innerNodes.length > 0 && innerNodes.every((n) => n.mode === 4)) {
+          count += 1;
+        }
       }
     }
     return count;
@@ -656,10 +601,10 @@ export function buildNestedListFromLayout(
           nodeId: ref.id,
           subgraphId: parentSubgraphId
         });
-        if (hasStableFlag(hiddenItems, nodePointer)) {
+        if (hasFlag(hiddenItems, nodePointer)) {
           continue;
         }
-        const node = nodeById.get(ref.id);
+        const node = resolveNode(ref.id, parentSubgraphId);
         if (!node) continue;
         items.push({
           type: 'node',
@@ -671,54 +616,48 @@ export function buildNestedListFromLayout(
       }
 
       if (ref.type === 'group') {
-        if (hasStableFlag(hiddenItems, ref.stableKey)) continue;
-        if (visitedGroups.has(ref.stableKey)) continue;
+        const groupKey = getGroupKey(ref.id, ref.subgraphId);
+        if (hasFlag(hiddenItems, groupKey)) continue;
+        if (visitedGroups.has(groupKey)) continue;
 
         let group: WorkflowGroup | undefined;
-        if (parentSubgraphId) {
-          group = subgraphGroupBySubgraph.get(parentSubgraphId)?.get(ref.id);
+        // Use the subgraph scope from the ref itself (set during layout build),
+        // falling back to the runtime parentSubgraphId, then root.
+        const groupScope = ref.subgraphId ?? parentSubgraphId;
+        if (groupScope) {
+          group = subgraphGroupBySubgraph.get(groupScope)?.get(ref.id);
         }
         group ??= rootGroupById.get(ref.id);
-        if (!group) {
-          for (const groupMap of subgraphGroupBySubgraph.values()) {
-            const match = groupMap.get(ref.id);
-            if (match) {
-              group = match;
-              break;
-            }
-          }
-        }
         if (!group) continue;
 
-        const childRefs = layout.groups[ref.stableKey] ?? [];
-        const isCollapsed = getStableFlag(collapsedItems, ref.stableKey, false);
-        visitedGroups.add(ref.stableKey);
+        const childRefs = layout.groups[groupKey] ?? [];
+        const isCollapsed = getFlag(collapsedItems, groupKey, false);
+        visitedGroups.add(groupKey);
         const children = isCollapsed
           ? []
-          : buildItems(childRefs, ref.id, parentSubgraphId, visitedGroups, visitedSubgraphs);
-        visitedGroups.delete(ref.stableKey);
+          : buildItems(childRefs, ref.id, groupScope, visitedGroups, visitedSubgraphs);
+        visitedGroups.delete(groupKey);
 
         items.push({
           type: 'group',
           group,
-          stableKey: ref.stableKey,
-          nodeCount: countNodesInRefs(childRefs, parentSubgraphId),
-          bypassedNodeCount: countBypassedNodesInRefs(childRefs, parentSubgraphId),
+          nodeCount: countNodesInRefs(childRefs, groupScope),
+          bypassedNodeCount: countBypassedNodesInRefs(childRefs, groupScope),
           isCollapsed,
-          subgraphId: parentSubgraphId,
+          subgraphId: groupScope,
           children
         });
         continue;
       }
 
-      if (hasStableFlag(hiddenItems, makeLocationPointer({ type: 'subgraph', subgraphId: ref.id }))) continue;
+      if (hasFlag(hiddenItems, makeLocationPointer({ type: 'subgraph', subgraphId: ref.id }))) continue;
       if (visitedSubgraphs.has(ref.id)) continue;
 
       const subgraph = subgraphById.get(ref.id);
       if (!subgraph) continue;
 
       const childRefs = layout.subgraphs[ref.id] ?? [];
-      const isCollapsed = getStableFlag(
+      const isCollapsed = getFlag(
         collapsedItems,
         makeLocationPointer({ type: 'subgraph', subgraphId: ref.id }),
         false
@@ -742,7 +681,7 @@ export function buildNestedListFromLayout(
     return items;
   };
 
-  return buildItems(layout.root, null, null);
+  return buildItems(layout.root, null, currentScopeSubgraphId);
 }
 
 /**

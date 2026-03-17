@@ -23,7 +23,7 @@ interface BookmarksState {
   bookmarkBarSide: 'left' | 'right';
   bookmarkBarTop: number | null;
   bookmarkRepositioningActive: boolean;
-  toggleBookmark: (stableKey: string) => void;
+  toggleBookmark: (itemKey: string) => void;
   clearBookmarks: () => void;
   setBookmarkBarPosition: (position: { side?: 'left' | 'right'; top?: number | null }) => void;
   setBookmarkRepositioningActive: (active: boolean) => void;
@@ -69,26 +69,29 @@ function areStringArraysEqual(a: string[], b: string[]): boolean {
 function getValidStableBookmarks(items: string[]): string[] {
   const { workflow } = useWorkflowStore.getState();
   if (!workflow) return [];
-  const validStableKeys = new Set<string>();
+  const validHierarchicalKeys = new Set<string>();
   for (const node of workflow.nodes ?? []) {
-    if (node.stableKey) validStableKeys.add(node.stableKey);
+    if (node.itemKey) validHierarchicalKeys.add(node.itemKey);
   }
   for (const group of workflow.groups ?? []) {
-    if (group.stableKey) validStableKeys.add(group.stableKey);
+    if (group.itemKey) validHierarchicalKeys.add(group.itemKey);
   }
   for (const subgraph of workflow.definitions?.subgraphs ?? []) {
-    if (subgraph.stableKey) validStableKeys.add(subgraph.stableKey);
+    if (subgraph.itemKey) validHierarchicalKeys.add(subgraph.itemKey);
+    for (const node of subgraph.nodes ?? []) {
+      if (node.itemKey) validHierarchicalKeys.add(node.itemKey);
+    }
     for (const group of subgraph.groups ?? []) {
-      if (group.stableKey) validStableKeys.add(group.stableKey);
+      if (group.itemKey) validHierarchicalKeys.add(group.itemKey);
     }
   }
   const result: string[] = [];
   const seen = new Set<string>();
-  for (const stableKey of items) {
-    if (!stableKey || seen.has(stableKey)) continue;
-    if (!validStableKeys.has(stableKey)) continue;
-    seen.add(stableKey);
-    result.push(stableKey);
+  for (const itemKey of items) {
+    if (!itemKey || seen.has(itemKey)) continue;
+    if (!validHierarchicalKeys.has(itemKey)) continue;
+    seen.add(itemKey);
+    result.push(itemKey);
   }
   return result;
 }
@@ -100,8 +103,8 @@ export const useBookmarksStore = create<BookmarksState>()(
       bookmarkBarSide: 'right',
       bookmarkBarTop: null,
       bookmarkRepositioningActive: false,
-      toggleBookmark: (stableKey) => {
-        if (!stableKey) return;
+      toggleBookmark: (itemKey) => {
+        if (!itemKey) return;
         const { bookmarkedItems } = get();
         const {
           currentWorkflowKey,
@@ -112,12 +115,12 @@ export const useBookmarksStore = create<BookmarksState>()(
         } = useWorkflowStore.getState();
         const seedModes = useSeedStore.getState().seedModes;
 
-        const exists = bookmarkedItems.includes(stableKey);
+        const exists = bookmarkedItems.includes(itemKey);
         const nextBookmarkedItems = exists
-          ? bookmarkedItems.filter((key) => key !== stableKey)
+          ? bookmarkedItems.filter((key) => key !== itemKey)
           : bookmarkedItems.length >= MAX_BOOKMARKS
             ? bookmarkedItems
-            : [...bookmarkedItems, stableKey];
+            : [...bookmarkedItems, itemKey];
 
         if (nextBookmarkedItems === bookmarkedItems) return;
 

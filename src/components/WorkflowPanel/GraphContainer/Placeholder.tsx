@@ -7,9 +7,7 @@ interface GraphContainerPlaceholderProps {
   containerType: GraphContainerType;
   containerId: string | number;
   hiddenNodeCount?: number;
-  color?: string;
-  borderColor?: string;
-  dashedBorderColor?: string;
+  color: string;
   onClick?: () => void;
 }
 
@@ -18,8 +16,6 @@ export function GraphContainerPlaceholder({
   containerId,
   hiddenNodeCount = 0,
   color,
-  borderColor,
-  dashedBorderColor,
   onClick
 }: GraphContainerPlaceholderProps) {
   const label = containerType === 'group' ? 'group' : 'subgraph';
@@ -27,13 +23,13 @@ export function GraphContainerPlaceholder({
     <div
       id={`${containerType}-placeholder-${containerId}`}
       className="flex items-center justify-center px-4 pb-4 pt-2"
-      style={{ borderColor: color ? hexToRgba(color, 0.3) : borderColor }}
+      style={{ borderColor: hexToRgba(color, 0.3) }}
     >
       <button
         type="button"
         onClick={onClick}
         className="w-full rounded-lg border-2 border-dashed flex flex-col items-center justify-center py-4 hover:bg-white/40 transition-colors"
-        style={{ borderColor: color ? hexToRgba(color, 0.4) : dashedBorderColor }}
+        style={{ borderColor: hexToRgba(color, 0.4) }}
       >
         <span className="text-sm text-gray-400 select-none">
           {hiddenNodeCount > 0

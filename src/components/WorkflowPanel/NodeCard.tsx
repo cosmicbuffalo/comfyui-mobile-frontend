@@ -1,6 +1,8 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { WorkflowInput, WorkflowNode } from '@/api/types';
-import { useWorkflowStore, getWidgetDefinitions, getInputWidgetDefinitions, getWidgetIndexForInput, findSeedWidgetIndex } from '@/hooks/useWorkflow';
+import { useWorkflowStore, getWidgetDefinitions, getInputWidgetDefinitions, getWidgetIndexForInput, findSeedWidgetIndex, resolveSubgraphPlaceholderWidgetDefs, resolveSubgraphPlaceholderInputWidgetDefs, resolveSubgraphProxyWidgetDefs, resolveSubgraphProxyInputWidgetDefs } from '@/hooks/useWorkflow';
+import type { ProxyWidgetRoute } from '@/utils/widgetDefinitions';
+import { isSubgraphPlaceholder } from '@/utils/canonicalWorkflowOps';
 import { isLoraManagerNodeType } from '@/utils/loraManager';
 import { useSeedStore } from '@/hooks/useSeed';
 import { useBookmarksStore } from '@/hooks/useBookmarks';
@@ -21,9 +23,9 @@ import { ErrorHighlightBadge } from './NodeCard/ErrorHighlightBadge';
 import { NodeCardConnectionsSection } from './NodeCard/ConnectionsSection';
 import { NodeCardParameters } from './NodeCard/Parameters';
 import { resolveLoadImagePreview } from '@/utils/loadImagePreview';
-import { requireStableKey } from '@/utils/stableKeys';
+import { requireHierarchicalKey } from '@/utils/itemKeys';
 import { hexToRgba } from '@/utils/grouping';
-import { resolveWorkflowColor } from '@/theme/colors';
+import { resolveWorkflowColor, themeColors } from '@/theme/colors';
 
 const EMPTY_IMAGES: Array<{ filename: string; subfolder: string; type: string }> = [];
 type ImageLike = (typeof EMPTY_IMAGES)[number];
@@ -36,6 +38,7 @@ interface NodeCardProps {
   onImageClick?: (images: Array<{ src: string; alt?: string }>, index: number) => void;
   inGroup?: boolean;
   onMoveNode?: () => void;
+  onEnterSubgraph?: () => void;
 }
 
 export const NodeCard = memo(function NodeCard({
@@ -45,20 +48,23 @@ export const NodeCard = memo(function NodeCard({
   errorBadgeLabel,
   onImageClick,
   inGroup = false,
-  onMoveNode
+  onMoveNode,
+  onEnterSubgraph,
 }: NodeCardProps) {
   const nodeTypes = useWorkflowStore((s) => s.nodeTypes);
   const workflow = useWorkflowStore((s) => s.workflow);
   const updateNodeWidget = useWorkflowStore((s) => s.updateNodeWidget);
   const updateNodeWidgets = useWorkflowStore((s) => s.updateNodeWidgets);
+  const updateSubgraphInnerNodeWidget = useWorkflowStore((s) => s.updateSubgraphInnerNodeWidget);
   const updateNodeTitle = useWorkflowStore((s) => s.updateNodeTitle);
+  const updateWorkflowItemColor = useWorkflowStore((s) => s.updateWorkflowItemColor);
   const toggleBypass = useWorkflowStore((s) => s.toggleBypass);
   const setItemCollapsed = useWorkflowStore((s) => s.setItemCollapsed);
   const setItemHidden = useWorkflowStore((s) => s.setItemHidden);
   const collapsedItems = useWorkflowStore((s) => s.collapsedItems);
-  const nodeStableKey = requireStableKey(node.stableKey, `node ${node.id}`);
+  const nodeHierarchicalKey = requireHierarchicalKey(node.itemKey, `node ${node.id}`);
   const setConnectionHighlightMode = useWorkflowStore((s) => s.setConnectionHighlightMode);
-  const connectionHighlightMode = useWorkflowStore((s) => s.connectionHighlightModes[node.id] ?? 'off');
+  const connectionHighlightMode = useWorkflowStore((s) => s.connectionHighlightModes[nodeHierarchicalKey] ?? 'off');
   const setSeedMode = useSeedStore((s) => s.setSeedMode);
   const currentWorkflowKey = useWorkflowStore((s) => s.currentWorkflowKey);
   // Only subscribe to whether THIS node has a pinned widget (reduces re-renders)
@@ -84,16 +90,6 @@ export const NodeCard = memo(function NodeCard({
     workflowDurationStats,
   });
   const displayNodeProgress = overallProgress === 100 ? 100 : progress;
-  const handleSetSeedMode = useCallback(
-    (nodeId: number, mode: 'fixed' | 'randomize' | 'increment' | 'decrement') => {
-      setSeedMode(nodeId, mode, {
-        workflow,
-        nodeTypes,
-        updateNodeWidgets: (_rawNodeId, updates) => updateNodeWidgets(nodeStableKey, updates)
-      });
-    },
-    [nodeStableKey, nodeTypes, setSeedMode, updateNodeWidgets, workflow]
-  );
   const handleSetPinnedWidget = useCallback(
     (pin: {
       nodeId: number;
@@ -161,14 +157,23 @@ export const NodeCard = memo(function NodeCard({
   }, [latestKey, previewKey, latestImage]);
 
   const typeDef = nodeTypes?.[node.type];
+  const isPlaceholder = useMemo(
+    () => workflow != null && isSubgraphPlaceholder(node, workflow),
+    [node, workflow],
+  );
   const nodeTitle = useMemo(() => {
     return node.title?.trim() || null;
   }, [node]);
-  const displayName: string = nodeTitle || typeDef?.display_name || node.type;
+  const placeholderSubgraphName = useMemo(() => {
+    if (!isPlaceholder || !workflow) return null;
+    const sg = workflow.definitions?.subgraphs?.find((s) => s.id === node.type);
+    return sg?.name ?? null;
+  }, [isPlaceholder, workflow, node.type]);
+  const displayName: string = nodeTitle || placeholderSubgraphName || typeDef?.display_name || node.type;
   const isKSampler = node.type === 'KSampler';
   const isLoraManagerNode = isLoraManagerNodeType(node.type);
   const isBypassed = node.mode === 4;
-  const isCollapsed = Boolean(collapsedItems[nodeStableKey]);
+  const isCollapsed = Boolean(collapsedItems[nodeHierarchicalKey]);
   const isLoadImageNode = /LoadImage/i.test(node.type);
   const inputImagePreview = useMemo(() => {
     if (!isLoadImageNode || !workflow || !nodeTypes) return null;
@@ -176,18 +181,34 @@ export const NodeCard = memo(function NodeCard({
   }, [isLoadImageNode, node, nodeTypes, workflow]);
   const effectivePreviewImage = inputImagePreview ?? previewImage;
 
+  // Unfiltered widget defs — used for proxy route extraction before seed filtering.
+  const allResolvedWidgets = useMemo(() => {
+    if (isPlaceholder && workflow) {
+      const slotPromoted = resolveSubgraphPlaceholderWidgetDefs(node, workflow, nodeTypes);
+      const proxyPromoted = resolveSubgraphProxyWidgetDefs(node, workflow, nodeTypes);
+      return [...slotPromoted, ...proxyPromoted];
+    }
+    return getWidgetDefinitions(nodeTypes, node);
+  }, [nodeTypes, node, isPlaceholder, workflow]);
+
   const widgets = useMemo(() => {
-    const allWidgets = getWidgetDefinitions(nodeTypes, node);
-    if (!isKSampler) return allWidgets;
-    return allWidgets.filter((widget) => widget.name !== 'seed');
-  }, [nodeTypes, node, isKSampler]);
+    if (!isKSampler) return allResolvedWidgets;
+    // Filter seed widgets — for proxy widgets the display name may be "InnerTitle: seed"
+    return allResolvedWidgets.filter((widget) => {
+      const baseName = widget.name.split(': ').pop() ?? widget.name;
+      return baseName !== 'seed';
+    });
+  }, [allResolvedWidgets, isKSampler]);
 
-
-  // Get input widgets (unconnected inputs that have options like ckpt_name, sampler_name, etc.)
-  const inputWidgets = useMemo(() =>
-    getInputWidgetDefinitions(nodeTypes, node),
-    [nodeTypes, node]
-  );
+  // Get input widgets (COMBO dropdowns). For placeholder nodes, derive from both mechanisms.
+  const inputWidgets = useMemo(() => {
+    if (isPlaceholder && workflow) {
+      const slotPromoted = resolveSubgraphPlaceholderInputWidgetDefs(node, workflow, nodeTypes);
+      const proxyPromoted = resolveSubgraphProxyInputWidgetDefs(node, workflow, nodeTypes);
+      return [...slotPromoted, ...proxyPromoted];
+    }
+    return getInputWidgetDefinitions(nodeTypes, node);
+  }, [nodeTypes, node, isPlaceholder, workflow]);
   const visibleInputWidgets = useMemo(
     () => inputWidgets.filter((inputWidget) => !inputWidget.connected),
     [inputWidgets]
@@ -236,12 +257,14 @@ export const NodeCard = memo(function NodeCard({
 
   const handleFindSeedWidgetIndex = () => {
     if (!workflow || !nodeTypes) return null;
-    return findSeedWidgetIndex(workflow, nodeTypes, node);
+    return findSeedWidgetIndex(workflow, nodeTypes, node, {
+      widgetDescriptors: [...inputWidgets, ...widgets],
+    });
   };
 
   const handleUpdateNote = (value: string) => {
     if (noteWidgetIndex === null) return;
-    updateNodeWidget(nodeStableKey, noteWidgetIndex, value);
+    updateNodeWidget(nodeHierarchicalKey, noteWidgetIndex, value);
   };
 
   const noteLinkified = useMemo(() => {
@@ -309,6 +332,9 @@ export const NodeCard = memo(function NodeCard({
 
   // Filter inputs to only show those that are actual connections (connected or connectable without widget values)
   const isWidgetInput = useCallback((input: WorkflowInput) => {
+    // Promoted widgets on placeholder nodes have link set (to subgraph boundary),
+    // but should render as widget controls, not connection buttons.
+    if (isPlaceholder && input.widget != null) return true;
     if (input.link != null) return false;
     if (input.widget) return true;
     const inputDef = typeDef?.input?.required?.[input.name] || typeDef?.input?.optional?.[input.name];
@@ -326,7 +352,7 @@ export const NodeCard = memo(function NodeCard({
       normalized.includes('AUTOCOMPLETE_TEXT_LORAS') ||
       normalized.includes('AUTOCOMPLETE_TEXT_PROMPT') ||
       hasDefault;
-  }, [typeDef]);
+  }, [typeDef, isPlaceholder]);
 
   const connectionInputs = useMemo(() => {
     return node.inputs.filter((input) => {
@@ -383,7 +409,7 @@ export const NodeCard = memo(function NodeCard({
     ? isWidgetPinned(singlePinnableWidget.widgetIndex)
     : false;
   const hasPinnedWidget = Boolean(pinnedWidgetForThisNode);
-  const isNodeBookmarked = bookmarkedItems.includes(nodeStableKey);
+  const isNodeBookmarked = bookmarkedItems.includes(nodeHierarchicalKey);
   const totalBookmarkCount = bookmarkedItems.length;
   const canAddNodeBookmark = totalBookmarkCount < 5 || isNodeBookmarked;
 
@@ -430,60 +456,118 @@ export const NodeCard = memo(function NodeCard({
 
   const handleLabelBlur = () => {
     const nextValue = labelValue.trim();
-    updateNodeTitle(nodeStableKey, nextValue.length > 0 ? nextValue : null);
+    updateNodeTitle(nodeHierarchicalKey, nextValue.length > 0 ? nextValue : null);
     setIsEditingLabel(false);
   };
 
+  // Map from widgetIndex → proxy routing info for proxy widget updates.
+  const proxyRoutes = useMemo(() => {
+    if (!isPlaceholder) return new Map<number, ProxyWidgetRoute>();
+    const map = new Map<number, ProxyWidgetRoute>();
+    const extract = (defs: Array<{ widgetIndex: number; options?: Record<string, unknown> | unknown[] }>) => {
+      for (const def of defs) {
+        const proxy = (def.options as Record<string, unknown>)?.__proxy;
+        if (proxy && typeof proxy === 'object') {
+          map.set(def.widgetIndex, proxy as ProxyWidgetRoute);
+        }
+      }
+    };
+    extract(allResolvedWidgets);
+    extract(inputWidgets);
+    return map;
+  }, [isPlaceholder, allResolvedWidgets, inputWidgets]);
+
   const handleUpdateNodeWidget = useCallback(
     (widgetIndex: number, value: unknown, widgetName?: string) => {
-      updateNodeWidget(nodeStableKey, widgetIndex, value, widgetName);
+      const proxy = proxyRoutes.get(widgetIndex);
+      if (proxy) {
+        updateSubgraphInnerNodeWidget(proxy.subgraphId, proxy.innerNodeId, proxy.innerWidgetIndex, value);
+      } else {
+        updateNodeWidget(nodeHierarchicalKey, widgetIndex, value, widgetName);
+      }
     },
-    [nodeStableKey, updateNodeWidget]
+    [nodeHierarchicalKey, updateNodeWidget, updateSubgraphInnerNodeWidget, proxyRoutes]
+  );
+
+  // Resolve a widget value, following proxy routes to inner nodes when needed.
+  const resolveWidgetValue = useCallback(
+    (widgetIndex: number): unknown => {
+      const proxy = proxyRoutes.get(widgetIndex);
+      if (proxy && workflow) {
+        const sg = workflow.definitions?.subgraphs?.find((s) => s.id === proxy.subgraphId);
+        const innerNode = sg?.nodes?.find((n) => n.id === proxy.innerNodeId);
+        if (innerNode) {
+          const values = Array.isArray(innerNode.widgets_values) ? innerNode.widgets_values : [];
+          return values[proxy.innerWidgetIndex];
+        }
+      }
+      const values = Array.isArray(node.widgets_values) ? node.widgets_values : [];
+      return values[widgetIndex];
+    },
+    [node, workflow, proxyRoutes]
   );
 
   const handleUpdateNodeWidgets = useCallback(
     (updates: Record<number, unknown>) => {
-      updateNodeWidgets(nodeStableKey, updates);
+      const directUpdates: Record<number, unknown> = {};
+      for (const [idxStr, value] of Object.entries(updates)) {
+        const widgetIndex = Number.parseInt(idxStr, 10);
+        if (!Number.isFinite(widgetIndex)) continue;
+        const proxy = proxyRoutes.get(widgetIndex);
+        if (proxy) {
+          updateSubgraphInnerNodeWidget(
+            proxy.subgraphId,
+            proxy.innerNodeId,
+            proxy.innerWidgetIndex,
+            value
+          );
+        } else {
+          directUpdates[widgetIndex] = value;
+        }
+      }
+      if (Object.keys(directUpdates).length > 0) {
+        updateNodeWidgets(nodeHierarchicalKey, directUpdates);
+      }
     },
-    [nodeStableKey, updateNodeWidgets]
+    [nodeHierarchicalKey, updateNodeWidgets, updateSubgraphInnerNodeWidget, proxyRoutes]
   );
-  const handleChangeNodeColor = useCallback((color: string) => {
-    useWorkflowStore.setState((state) => {
-      const currentWorkflow = state.workflow;
-      if (!currentWorkflow) return state;
-      let changed = false;
-      const updatedNodes = currentWorkflow.nodes.map((candidate) => {
-        if (candidate.id !== node.id) return candidate;
-        changed = true;
-        return {
-          ...candidate,
-          color,
-          bgcolor: color,
-        };
+  const handleSetSeedMode = useCallback(
+    (nodeId: number, mode: 'fixed' | 'randomize' | 'increment' | 'decrement') => {
+      if (!workflow || !nodeTypes) return;
+      const seedWidgetIndex = findSeedWidgetIndex(workflow, nodeTypes, node, {
+        widgetDescriptors: [...inputWidgets, ...widgets],
       });
-      if (!changed) return state;
-      return {
-        workflow: {
-          ...currentWorkflow,
-          nodes: updatedNodes,
-        },
-      };
-    });
-  }, [node.id]);
-
+      setSeedMode(nodeId, mode, {
+        workflow,
+        nodeTypes,
+        seedWidgetIndex,
+        updateNodeWidgets: (_rawNodeId, updates) => handleUpdateNodeWidgets(updates)
+      });
+    },
+    [workflow, nodeTypes, node, inputWidgets, widgets, setSeedMode, handleUpdateNodeWidgets]
+  );
   const showHighlightLabel = Boolean(highlightLabel && !/^error\b/i.test(highlightLabel));
   const rawNodeColor = (typeof node.bgcolor === 'string' && node.bgcolor.trim())
     ? node.bgcolor.trim()
     : (typeof node.color === 'string' ? node.color.trim() : '');
   const nodeColor = resolveWorkflowColor(rawNodeColor);
   const nodeTintColor = hexToRgba(nodeColor, 0.4);
-  const nodeHeaderBorderColor = 'rgba(0, 0, 0, 0.24)';
+  const nodeHeaderBorderColor = themeColors.border.nodeHeaderTint;
   const canUseNodeTint =
     !isBypassed &&
     !hasErrors &&
     !isConnectionHighlighted &&
     !isExecuting &&
     rawNodeColor.length > 0;
+  const nodeCardBorderClass = hasErrors
+    ? '!border-2 !border-red-700 !ring-2 !ring-red-200 shadow-red-200'
+    : isConnectionHighlighted
+      ? 'border-orange-500 shadow-orange-200'
+      : isExecuting
+        ? 'border-green-500 shadow-green-200'
+        : isPlaceholder
+          ? 'border-blue-500/60 shadow-blue-100'
+          : 'border-transparent';
   return (
     <div
       id={`node-card-wrapper-${node.id}`}
@@ -509,7 +593,7 @@ export const NodeCard = memo(function NodeCard({
         node-card-inner
         ${inGroup ? `rounded-lg shadow-sm ${isCollapsed && isBypassed ? 'pt-1 pb-0' : 'py-1'}` : `rounded-xl shadow-md px-2 ${isCollapsed && isBypassed ? 'pt-1 pb-0' : 'py-1'} mb-3`}
         border-2
-        ${hasErrors ? 'border-red-700 shadow-red-200' : (isConnectionHighlighted ? 'border-orange-500 shadow-orange-200' : (isExecuting ? 'border-green-500 shadow-green-200' : 'border-transparent'))}
+        ${nodeCardBorderClass}
         ${isBypassed ? 'bg-purple-100/50' : 'bg-white'}
       `}
         style={{
@@ -538,18 +622,19 @@ export const NodeCard = memo(function NodeCard({
         errorPopoverOpen={errorPopoverOpen}
         setErrorPopoverOpen={setErrorPopoverOpen}
         toggleNodeFold={() => {
-          setItemCollapsed(nodeStableKey, !isCollapsed);
+          setItemCollapsed(nodeHierarchicalKey, !isCollapsed);
         }}
         expandedBorderColor={canUseNodeTint ? nodeHeaderBorderColor : undefined}
         rightSlot={(
           <NodeCardMenu
             nodeId={node.id}
-            nodeStableKey={nodeStableKey}
+            nodeHierarchicalKey={nodeHierarchicalKey}
             isLoraManagerNode={isLoraManagerNode}
             isBypassed={isBypassed}
+            onEnterSubgraph={onEnterSubgraph}
             onEditLabel={handleEditLabel}
             nodeColor={nodeColor}
-            onChangeColor={handleChangeNodeColor}
+            onChangeColor={(color) => updateWorkflowItemColor(nodeHierarchicalKey, color)}
             pinnableWidgets={pinnableWidgets}
             singlePinnableWidget={singlePinnableWidget}
             isSingleWidgetPinned={isSingleWidgetPinned}
@@ -558,7 +643,7 @@ export const NodeCard = memo(function NodeCard({
             setPinnedWidget={handleSetPinnedWidget}
             isNodeBookmarked={isNodeBookmarked}
             canAddNodeBookmark={canAddNodeBookmark}
-            onToggleNodeBookmark={() => toggleBookmark(nodeStableKey)}
+            onToggleNodeBookmark={() => toggleBookmark(nodeHierarchicalKey)}
             toggleBypass={toggleBypass}
             setItemHidden={setItemHidden}
             onDeleteNode={() => setShowDeleteModal(true)}
@@ -613,6 +698,7 @@ export const NodeCard = memo(function NodeCard({
               setSeedMode={handleSetSeedMode}
               isWidgetPinned={isWidgetPinned}
               toggleWidgetPin={toggleWidgetPin}
+              resolveWidgetValue={resolveWidgetValue}
             />
             {noteText && (
               <NodeCardNote
@@ -657,7 +743,7 @@ export const NodeCard = memo(function NodeCard({
           hasConnections={hasNodeConnections}
           onCancel={() => setShowDeleteModal(false)}
           onDelete={(reconnect) => {
-            deleteNode(nodeStableKey, reconnect);
+            deleteNode(nodeHierarchicalKey, reconnect);
             setShowDeleteModal(false);
           }}
         />

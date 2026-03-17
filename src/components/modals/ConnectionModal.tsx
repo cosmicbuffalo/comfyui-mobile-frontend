@@ -15,6 +15,10 @@ import {
   prettyPackName
 } from '@/utils/search';
 import { resolveNodeTypeDisplayName, searchAndSortNodeTypes } from '@/utils/nodeTypeSearch';
+import {
+  findWorkflowNodeInScope,
+  resolveWorkflowNodeDisplayName
+} from '@/utils/subgraphPlaceholderLabels';
 import { ConnectionSearchResult } from './ConnectionModal/SearchResult';
 import { SearchActionModal } from './SearchActionModal';
 import { NodeTypeSearchResult } from './NodeTypeSearchResult';
@@ -81,12 +85,30 @@ function areKeySetsEqual(a: Set<string>, b: Set<string>): boolean {
 export function ConnectionModal(props: ConnectionModalProps) {
   const { isOpen, onClose, nodeId, mode } = props;
   const workflow = useWorkflowStore((s) => s.workflow);
+  const scopeStack = useWorkflowStore((s) => s.scopeStack);
   const nodeTypes = useWorkflowStore((s) => s.nodeTypes);
   const connectNodes = useWorkflowStore((s) => s.connectNodes);
   const disconnectInput = useWorkflowStore((s) => s.disconnectInput);
   const addNode = useWorkflowStore((s) => s.addNode);
   const addNodeAndConnect = useWorkflowStore((s) => s.addNodeAndConnect);
   const scrollToNode = useWorkflowStore((s) => s.scrollToNode);
+  const topScopeFrame = scopeStack[scopeStack.length - 1];
+  const currentSubgraphId = topScopeFrame?.type === 'subgraph' ? topScopeFrame.id : null;
+  const scopedWorkflow = useMemo(() => {
+    if (!workflow) return null;
+    if (currentSubgraphId == null) return workflow;
+    const subgraph = workflow.definitions?.subgraphs?.find(
+      (entry) => entry.id === currentSubgraphId,
+    );
+    if (!subgraph) return workflow;
+    return {
+      ...workflow,
+      nodes: subgraph.nodes ?? [],
+      links: (subgraph.links ?? []).map(
+        (link) => [link.id, link.origin_id, link.origin_slot, link.target_id, link.target_slot, link.type] as [number, number, number, number, number, string]
+      ),
+    };
+  }, [currentSubgraphId, workflow]);
 
   const [searchQuery, setSearchQuery] = useState('');
   const [currentAction, setCurrentAction] = useState<'pick' | 'addNew'>('pick');
@@ -105,23 +127,24 @@ export function ConnectionModal(props: ConnectionModalProps) {
   const [multiInputPickerNodeId, setMultiInputPickerNodeId] = useState<number | null>(null);
   const [multiInputPickerSelection, setMultiInputPickerSelection] = useState<Set<string>>(new Set());
 
-  const currentNodeStableKey = useMemo(() => {
-    if (!workflow) return null;
-    const node = workflow.nodes.find((entry) => entry.id === nodeId);
-    return node?.stableKey ?? null;
-  }, [nodeId, workflow]);
+  const currentNodeHierarchicalKey = useMemo(() => {
+    const node = findWorkflowNodeInScope(workflow, nodeId, currentSubgraphId);
+    return node?.itemKey ?? null;
+  }, [currentSubgraphId, nodeId, workflow]);
 
-  const getStableKeyForNodeId = (targetNodeId: number): string | null => {
-    const latestWorkflow = useWorkflowStore.getState().workflow;
-    if (!latestWorkflow) return null;
-    const node = latestWorkflow.nodes.find((entry) => entry.id === targetNodeId);
-    return node?.stableKey ?? null;
+  const getHierarchicalKeyForNodeId = (targetNodeId: number): string | null => {
+    const node = findWorkflowNodeInScope(
+      useWorkflowStore.getState().workflow,
+      targetNodeId,
+      currentSubgraphId,
+    );
+    return node?.itemKey ?? null;
   };
 
   const compatibleNodes = useMemo(() => {
-    if (mode !== 'input' || !workflow || !nodeTypes) return [];
-    return findCompatibleSourceNodes(workflow, nodeId, props.inputIndex);
-  }, [mode, workflow, nodeTypes, nodeId, props]);
+    if (mode !== 'input' || !scopedWorkflow || !nodeTypes) return [];
+    return findCompatibleSourceNodes(scopedWorkflow, nodeId, props.inputIndex);
+  }, [mode, scopedWorkflow, nodeTypes, nodeId, props]);
 
   const filteredNodes = useMemo(() => {
     if (mode !== 'input') return [];
@@ -130,10 +153,7 @@ export function ConnectionModal(props: ConnectionModalProps) {
       .map((entry) => {
         const { node } = entry;
         const typeDef = nodeTypes?.[node.type];
-        const title = (node as { title?: unknown }).title;
-        const displayName = (typeof title === 'string' && title.trim())
-          ? title.trim()
-          : (typeDef?.display_name || node.type);
+        const displayName = resolveWorkflowNodeDisplayName(workflow, node, nodeTypes);
         const text = `${displayName} ${typeDef?.display_name ?? ''} ${node.type} ${String(node.id)}`;
         const matches = !query
           || fuzzyMatch(query, text)
@@ -149,7 +169,7 @@ export function ConnectionModal(props: ConnectionModalProps) {
       .filter(Boolean) as Array<(typeof compatibleNodes)[number] & { score: number }>;
     scored.sort((a, b) => b.score - a.score || a.node.id - b.node.id);
     return scored;
-  }, [mode, compatibleNodes, searchQuery, nodeTypes]);
+  }, [mode, compatibleNodes, searchQuery, nodeTypes, workflow]);
 
   const compatibleTypes = useMemo(() => {
     if (mode !== 'input' || !nodeTypes) return [];
@@ -208,10 +228,10 @@ export function ConnectionModal(props: ConnectionModalProps) {
   }, [mode, compatibleOutputTypes, searchQuery]);
 
   const outputCandidates = useMemo<OutputCandidate[]>(() => {
-    if (mode !== 'output' || !workflow || !nodeTypes) return [];
-    const compatibleTargets = findCompatibleTargetNodesForOutput(workflow, nodeId, props.outputIndex);
+    if (mode !== 'output' || !scopedWorkflow || !nodeTypes) return [];
+    const compatibleTargets = findCompatibleTargetNodesForOutput(scopedWorkflow, nodeId, props.outputIndex);
     const connectedKeys = new Set<string>();
-    for (const link of workflow.links) {
+    for (const link of scopedWorkflow.links) {
       const [, srcNodeId, srcSlot, tgtNodeId, tgtSlot] = link;
       if (srcNodeId === nodeId && srcSlot === props.outputIndex) {
         connectedKeys.add(makeOutputSelectionKey(tgtNodeId, tgtSlot));
@@ -222,10 +242,7 @@ export function ConnectionModal(props: ConnectionModalProps) {
     const candidates = compatibleTargets
       .map(({ node, inputIndex }) => {
         const typeDef = nodeTypes[node.type];
-        const title = (node as { title?: unknown }).title;
-        const displayName = (typeof title === 'string' && title.trim())
-          ? title.trim()
-          : (typeDef?.display_name || node.type);
+        const displayName = resolveWorkflowNodeDisplayName(workflow, node, nodeTypes);
         const pack = prettyPackName(String(typeDef?.python_module ?? typeDef?.category?.split('/')[0] ?? 'Core'));
         const inputSlot = node.inputs?.[inputIndex];
         if (!inputSlot) return null;
@@ -237,14 +254,17 @@ export function ConnectionModal(props: ConnectionModalProps) {
         let existingSourceLabel: string | null = null;
         const existingLinkId = inputSlot.link;
         if (existingLinkId != null && !currentlyConnectedFromThisOutput) {
-          const existingLink = workflow.links.find((link) => link[0] === existingLinkId);
+          const existingLink = scopedWorkflow.links.find((link) => link[0] === existingLinkId);
           if (existingLink) {
             hasExistingLink = true;
             const [, existingSrcNodeId] = existingLink;
-            const existingSrcNode = workflow.nodes.find((n) => n.id === existingSrcNodeId);
+            const existingSrcNode = findWorkflowNodeInScope(
+              workflow,
+              existingSrcNodeId,
+              currentSubgraphId,
+            );
             if (existingSrcNode) {
-              const existingTypeDef = nodeTypes[existingSrcNode.type];
-              existingSourceLabel = `${existingTypeDef?.display_name || existingSrcNode.type} #${existingSrcNode.id}`;
+              existingSourceLabel = `${resolveWorkflowNodeDisplayName(workflow, existingSrcNode, nodeTypes)} #${existingSrcNode.id}`;
             }
           }
         }
@@ -276,7 +296,7 @@ export function ConnectionModal(props: ConnectionModalProps) {
     const filtered = candidates.filter((candidate): candidate is OutputCandidate => candidate !== null);
     filtered.sort((a, b) => b.score - a.score || a.nodeId - b.nodeId);
     return filtered;
-  }, [mode, workflow, nodeTypes, nodeId, props, searchQuery]);
+  }, [mode, scopedWorkflow, workflow, nodeTypes, nodeId, props, searchQuery, currentSubgraphId]);
 
   const initialOutputSelection = useMemo(() => {
     if (mode !== 'output') return new Set<string>();
@@ -334,29 +354,29 @@ export function ConnectionModal(props: ConnectionModalProps) {
 
   const handleSelectNode = (srcNodeId: number, srcOutputIndex: number) => {
     if (mode !== 'input') return;
-    const srcStableKey = getStableKeyForNodeId(srcNodeId);
-    if (!srcStableKey || !currentNodeStableKey) return;
-    connectNodes(srcStableKey, srcOutputIndex, currentNodeStableKey, props.inputIndex, props.inputType);
+    const srcHierarchicalKey = getHierarchicalKeyForNodeId(srcNodeId);
+    if (!srcHierarchicalKey || !currentNodeHierarchicalKey) return;
+    connectNodes(srcHierarchicalKey, srcOutputIndex, currentNodeHierarchicalKey, props.inputIndex, props.inputType);
     onClose();
-    scrollToNode(srcStableKey);
+    scrollToNode(srcHierarchicalKey);
   };
 
   const handleDisconnect = () => {
     if (mode !== 'input') return;
-    if (!currentNodeStableKey) return;
-    disconnectInput(currentNodeStableKey, props.inputIndex);
+    if (!currentNodeHierarchicalKey) return;
+    disconnectInput(currentNodeHierarchicalKey, props.inputIndex);
     onClose();
   };
 
   const handleAddNewNode = (typeName: string) => {
     if (mode !== 'input') return;
-    if (!currentNodeStableKey) return;
-    const newNodeId = addNodeAndConnect(typeName, currentNodeStableKey, props.inputIndex);
+    if (!currentNodeHierarchicalKey) return;
+    const newNodeId = addNodeAndConnect(typeName, currentNodeHierarchicalKey, props.inputIndex);
     onClose();
     if (newNodeId !== null) {
-      const newStableKey = getStableKeyForNodeId(newNodeId);
-      if (newStableKey) {
-        scrollToNode(newStableKey);
+      const newHierarchicalKey = getHierarchicalKeyForNodeId(newNodeId);
+      if (newHierarchicalKey) {
+        scrollToNode(newHierarchicalKey);
       }
     }
   };
@@ -367,28 +387,28 @@ export function ConnectionModal(props: ConnectionModalProps) {
     suggestedInputType: string
   ) => {
     if (mode !== 'output') return;
-    if (!currentNodeStableKey) return;
+    if (!currentNodeHierarchicalKey) return;
 
     const newNodeId = addNode(typeName, {
-      nearNodeStableKey: currentNodeStableKey,
+      nearNodeHierarchicalKey: currentNodeHierarchicalKey,
     });
     if (newNodeId === null) return;
 
-    const newStableKey = getStableKeyForNodeId(newNodeId);
-    if (!newStableKey) return;
+    const newHierarchicalKey = getHierarchicalKeyForNodeId(newNodeId);
+    if (!newHierarchicalKey) return;
 
     const latestWorkflow = useWorkflowStore.getState().workflow;
     const newNode = latestWorkflow?.nodes.find((node) => node.id === newNodeId);
-    if (!newNode || !currentNodeStableKey) return;
+    if (!newNode || !currentNodeHierarchicalKey) return;
 
     const compatibleInputIndex = newNode.inputs.findIndex((input) => input.type.toUpperCase() === suggestedInputType.toUpperCase());
     const inputIndex = compatibleInputIndex >= 0 ? compatibleInputIndex : suggestedInputIndex;
     const inputType = newNode.inputs[inputIndex]?.type;
     if (inputType == null) return;
 
-    connectNodes(currentNodeStableKey, props.outputIndex, newStableKey, inputIndex, inputType);
+    connectNodes(currentNodeHierarchicalKey, props.outputIndex, newHierarchicalKey, inputIndex, inputType);
     onClose();
-    scrollToNode(newStableKey);
+    scrollToNode(newHierarchicalKey);
   };
 
   const toggleOutputTargetSelection = (nodeIdToToggle: number, inputIndexToToggle: number) => {
@@ -470,17 +490,17 @@ export function ConnectionModal(props: ConnectionModalProps) {
       if (selectedOutputTargetKeys.has(key)) continue;
       const candidate = outputCandidatesByKey.get(key);
       if (!candidate) continue;
-      const targetStableKey = getStableKeyForNodeId(candidate.nodeId);
-      if (!targetStableKey) continue;
-      disconnectInput(targetStableKey, candidate.inputIndex);
+      const targetHierarchicalKey = getHierarchicalKeyForNodeId(candidate.nodeId);
+      if (!targetHierarchicalKey) continue;
+      disconnectInput(targetHierarchicalKey, candidate.inputIndex);
     }
     for (const key of selectedOutputTargetKeys) {
       if (initialOutputSelection.has(key)) continue;
       const candidate = outputCandidatesByKey.get(key);
       if (!candidate) continue;
-      const targetStableKey = getStableKeyForNodeId(candidate.nodeId);
-      if (!targetStableKey || !currentNodeStableKey) continue;
-      connectNodes(currentNodeStableKey, props.outputIndex, targetStableKey, candidate.inputIndex, candidate.inputType);
+      const targetHierarchicalKey = getHierarchicalKeyForNodeId(candidate.nodeId);
+      if (!targetHierarchicalKey || !currentNodeHierarchicalKey) continue;
+      connectNodes(currentNodeHierarchicalKey, props.outputIndex, targetHierarchicalKey, candidate.inputIndex, candidate.inputType);
     }
     onClose();
   };
@@ -508,10 +528,7 @@ export function ConnectionModal(props: ConnectionModalProps) {
       <div className="px-3 pt-3 pb-20 flex flex-col gap-2">
         {filteredNodes.map(({ node, outputIndex }) => {
           const typeDef = nodeTypes?.[node.type];
-          const title = (node as { title?: unknown }).title;
-          const displayName = (typeof title === 'string' && title.trim())
-            ? title.trim()
-            : (typeDef?.display_name || node.type);
+          const displayName = resolveWorkflowNodeDisplayName(workflow, node, nodeTypes);
           const pack = prettyPackName(String(typeDef?.python_module ?? typeDef?.category?.split('/')[0] ?? 'Core'));
           const outputSlot = node.outputs?.[outputIndex];
           const outputName = outputSlot?.localized_name || outputSlot?.name || `Output ${outputIndex + 1}`;

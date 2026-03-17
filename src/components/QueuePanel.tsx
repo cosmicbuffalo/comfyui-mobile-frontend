@@ -15,6 +15,7 @@ import { downloadBatch, downloadImage } from '@/utils/downloads';
 import { copyTextToClipboard } from '@/utils/clipboard';
 import { QueueList } from './QueuePanel/QueueList';
 import { useQueueMenuDismiss } from '@/hooks/useQueueMenuDismiss';
+import { resolveExecutingNodeLabel } from '@/utils/executionLabels';
 
 interface QueuePanelProps {
   visible: boolean;
@@ -32,6 +33,7 @@ export function QueuePanel({ visible, onImageClick }: QueuePanelProps) {
   const workflow = useWorkflowStore((s) => s.workflow);
   const nodeTypes = useWorkflowStore((s) => s.nodeTypes);
   const executingNodeId = useWorkflowStore((s) => s.executingNodeId);
+  const executingNodePath = useWorkflowStore((s) => s.executingNodePath);
   const workflowDurationStats = useWorkflowStore((s) => s.workflowDurationStats);
   const promptOutputs = useWorkflowStore((s) => s.promptOutputs);
 
@@ -47,12 +49,13 @@ export function QueuePanel({ visible, onImageClick }: QueuePanelProps) {
   );
   const effectiveExecutingId = executingPromptId || (running.length === 1 ? running[0].prompt_id : null);
   const executingNodeLabel = useMemo(() => {
-    if (!workflow || !executingNodeId) return null;
-    const node = workflow.nodes.find((n) => String(n.id) === executingNodeId);
-    if (!node) return `Node ${executingNodeId}`;
-    const typeDef = nodeTypes?.[node.type];
-    return typeDef?.display_name || node.type;
-  }, [workflow, executingNodeId, nodeTypes]);
+    return resolveExecutingNodeLabel(
+      executingNodePath,
+      executingNodeId,
+      workflow,
+      nodeTypes,
+    );
+  }, [workflow, executingNodeId, executingNodePath, nodeTypes]);
   const overallProgress = useOverallProgress({
     workflow,
     runKey: executingPromptId || effectiveExecutingId,

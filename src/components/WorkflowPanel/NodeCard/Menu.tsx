@@ -1,6 +1,6 @@
 import { useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { BypassToggleIcon, BookmarkIconSvg, BookmarkOutlineIcon, ChevronRightIcon, EyeOffIcon, MoveUpDownIcon, NodeConnectionsIcon, EditIcon, ExternalLinkIcon, PinIconSvg, PinOutlineIcon, TrashIcon } from '@/components/icons';
+import { BypassToggleIcon, BookmarkIconSvg, BookmarkOutlineIcon, ChevronRightIcon, EyeOffIcon, MoveUpDownIcon, NodeConnectionsIcon, EditIcon, ExternalLinkIcon, PinIconSvg, PinOutlineIcon, TrashIcon, ArrowRightIcon, WorkflowIcon } from '@/components/icons';
 import { useAnchoredMenuPosition } from '@/hooks/useAnchoredMenuPosition';
 import { useDismissOnOutsideClick } from '@/hooks/useDismissOnOutsideClick';
 import { ContextMenuButton } from '@/components/buttons/ContextMenuButton';
@@ -17,9 +17,10 @@ interface PinnableWidget {
 
 interface NodeCardMenuProps {
   nodeId: number;
-  nodeStableKey: string;
+  nodeHierarchicalKey: string;
   isLoraManagerNode: boolean;
   isBypassed: boolean;
+  onEnterSubgraph?: () => void;
   onEditLabel: () => void;
   nodeColor?: string;
   onChangeColor: (color: string) => void;
@@ -43,21 +44,22 @@ interface NodeCardMenuProps {
   isNodeBookmarked: boolean;
   canAddNodeBookmark: boolean;
   onToggleNodeBookmark: () => void;
-  toggleBypass: (stableKey: string) => void;
-  setItemHidden: (stableKey: string, hidden: boolean) => void;
+  toggleBypass: (itemKey: string) => void;
+  setItemHidden: (itemKey: string, hidden: boolean) => void;
   onDeleteNode: () => void;
   onMoveNode: () => void;
   connectionHighlightMode: 'off' | 'inputs' | 'outputs' | 'both';
-  setConnectionHighlightMode: (stableKey: string, mode: 'off' | 'inputs' | 'outputs' | 'both') => void;
+  setConnectionHighlightMode: (itemKey: string, mode: 'off' | 'inputs' | 'outputs' | 'both') => void;
   leftLineCount: number;
   rightLineCount: number;
 }
 
 export function NodeCardMenu({
   nodeId,
-  nodeStableKey,
+  nodeHierarchicalKey,
   isLoraManagerNode,
   isBypassed,
+  onEnterSubgraph,
   onEditLabel,
   nodeColor = '',
   onChangeColor,
@@ -169,7 +171,7 @@ export function NodeCardMenu({
         : ['off', 'outputs'];
     const currentIndex = validModes.indexOf(connectionHighlightMode);
     const nextMode = validModes[(currentIndex + 1) % validModes.length] as typeof connectionHighlightMode;
-    setConnectionHighlightMode(nodeStableKey, nextMode);
+    setConnectionHighlightMode(nodeHierarchicalKey, nextMode);
   };
 
   const handleToggleMenu = (event: React.MouseEvent<HTMLButtonElement>) => {
@@ -187,13 +189,13 @@ export function NodeCardMenu({
 
   const handleToggleBypassClick = (event: React.MouseEvent<HTMLButtonElement>) => {
     event.stopPropagation();
-    toggleBypass(nodeStableKey);
+    toggleBypass(nodeHierarchicalKey);
     closeMenu();
   };
 
   const handleHideNodeClick = (event: React.MouseEvent<HTMLButtonElement>) => {
     event.stopPropagation();
-    setItemHidden(nodeStableKey, true);
+    setItemHidden(nodeHierarchicalKey, true);
     closeMenu();
   };
 
@@ -263,7 +265,12 @@ export function NodeCardMenu({
         ariaLabel="Node options"
         buttonSize={8}
         iconSize={5}
-        icon={isNodeBookmarked ? <BookmarkIconSvg className="w-5 h-5 text-yellow-500" /> : undefined}
+        icon={isNodeBookmarked
+          ? <BookmarkIconSvg className="w-5 h-5 text-yellow-500" />
+          : onEnterSubgraph
+            ? <WorkflowIcon className="w-5 h-5 -scale-x-100 text-blue-500" />
+            : undefined
+        }
       />
       {colorPopoverOpen && createPortal(
         <div
@@ -281,7 +288,7 @@ export function NodeCardMenu({
                   type="button"
                   title={label}
                   aria-label={`Set color: ${label}`}
-                  className={`w-9 h-9 rounded-full transition-transform active:scale-95 ${
+                  className={`w-9 aspect-square rounded-full transition-transform active:scale-95 ${
                     isSelected ? 'ring-2 ring-offset-1 ring-gray-400' : ''
                   }`}
                   style={{ backgroundColor: color }}
@@ -306,6 +313,22 @@ export function NodeCardMenu({
         >
           <ContextMenuBuilder
             items={[
+              {
+                key: 'enter-subgraph',
+                label: 'Enter subgraph',
+                icon: <ArrowRightIcon className="w-4 h-4" />,
+                onClick: (event) => {
+                  event.stopPropagation();
+                  onEnterSubgraph?.();
+                  closeMenu();
+                },
+                hidden: !onEnterSubgraph
+              },
+              {
+                type: 'divider',
+                key: 'divider-enter-subgraph',
+                className: onEnterSubgraph ? '' : 'hidden'
+              },
               {
                 key: 'edit-label',
                 label: 'Edit label',
@@ -354,7 +377,10 @@ export function NodeCardMenu({
                 key: 'toggle-bypass',
                 label: isBypassed ? 'Engage node' : 'Bypass node',
                 icon: <BypassToggleIcon className="w-4 h-4" isBypassed={isBypassed} />,
-                onClick: handleToggleBypassClick
+                onClick: handleToggleBypassClick,
+                // Subgraph placeholder bypass is derived from inner node bypass states.
+                // Hiding this action prevents placeholder mode from drifting out of sync.
+                hidden: Boolean(onEnterSubgraph)
               },
               {
                 key: 'hide-node',

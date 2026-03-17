@@ -7,7 +7,7 @@ describe('collectLayoutHiddenState', () => {
   it('counts hidden nodes from direct and hidden-block entries', () => {
     const groupKey = makeLocationPointer({ type: 'group', groupId: 10, subgraphId: null });
     const layout: MobileLayout = {
-      root: [{ type: 'group', id: 10, subgraphId: null, stableKey: groupKey }],
+      root: [{ type: 'group', id: 10, subgraphId: null, itemKey: groupKey }],
       groups: {
         [groupKey]: [
           { type: 'node', id: 1 },
@@ -26,8 +26,7 @@ describe('collectLayoutHiddenState', () => {
         [makeLocationPointer({ type: 'node', nodeId: 1, subgraphId: null })]: true,
         [makeLocationPointer({ type: 'node', nodeId: 2, subgraphId: null })]: true,
         [makeLocationPointer({ type: 'group', groupId: 10, subgraphId: null })]: false
-      },
-      stableKeyByPointer: {}
+      }
     });
 
     expect(hiddenState.hiddenNodeCount).toBe(2);
@@ -42,7 +41,7 @@ describe('collectLayoutHiddenState', () => {
   it('marks all descendants hidden when parent container is hidden', () => {
     const groupKey = makeLocationPointer({ type: 'group', groupId: 10, subgraphId: null });
     const layout: MobileLayout = {
-      root: [{ type: 'group', id: 10, subgraphId: null, stableKey: groupKey }],
+      root: [{ type: 'group', id: 10, subgraphId: null, itemKey: groupKey }],
       groups: {
         [groupKey]: [{ type: 'node', id: 1 }]
       },
@@ -54,8 +53,7 @@ describe('collectLayoutHiddenState', () => {
       layout,
       hiddenItems: {
         [makeLocationPointer({ type: 'group', groupId: 10, subgraphId: null })]: true
-      },
-      stableKeyByPointer: {}
+      }
     });
 
     expect(hiddenState.hiddenNodeCount).toBe(1);

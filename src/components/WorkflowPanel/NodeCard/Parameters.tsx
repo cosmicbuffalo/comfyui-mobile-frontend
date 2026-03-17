@@ -3,7 +3,7 @@ import { WidgetControl } from '../../InputControls/WidgetControl';
 import { NumberControl } from '../../InputControls/NumberControl';
 import type { WorkflowGroup, WorkflowNode } from '@/api/types';
 import {
-  collectBypassGroupTargetNodeIds,
+  collectBypassGroupTargetNodes,
   generateSeedFromNode,
   getSpecialSeedMode,
   isSpecialSeedValue,
@@ -32,7 +32,7 @@ import {
 } from '@/utils/triggerWordToggle';
 import { themeColors } from '@/theme/colors';
 import { cssColorToHex, hexToHsl, normalizeColorTokens, normalizeHexColor } from '@/utils/colorUtils';
-import { requireStableKey } from '@/utils/stableKeys';
+import { requireHierarchicalKey } from '@/utils/itemKeys';
 
 interface WidgetDescriptor {
   widgetIndex: number;
@@ -63,6 +63,7 @@ interface NodeCardParametersProps {
   setSeedMode: (nodeId: number, mode: 'fixed' | 'randomize' | 'increment' | 'decrement') => void;
   isWidgetPinned: (widgetIndex: number) => boolean;
   toggleWidgetPin: (widgetIndex: number, widgetName: string, widgetType: string, options?: Record<string, unknown> | unknown[]) => void;
+  resolveWidgetValue?: (widgetIndex: number) => unknown;
 }
 
 export function NodeCardParameters({
@@ -80,11 +81,13 @@ export function NodeCardParameters({
   findSeedWidgetIndex,
   setSeedMode,
   isWidgetPinned,
-  toggleWidgetPin
+  toggleWidgetPin,
+  resolveWidgetValue
 }: NodeCardParametersProps) {
   const widgetValues = Array.isArray(node.widgets_values) ? node.widgets_values : [];
   const nodeTypes = useWorkflowStore((state) => state.nodeTypes);
   const workflow = useWorkflowStore((state) => state.workflow);
+  const scopeStack = useWorkflowStore((state) => state.scopeStack);
   const syncTriggerWordsForNode = useLoraManagerStore((state) => state.syncTriggerWordsForNode);
   const bypassAllInContainer = useWorkflowStore((state) => state.bypassAllInContainer);
   const storedSeedMode = useSeedStore((state) => state.seedModes[node.id]);
@@ -97,7 +100,9 @@ export function NodeCardParameters({
     ? findSeedWidgetIndex()
     : null;
   const seedControlIndex = seedWidgetIndex !== null ? seedWidgetIndex + 1 : null;
-  const seedControlValue = seedControlIndex !== null ? widgetValues[seedControlIndex] : undefined;
+  const seedControlValue = seedControlIndex !== null
+    ? (resolveWidgetValue ? resolveWidgetValue(seedControlIndex) : widgetValues[seedControlIndex])
+    : undefined;
   const hasSeedControlWidget = typeof seedControlValue === 'string';
   const hideSeedInputWidget = !isKSampler && seedWidgetIndex !== null && !hasSeedControlWidget;
   const inputWidgetsToRender = hideSeedInputWidget
@@ -107,6 +112,54 @@ export function NodeCardParameters({
     ? visibleWidgets.filter((widget) => widget.name !== 'seed' && widget.name !== 'noise_seed')
     : visibleWidgets;
   const showParameters = visibleWidgets.length > 0 || visibleInputWidgets.length > 0;
+  const inSubgraphScope = scopeStack[scopeStack.length - 1]?.type === 'subgraph';
+  const promotedWidgetNames = useMemo(() => {
+    const names = new Set<string>();
+    if (!workflow || !inSubgraphScope) return names;
+    const currentFrame = scopeStack[scopeStack.length - 1];
+    if (!currentFrame || currentFrame.type !== 'subgraph') return names;
+    const parentFrame = scopeStack.length > 1 ? scopeStack[scopeStack.length - 2] : null;
+
+    const placeholderNodeId = currentFrame.placeholderNodeId;
+    const placeholderNode =
+      !parentFrame || parentFrame.type === 'root'
+        ? workflow.nodes.find((n) => n.id === placeholderNodeId)
+        : workflow.definitions?.subgraphs
+            ?.find((sg) => sg.id === parentFrame.id)
+            ?.nodes?.find((n) => n.id === placeholderNodeId);
+    if (!placeholderNode) return names;
+
+    const proxyWidgets = (placeholderNode.properties as Record<string, unknown> | undefined)?.proxyWidgets;
+    if (Array.isArray(proxyWidgets)) {
+      for (const entry of proxyWidgets) {
+        if (!Array.isArray(entry) || entry.length < 2) continue;
+        const [innerNodeIdRaw, widgetNameRaw] = entry;
+        const widgetName = typeof widgetNameRaw === 'string' ? widgetNameRaw : null;
+        if (!widgetName) continue;
+        const innerNodeId = Number(innerNodeIdRaw);
+        if (innerNodeIdRaw === '-1' || innerNodeId === node.id) {
+          names.add(widgetName);
+        }
+      }
+    }
+
+    for (const input of placeholderNode.inputs ?? []) {
+      const promotedName = input.widget?.name;
+      if (typeof promotedName === 'string' && promotedName.trim()) {
+        names.add(promotedName.trim());
+      }
+    }
+
+    return names;
+  }, [workflow, inSubgraphScope, scopeStack, node.id]);
+
+  const isPromotedWidget = (widgetName: string): boolean => {
+    if (promotedWidgetNames.size === 0) return false;
+    const direct = widgetName.trim();
+    if (promotedWidgetNames.has(direct)) return true;
+    const base = direct.split(': ').pop()?.trim() ?? direct;
+    return promotedWidgetNames.has(base);
+  };
   const fastGroupToggles = useMemo(() => {
     if (!isFastGroupsBypasser || !workflow) return [];
 
@@ -171,11 +224,21 @@ export function NodeCardParameters({
       }
     }
 
-    const nodesById = new Map(workflow.nodes.map((entry) => [entry.id, entry]));
+    const rootNodesById = new Map(workflow.nodes.map((n) => [n.id, n]));
+    const subgraphNodesById = new Map<string, Map<number, WorkflowNode>>();
+    for (const sg of workflow.definitions?.subgraphs ?? []) {
+      subgraphNodesById.set(sg.id, new Map((sg.nodes ?? []).map((n) => [n.id, n])));
+    }
+    const resolveNode = (nodeId: number, sgId: string | null): WorkflowNode | undefined => {
+      if (sgId) {
+        return subgraphNodesById.get(sgId)?.get(nodeId) ?? rootNodesById.get(nodeId);
+      }
+      return rootNodesById.get(nodeId);
+    };
     const entries: Array<{
       key: string;
       label: string;
-      stableKey: string;
+      itemKey: string;
       color?: string;
       isEngaged: boolean;
       isDisabled: boolean;
@@ -209,14 +272,14 @@ export function NodeCardParameters({
 
     const pushGroup = (group: WorkflowGroup, subgraphId: string | null) => {
       if (!shouldIncludeGroup(group)) return;
-      const stableKey = requireStableKey(
-        group.stableKey,
+      const itemKey = requireHierarchicalKey(
+        group.itemKey,
         `group ${group.id}${subgraphId ? ` in subgraph ${subgraphId}` : ' in root graph'}`
       );
-      const targetNodeIds = collectBypassGroupTargetNodeIds(workflow, group.id, subgraphId);
+      const targetNodes = collectBypassGroupTargetNodes(workflow, group.id, subgraphId);
       let isEngaged = false;
-      for (const nodeId of targetNodeIds) {
-        const node = nodesById.get(nodeId);
+      for (const target of targetNodes) {
+        const node = resolveNode(target.nodeId, target.subgraphId);
         if (!node || node.mode === 4) continue;
         isEngaged = true;
         break;
@@ -224,18 +287,17 @@ export function NodeCardParameters({
       entries.push({
         key: `${subgraphId ?? 'root'}-${group.id}`,
         label: group.title?.trim() || `Group ${group.id}`,
-        stableKey,
+        itemKey,
         color: group.color,
         isEngaged,
-        isDisabled: targetNodeIds.size === 0,
+        isDisabled: targetNodes.length === 0,
         group
       });
     };
 
-    const origin = (node.properties as Record<string, unknown> | undefined)?.[
-      '__mobile_origin'
-    ] as { scope?: string; subgraphId?: string } | undefined;
-    const originScope = origin?.scope === 'subgraph' ? origin.subgraphId : null;
+    const scopeStack = useWorkflowStore.getState().scopeStack ?? [];
+    const currentScope = scopeStack[scopeStack.length - 1];
+    const originScope = currentScope?.type === 'subgraph' ? currentScope.id : null;
 
     if (showAllGraphs) {
       for (const group of workflow.groups ?? []) {
@@ -290,9 +352,9 @@ export function NodeCardParameters({
     return entries;
   }, [isFastGroupsBypasser, node.properties, workflow]);
 
-  const handleFastGroupToggle = (entry: { isDisabled: boolean; stableKey: string; isEngaged: boolean }) => () => {
+  const handleFastGroupToggle = (entry: { isDisabled: boolean; itemKey: string; isEngaged: boolean }) => () => {
     if (entry.isDisabled) return;
-    bypassAllInContainer(entry.stableKey, entry.isEngaged);
+    bypassAllInContainer(entry.itemKey, entry.isEngaged);
   };
 
   const handleSeedModeValue = (newValue: unknown) => {
@@ -406,12 +468,10 @@ export function NodeCardParameters({
   };
 
   const syncTriggerWordsForCurrentNode = () => {
-    const origin = (node.properties as Record<string, unknown> | undefined)?.[
-      '__mobile_origin'
-    ] as { scope?: string; subgraphId?: string; nodeId?: number } | undefined;
-    const graphId = origin?.scope === 'subgraph' ? origin.subgraphId ?? null : 'root';
-    const targetNodeId = typeof origin?.nodeId === 'number' ? origin.nodeId : node.id;
-    syncTriggerWordsForNode(targetNodeId, graphId);
+    const scopeStack = useWorkflowStore.getState().scopeStack ?? [];
+    const currentScope = scopeStack[scopeStack.length - 1];
+    const graphId = currentScope?.type === 'subgraph' ? currentScope.id : 'root';
+    syncTriggerWordsForNode(node.id, graphId);
   };
 
   const handleInputWidgetChange = (inputWidget: WidgetDescriptor) => (newValue: unknown) => {
@@ -770,6 +830,7 @@ export function NodeCardParameters({
                   onChange={(newValue) => onUpdateNodeWidget(seedIndex, newValue, 'seed')}
                   disabled={isBypassed}
                   hasError={errorInputNames.has('seed')}
+                  isPromoted={isPromotedWidget('seed')}
                 />
                 {seedControlIndex < widgetValues.length && !hideSeedControl && (
                   <WidgetControl
@@ -778,6 +839,7 @@ export function NodeCardParameters({
                     value={seedControlValue}
                     options={seedControlChoices}
                     onChange={handleSeedControlChange(seedControlIndex)}
+                    isPromoted={isPromotedWidget('control_after_generate')}
                   />
                 )}
               </div>
@@ -805,6 +867,7 @@ export function NodeCardParameters({
                     value={seedControlValue}
                     options={choices}
                     onChange={handleSeedControlChange(controlIndex)}
+                    isPromoted={isPromotedWidget('control_after_generate')}
                   />
                 </div>
               );
@@ -817,7 +880,7 @@ export function NodeCardParameters({
             const min = typeof seedOptions.min === 'number' ? seedOptions.min : undefined;
             const max = typeof seedOptions.max === 'number' ? seedOptions.max : undefined;
             const step = typeof seedOptions.step === 'number' ? seedOptions.step : undefined;
-            const rawSeedValue = Number(widgetValues[seedIndex] ?? 0);
+            const rawSeedValue = Number((resolveWidgetValue ? resolveWidgetValue(seedIndex) : widgetValues[seedIndex]) ?? 0);
             const specialMode = getSpecialSeedMode(rawSeedValue);
             const seedMode = storedSeedMode ?? specialMode ?? 'fixed';
             const displaySeedValue = isSpecialSeedValue(rawSeedValue)
@@ -836,6 +899,7 @@ export function NodeCardParameters({
                   max={max}
                   step={step}
                   hasError={hasSeedError}
+                  isPromoted={isPromotedWidget('seed')}
                 />
                 <WidgetControl
                   name="Seed control"
@@ -843,6 +907,7 @@ export function NodeCardParameters({
                   value={seedMode}
                   options={baseChoices}
                   onChange={handleSeedModeValue}
+                  isPromoted={isPromotedWidget('control_after_generate')}
                 />
                 <div className="grid gap-2 mt-2">
                   <button
@@ -934,6 +999,7 @@ export function NodeCardParameters({
                                 isPinned={pinAllowed ? isWidgetPinned(widget.widgetIndex) : false}
                                 onTogglePin={pinAllowed ? () => toggleWidgetPin(widget.widgetIndex, widget.name, widget.type, widgetOptions) : undefined}
                                 hasError={errorInputNames.has(widget.name)}
+                                isPromoted={isPromotedWidget(widget.name)}
                               />
                             </div>
                           );
@@ -958,6 +1024,7 @@ export function NodeCardParameters({
                       isPinned={pinAllowed ? isWidgetPinned(widget.widgetIndex) : false}
                       onTogglePin={pinAllowed ? () => toggleWidgetPin(widget.widgetIndex, widget.name, widget.type, widgetOptions) : undefined}
                       hasError={errorInputNames.has(widget.name)}
+                      isPromoted={isPromotedWidget(widget.name)}
                     />
                   </div>
                 );
@@ -977,6 +1044,7 @@ export function NodeCardParameters({
                     isPinned={canPinWidget(inputWidget.type, inputWidget.name) ? isWidgetPinned(inputWidget.widgetIndex) : false}
                     onTogglePin={canPinWidget(inputWidget.type, inputWidget.name) ? () => toggleWidgetPin(inputWidget.widgetIndex, inputWidget.name, inputWidget.type, inputWidget.options) : undefined}
                     hasError={errorInputNames.has(inputWidget.name)}
+                    isPromoted={isPromotedWidget(inputWidget.name)}
                   />
                 </div>
               ))}
@@ -992,6 +1060,7 @@ export function NodeCardParameters({
                     isPinned={canPinWidget(widget.type, widget.name) ? isWidgetPinned(widget.widgetIndex) : false}
                     onTogglePin={canPinWidget(widget.type, widget.name) ? () => toggleWidgetPin(widget.widgetIndex, widget.name, widget.type, widget.options) : undefined}
                     hasError={errorInputNames.has(widget.name)}
+                    isPromoted={isPromotedWidget(widget.name)}
                   />
                 </div>
               ))}
@@ -1013,6 +1082,7 @@ export function NodeCardParameters({
                   options={controlChoices}
                   onChange={(newValue) => onUpdateNodeWidget(1, newValue)}
                   disabled={isBypassed}
+                  isPromoted={isPromotedWidget('control_after_generate')}
                 />
               </div>
             );

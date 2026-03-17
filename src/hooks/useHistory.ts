@@ -9,6 +9,7 @@ export interface HistoryEntry {
   timestamp: number;
   durationSeconds?: number;
   success?: boolean;
+  errorMessage?: string | null;
   outputs: {
     images: HistoryOutputImage[];
   };
@@ -55,6 +56,31 @@ export const useHistoryStore = create<HistoryState>((set, get) => ({
     set({ isLoading: true });
     try {
       const data = await api.getHistory(50); // Get last 50 items
+      const asText = (value: unknown): string | null => {
+        if (typeof value === "string") {
+          const trimmed = value.trim();
+          return trimmed.length > 0 ? trimmed : null;
+        }
+        if (typeof value === 'number' && Number.isFinite(value)) {
+          return value.toString();
+        }
+        return null;
+      };
+      const getExecutionErrorMessage = (msgData: Record<string, unknown>): string | null => {
+        const direct = asText(msgData.exception_message) ??
+          asText(msgData.error) ??
+          asText(msgData.message) ??
+          asText(msgData.exception_type);
+        if (direct) return direct;
+        const details = asText((msgData as { details?: unknown }).details);
+        if (details) return details;
+        const traceback = asText(msgData.traceback);
+        const node = asText(msgData.node_id) || asText(msgData.node);
+        if (traceback && node) return `${node}: ${traceback}`;
+        if (traceback) return traceback;
+        if (node) return `${node}: execution error`;
+        return null;
+      };
 
       const entries: HistoryEntry[] = Object.entries(data).map(([prompt_id, item]) => {
         // Collect all images from all output nodes
@@ -76,6 +102,7 @@ export const useHistoryStore = create<HistoryState>((set, get) => ({
         let startTime: number | null = null;
         let endTime: number | null = null;
         let failed = false;
+        let errorMessage: string | null = null;
         if (item.status?.messages) {
           for (const [msgType, msgData] of item.status.messages) {
             if (msgType === 'execution_start' && msgData.timestamp) {
@@ -87,6 +114,13 @@ export const useHistoryStore = create<HistoryState>((set, get) => ({
             }
             if (msgType === 'execution_error') {
               failed = true;
+              if (typeof msgData === 'object' && msgData !== null && !Array.isArray(msgData)) {
+                const nextError = getExecutionErrorMessage(msgData as Record<string, unknown>);
+                if (nextError) errorMessage = nextError;
+              } else {
+                const nextError = asText(msgData as unknown);
+                if (nextError) errorMessage = nextError;
+              }
             }
           }
         }
@@ -107,6 +141,7 @@ export const useHistoryStore = create<HistoryState>((set, get) => ({
           timestamp,
           durationSeconds,
           success,
+          errorMessage,
           outputs: { images },
           prompt: item.prompt[2] as Record<string, unknown>,
           workflow

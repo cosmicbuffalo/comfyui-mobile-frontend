@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
+  findSeedWidgetIndex,
   isSpecialSeedValue,
   getSpecialSeedMode,
   getSpecialSeedValueForMode,
@@ -89,5 +90,46 @@ describe('getSeedRandomBounds', () => {
   it('handles non-finite values gracefully', () => {
     const result = getSeedRandomBounds(makeNode({ randomMin: NaN, randomMax: Infinity }));
     expect(result).toEqual({ min: 0, max: DEFAULT_SPECIAL_SEED_RANGE });
+  });
+});
+
+describe('findSeedWidgetIndex', () => {
+  it('resolves seed index from provided widget descriptors when node type metadata is unavailable', () => {
+    const workflow = {
+      last_node_id: 1,
+      last_link_id: 0,
+      nodes: [{
+        id: 1,
+        type: 'subgraph-placeholder',
+        pos: [0, 0] as [number, number],
+        size: [200, 100] as [number, number],
+        flags: {},
+        order: 0,
+        mode: 0,
+        inputs: [],
+        outputs: [],
+        properties: {},
+        widgets_values: [123, 'fixed'],
+      }],
+      links: [],
+      groups: [],
+      config: {},
+      version: 1,
+    };
+    const node = workflow.nodes[0];
+
+    const seedIndex = findSeedWidgetIndex(
+      workflow,
+      null,
+      node,
+      {
+        widgetDescriptors: [
+          { name: 'steps', type: 'INT', widgetIndex: 0 },
+          { name: 'seed', type: 'INT', widgetIndex: 3 },
+        ],
+      }
+    );
+
+    expect(seedIndex).toBe(3);
   });
 });

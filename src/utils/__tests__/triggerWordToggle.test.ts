@@ -15,7 +15,7 @@ import {
 function makeNode(id: number, widgetsValues: unknown[]): WorkflowNode {
   return {
     id,
-    stableKey: `sk-${id}`,
+    itemKey: `sk-${id}`,
     type: 'TriggerWord Toggle (LoraManager)',
     pos: [0, 0],
     size: [200, 100],

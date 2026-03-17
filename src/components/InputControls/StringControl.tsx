@@ -2,6 +2,7 @@ import { useLayoutEffect, useRef, useState } from 'react';
 import { TextareaActions } from './TextareaActions';
 import { FullscreenWidgetModal } from '../modals/FullscreenWidgetModal';
 import { PinButton } from './PinButton';
+import { PromotedWidgetIcon } from '../icons';
 import { useCoarsePointer } from '@/hooks/useCoarsePointer';
 import { useThemeStore } from '@/hooks/useTheme';
 import { themeColors } from '@/theme/colors';
@@ -18,6 +19,7 @@ interface StringControlProps {
   isPinned?: boolean;
   onTogglePin?: () => void;
   hasError?: boolean;
+  isPromoted?: boolean;
   forceModalOpen?: boolean;
   onModalClose?: () => void;
 }
@@ -34,6 +36,7 @@ export function StringControl({
   isPinned = false,
   onTogglePin,
   hasError = false,
+  isPromoted = false,
   forceModalOpen = false,
   onModalClose
 }: StringControlProps) {
@@ -81,7 +84,12 @@ export function StringControl({
             <div className="flex items-center justify-between mb-1 min-h-[18px]">
               {!hideLabel ? (
                 <label className="block text-sm font-medium text-gray-700">
-                  {name}
+                  <span className="inline-flex items-center gap-1">
+                    <span>{name}</span>
+                    {isPromoted && (
+                      <PromotedWidgetIcon className="w-3.5 h-3.5 text-pink-500" />
+                    )}
+                  </span>
                 </label>
               ) : (
                 <span className="block text-sm font-medium text-gray-700" />
@@ -94,7 +102,7 @@ export function StringControl({
               />
             </div>
             <div
-              className={`relative w-full p-3 comfy-input min-h-[100px] text-base group cursor-text ${disabled ? 'opacity-60 cursor-not-allowed' : ''} ${hasPin ? 'pr-10' : ''} ${hasError ? 'border-red-700 ring-1 ring-red-700' : ''}`}
+              className={`relative w-full p-3 comfy-input min-h-[100px] text-base group cursor-text ${disabled ? 'opacity-60 cursor-not-allowed' : ''} ${hasPin ? 'pr-10' : ''} ${hasError ? 'border-red-700 ring-1 ring-red-700' : ''} ${!hasError && isPromoted ? 'border-pink-500 ring-1 ring-pink-500' : ''}`}
               onClick={() => !disabled && setInternalModalOpen(true)}
             >
               <div
@@ -116,11 +124,16 @@ export function StringControl({
           <>
             {!hideLabel && (
               <label className="block text-sm font-medium text-gray-700 mb-1">
-                {name}
+                <span className="inline-flex items-center gap-1">
+                  <span>{name}</span>
+                  {isPromoted && (
+                    <PromotedWidgetIcon className="w-3.5 h-3.5 text-pink-500" />
+                  )}
+                </span>
               </label>
             )}
             <div
-              className={`relative w-full p-3 comfy-input text-base min-h-[46px] flex items-center cursor-text ${disabled ? 'opacity-60 cursor-not-allowed' : ''} ${hasPin ? 'pr-16' : 'pr-6'} ${hasError ? 'border-red-700 ring-1 ring-red-700' : ''}`}
+              className={`relative w-full p-3 comfy-input text-base min-h-[46px] flex items-center cursor-text ${disabled ? 'opacity-60 cursor-not-allowed' : ''} ${hasPin ? 'pr-16' : 'pr-6'} ${hasError ? 'border-red-700 ring-1 ring-red-700' : ''} ${!hasError && isPromoted ? 'border-pink-500 ring-1 ring-pink-500' : ''}`}
               onClick={() => !disabled && setInternalModalOpen(true)}
             >
               <div
@@ -159,7 +172,7 @@ export function StringControl({
               value={valueString}
               onChange={(e) => onChange(e.target.value)}
               placeholder={placeholder}
-              className="w-full p-3 border border-gray-300 rounded-lg min-h-[150px] text-base resize-none outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
+              className={`w-full p-3 border rounded-lg min-h-[150px] text-base resize-none outline-none focus:ring-2 ${isPromoted ? 'border-pink-500 focus:ring-pink-500/20 focus:border-pink-500' : 'border-gray-300 focus:ring-blue-500/20 focus:border-blue-500'}`}
               autoFocus={!forceModalOpen}
               disabled={disabled}
             />
@@ -170,7 +183,7 @@ export function StringControl({
               value={valueString}
               onChange={(e) => onChange(e.target.value)}
               placeholder={placeholder}
-              className="w-full p-3 border border-gray-300 rounded-lg text-base outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
+              className={`w-full p-3 border rounded-lg text-base outline-none focus:ring-2 ${isPromoted ? 'border-pink-500 focus:ring-pink-500/20 focus:border-pink-500' : 'border-gray-300 focus:ring-blue-500/20 focus:border-blue-500'}`}
               autoFocus={!forceModalOpen}
               disabled={disabled}
             />
@@ -186,7 +199,12 @@ export function StringControl({
         <div className="flex items-center justify-between mb-1 min-h-[18px]" data-textarea-header="true">
           {!hideLabel ? (
             <label className="block text-sm font-medium text-gray-700">
-              {name}
+              <span className="inline-flex items-center gap-1">
+                <span>{name}</span>
+                {isPromoted && (
+                  <PromotedWidgetIcon className="w-3.5 h-3.5 text-pink-500" />
+                )}
+              </span>
             </label>
           ) : (
             <span className="block text-sm font-medium text-gray-700" />
@@ -204,7 +222,7 @@ export function StringControl({
             value={valueString}
             onChange={handleTextareaChange}
             placeholder={placeholder}
-            className={`w-full p-3 comfy-input min-h-[100px] text-base resize-none overflow-hidden ${disabled ? 'opacity-60 cursor-not-allowed' : ''} ${hasPin ? 'pr-10' : ''} ${hasError ? 'border-red-700 ring-1 ring-red-700' : ''}`} // TODO - determine if overflow should be hidden or auto here
+            className={`w-full p-3 comfy-input min-h-[100px] text-base resize-none overflow-hidden ${disabled ? 'opacity-60 cursor-not-allowed' : ''} ${hasPin ? 'pr-10' : ''} ${hasError ? 'border-red-700 ring-1 ring-red-700' : ''} ${!hasError && isPromoted ? 'border-pink-500 ring-1 ring-pink-500' : ''}`} // TODO - determine if overflow should be hidden or auto here
             style={{ overflowAnchor: 'none' }}
             disabled={disabled}
           />
@@ -222,7 +240,12 @@ export function StringControl({
     <div className={containerClass}>
       {!hideLabel && (
         <label className="block text-sm font-medium text-gray-700 mb-1">
-          {name}
+          <span className="inline-flex items-center gap-1">
+            <span>{name}</span>
+            {isPromoted && (
+              <PromotedWidgetIcon className="w-3.5 h-3.5 text-pink-500" />
+            )}
+          </span>
         </label>
       )}
       <div className="relative">
@@ -231,7 +254,7 @@ export function StringControl({
           value={String(value ?? '')}
           onChange={(e) => onChange(e.target.value)}
           placeholder={placeholder}
-          className={`w-full p-3 comfy-input text-base ${disabled ? 'opacity-60 cursor-not-allowed' : ''} ${hasPin ? 'pr-16' : ''} ${hasError ? 'border-red-700 ring-1 ring-red-700' : ''}`}
+          className={`w-full p-3 comfy-input text-base ${disabled ? 'opacity-60 cursor-not-allowed' : ''} ${hasPin ? 'pr-16' : ''} ${hasError ? 'border-red-700 ring-1 ring-red-700' : ''} ${!hasError && isPromoted ? 'border-pink-500 ring-1 ring-pink-500' : ''}`}
           disabled={disabled}
         />
         {hasPin && (

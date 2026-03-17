@@ -1,10 +1,15 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import type { Workflow, WorkflowInput, WorkflowOutput } from '@/api/types';
+import type { Workflow, WorkflowInput, WorkflowLink, WorkflowOutput } from '@/api/types';
 import { useWorkflowStore } from '@/hooks/useWorkflow';
 import { findConnectedNode, findConnectedOutputNodes } from '@/utils/nodeOrdering';
 import { ConnectionModal } from '@/components/modals/ConnectionModal';
 import { resolveRerouteConnectionLabel } from '@/utils/rerouteLabels';
+import {
+  findWorkflowNodeInScope,
+  resolveSubgraphPlaceholderConnectionLabel,
+  resolveWorkflowNodeDisplayName
+} from '@/utils/subgraphPlaceholderLabels';
 import { ContextMenuBuilder } from '@/components/menus/ContextMenuBuilder';
 import { ConnectionRow } from './ConnectionRow';
 
@@ -44,11 +49,52 @@ export const ConnectionButton = memo(function ConnectionButton({
   hideLabel = false,
   isRequired = false
 }: ConnectionButtonProps) {
+  // The store keeps the canonical workflow model in `workflow`, with root nodes
+  // at the top level and nested nodes in `definitions.subgraphs`.
   const workflow = useWorkflowStore((s) => s.workflow);
+  const scopeStack = useWorkflowStore((s) => s.scopeStack);
+  const exitSubgraph = useWorkflowStore((s) => s.exitSubgraph);
   const scrollToNode = useWorkflowStore((s) => s.scrollToNode);
   const revealNodeWithParents = useWorkflowStore((s) => s.revealNodeWithParents);
   const nodeTypes = useWorkflowStore((s) => s.nodeTypes);
   const hiddenItems = useWorkflowStore((s) => s.hiddenItems);
+  const topScopeFrame = scopeStack[scopeStack.length - 1];
+  const currentSubgraphId = topScopeFrame?.type === 'subgraph' ? topScopeFrame.id : null;
+
+  // When inside a subgraph scope, use the subgraph's nodes and links for connection lookups.
+  // Subgraph links are objects; convert to tuple format for findConnectedNode compatibility.
+  const scopedWorkflow = useMemo((): Workflow | null => {
+    if (!workflow) return null;
+    const top = scopeStack[scopeStack.length - 1];
+    if (!top || top.type !== 'subgraph') return workflow;
+    const sg = workflow.definitions?.subgraphs?.find((s) => s.id === top.id);
+    if (!sg) return workflow;
+    const convertedLinks: WorkflowLink[] = (sg.links ?? []).map(
+      (l) => [l.id, l.origin_id, l.origin_slot, l.target_id, l.target_slot, l.type] as WorkflowLink
+    );
+    return { ...workflow, nodes: sg.nodes ?? [], links: convertedLinks };
+  }, [workflow, scopeStack]);
+
+  // True when the slot is connected to a subgraph boundary sentinel (-10 input / -20 output).
+  // These connections cross the subgraph boundary; clicking should exit the subgraph.
+  const isBoundaryConnection = useMemo(() => {
+    if (!scopedWorkflow) return false;
+    const top = scopeStack[scopeStack.length - 1];
+    if (top?.type !== 'subgraph') return false;
+    if (direction === 'input') {
+      const input = slot as WorkflowInput;
+      if (input.link == null) return false;
+      const link = scopedWorkflow.links.find((l) => l[0] === input.link);
+      return link != null && link[1] === -10; // origin_id === input sentinel
+    } else {
+      const output = slot as WorkflowOutput;
+      const linkIds = output.links ?? [];
+      return linkIds.some((linkId) => {
+        const link = scopedWorkflow.links.find((l) => l[0] === linkId);
+        return link != null && link[3] === -20; // target_id === output sentinel
+      });
+    }
+  }, [scopedWorkflow, scopeStack, slot, direction]);
   const [menuOpen, setMenuOpen] = useState(false);
   const [connectionModalOpen, setConnectionModalOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -60,42 +106,57 @@ export const ConnectionButton = memo(function ConnectionButton({
   const longPressTriggeredRef = useRef(false);
 
   const resolvedLabel = useMemo(() => {
-    const fallback = slot.localized_name || slot.name;
-    if (!workflow) return fallback;
-    return resolveRerouteConnectionLabel(workflow, nodeId, direction, fallback);
-  }, [workflow, direction, slot.localized_name, slot.name, nodeId]);
+    const node = findWorkflowNodeInScope(workflow, nodeId, currentSubgraphId);
+    const isSubgraphPlaceholder = Boolean(
+      node &&
+      workflow?.definitions?.subgraphs?.some((sg) => sg.id === node.type)
+    );
+    const fallback = isSubgraphPlaceholder
+      ? (slot.label || slot.localized_name || slot.name)
+      : (slot.localized_name || slot.name);
+    const placeholderLabel = resolveSubgraphPlaceholderConnectionLabel(
+      workflow,
+      nodeId,
+      direction,
+      slotIndex,
+      fallback,
+      currentSubgraphId,
+    );
+    if (!scopedWorkflow) return placeholderLabel;
+    return resolveRerouteConnectionLabel(scopedWorkflow, nodeId, direction, placeholderLabel);
+  }, [workflow, currentSubgraphId, scopedWorkflow, direction, slot.label, slot.localized_name, slot.name, slotIndex, nodeId]);
 
-  // Find connected node(s)
+  // Find connected node(s) using the scope-aware workflow.
   const connectedNodes = useMemo(() => {
-    if (!workflow) return [];
+    if (!scopedWorkflow) return [];
     const nodes: Workflow['nodes'] = [];
     if (direction === 'input') {
       const input = slot as WorkflowInput;
       if (input.link != null) {
-        const connected = findConnectedNode(workflow, nodeId, slotIndex);
+        const connected = findConnectedNode(scopedWorkflow, nodeId, slotIndex);
         if (connected) nodes.push(connected.node);
       }
     } else {
-      const connections = findConnectedOutputNodes(workflow, nodeId, slotIndex);
+      const connections = findConnectedOutputNodes(scopedWorkflow, nodeId, slotIndex);
       for (const conn of connections) {
         nodes.push(conn.node);
       }
     }
     return nodes;
-  }, [workflow, nodeId, direction, slot, slotIndex]);
+  }, [scopedWorkflow, nodeId, direction, slot, slotIndex]);
 
   const { effectiveNodes, directNodes, bypassedTargets } = useMemo(() => {
-    if (!workflow) {
+    if (!scopedWorkflow) {
       return { effectiveNodes: [], directNodes: [], bypassedTargets: [] };
     }
     if (Object.keys(hiddenItems).length === 0) {
       return { effectiveNodes: connectedNodes, directNodes: connectedNodes, bypassedTargets: [] };
     }
     const nodeMap = new Map<number, Workflow['nodes'][number]>(
-      workflow.nodes.map((node) => [node.id, node])
+      scopedWorkflow.nodes.map((node) => [node.id, node])
     );
     const isHiddenNode = (node: Workflow['nodes'][number]) =>
-      Boolean(node.stableKey && hiddenItems[node.stableKey]);
+      Boolean(node.itemKey && hiddenItems[node.itemKey]);
     const seen = new Set<number>();
     const collectTargets = (nodeId: number): Workflow['nodes'] => {
       if (seen.has(nodeId)) return [];
@@ -104,7 +165,7 @@ export const ConnectionButton = memo(function ConnectionButton({
       if (!node) return [];
       const targets: Workflow['nodes'] = [];
       node.outputs?.forEach((_, index) => {
-        const connections = findConnectedOutputNodes(workflow, nodeId, index);
+        const connections = findConnectedOutputNodes(scopedWorkflow, nodeId, index);
         connections.forEach((connection) => {
           const connectedNode = connection.node;
           if (isHiddenNode(connectedNode)) {
@@ -124,7 +185,7 @@ export const ConnectionButton = memo(function ConnectionButton({
       const sources: Workflow['nodes'] = [];
       node.inputs?.forEach((input, index) => {
         if (input.link === null) return;
-        const connected = findConnectedNode(workflow, nodeId, index);
+        const connected = findConnectedNode(scopedWorkflow, nodeId, index);
         if (!connected) return;
         if (isHiddenNode(connected.node)) {
           sources.push(...collectSources(connected.node.id));
@@ -175,12 +236,13 @@ export const ConnectionButton = memo(function ConnectionButton({
       directNodes: direct,
       bypassedTargets: dedupedBypassed
     };
-  }, [connectedNodes, workflow, direction, slot.type, hiddenItems]);
+  }, [connectedNodes, scopedWorkflow, direction, slot.type, hiddenItems]);
 
   const connectionCount = effectiveNodes.length;
   const connectedNodeId = connectionCount === 1 ? effectiveNodes[0].id : null;
 
-  const hasConnection = connectionCount > 0;
+  // Boundary connections cross the subgraph boundary; treat them as filled.
+  const hasConnection = connectionCount > 0 || isBoundaryConnection;
   const isEmptyRequiredInput = direction === 'input' && !hasConnection && isRequired;
 
   const clearLongPress = useCallback(() => {
@@ -190,13 +252,40 @@ export const ConnectionButton = memo(function ConnectionButton({
     }
   }, []);
 
-  const getNodeStableKey = useCallback((targetNode: Workflow['nodes'][number]): string | null => {
-    return targetNode.stableKey ?? null;
+  const getNodeHierarchicalKey = useCallback((targetNode: Workflow['nodes'][number]): string | null => {
+    return targetNode.itemKey ?? null;
   }, []);
+
+  // Navigate out of the subgraph to the placeholder node.
+  const handleBoundaryClick = useCallback(() => {
+    const top = scopeStack[scopeStack.length - 1];
+    if (top?.type !== 'subgraph') return;
+    const parentFrame = scopeStack[scopeStack.length - 2];
+    const parentSubgraphId = parentFrame?.type === 'subgraph' ? parentFrame.id : null;
+    const placeholderNode = findWorkflowNodeInScope(
+      workflow,
+      top.placeholderNodeId,
+      parentSubgraphId,
+    );
+    exitSubgraph();
+    if (placeholderNode?.itemKey) {
+      const itemKey = placeholderNode.itemKey;
+      // Delay to allow scope state to settle before scrolling.
+      setTimeout(() => {
+        revealNodeWithParents(itemKey);
+        scrollToNode(itemKey);
+      }, 50);
+    }
+  }, [scopeStack, workflow, exitSubgraph, revealNodeWithParents, scrollToNode]);
 
   const handleClick = () => {
     if (longPressTriggeredRef.current) {
       longPressTriggeredRef.current = false;
+      return;
+    }
+    // Boundary connection: exit subgraph to the placeholder node.
+    if (isBoundaryConnection) {
+      handleBoundaryClick();
       return;
     }
     // Empty output: open connection modal on single click.
@@ -204,18 +293,18 @@ export const ConnectionButton = memo(function ConnectionButton({
       setConnectionModalOpen(true);
       return;
     }
-    // Empty required input: open connection modal
-    if (isEmptyRequiredInput) {
+    // Empty input: open connection modal
+    if (direction === 'input' && !hasConnection) {
       setConnectionModalOpen(true);
       return;
     }
     if (!hasConnection) return;
     if (connectionCount === 1 && connectedNodeId !== null) {
       const connectedNode = effectiveNodes[0];
-      const stableKey = connectedNode ? getNodeStableKey(connectedNode) : null;
-      if (stableKey) {
-        revealNodeWithParents(stableKey);
-        scrollToNode(stableKey);
+      const itemKey = connectedNode ? getNodeHierarchicalKey(connectedNode) : null;
+      if (itemKey) {
+        revealNodeWithParents(itemKey);
+        scrollToNode(itemKey);
       }
       return;
     }
@@ -252,10 +341,10 @@ export const ConnectionButton = memo(function ConnectionButton({
   const handleMenuNodeClick = (targetId: number) => (event: React.MouseEvent<HTMLButtonElement>) => {
     event.stopPropagation();
     const targetNode = effectiveNodes.find((node) => node.id === targetId);
-    const stableKey = targetNode ? getNodeStableKey(targetNode) : null;
-    if (stableKey) {
-      revealNodeWithParents(stableKey);
-      scrollToNode(stableKey);
+    const itemKey = targetNode ? getNodeHierarchicalKey(targetNode) : null;
+    if (itemKey) {
+      revealNodeWithParents(itemKey);
+      scrollToNode(itemKey);
     }
     setMenuOpen(false);
   };
@@ -318,7 +407,7 @@ export const ConnectionButton = memo(function ConnectionButton({
 
   if (!workflow) return null;
 
-  const currentlyConnectedNodeId = direction === 'input' && hasConnection && connectedNodeId !== null
+  const currentlyConnectedNodeId = direction === 'input' && hasConnection && !isBoundaryConnection && connectedNodeId !== null
     ? connectedNodeId
     : null;
   const shouldWrapResolvedLabel = resolvedLabel.includes('/') || resolvedLabel.includes('\n');
@@ -329,6 +418,7 @@ export const ConnectionButton = memo(function ConnectionButton({
         direction={direction}
         hasConnection={hasConnection}
         isEmptyRequiredInput={isEmptyRequiredInput}
+        isBoundaryConnection={isBoundaryConnection}
         hideLabel={hideLabel}
         resolvedLabel={resolvedLabel}
         shouldWrapResolvedLabel={shouldWrapResolvedLabel}
@@ -357,8 +447,7 @@ export const ConnectionButton = memo(function ConnectionButton({
           <ContextMenuBuilder
             items={[
               ...directNodes.map((node) => {
-                const typeDef = nodeTypes?.[node.type];
-                const label = typeDef?.display_name || node.type;
+                const label = resolveWorkflowNodeDisplayName(workflow, node, nodeTypes);
                 return {
                   key: `direct-${node.id}`,
                   label: `${label} #${node.id}`,
@@ -380,8 +469,7 @@ export const ConnectionButton = memo(function ConnectionButton({
                 )
               },
               ...bypassedTargets.map((node) => {
-                const typeDef = nodeTypes?.[node.type];
-                const label = typeDef?.display_name || node.type;
+                const label = resolveWorkflowNodeDisplayName(workflow, node, nodeTypes);
                 return {
                   key: `bypassed-${node.id}`,
                   label: `${label} #${node.id}`,

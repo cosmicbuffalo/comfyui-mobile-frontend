@@ -3,6 +3,11 @@ import { getWorkflowWidgetIndexMap, isWidgetInputType } from '@/utils/workflowIn
 
 // Seed mode type
 export type SeedMode = 'fixed' | 'randomize' | 'increment' | 'decrement';
+export interface SeedWidgetDescriptor {
+  name: string;
+  type: string;
+  widgetIndex: number;
+}
 
 // Special seed values used by ComfyUI
 export const SPECIAL_SEED_RANDOM = -1;
@@ -87,8 +92,24 @@ export function getWidgetIndexForInput(
 export function findSeedWidgetIndex(
   workflow: Workflow,
   nodeTypes: NodeTypes | null,
-  node: WorkflowNode
+  node: WorkflowNode,
+  options?: {
+    widgetDescriptors?: SeedWidgetDescriptor[];
+  }
 ): number | null {
+  const descriptorSeedIndex = options?.widgetDescriptors
+    ?.find(
+      (entry) =>
+        String(entry.type).toUpperCase() === 'INT' &&
+        (entry.name === 'seed' ||
+          entry.name === 'noise_seed' ||
+          entry.name.toLowerCase().includes('seed'))
+    )
+    ?.widgetIndex;
+  if (typeof descriptorSeedIndex === 'number') {
+    return descriptorSeedIndex;
+  }
+
   // First try the standard names
   const standardIndex = getWidgetIndexForInput(workflow, nodeTypes, node, 'seed') ??
     getWidgetIndexForInput(workflow, nodeTypes, node, 'noise_seed');

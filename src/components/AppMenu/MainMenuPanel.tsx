@@ -1,4 +1,4 @@
-import { BookIcon, CaretDownIcon, ClipboardDownloadIcon, ExternalLinkIcon, FolderIcon, GithubIcon, InfoCircleOutlineIcon, MoonIcon, SaveAsIcon, SaveDiskIcon, SunIcon, TemplateIcon, WorkflowIcon } from '@/components/icons';
+import { BookIcon, CaretDownIcon, ClipboardDownloadIcon, ExternalLinkIcon, FolderIcon, GithubIcon, InfoCircleOutlineIcon, SaveAsIcon, SaveDiskIcon, TemplateIcon, WorkflowIcon } from '@/components/icons';
 import type { Workflow } from '@/api/types';
 import { MenuErrorNotice } from './MenuErrorNotice';
 
@@ -41,12 +41,10 @@ export function MainMenuPanel({
   currentFilename,
   isDirty,
   loading,
-  theme,
   menuSectionsOpen,
   fileInputRef,
   loadSectionRef,
   saveSectionRef,
-  appearanceSectionRef,
   infoSectionRef,
   onDismissError,
   onFileChange,
@@ -57,7 +55,6 @@ export function MainMenuPanel({
   onOpenPasteJson,
   onSave,
   onOpenSaveAs,
-  onToggleTheme,
   onOpenLegend,
 }: MainMenuPanelProps) {
   return (
@@ -165,8 +162,12 @@ export function MainMenuPanel({
         )}
       </section>
 
-      <div className="border-t border-gray-200 mb-6" />
 
+      {/*
+        TODO (temporary): appearance theme toggle is intentionally disabled while we stabilize dark-mode visual styling.
+        Re-enable this section once light mode gets a dedicated visual pass.
+      */}
+      {/* <div className="border-t border-gray-200 mb-6" />
       <section ref={appearanceSectionRef} className="mb-6">
         <button
           type="button"
@@ -195,7 +196,7 @@ export function MainMenuPanel({
             </button>
           </div>
         )}
-      </section>
+      </section> */}
 
       <section ref={infoSectionRef} className="mt-auto pt-6 border-t border-gray-200">
         <button

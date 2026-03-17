@@ -7,6 +7,7 @@ import { useWorkflowErrorsStore } from '@/hooks/useWorkflowErrors';
 import { useImageViewerStore } from '@/hooks/useImageViewer';
 import { useQueueStore } from '@/hooks/useQueue';
 import { useOverallProgress } from '@/hooks/useOverallProgress';
+import { resolveExecutingNodeLabel } from '@/utils/executionLabels';
 
 export function BottomStatusOverlay() {
   const currentPanel = useNavigationStore((s) => s.currentPanel);
@@ -15,6 +16,7 @@ export function BottomStatusOverlay() {
   const isExecuting = useWorkflowStore((s) => s.isExecuting);
   const progress = useWorkflowStore((s) => s.progress);
   const executingNodeId = useWorkflowStore((s) => s.executingNodeId);
+  const executingNodePath = useWorkflowStore((s) => s.executingNodePath);
   const executingPromptId = useWorkflowStore((s) => s.executingPromptId);
   const workflowDurationStats = useWorkflowStore((s) => s.workflowDurationStats);
   const error = useWorkflowErrorsStore((s) => s.error);
@@ -31,7 +33,6 @@ export function BottomStatusOverlay() {
 
   const isQueuePanel = currentPanel === 'queue';
   const isOutputsPanel = currentPanel === 'outputs';
-  const visible = !isQueuePanel && !isOutputsPanel && !viewerOpen;
 
   const nodeErrorCount = Object.values(nodeErrors).reduce(
     (total, errors) => total + errors.length,
@@ -46,15 +47,15 @@ export function BottomStatusOverlay() {
   const errorMessage = isWorkflowLoadError && error
     ? error.replace(/^Workflow load error:\s*/i, '')
     : error ?? (hasNodeErrors ? `${nodeErrorCount} inputs reference missing options.` : null);
-  const shouldShowError = (Boolean(error) || hasNodeErrors) && !errorsDismissed;
 
   const executingNodeLabel = useMemo(() => {
-    if (!workflow || !executingNodeId) return null;
-    const node = workflow.nodes.find((n) => String(n.id) === executingNodeId);
-    if (!node) return `Node ${executingNodeId}`;
-    const typeDef = nodeTypes?.[node.type];
-    return typeDef?.display_name || node.type;
-  }, [workflow, executingNodeId, nodeTypes]);
+    return resolveExecutingNodeLabel(
+      executingNodePath,
+      executingNodeId,
+      workflow,
+      nodeTypes,
+    );
+  }, [workflow, executingNodeId, executingNodePath, nodeTypes]);
 
   const runKey = executingPromptId || (running[0]?.prompt_id ?? null);
   const overallProgress = useOverallProgress({
@@ -64,6 +65,15 @@ export function BottomStatusOverlay() {
     workflowDurationStats,
   });
   const displayNodeProgress = overallProgress === 100 ? 100 : progress;
+  const hasErrorToast = (Boolean(error) || hasNodeErrors) && !errorsDismissed;
+  const progressDismissed = dismissedRunKey !== null && dismissedRunKey === runKey;
+  const showProgress =
+    overallProgress !== null &&
+    !isQueuePanel &&
+    !isOutputsPanel &&
+    !progressDismissed;
+  const visible = !viewerOpen && (hasErrorToast || showProgress);
+  const shouldShowError = hasErrorToast;
 
   const handleErrorClick = () => {
     if (!workflow) return;
@@ -75,15 +85,15 @@ export function BottomStatusOverlay() {
     const closestNode = errorNodes[nextIndex];
     if (!closestNode) return;
     const closestId = closestNode.id;
-    const stableKey = closestNode.stableKey;
-    if (!stableKey) return;
+    const itemKey = closestNode.itemKey;
+    if (!itemKey) return;
     const label = `Error #${nextIndex + 1}`;
-    revealNodeWithParents(stableKey);
+    revealNodeWithParents(itemKey);
     setErrorCycleIndex((nextIndex + 1) % errorNodes.length);
 
     window.dispatchEvent(new CustomEvent('workflow-label-error-node', { detail: { nodeId: closestId, label } }));
     window.dispatchEvent(new CustomEvent('workflow-scroll-to-node', { detail: { nodeId: closestId, label } }));
-    scrollToNode(stableKey, label);
+    scrollToNode(itemKey, label);
   };
 
   const handleErrorKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
@@ -106,8 +116,6 @@ export function BottomStatusOverlay() {
     if (!runKey) return;
     setDismissedRunKey(runKey);
   };
-
-  const progressDismissed = dismissedRunKey !== null && dismissedRunKey === runKey;
 
   if (!visible) return null;
 
@@ -152,7 +160,7 @@ export function BottomStatusOverlay() {
           </button>
         </div>
       )}
-      {overallProgress !== null && !progressDismissed && (
+      {showProgress && (
         <div
           id="execution-progress-card"
           className="relative bg-white border border-gray-200 rounded-xl shadow-lg px-4 py-2 w-[70vw] max-w-sm pointer-events-auto"

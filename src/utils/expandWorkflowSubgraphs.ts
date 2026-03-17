@@ -7,17 +7,9 @@ import type {
 } from '@/api/types';
 
 type RawLink = Omit<WorkflowSubgraphLink, 'id'>;
-const MOBILE_ORIGIN_KEY = '__mobile_origin';
 const MOBILE_SUBGRAPH_GROUP_MAP_KEY = '__mobile_subgraph_group_map';
-type MobileOrigin =
-  | { scope: 'root'; nodeId: number }
-  | { scope: 'subgraph'; subgraphId: string; nodeId: number };
 
-function cloneNode(node: WorkflowNode, id: number, origin?: MobileOrigin): WorkflowNode {
-  const properties = { ...(node.properties ?? {}) } as Record<string, unknown>;
-  if (origin && properties[MOBILE_ORIGIN_KEY] === undefined) {
-    properties[MOBILE_ORIGIN_KEY] = origin;
-  }
+function cloneNode(node: WorkflowNode, id: number): WorkflowNode {
   return {
     ...node,
     id,
@@ -25,7 +17,7 @@ function cloneNode(node: WorkflowNode, id: number, origin?: MobileOrigin): Workf
     outputs: (node.outputs ?? []).map((output) => ({ ...output, links: [] })),
     widgets_values: node.widgets_values ?? [],
     flags: node.flags ?? {},
-    properties,
+    properties: { ...(node.properties ?? {}) },
     mode: node.mode ?? 0,
     order: node.order ?? 0
   };
@@ -114,16 +106,18 @@ function rebuildNodeLinks(nodes: WorkflowNode[], links: WorkflowLink[]): Workflo
 
 function expandWorkflowSubgraphsOnce(
   workflow: Workflow,
-  subgraphMap: Map<string, WorkflowSubgraphDefinition>
-): { workflow: Workflow; changed: boolean } {
+  subgraphMap: Map<string, WorkflowSubgraphDefinition>,
+  previousPromptKeyMap: Map<number, string>
+): { workflow: Workflow; changed: boolean; promptKeyMap: Map<number, string> } {
   const placeholderNodes = workflow.nodes.filter((node) => subgraphMap.has(node.type));
   if (placeholderNodes.length === 0) {
-    return { workflow, changed: false };
+    return { workflow, changed: false, promptKeyMap: previousPromptKeyMap };
   }
 
   const placeholderIds = new Set(placeholderNodes.map((node) => node.id));
   let nextNodeId = Math.max(0, ...workflow.nodes.map((node) => node.id)) + 1;
   const newNodes: WorkflowNode[] = [];
+  const promptKeyMap = new Map<number, string>();
   const groups = workflow.groups ?? [];
   const extra = (workflow.extra ?? {}) as Record<string, unknown>;
   const previousGroupMap =
@@ -151,13 +145,16 @@ function expandWorkflowSubgraphsOnce(
 
   for (const node of workflow.nodes) {
     if (!placeholderIds.has(node.id)) {
-      newNodes.push(cloneNode(node, node.id, { scope: 'root', nodeId: node.id }));
+      newNodes.push(cloneNode(node, node.id));
+      // Carry forward existing prompt key or default to the node's own ID
+      promptKeyMap.set(node.id, previousPromptKeyMap.get(node.id) ?? String(node.id));
       continue;
     }
 
     const subgraph = subgraphMap.get(node.type);
     if (!subgraph) {
-      newNodes.push(cloneNode(node, node.id, { scope: 'root', nodeId: node.id }));
+      newNodes.push(cloneNode(node, node.id));
+      promptKeyMap.set(node.id, previousPromptKeyMap.get(node.id) ?? String(node.id));
       continue;
     }
     const groupId = getGroupIdForNode(node, groups);
@@ -170,12 +167,15 @@ function expandWorkflowSubgraphsOnce(
     const outputSources = new Map<number, Array<RawLink>>();
     const internalLinks: RawLink[] = [];
 
+    // The placeholder's prompt key prefix for its children
+    const placeholderPromptKey = previousPromptKeyMap.get(node.id) ?? String(node.id);
+
     for (const subNode of subgraph.nodes ?? []) {
       const mappedId = nextNodeId++;
       nodeIdMap.set(subNode.id, mappedId);
-      newNodes.push(
-        cloneNode(subNode, mappedId, { scope: 'subgraph', subgraphId: subgraph.id, nodeId: subNode.id })
-      );
+      newNodes.push(cloneNode(subNode, mappedId));
+      // Hierarchical key: placeholderKey:innerNodeId
+      promptKeyMap.set(mappedId, `${placeholderPromptKey}:${subNode.id}`);
     }
 
     for (const subLink of subgraph.links ?? []) {
@@ -338,13 +338,20 @@ function expandWorkflowSubgraphsOnce(
       last_node_id: Math.max(0, ...newNodes.map((node) => node.id)),
       last_link_id: links.length
     },
-    changed: true
+    changed: true,
+    promptKeyMap
   };
 }
 
-export function expandWorkflowSubgraphs(workflow: Workflow): Workflow {
+export interface ExpandedWorkflowResult {
+  workflow: Workflow;
+  /** Maps each expanded node's numeric ID to its hierarchical prompt key (e.g. "50:7" for inner node 7 inside placeholder 50). */
+  promptKeyMap: Map<number, string>;
+}
+
+export function expandWorkflowSubgraphs(workflow: Workflow): ExpandedWorkflowResult {
   const subgraphs = workflow.definitions?.subgraphs ?? [];
-  if (subgraphs.length === 0) return workflow;
+  if (subgraphs.length === 0) return { workflow, promptKeyMap: new Map() };
 
   const subgraphMap = new Map<string, WorkflowSubgraphDefinition>();
   for (const subgraph of subgraphs) {
@@ -354,11 +361,13 @@ export function expandWorkflowSubgraphs(workflow: Workflow): Workflow {
   }
 
   let current = workflow;
+  let currentPromptKeyMap = new Map<number, string>();
   for (let i = 0; i < subgraphs.length + 4; i += 1) {
-    const { workflow: next, changed } = expandWorkflowSubgraphsOnce(current, subgraphMap);
+    const { workflow: next, changed, promptKeyMap } = expandWorkflowSubgraphsOnce(current, subgraphMap, currentPromptKeyMap);
     if (!changed) break;
     current = next;
+    currentPromptKeyMap = promptKeyMap;
   }
 
-  return current;
+  return { workflow: current, promptKeyMap: currentPromptKeyMap };
 }

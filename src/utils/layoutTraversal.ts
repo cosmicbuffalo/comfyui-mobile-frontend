@@ -1,4 +1,4 @@
-import type { ItemRef, MobileLayout } from '@/utils/mobileLayout';
+import { getGroupKey, type ItemRef, type MobileLayout } from '@/utils/mobileLayout';
 
 export interface LayoutPath {
   groupKeys: string[];
@@ -37,9 +37,10 @@ export function findLayoutPath(
       }
 
       if (ref.type === 'group') {
+        const groupKey = getGroupKey(ref.id, ref.subgraphId);
         const child = visit(
-          layout.groups[ref.stableKey] ?? [],
-          [...groupTrail, ref.stableKey],
+          layout.groups[groupKey] ?? [],
+          [...groupTrail, groupKey],
           subgraphTrail,
           currentSubgraphId
         );
@@ -62,4 +63,3 @@ export function findLayoutPath(
 
   return visit(layout.root, [], [], null);
 }
-

@@ -1,4 +1,4 @@
-import type { WorkflowNode, NodeTypes, NodeTypeDefinition } from '@/api/types';
+import type { WorkflowNode, NodeTypes, NodeTypeDefinition, Workflow } from '@/api/types';
 import { getWidgetValue, isWidgetInputType } from '@/utils/workflowInputs';
 import { findLoraListIndex, isLoraList, isLoraManagerNodeType } from '@/utils/loraManager';
 import {
@@ -379,4 +379,200 @@ export function getInputWidgetDefinitions(
       connected: def.connected,
       inputIndex: def.inputIndex
     }));
+}
+
+/**
+ * widgetIndex offset applied to proxy widget indices to avoid collisions with
+ * input.widget promoted widget indices.
+ */
+export const PROXY_INDEX_OFFSET = 10000;
+
+/**
+ * Resolve all promoted widget definitions (both COMBO and non-COMBO) for a
+ * subgraph placeholder node in a single pass.
+ *
+ * Promoted widgets appear as placeholder inputs with `input.widget: { name }` set.
+ * Their values are stored in `placeholderNode.widgets_values[]` in promoted-input order.
+ * (The `sg.widgets` field is always empty in practice and is not used.)
+ */
+export function resolveAllSubgraphPlaceholderWidgetDefs(
+  placeholderNode: WorkflowNode,
+  canonical: Workflow,
+  nodeTypes: NodeTypes | null
+): { widgets: ReturnType<typeof getWidgetDefinitions>; inputWidgets: ReturnType<typeof getInputWidgetDefinitions> } {
+  const promotedInputs = (placeholderNode.inputs ?? []).filter((inp) => inp.widget != null);
+  if (promotedInputs.length === 0) return { widgets: [], inputWidgets: [] };
+
+  const values = Array.isArray(placeholderNode.widgets_values) ? placeholderNode.widgets_values : [];
+  const sg = canonical.definitions?.subgraphs?.find((s) => s.id === placeholderNode.type);
+
+  const widgets: ReturnType<typeof getWidgetDefinitions> = [];
+  const inputWidgets: ReturnType<typeof getInputWidgetDefinitions> = [];
+
+  promotedInputs.forEach((inp, widgetIndex) => {
+    const typeName = String(inp.type);
+    const isCombo = typeName.toUpperCase() === 'COMBO';
+    const widgetName = inp.widget!.name;
+    const name = inp.localized_name || inp.name;
+    const value = values[widgetIndex];
+    const inputIndex = placeholderNode.inputs.indexOf(inp);
+
+    if (isCombo) {
+      let options: Record<string, unknown> | unknown[] = [];
+      if (sg && nodeTypes) {
+        for (const innerNode of sg.nodes ?? []) {
+          const typeDef = nodeTypes[innerNode.type];
+          if (!typeDef) continue;
+          const entry =
+            typeDef.input?.required?.[widgetName] ??
+            typeDef.input?.optional?.[widgetName];
+          if (entry && Array.isArray(entry[0])) {
+            options = { ...(entry[1] ?? {}), options: entry[0] as unknown[] };
+            break;
+          }
+        }
+      }
+      inputWidgets.push({ name, type: 'COMBO', value, options, widgetIndex, connected: false, inputIndex });
+    } else {
+      let options: Record<string, unknown> | undefined = undefined;
+      if (sg && nodeTypes) {
+        for (const innerNode of sg.nodes ?? []) {
+          const typeDef = nodeTypes[innerNode.type];
+          if (!typeDef) continue;
+          const entry =
+            typeDef.input?.required?.[widgetName] ??
+            typeDef.input?.optional?.[widgetName];
+          if (entry && !Array.isArray(entry[0])) {
+            options = entry[1] as Record<string, unknown> | undefined;
+            break;
+          }
+        }
+      }
+      widgets.push({ name, type: typeName, options, value, widgetIndex, connected: false, inputIndex });
+    }
+  });
+
+  return { widgets, inputWidgets };
+}
+
+/** Resolve non-COMBO promoted widget definitions for a subgraph placeholder node. */
+export function resolveSubgraphPlaceholderWidgetDefs(
+  placeholderNode: WorkflowNode,
+  canonical: Workflow,
+  nodeTypes: NodeTypes | null
+): ReturnType<typeof getWidgetDefinitions> {
+  return resolveAllSubgraphPlaceholderWidgetDefs(placeholderNode, canonical, nodeTypes).widgets;
+}
+
+/** Resolve COMBO promoted widget definitions for a subgraph placeholder node. */
+export function resolveSubgraphPlaceholderInputWidgetDefs(
+  placeholderNode: WorkflowNode,
+  canonical: Workflow,
+  nodeTypes: NodeTypes | null
+): ReturnType<typeof getInputWidgetDefinitions> {
+  return resolveAllSubgraphPlaceholderWidgetDefs(placeholderNode, canonical, nodeTypes).inputWidgets;
+}
+
+/**
+ * Routing metadata embedded in options for proxy widget definitions.
+ * Used by NodeCard to route updates to the correct inner subgraph node.
+ */
+export interface ProxyWidgetRoute {
+  subgraphId: string;
+  innerNodeId: number;
+  innerWidgetIndex: number;
+}
+
+/**
+ * Resolve all widget definitions (both COMBO and non-COMBO) for a subgraph
+ * placeholder node using the `proxyWidgets` mechanism in a single pass.
+ *
+ * `properties.proxyWidgets` is an array of [innerNodeId, widgetName] pairs referencing
+ * inner subgraph nodes' widgets. Values are stored in those inner nodes' widgets_values.
+ * The sentinel "-1" means the widget is handled by the input.widget slot-promotion mechanism.
+ *
+ * Returns widgetIndex values offset by PROXY_INDEX_OFFSET to avoid collisions.
+ * Options include a `__proxy` key with ProxyWidgetRoute routing metadata.
+ */
+export function resolveAllSubgraphProxyWidgetDefs(
+  placeholderNode: WorkflowNode,
+  canonical: Workflow,
+  nodeTypes: NodeTypes | null
+): { widgets: ReturnType<typeof getWidgetDefinitions>; inputWidgets: ReturnType<typeof getInputWidgetDefinitions> } {
+  const proxyWidgets = (placeholderNode.properties as Record<string, unknown>)?.proxyWidgets;
+  if (!Array.isArray(proxyWidgets) || proxyWidgets.length === 0) return { widgets: [], inputWidgets: [] };
+
+  const sg = canonical.definitions?.subgraphs?.find((s) => s.id === placeholderNode.type);
+  if (!sg) return { widgets: [], inputWidgets: [] };
+
+  const widgets: ReturnType<typeof getWidgetDefinitions> = [];
+  const inputWidgets: ReturnType<typeof getInputWidgetDefinitions> = [];
+
+  (proxyWidgets as [string, string][]).forEach(([innerNodeIdStr, widgetName], proxyIndex) => {
+    if (innerNodeIdStr === '-1') return; // Handled by input.widget mechanism
+    const innerNodeId = Number(innerNodeIdStr);
+    const innerNode = (sg.nodes ?? []).find((n) => n.id === innerNodeId);
+    if (!innerNode) return;
+
+    const nodeTitle = (innerNode as { title?: string }).title;
+    const displayName = nodeTitle ? `${nodeTitle}: ${widgetName}` : widgetName;
+    const proxy: ProxyWidgetRoute = {
+      subgraphId: placeholderNode.type,
+      innerNodeId,
+      innerWidgetIndex: -1, // set below per branch
+    };
+
+    // Try non-COMBO first
+    const innerWidgetDef = getWidgetDefinitions(nodeTypes, innerNode).find((def) => def.name === widgetName);
+    if (innerWidgetDef) {
+      proxy.innerWidgetIndex = innerWidgetDef.widgetIndex;
+      widgets.push({
+        ...innerWidgetDef,
+        name: displayName,
+        widgetIndex: PROXY_INDEX_OFFSET + proxyIndex,
+        options: {
+          ...(innerWidgetDef.options as Record<string, unknown> ?? {}),
+          __proxy: proxy,
+        },
+        inputIndex: -1,
+      });
+      return;
+    }
+
+    // Try COMBO
+    const innerInputWidgetDef = getInputWidgetDefinitions(nodeTypes, innerNode).find((def) => def.name === widgetName);
+    if (innerInputWidgetDef) {
+      proxy.innerWidgetIndex = innerInputWidgetDef.widgetIndex;
+      inputWidgets.push({
+        ...innerInputWidgetDef,
+        name: displayName,
+        widgetIndex: PROXY_INDEX_OFFSET + proxyIndex,
+        options: {
+          ...(innerInputWidgetDef.options as Record<string, unknown> ?? {}),
+          __proxy: proxy,
+        },
+        inputIndex: -1,
+      });
+    }
+  });
+
+  return { widgets, inputWidgets };
+}
+
+/** Resolve non-COMBO proxy widget definitions for a subgraph placeholder node. */
+export function resolveSubgraphProxyWidgetDefs(
+  placeholderNode: WorkflowNode,
+  canonical: Workflow,
+  nodeTypes: NodeTypes | null
+): ReturnType<typeof getWidgetDefinitions> {
+  return resolveAllSubgraphProxyWidgetDefs(placeholderNode, canonical, nodeTypes).widgets;
+}
+
+/** Resolve COMBO proxy widget definitions for a subgraph placeholder node. */
+export function resolveSubgraphProxyInputWidgetDefs(
+  placeholderNode: WorkflowNode,
+  canonical: Workflow,
+  nodeTypes: NodeTypes | null
+): ReturnType<typeof getInputWidgetDefinitions> {
+  return resolveAllSubgraphProxyWidgetDefs(placeholderNode, canonical, nodeTypes).inputWidgets;
 }

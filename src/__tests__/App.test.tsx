@@ -7,7 +7,7 @@ const workflowState = {
   followQueue: false,
   setFollowQueue: vi.fn(),
   setNodeTypes: vi.fn(),
-  ensureStableKeysAndRepair: vi.fn(),
+  ensureHierarchicalKeysAndRepair: vi.fn(),
   workflowLoadedAt: 0,
 };
 
@@ -101,7 +101,7 @@ vi.mock('@/components/QueuePanel', () => ({ QueuePanel: () => null }));
 vi.mock('@/components/ImageViewer', () => ({ ImageViewer: () => null }));
 vi.mock('@/components/OutputsPanel', () => ({ OutputsPanel: () => null }));
 
-describe('App stable key repair effect', () => {
+describe('App item-key repair effect', () => {
   let container: HTMLDivElement;
   let root: Root;
 
@@ -110,7 +110,7 @@ describe('App stable key repair effect', () => {
     workflowState.workflowLoadedAt = 0;
     workflowState.setFollowQueue.mockReset();
     workflowState.setNodeTypes.mockReset();
-    workflowState.ensureStableKeysAndRepair.mockReset();
+    workflowState.ensureHierarchicalKeysAndRepair.mockReset();
     queueState.fetchQueue.mockReset();
     outputsState.navigateUp.mockReset();
     container = document.createElement('div');
@@ -125,16 +125,16 @@ describe('App stable key repair effect', () => {
     container.remove();
   });
 
-  it('invokes ensureStableKeysAndRepair when workflowLoadedAt changes to a loaded value', async () => {
+  it('invokes ensureHierarchicalKeysAndRepair when workflowLoadedAt changes to a loaded value', async () => {
     await act(async () => {
       root.render(<App />);
     });
-    expect(workflowState.ensureStableKeysAndRepair).not.toHaveBeenCalled();
+    expect(workflowState.ensureHierarchicalKeysAndRepair).not.toHaveBeenCalled();
 
     workflowState.workflowLoadedAt = Date.now();
     await act(async () => {
       root.render(<App />);
     });
-    expect(workflowState.ensureStableKeysAndRepair).toHaveBeenCalledTimes(1);
+    expect(workflowState.ensureHierarchicalKeysAndRepair).toHaveBeenCalledTimes(1);
   });
 });

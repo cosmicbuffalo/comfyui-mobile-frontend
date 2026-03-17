@@ -4,6 +4,7 @@ import { useWorkflowStore } from './useWorkflow';
 import { useLoraManagerStore } from './useLoraManager';
 import { useQueueStore } from './useQueue';
 import { useHistoryStore } from './useHistory';
+import { useWorkflowErrorsStore, type NodeError } from './useWorkflowErrors';
 import type { WSMessage, WSStatusMessage, WSProgressMessage, WSExecutingMessage, WSExecutedMessage, HistoryOutputImage } from '@/api/types';
 
 export function extractTextPreviewFromOutput(output: Record<string, unknown>): string | null {
@@ -104,62 +105,64 @@ export function useWebSocket() {
   useEffect(() => {
     const resolveStableNodeKey = (rawNodeId: number | string | null | undefined): string | null => {
       if (rawNodeId == null) return null;
-      const numericNodeId = Number(rawNodeId);
-      if (!Number.isFinite(numericNodeId)) return null;
+      const idStr = String(rawNodeId);
       const workflowState = useWorkflowStore.getState();
       const workflow = workflowState.workflow;
       if (!workflow) return null;
-      let candidates = workflow.nodes.filter((node) => node.id === numericNodeId);
-      if (candidates.length === 0) {
-        candidates = workflow.nodes.filter((node) => {
-          const origin = (node.properties as Record<string, unknown> | undefined)?.__mobile_origin;
-          if (!origin || typeof origin !== 'object') return false;
-          const originNodeId = (origin as { nodeId?: unknown }).nodeId;
-          return Number(originNodeId) === numericNodeId;
-        });
+
+      // First try the execution expansion map; WS node IDs may be hierarchical keys
+      // (e.g. "50:7") or expanded numeric IDs that don't exist in canonical workflow.nodes.
+      const mappedKey = workflowState.expandedNodeIdMap[idStr];
+      if (mappedKey) return mappedKey;
+
+      // Fast path: non-hierarchical ID — try direct match on root-level canonical nodes
+      if (!idStr.includes(':')) {
+        const numericNodeId = Number(idStr);
+        if (Number.isFinite(numericNodeId)) {
+          const directMatch = workflow.nodes.find(
+            (node) => node.id === numericNodeId && node.itemKey,
+          );
+          if (directMatch) return directMatch.itemKey!;
+        }
       }
-      if (candidates.length === 0) return null;
-      const preferred = candidates.find((node) => node.stableKey) ?? candidates[0];
-      return preferred?.stableKey ?? null;
+
+      return null;
+    };
+
+    const resolveExecutionNodePath = (
+      rawNodeId: number | string | null | undefined,
+    ): string | null => {
+      if (rawNodeId == null) return null;
+      const idStr = String(rawNodeId).trim();
+      if (!idStr) return null;
+      const workflowState = useWorkflowStore.getState();
+      return workflowState.expandedNodePathMap[idStr] ?? idStr;
     };
 
     const resolveStableNodeKeysForOutput = (
       rawNodeId: number | string | null | undefined,
     ): string[] => {
       if (rawNodeId == null) return [];
-      const numericNodeId = Number(rawNodeId);
-      if (!Number.isFinite(numericNodeId)) return [];
+      const idStr = String(rawNodeId);
       const workflowState = useWorkflowStore.getState();
       const workflow = workflowState.workflow;
       if (!workflow) return [];
 
       const keys = new Set<string>();
-      const byId = workflow.nodes.filter((node) => node.id === numericNodeId);
-      byId.forEach((node) => {
-        if (node.stableKey) keys.add(node.stableKey);
-      });
 
-      const byOrigin = workflow.nodes.filter((node) => {
-        const origin = (node.properties as Record<string, unknown> | undefined)?.__mobile_origin;
-        if (!origin || typeof origin !== 'object') return false;
-        const originNodeId = (origin as { nodeId?: unknown }).nodeId;
-        return Number(originNodeId) === numericNodeId;
-      });
-      byOrigin.forEach((node) => {
-        if (node.stableKey) keys.add(node.stableKey);
-      });
+      const mappedKey = workflowState.expandedNodeIdMap[idStr];
+      if (mappedKey) keys.add(mappedKey);
 
-      // If the executed node is an expanded clone, also mirror output to its origin/root node id.
-      for (const node of byId) {
-        const origin = (node.properties as Record<string, unknown> | undefined)?.__mobile_origin;
-        if (!origin || typeof origin !== 'object') continue;
-        const originNodeId = Number((origin as { nodeId?: unknown }).nodeId);
-        if (!Number.isFinite(originNodeId)) continue;
-        workflow.nodes
-          .filter((entry) => entry.id === originNodeId)
-          .forEach((entry) => {
-            if (entry.stableKey) keys.add(entry.stableKey);
-          });
+      // Fast path: non-hierarchical ID — try direct match on root-level canonical nodes
+      if (!idStr.includes(':')) {
+        const numericNodeId = Number(idStr);
+        if (Number.isFinite(numericNodeId)) {
+          for (const node of workflow.nodes) {
+            if (node.id === numericNodeId && node.itemKey) {
+              keys.add(node.itemKey);
+            }
+          }
+        }
       }
 
       return Array.from(keys);
@@ -182,6 +185,17 @@ export function useWebSocket() {
         registerLoraManagerNodes
       } = storeActionsRef.current;
       const msg = data as WSMessage;
+      const asText = (value: unknown): string | null =>
+        typeof value === 'string' ? value.trim() : null;
+      const asRecord = (value: unknown): Record<string, unknown> | null =>
+        typeof value === 'object' && value !== null && !Array.isArray(value)
+          ? value as Record<string, unknown>
+          : null;
+      const asNodeId = (value: unknown): string | null => {
+        if (typeof value === 'number' && Number.isFinite(value)) return String(value);
+        if (typeof value === 'string' && value.trim().length > 0) return value.trim();
+        return null;
+      };
 
       switch (msg.type) {
         case 'status': {
@@ -199,7 +213,13 @@ export function useWebSocket() {
           const progressMsg = msg as WSProgressMessage;
           const { value, max, node, prompt_id } = progressMsg.data;
           const progress = Math.round((value / max) * 100);
-          setExecutionState(true, resolveStableNodeKey(node), prompt_id || null, progress);
+          setExecutionState(
+            true,
+            resolveStableNodeKey(node),
+            prompt_id || null,
+            progress,
+            resolveExecutionNodePath(node),
+          );
           break;
         }
 
@@ -242,7 +262,13 @@ export function useWebSocket() {
             }
 
             // Execution started/is continuing for a node
-            setExecutionState(true, resolveStableNodeKey(nodeId), promptId || null, 0);
+            setExecutionState(
+              true,
+              resolveStableNodeKey(nodeId),
+              promptId || null,
+              0,
+              resolveExecutionNodePath(nodeId),
+            );
             // Sync queue if we don't see this prompt_id as running yet
             const queueStore = useQueueStore.getState();
             if (promptId && !queueStore.running.some(r => r.prompt_id === promptId)) {
@@ -255,8 +281,8 @@ export function useWebSocket() {
         case 'executed': {
           const executedMsg = msg as WSExecutedMessage;
           const { node, prompt_id, output } = executedMsg.data;
-          const stableKey = resolveStableNodeKey(node);
-          const stableKeysForOutput = resolveStableNodeKeysForOutput(node);
+          const itemKey = resolveStableNodeKey(node);
+          const itemKeysForOutput = resolveStableNodeKeysForOutput(node);
           const images = output.images;
           if (images) {
              // Store for history
@@ -268,16 +294,16 @@ export function useWebSocket() {
 
              // Store for node display
              const targetKeys =
-               stableKeysForOutput.length > 0
-                 ? stableKeysForOutput
-                 : (stableKey ? [stableKey] : []);
+               itemKeysForOutput.length > 0
+                 ? itemKeysForOutput
+                 : (itemKey ? [itemKey] : []);
              targetKeys.forEach((key) => {
                setNodeOutput(key, images);
              });
           }
           const textPreview = extractTextPreviewFromOutput(output as Record<string, unknown>);
-          if (textPreview && stableKeysForOutput.length > 0) {
-            stableKeysForOutput.forEach((key) => {
+          if (textPreview && itemKeysForOutput.length > 0) {
+            itemKeysForOutput.forEach((key) => {
               setNodeTextOutput(key, textPreview);
             });
           }
@@ -285,6 +311,47 @@ export function useWebSocket() {
         }
 
         case 'execution_error': {
+          const errorData = (msg as WSMessage).data as Record<string, unknown>;
+          const errorRecord = asRecord(errorData);
+          const errorObject = asRecord(errorRecord?.error);
+          const promptId = asText(errorData.prompt_id);
+          const nodeId = asNodeId(errorData.node);
+          const nodeType = asText(errorData.node_type);
+          const message = asText(errorData.exception_message)
+            || asText(errorData.msg)
+            || asText(errorData.error)
+            || asText(errorObject?.message)
+            || 'Execution failed';
+          const details = asText(errorData.exception_type)
+            || asText(errorData.traceback)
+            || asText(errorObject?.details)
+            || '';
+          const fullMessage = nodeId
+            ? `${message}${nodeType ? ` (${nodeType})` : ''} for node ${nodeId}`
+            : message;
+
+          useWorkflowErrorsStore.getState().setError(`${fullMessage}${details ? `\n${details}` : ''}`);
+          if (nodeId) {
+            const nodeErrors: Record<string, NodeError[]> = {
+              [nodeId]: [
+                {
+                  type: 'execution_error',
+                  message,
+                  details,
+                  inputName: undefined
+                },
+              ],
+            };
+            useWorkflowErrorsStore.getState().setNodeErrors(nodeErrors);
+          }
+          console.error('Execution error:', {
+            promptId,
+            nodeId,
+            nodeType,
+            message,
+            details,
+          });
+
           setExecutionState(false, null, null, 0);
           clearPromptOutputs();
           fetchQueue();

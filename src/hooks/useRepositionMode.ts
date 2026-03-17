@@ -1,5 +1,6 @@
 import { useCallback, useState } from 'react';
 import { useWorkflowStore } from '@/hooks/useWorkflow';
+import { getGroupKey } from '@/utils/mobileLayout';
 import type { ItemRef, MobileLayout } from '@/utils/mobileLayout';
 
 export type RepositionTarget =
@@ -25,7 +26,7 @@ export interface UseRepositionModeReturn {
 }
 
 export function useRepositionMode(): UseRepositionModeReturn {
-  const setMobileLayout = useWorkflowStore((s) => s.setMobileLayout);
+  const commitRepositionLayout = useWorkflowStore((s) => s.commitRepositionLayout);
   const mobileLayout = useWorkflowStore((s) => s.mobileLayout);
   const prepareRepositionScrollTarget = useWorkflowStore(
     (s) => s.prepareRepositionScrollTarget,
@@ -42,9 +43,9 @@ export function useRepositionMode(): UseRepositionModeReturn {
         for (const ref of refs) {
           if (ref.type === 'group') {
             if (ref.id === groupId && currentSubgraphId === subgraphId) {
-              return ref.stableKey;
+              return getGroupKey(ref.id, ref.subgraphId);
             }
-            const nested = visit(mobileLayout.groups[ref.stableKey] ?? [], currentSubgraphId);
+            const nested = visit(mobileLayout.groups[getGroupKey(ref.id, ref.subgraphId)] ?? [], currentSubgraphId);
             if (nested) return nested;
             continue;
           }
@@ -84,7 +85,7 @@ export function useRepositionMode(): UseRepositionModeReturn {
     scrollTarget: RepositionTarget,
     viewportAnchor?: RepositionViewportAnchor | null
   ) => {
-    setMobileLayout(newLayout);
+    commitRepositionLayout(newLayout);
     setOverlayOpen(false);
     setInitialTarget(null);
     setInitialViewportAnchor(null);
@@ -125,7 +126,7 @@ export function useRepositionMode(): UseRepositionModeReturn {
         }
       });
     });
-  }, [prepareRepositionScrollTarget, resolveGroupLayoutKey, setMobileLayout]);
+  }, [commitRepositionLayout, prepareRepositionScrollTarget, resolveGroupLayoutKey]);
 
   const cancelOverlay = useCallback(() => {
     setOverlayOpen(false);

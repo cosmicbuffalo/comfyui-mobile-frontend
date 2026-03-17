@@ -34,6 +34,8 @@ So this mobile frontend is my attempt at improving upon the user experience of C
   - navigate by traversing connections between nodes and jumping to bookmarks
   - add or delete nodes, and edit connections directly from the mobile UI
   - reposition nodes, groups, and subgraphs in the mobile layout with drag-and-drop
+  - drill into subgraphs from a placeholder node and edit inner nodes with a breadcrumb navigation bar
+  - widget controls on subgraph placeholder nodes (promoted and proxy widgets rendered and editable inline)
   - load and save workflows from anywhere, whether on your server, pasted from your clipboard, or out of a generated image
 ### ☑️ **Workflow Runner:** Trigger generations and monitor progress through your queue
   - WebSocket integration for live status and progress monitoring.
@@ -58,6 +60,7 @@ So this mobile frontend is my attempt at improving upon the user experience of C
   - [x] create new nodes in a workflow (via fuzzy search)
   - [x] move nodes in/out of groups/subgraphs
   - [x] modify connections between nodes
+  - [x] navigate into and edit subgraph inner nodes
   - [ ] load multiple workflows at once (workflow tabs)
 - [ ] ComfyUI Manager support
 - [ ] Auto-positioning of nodes/Compatibility with desktop FE's graph interface
