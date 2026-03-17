@@ -1,3 +1,4 @@
+import { themeColors } from "@/theme/colors";
 import { hexToRgba } from "@/utils/grouping";
 
 interface ContainerFooterProps {
@@ -5,9 +6,7 @@ interface ContainerFooterProps {
   headerId: string;
   title: string;
   nodeCount?: number;
-  color?: string;
-  backgroundColor?: string;
-  borderColor?: string;
+  color: string;
   textClassName: string;
   className?: string;
   allBypassed?: boolean;
@@ -19,11 +18,9 @@ export function ContainerFooter({
   title,
   nodeCount,
   color,
-  backgroundColor,
-  borderColor,
   textClassName,
   className = '',
-  allBypassed = false
+  allBypassed = false,
 }: ContainerFooterProps) {
   const handleClick = () => {
     const header = document.getElementById(headerId);
@@ -34,11 +31,11 @@ export function ContainerFooter({
     <button
       type="button"
       id={id}
-      className={`p-3 -mx-1 w-full text-left ${className}`}
+      className={`p-3 w-full cursor-pointer ${className}`}
       onClick={handleClick}
       style={{
-        backgroundColor: allBypassed ? hexToRgba('#9333ea', 0.12) : color ? hexToRgba(color, 0.15) : backgroundColor,
-        borderColor: allBypassed ? hexToRgba('#9333ea', 0.3) : color ? hexToRgba(color, 0.3) : borderColor,
+        backgroundColor: allBypassed ? hexToRgba(themeColors.brand.bypassPurple, 0.12) : hexToRgba(color, 0.15),
+        borderColor: allBypassed ? hexToRgba(themeColors.brand.bypassPurple, 0.3) : hexToRgba(color, 0.3),
       }}
     >
       <div className="flex items-center justify-between gap-3">

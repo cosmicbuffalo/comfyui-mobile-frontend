@@ -7,7 +7,7 @@ import { loadTemplateWorkflow, loadUserWorkflow } from '@/api/client';
 import { CaretDownIcon, CaretRightIcon, EyeIcon, EyeOffIcon, ArrowRightIcon, ReloadIcon, SearchIcon, TrashIcon, PlusIcon, WorkflowIcon } from '@/components/icons';
 import { ContextMenuButton } from '@/components/buttons/ContextMenuButton';
 import { ContextMenuBuilder } from '@/components/menus/ContextMenuBuilder';
-import { requireStableKey } from '@/utils/stableKeys';
+import { requireHierarchicalKey } from '@/utils/itemKeys';
 
 interface WorkflowTopBarMenuProps {
   open: boolean;
@@ -18,6 +18,7 @@ interface WorkflowTopBarMenuProps {
   onGoToQueue: () => void;
   onGoToOutputs: () => void;
   onAddNode: () => void;
+  onAddGroup: () => void;
   onOpenWorkflowActions: () => void;
 }
 
@@ -30,9 +31,11 @@ export function WorkflowTopBarMenu({
   onGoToQueue,
   onGoToOutputs,
   onAddNode,
+  onAddGroup,
   onOpenWorkflowActions
 }: WorkflowTopBarMenuProps) {
   const workflow = useWorkflowStore((s) => s.workflow);
+  const scopeStack = useWorkflowStore((s) => s.scopeStack);
   const nodeTypes = useWorkflowStore((s) => s.nodeTypes);
   const setItemCollapsed = useWorkflowStore((s) => s.setItemCollapsed);
   const setItemHidden = useWorkflowStore((s) => s.setItemHidden);
@@ -52,27 +55,51 @@ export function WorkflowTopBarMenu({
   );
   const history = useHistoryStore((s) => s.history);
   const hasStableFlag = useCallback(
-    (state: Record<string, boolean>, stableKey: string): boolean =>
-      Boolean(state[stableKey]),
+    (state: Record<string, boolean>, itemKey: string): boolean =>
+      Boolean(state[itemKey]),
     [],
   );
 
   const hasWorkflow = Boolean(workflow);
-  const allWorkflowNodeStableKeys = useMemo(() => (
-    workflow?.nodes
-      .map((node) => requireStableKey(node.stableKey, `node ${node.id}`)) ?? []
-  ), [workflow]);
+
+  // Nodes and groups for the currently-visible scope (root or a subgraph).
+  // Fold-all / unfold-all should operate on visible items only.
+  const currentScopeNodes = useMemo(() => {
+    const top = scopeStack[scopeStack.length - 1];
+    if (top?.type === 'subgraph' && workflow) {
+      const sg = workflow.definitions?.subgraphs?.find((s) => s.id === top.id);
+      if (sg) return sg.nodes ?? [];
+    }
+    return workflow?.nodes ?? [];
+  }, [scopeStack, workflow]);
+
+  const currentScopeGroups = useMemo(() => {
+    const top = scopeStack[scopeStack.length - 1];
+    if (top?.type === 'subgraph' && workflow) {
+      const sg = workflow.definitions?.subgraphs?.find((s) => s.id === top.id);
+      if (sg) return sg.groups ?? [];
+    }
+    return workflow?.groups ?? [];
+  }, [scopeStack, workflow]);
+
+  const allWorkflowNodeHierarchicalKeys = useMemo(() => (
+    currentScopeNodes
+      .map((node) => requireHierarchicalKey(node.itemKey, `node ${node.id}`))
+  ), [currentScopeNodes]);
   const allGroupTargets = useMemo(() => {
-    const groups = [
-      ...(workflow?.groups ?? []),
-      ...((workflow?.definitions?.subgraphs ?? []).flatMap((subgraph) => subgraph.groups ?? [])),
-    ];
-    return groups
-      .map((group) => requireStableKey(group.stableKey, `group ${group.id}`));
-  }, [workflow]);
-  const allSubgraphStableKeys = useMemo(() => (
-    (workflow?.definitions?.subgraphs?.map((subgraph) => requireStableKey(subgraph.stableKey, `subgraph ${subgraph.id}`)) ?? [])
-  ), [workflow]);
+    // For fold/unfold, use current scope's groups only.
+    // (Button visibility uses these same keys, which is fine — reflects what's visible.)
+    return currentScopeGroups
+      .map((group) => requireHierarchicalKey(group.itemKey, `group ${group.id}`));
+  }, [currentScopeGroups]);
+  // Subgraph accordion containers only exist at root scope.
+  const allSubgraphHierarchicalKeys = useMemo(() => {
+    const top = scopeStack[scopeStack.length - 1];
+    if (top?.type !== 'root') return [];
+    return workflow?.definitions?.subgraphs?.map((subgraph) =>
+      requireHierarchicalKey(subgraph.itemKey, `subgraph ${subgraph.id}`)
+    ) ?? [];
+  }, [scopeStack, workflow]);
 
   const bypassedNodes = useMemo(() => (
     workflow?.nodes.filter((node) => node.mode === 4) ?? []
@@ -96,8 +123,8 @@ export function WorkflowTopBarMenu({
     () =>
       bypassedNodes.filter((node) =>
         (() => {
-          const stableKey = requireStableKey(node.stableKey, `node ${node.id}`);
-          return hiddenItems[stableKey];
+          const itemKey = requireHierarchicalKey(node.itemKey, `node ${node.id}`);
+          return hiddenItems[itemKey];
         })()
       ).length,
     [bypassedNodes, hiddenItems]
@@ -106,68 +133,64 @@ export function WorkflowTopBarMenu({
     () =>
       staticNodes.filter((node) =>
         (() => {
-          const stableKey = requireStableKey(node.stableKey, `node ${node.id}`);
-          return hiddenItems[stableKey];
+          const itemKey = requireHierarchicalKey(node.itemKey, `node ${node.id}`);
+          return hiddenItems[itemKey];
         })()
       ).length,
     [staticNodes, hiddenItems]
   );
 
-  const visibleNodes = useMemo(() => {
-    if (!workflow) return [];
-    return workflow.nodes.filter(
-      (node) =>
-        (() => {
-          const stableKey = requireStableKey(node.stableKey, `node ${node.id}`);
-          return !hiddenItems[stableKey];
-        })()
-    );
-  }, [workflow, hiddenItems]);
+  const visibleNodes = useMemo(() => (
+    currentScopeNodes.filter((node) => {
+      const itemKey = requireHierarchicalKey(node.itemKey, `node ${node.id}`);
+      return !hiddenItems[itemKey];
+    })
+  ), [currentScopeNodes, hiddenItems]);
 
   const hasFoldedVisibleNode = useMemo(
     () =>
       visibleNodes.some((node) => {
-        const stableKey = requireStableKey(node.stableKey, `node ${node.id}`);
-        return collapsedItems[stableKey] === true;
+        const itemKey = requireHierarchicalKey(node.itemKey, `node ${node.id}`);
+        return collapsedItems[itemKey] === true;
       }),
     [collapsedItems, visibleNodes]
   );
   const hasUnfoldedVisibleNode = useMemo(
     () =>
       visibleNodes.some((node) => {
-        const stableKey = requireStableKey(node.stableKey, `node ${node.id}`);
-        return collapsedItems[stableKey] !== true;
+        const itemKey = requireHierarchicalKey(node.itemKey, `node ${node.id}`);
+        return collapsedItems[itemKey] !== true;
       }),
     [collapsedItems, visibleNodes]
   );
   const hasCollapsedGroup = useMemo(
-    () => allGroupTargets.some((stableKey) => collapsedItems[stableKey] === true),
+    () => allGroupTargets.some((itemKey) => collapsedItems[itemKey] === true),
     [allGroupTargets, collapsedItems]
   );
   const hasExpandedGroup = useMemo(
-    () => allGroupTargets.some((stableKey) => (collapsedItems[stableKey] ?? false) === false),
+    () => allGroupTargets.some((itemKey) => (collapsedItems[itemKey] ?? false) === false),
     [allGroupTargets, collapsedItems]
   );
   const hasCollapsedSubgraph = useMemo(
-    () => allSubgraphStableKeys.some((stableKey) =>
-      (collapsedItems[stableKey] ?? false)
+    () => allSubgraphHierarchicalKeys.some((itemKey) =>
+      (collapsedItems[itemKey] ?? false)
     ),
-    [allSubgraphStableKeys, collapsedItems]
+    [allSubgraphHierarchicalKeys, collapsedItems]
   );
   const hasExpandedSubgraph = useMemo(
-    () => allSubgraphStableKeys.some((stableKey) =>
-      (collapsedItems[stableKey] ?? false) === false
+    () => allSubgraphHierarchicalKeys.some((itemKey) =>
+      (collapsedItems[itemKey] ?? false) === false
     ),
-    [allSubgraphStableKeys, collapsedItems]
+    [allSubgraphHierarchicalKeys, collapsedItems]
   );
   const hasFoldedVisibleItem = hasFoldedVisibleNode || hasCollapsedGroup || hasCollapsedSubgraph;
   const hasUnfoldedVisibleItem = hasUnfoldedVisibleNode || hasExpandedGroup || hasExpandedSubgraph;
   const showAllHiddenNodesButton = useMemo(() => {
     if (manuallyHiddenCount > 0) return true;
-    const anyHiddenGroup = allGroupTargets.some((stableKey) => hasStableFlag(hiddenItems, stableKey));
+    const anyHiddenGroup = allGroupTargets.some((itemKey) => hasStableFlag(hiddenItems, itemKey));
     if (anyHiddenGroup) return true;
-    return allSubgraphStableKeys.some((stableKey) => hiddenItems[stableKey] === true);
-  }, [manuallyHiddenCount, hiddenItems, allGroupTargets, allSubgraphStableKeys, hasStableFlag]);
+    return allSubgraphHierarchicalKeys.some((itemKey) => hiddenItems[itemKey] === true);
+  }, [manuallyHiddenCount, hiddenItems, allGroupTargets, allSubgraphHierarchicalKeys, hasStableFlag]);
 
   const [visibilityModalOpen, setVisibilityModalOpen] = useState(false);
 
@@ -196,24 +219,29 @@ export function WorkflowTopBarMenu({
     closeMenu();
   };
 
+  const handleAddGroupClick = () => {
+    onAddGroup();
+    closeMenu();
+  };
+
   const handleFoldAllClick = () => {
-    allWorkflowNodeStableKeys.forEach((stableKey) => setItemCollapsed(stableKey, true));
-    allGroupTargets.forEach((stableKey) => setItemCollapsed(stableKey, true));
-    allSubgraphStableKeys.forEach((stableKey) => setItemCollapsed(stableKey, true));
+    allWorkflowNodeHierarchicalKeys.forEach((itemKey) => setItemCollapsed(itemKey, true));
+    allGroupTargets.forEach((itemKey) => setItemCollapsed(itemKey, true));
+    allSubgraphHierarchicalKeys.forEach((itemKey) => setItemCollapsed(itemKey, true));
     closeMenu();
   };
 
   const handleUnfoldAllClick = () => {
-    allWorkflowNodeStableKeys.forEach((stableKey) => setItemCollapsed(stableKey, false));
-    allGroupTargets.forEach((stableKey) => setItemCollapsed(stableKey, false));
-    allSubgraphStableKeys.forEach((stableKey) => setItemCollapsed(stableKey, false));
+    allWorkflowNodeHierarchicalKeys.forEach((itemKey) => setItemCollapsed(itemKey, false));
+    allGroupTargets.forEach((itemKey) => setItemCollapsed(itemKey, false));
+    allSubgraphHierarchicalKeys.forEach((itemKey) => setItemCollapsed(itemKey, false));
     closeMenu();
   };
 
   const handleShowAllHiddenClick = () => {
     showAllHiddenNodes();
-    allGroupTargets.forEach((stableKey) => setItemHidden(stableKey, false));
-    allSubgraphStableKeys.forEach((stableKey) => setItemHidden(stableKey, false));
+    allGroupTargets.forEach((itemKey) => setItemHidden(itemKey, false));
+    allSubgraphHierarchicalKeys.forEach((itemKey) => setItemHidden(itemKey, false));
   };
 
   const handleClearBookmarksClick = () => {
@@ -295,6 +323,13 @@ export function WorkflowTopBarMenu({
                 label: 'Add node',
                 icon: <PlusIcon className="w-4 h-4" />,
                 onClick: handleAddNodeClick,
+                hidden: !hasWorkflow
+              },
+              {
+                key: 'add-group',
+                label: 'Add group',
+                icon: <PlusIcon className="w-4 h-4" />,
+                onClick: handleAddGroupClick,
                 hidden: !hasWorkflow
               },
               {
@@ -382,13 +417,13 @@ export function WorkflowTopBarMenu({
                     onClick: () => {
                       if (hiddenStaticCount < staticNodeCount) {
                         staticNodes.forEach((node) => {
-                          const stableKey = requireStableKey(node.stableKey, `node ${node.id}`);
-                          setItemHidden(stableKey, true);
+                          const itemKey = requireHierarchicalKey(node.itemKey, `node ${node.id}`);
+                          setItemHidden(itemKey, true);
                         });
                       } else {
                         staticNodes.forEach((node) => {
-                          const stableKey = requireStableKey(node.stableKey, `node ${node.id}`);
-                          setItemHidden(stableKey, false);
+                          const itemKey = requireHierarchicalKey(node.itemKey, `node ${node.id}`);
+                          setItemHidden(itemKey, false);
                         });
                       }
                     },
@@ -405,13 +440,13 @@ export function WorkflowTopBarMenu({
                     onClick: () => {
                       if (hiddenBypassedCount > 0) {
                         bypassedNodes.forEach((node) => {
-                          const stableKey = requireStableKey(node.stableKey, `node ${node.id}`);
-                          setItemHidden(stableKey, false);
+                          const itemKey = requireHierarchicalKey(node.itemKey, `node ${node.id}`);
+                          setItemHidden(itemKey, false);
                         });
                       } else {
                         bypassedNodes.forEach((node) => {
-                          const stableKey = requireStableKey(node.stableKey, `node ${node.id}`);
-                          setItemHidden(stableKey, true);
+                          const itemKey = requireHierarchicalKey(node.itemKey, `node ${node.id}`);
+                          setItemHidden(itemKey, true);
                         });
                       }
                     },

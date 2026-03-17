@@ -5,6 +5,8 @@ interface ConnectionRowProps {
   direction: 'input' | 'output';
   hasConnection: boolean;
   isEmptyRequiredInput?: boolean;
+  /** True when the connection crosses the subgraph boundary (sentinel -10/-20). */
+  isBoundaryConnection?: boolean;
   hideLabel: boolean;
   resolvedLabel: string;
   shouldWrapResolvedLabel: boolean;
@@ -23,6 +25,7 @@ export function ConnectionRow({
   direction,
   hasConnection,
   isEmptyRequiredInput = false,
+  isBoundaryConnection = false,
   hideLabel,
   resolvedLabel,
   shouldWrapResolvedLabel,
@@ -37,7 +40,7 @@ export function ConnectionRow({
   onPointerUp
 }: ConnectionRowProps) {
   const isInput = direction === 'input';
-  const isDisabled = isInput ? (!hasConnection && !isEmptyRequiredInput) : false;
+  const isVisuallyDisabled = isInput ? (!hasConnection && !isEmptyRequiredInput) : false;
   const isInactiveOutput = !isInput && !hasConnection;
   const plusIconClass = sizeClass.includes('w-7') ? 'w-3 h-3' : 'w-3.5 h-3.5';
 
@@ -65,7 +68,7 @@ export function ConnectionRow({
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
         onPointerCancel={onPointerUp}
-        disabled={isDisabled}
+        disabled={false}
         ref={buttonRef}
         className={`
           flex items-center justify-center rounded-full font-medium box-border
@@ -73,11 +76,11 @@ export function ConnectionRow({
           ${sizeClass} flex-shrink-0
           transition-opacity
           ${typeClass}
-          ${isInput && isEmptyRequiredInput ? 'opacity-100 cursor-pointer border-red-500' : 'border-transparent'}
+          ${isInput && isEmptyRequiredInput ? 'opacity-100 cursor-pointer border-red-500' : (isBoundaryConnection ? 'border-blue-400' : 'border-transparent')}
           ${!isInput && isInactiveOutput ? 'border-dashed border-gray-400/70' : ''}
-          ${isDisabled ? 'opacity-40 cursor-not-allowed' : ''}
-          ${!isDisabled && isInactiveOutput ? 'opacity-50 cursor-pointer active:scale-95' : ''}
-          ${!isDisabled && !isInactiveOutput ? 'opacity-100 cursor-pointer active:scale-95' : ''}
+          ${isVisuallyDisabled ? 'opacity-40 cursor-not-allowed' : ''}
+          ${!isVisuallyDisabled && isInactiveOutput ? 'opacity-50 cursor-pointer active:scale-95' : ''}
+          ${!isVisuallyDisabled && !isInactiveOutput ? 'opacity-100 cursor-pointer active:scale-95' : ''}
         `}
       >
         {isInput ? (

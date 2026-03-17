@@ -1,10 +1,15 @@
 import { create } from "zustand";
-import type { NodeTypes, Workflow, WorkflowNode } from "@/api/types";
+import type { NodeTypes, Workflow, WorkflowLink, WorkflowNode, WorkflowSubgraphLink } from "@/api/types";
 import * as api from "@/api/client";
 import { useWorkflowStore } from "@/hooks/useWorkflow";
 import { getWidgetIndexForInput } from "@/utils/seedUtils";
 import { resolveComboOption, resolveSource } from "@/utils/workflowInputs";
-import { makeLocationPointer } from "@/utils/mobileLayout";
+import {
+  getLinkId,
+  getLinkTargetId,
+  resolveCurrentScope,
+} from "@/utils/canonicalWorkflowOps";
+import type { ScopeFrame } from "@/utils/canonicalWorkflowOps";
 import {
   applyLoraValuesToText,
   extractLoraList,
@@ -26,11 +31,40 @@ import {
   isTriggerWordToggleNodeType,
 } from "@/utils/triggerWordToggle";
 
-const MOBILE_ORIGIN_KEY = "__mobile_origin";
+interface ScopedNode {
+  node: WorkflowNode;
+  subgraphId: string | null;
+}
 
-type MobileOrigin =
-  | { scope: "root"; nodeId: number }
-  | { scope: "subgraph"; subgraphId: string; nodeId: number };
+/**
+ * Collect all nodes from the workflow: root nodes + nodes inside subgraph definitions.
+ * Each entry is tagged with its subgraphId (null for root).
+ */
+function getAllScopedNodes(workflow: Workflow): ScopedNode[] {
+  const result: ScopedNode[] = workflow.nodes.map((node) => ({
+    node,
+    subgraphId: null,
+  }));
+  for (const sg of workflow.definitions?.subgraphs ?? []) {
+    for (const node of sg.nodes ?? []) {
+      result.push({ node, subgraphId: sg.id });
+    }
+  }
+  return result;
+}
+
+/**
+ * Get the links for the scope a node lives in.
+ * Root nodes use workflow.links (tuple format), subgraph nodes use subgraph.links (object format).
+ */
+function getLinksForScope(
+  workflow: Workflow,
+  subgraphId: string | null,
+): (WorkflowLink | WorkflowSubgraphLink)[] {
+  if (subgraphId == null) return workflow.links;
+  const sg = (workflow.definitions?.subgraphs ?? []).find((s) => s.id === subgraphId);
+  return sg?.links ?? [];
+}
 
 interface LoraManagerState {
   isLoraManagerAvailable: boolean;
@@ -42,53 +76,49 @@ interface LoraManagerState {
   registerLoraManagerNodes: () => Promise<void>;
 }
 
-function getMobileOrigin(node: WorkflowNode | undefined): MobileOrigin | null {
-  if (!node) return null;
-  const props = node.properties as Record<string, unknown> | undefined;
-  const origin = props?.[MOBILE_ORIGIN_KEY];
-  if (!origin || typeof origin !== "object") return null;
-  const scope = (origin as { scope?: string }).scope;
-  if (scope === "root") {
-    const nodeId = (origin as { nodeId?: number }).nodeId;
-    return typeof nodeId === "number" ? { scope: "root", nodeId } : null;
-  }
-  if (scope === "subgraph") {
-    const nodeId = (origin as { nodeId?: number }).nodeId;
-    const subgraphId = (origin as { subgraphId?: string }).subgraphId;
-    if (typeof nodeId === "number" && typeof subgraphId === "string") {
-      return { scope: "subgraph", subgraphId, nodeId };
-    }
-  }
-  return null;
-}
-
-function matchesNodeReference(
-  node: WorkflowNode,
+function matchesScopedNodeReference(
+  scoped: ScopedNode,
   nodeId: number,
   graphId: string | null,
 ): boolean {
   const normalizedGraphId = graphId ?? "root";
-  const origin = getMobileOrigin(node);
-  if (origin?.scope === "subgraph") {
-    return (
-      normalizedGraphId !== "root" &&
-      origin.subgraphId === normalizedGraphId &&
-      origin.nodeId === nodeId
-    );
+  if (scoped.subgraphId != null) {
+    return normalizedGraphId === scoped.subgraphId && scoped.node.id === nodeId;
   }
-  if (origin?.scope === "root") {
-    return normalizedGraphId === "root" && origin.nodeId === nodeId;
-  }
-  return normalizedGraphId === "root" && node.id === nodeId;
+  return normalizedGraphId === "root" && scoped.node.id === nodeId;
 }
 
-function getNodePointerFromWorkflowNode(node: WorkflowNode): string {
-  const origin = getMobileOrigin(node);
-  return makeLocationPointer({
-    type: "node",
-    nodeId: node.id,
-    subgraphId: origin?.scope === "subgraph" ? origin.subgraphId : null,
-  });
+function buildScopeStack(subgraphId: string | null): ScopeFrame[] {
+  if (subgraphId == null) return [{ type: "root" }];
+  return [{ type: "root" }, { type: "subgraph", id: subgraphId, placeholderNodeId: -1 }];
+}
+
+function updateScopedNodeWidgets(
+  scoped: ScopedNode,
+  updates: Record<number, unknown>,
+): void {
+  const { workflow } = useWorkflowStore.getState();
+  if (!workflow) return;
+  const scope = resolveCurrentScope(buildScopeStack(scoped.subgraphId), workflow);
+  const node = scope.nodes.find((n) => n.id === scoped.node.id);
+  if (!node || !Array.isArray(node.widgets_values)) return;
+  const newValues = [...node.widgets_values];
+  for (const [idxStr, value] of Object.entries(updates)) {
+    newValues[parseInt(idxStr, 10)] = value;
+  }
+  const nextNodes = scope.nodes.map((n) =>
+    n.id === node.id ? { ...n, widgets_values: newValues } : n,
+  );
+  const nextWorkflow = scope.applyPatch(workflow, { nodes: nextNodes });
+  useWorkflowStore.setState({ workflow: nextWorkflow });
+}
+
+function updateScopedNodeWidget(
+  scoped: ScopedNode,
+  index: number,
+  value: unknown,
+): void {
+  updateScopedNodeWidgets(scoped, { [index]: value });
 }
 
 function resolveNodeTypeKey(nodeTypes: NodeTypes | null, nodeType: string): string | null {
@@ -111,8 +141,11 @@ function isLoraManagerRelevantNodeType(nodeType: string): boolean {
 }
 
 function hasLoraManagerSupport(workflow: Workflow | null, nodeTypes: NodeTypes | null): boolean {
-  if (workflow?.nodes.some((node) => isLoraManagerRelevantNodeType(node.type))) {
-    return true;
+  if (workflow) {
+    const allNodes = getAllScopedNodes(workflow);
+    if (allNodes.some(({ node }) => isLoraManagerRelevantNodeType(node.type))) {
+      return true;
+    }
   }
   if (!nodeTypes) return false;
   return Object.entries(nodeTypes).some(([key, def]) => {
@@ -133,13 +166,6 @@ export const useLoraManagerStore = create<LoraManagerState>((set, get) => {
     return available;
   };
 
-  const getStableKeyForNode = (node: WorkflowNode): string | null => {
-    if (typeof node.stableKey === "string" && node.stableKey) {
-      return node.stableKey;
-    }
-    const pointer = getNodePointerFromWorkflowNode(node);
-    return useWorkflowStore.getState().stableKeyByPointer[pointer] ?? null;
-  };
 
   const parsePayloadNodeId = (rawNodeId: unknown): number | null => {
     if (typeof rawNodeId === "number") return rawNodeId;
@@ -154,18 +180,20 @@ export const useLoraManagerStore = create<LoraManagerState>((set, get) => {
     workflow: Workflow,
     payload: Record<string, unknown>,
     options?: { allowBroadcastToLoraNodes?: boolean },
-  ): WorkflowNode[] => {
+  ): ScopedNode[] => {
     const rawNodeId = payload.node_id ?? payload.id;
     const graphId = typeof payload.graph_id === "string" ? payload.graph_id : null;
     const numericId = parsePayloadNodeId(rawNodeId);
     if (numericId === null) return [];
     const isBroadcast = numericId === -1;
 
+    const allNodes = getAllScopedNodes(workflow);
+
     if (isBroadcast && options?.allowBroadcastToLoraNodes) {
-      return workflow.nodes.filter((node) => isLoraManagerNodeType(node.type));
+      return allNodes.filter(({ node }) => isLoraManagerNodeType(node.type));
     }
 
-    return workflow.nodes.filter((node) => matchesNodeReference(node, numericId, graphId));
+    return allNodes.filter((scoped) => matchesScopedNodeReference(scoped, numericId, graphId));
   };
 
   const syncTriggerWordsForNode: LoraManagerState["syncTriggerWordsForNode"] = (
@@ -177,10 +205,14 @@ export const useLoraManagerStore = create<LoraManagerState>((set, get) => {
     const { workflow, nodeTypes } = useWorkflowStore.getState();
     if (!workflow) return;
 
-    const sourceNode = workflow.nodes.find((node) =>
-      matchesNodeReference(node, nodeId, graphId),
+    const allScoped = getAllScopedNodes(workflow);
+    const sourceScoped = allScoped.find((s) =>
+      matchesScopedNodeReference(s, nodeId, graphId),
     );
-    if (!sourceNode) return;
+    if (!sourceScoped) return;
+
+    const sourceNode = sourceScoped.node;
+    const scopeSubgraphId = sourceScoped.subgraphId;
 
     const isLoader = isLoraLoaderNodeType(sourceNode.type);
     const isChainProvider = isLoraChainProviderNodeType(sourceNode.type);
@@ -188,8 +220,14 @@ export const useLoraManagerStore = create<LoraManagerState>((set, get) => {
 
     if (!isLoader && !isChainProvider && !isDirectProvider) return;
 
-    const nodesById = new Map(workflow.nodes.map((node) => [node.id, node]));
-    const linkMap = new Map(workflow.links.map((link) => [link[0], link]));
+    // Build node and link maps for the scope the source node lives in
+    const scopeNodes = scopeSubgraphId == null
+      ? workflow.nodes
+      : ((workflow.definitions?.subgraphs ?? []).find((sg) => sg.id === scopeSubgraphId)?.nodes ?? []);
+    const scopeLinks = getLinksForScope(workflow, scopeSubgraphId);
+
+    const nodesById = new Map(scopeNodes.map((node) => [node.id, node]));
+    const linkMap = new Map(scopeLinks.map((link) => [getLinkId(link), link]));
     const isRecord = (value: unknown): value is Record<string, unknown> =>
       Boolean(value) && typeof value === "object" && !Array.isArray(value);
 
@@ -197,10 +235,9 @@ export const useLoraManagerStore = create<LoraManagerState>((set, get) => {
       node.mode === undefined || node.mode === 0 || node.mode === 3;
 
     const getNodeReference = (node: WorkflowNode): api.TriggerWordTargetReference => {
-      const origin = getMobileOrigin(node);
       return {
-        node_id: origin?.nodeId ?? node.id,
-        graph_id: origin?.scope === "subgraph" ? origin.subgraphId : "root",
+        node_id: node.id,
+        graph_id: scopeSubgraphId ?? "root",
       };
     };
 
@@ -211,7 +248,7 @@ export const useLoraManagerStore = create<LoraManagerState>((set, get) => {
         for (const linkId of links) {
           const link = linkMap.get(linkId);
           if (!link) continue;
-          const targetNode = nodesById.get(link[3]);
+          const targetNode = nodesById.get(getLinkTargetId(link));
           if (targetNode && isTriggerWordToggleNodeType(targetNode.type)) {
             connected.push(targetNode);
           }
@@ -351,7 +388,7 @@ export const useLoraManagerStore = create<LoraManagerState>((set, get) => {
         for (const linkId of links) {
           const link = linkMap.get(linkId);
           if (!link) continue;
-          const targetNode = nodesById.get(link[3]);
+          const targetNode = nodesById.get(getLinkTargetId(link));
           if (!targetNode) continue;
 
           if (isLoraLoaderNodeType(targetNode.type)) {
@@ -395,17 +432,14 @@ export const useLoraManagerStore = create<LoraManagerState>((set, get) => {
     }
   };
 
-  const syncTriggerWordsForWorkflowNode = (node: WorkflowNode) => {
-    const origin = getMobileOrigin(node);
-    const targetNodeId = origin?.nodeId ?? node.id;
-    const graphId = origin?.scope === "subgraph" ? origin.subgraphId : "root";
-    syncTriggerWordsForNode(targetNodeId, graphId);
+  const syncTriggerWordsForScopedNode = (scoped: ScopedNode) => {
+    syncTriggerWordsForNode(scoped.node.id, scoped.subgraphId ?? "root");
   };
 
   const applyLoraCodeUpdate: LoraManagerState["applyLoraCodeUpdate"] = (payload) => {
     if (!refreshAvailability()) return;
 
-    const { workflow, nodeTypes, updateNodeWidgets } = useWorkflowStore.getState();
+    const { workflow, nodeTypes } = useWorkflowStore.getState();
     if (!workflow) return;
 
     const loraCode = typeof payload.lora_code === "string" ? payload.lora_code : "";
@@ -416,7 +450,8 @@ export const useLoraManagerStore = create<LoraManagerState>((set, get) => {
       allowBroadcastToLoraNodes: true,
     });
 
-    targets.forEach((node) => {
+    targets.forEach((scoped) => {
+      const { node } = scoped;
       const textIndex = nodeTypes
         ? getWidgetIndexForInput(workflow, nodeTypes, node, "text")
         : null;
@@ -444,10 +479,8 @@ export const useLoraManagerStore = create<LoraManagerState>((set, get) => {
       if (textIndex !== null) updates[textIndex] = nextText;
       if (listIndex !== null) updates[listIndex] = mergedList;
       if (Object.keys(updates).length > 0) {
-        const stableKey = getStableKeyForNode(node);
-        if (!stableKey) return;
-        updateNodeWidgets(stableKey, updates);
-        syncTriggerWordsForWorkflowNode(node);
+        updateScopedNodeWidgets(scoped, updates);
+        syncTriggerWordsForScopedNode(scoped);
       }
     });
   };
@@ -455,14 +488,15 @@ export const useLoraManagerStore = create<LoraManagerState>((set, get) => {
   const applyTriggerWordUpdate: LoraManagerState["applyTriggerWordUpdate"] = (payload) => {
     if (!refreshAvailability()) return;
 
-    const { workflow, nodeTypes, updateNodeWidgets } = useWorkflowStore.getState();
+    const { workflow, nodeTypes } = useWorkflowStore.getState();
     if (!workflow || !nodeTypes) return;
 
     if (typeof payload.message !== "string") return;
     const message = payload.message;
     const targets = resolvePayloadTargets(workflow, payload);
 
-    targets.forEach((node) => {
+    targets.forEach((scoped) => {
+      const { node } = scoped;
       if (!isTriggerWordToggleNodeType(node.type)) return;
       if (!Array.isArray(node.widgets_values)) return;
 
@@ -526,16 +560,14 @@ export const useLoraManagerStore = create<LoraManagerState>((set, get) => {
         }
       }
 
-      const stableKey = getStableKeyForNode(node);
-      if (!stableKey) return;
-      updateNodeWidgets(stableKey, updates);
+      updateScopedNodeWidgets(scoped, updates);
     });
   };
 
   const applyWidgetUpdate: LoraManagerState["applyWidgetUpdate"] = (payload) => {
     if (!refreshAvailability()) return;
 
-    const { workflow, nodeTypes, updateNodeWidget, updateNodeWidgets } = useWorkflowStore.getState();
+    const { workflow, nodeTypes } = useWorkflowStore.getState();
     if (!workflow) return;
 
     const widgetName = typeof payload.widget_name === "string" ? payload.widget_name : "";
@@ -544,9 +576,8 @@ export const useLoraManagerStore = create<LoraManagerState>((set, get) => {
 
     const targets = resolvePayloadTargets(workflow, payload);
 
-    targets.forEach((node) => {
-      const stableKey = getStableKeyForNode(node);
-      if (!stableKey) return;
+    targets.forEach((scoped) => {
+      const { node } = scoped;
 
       const resolveWidgetIndex = (name: string): number | null => {
         let index: number | null = null;
@@ -580,7 +611,7 @@ export const useLoraManagerStore = create<LoraManagerState>((set, get) => {
       }
 
       if (!Array.isArray(node.widgets_values)) {
-        updateNodeWidget(stableKey, 0, nextValue, widgetName);
+        updateScopedNodeWidget(scoped, 0, nextValue);
         return;
       }
 
@@ -600,8 +631,8 @@ export const useLoraManagerStore = create<LoraManagerState>((set, get) => {
           const updates: Record<number, unknown> = {};
           if (index !== null) updates[index] = nextValue;
           updates[listIndex] = mergedList;
-          updateNodeWidgets(stableKey, updates);
-          syncTriggerWordsForWorkflowNode(node);
+          updateScopedNodeWidgets(scoped, updates);
+          syncTriggerWordsForScopedNode(scoped);
           return;
         }
       }
@@ -629,19 +660,19 @@ export const useLoraManagerStore = create<LoraManagerState>((set, get) => {
         }
 
         if (Object.keys(updates).length > 0) {
-          updateNodeWidgets(stableKey, updates);
-          syncTriggerWordsForWorkflowNode(node);
+          updateScopedNodeWidgets(scoped, updates);
+          syncTriggerWordsForScopedNode(scoped);
           return;
         }
       }
 
       if (index !== null) {
-        updateNodeWidget(stableKey, index, nextValue, widgetName);
+        updateScopedNodeWidget(scoped, index, nextValue);
         if (
           isLoraManagerNode &&
           (widgetName === "cycler_config" || widgetName === "randomizer_config")
         ) {
-          syncTriggerWordsForWorkflowNode(node);
+          syncTriggerWordsForScopedNode(scoped);
         }
       }
     });
@@ -656,10 +687,10 @@ export const useLoraManagerStore = create<LoraManagerState>((set, get) => {
     const targetWidgetNames = new Set(["ckpt_name", "unet_name"]);
     const nodesToRegister: api.LoraManagerRegistryNode[] = [];
 
-    workflow.nodes.forEach((node) => {
-      const origin = getMobileOrigin(node);
-      const nodeId = origin?.nodeId ?? node.id;
-      const graphId = origin?.scope === "subgraph" ? origin.subgraphId : "root";
+    const allScoped = getAllScopedNodes(workflow);
+    allScoped.forEach(({ node, subgraphId }) => {
+      const nodeId = node.id;
+      const graphId = subgraphId ?? "root";
       const supportsLora = isLoraManagerNodeType(node.type);
       const resolvedType = resolveNodeTypeKey(nodeTypes, node.type);
       const typeDef = resolvedType ? nodeTypes?.[resolvedType] : null;

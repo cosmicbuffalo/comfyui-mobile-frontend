@@ -75,7 +75,7 @@ function App() {
       !outputsSelectionActionOpen
   });
   const setNodeTypes = useWorkflowStore((s) => s.setNodeTypes);
-  const ensureStableKeysAndRepair = useWorkflowStore((s) => s.ensureStableKeysAndRepair);
+  const ensureHierarchicalKeysAndRepair = useWorkflowStore((s) => s.ensureHierarchicalKeysAndRepair);
   const theme = useThemeStore((s) => s.theme);
   const workflowLoadedAt = useWorkflowStore((s) => s.workflowLoadedAt);
   const fetchQueue = useQueueStore((s) => s.fetchQueue);
@@ -154,8 +154,10 @@ function App() {
 
   useLayoutEffect(() => {
     const root = document.documentElement;
-    root.classList.toggle('dark', theme === 'dark');
-    root.style.colorScheme = theme;
+    // TEMP: Force dark mode by default for now.
+    // This is a temporary workaround; light mode controls will be reintroduced later.
+    root.classList.add('dark');
+    root.style.colorScheme = 'dark';
   }, [theme]);
 
   useEffect(() => {
@@ -167,8 +169,8 @@ function App() {
 
   useEffect(() => {
     if (!workflowLoadedAt) return;
-    ensureStableKeysAndRepair();
-  }, [workflowLoadedAt, ensureStableKeysAndRepair]);
+    ensureHierarchicalKeysAndRepair();
+  }, [workflowLoadedAt, ensureHierarchicalKeysAndRepair]);
 
   return (
     <div id="app-root" className="min-h-screen bg-gray-100">

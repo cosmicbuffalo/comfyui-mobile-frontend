@@ -347,7 +347,8 @@ export function buildWorkflowPromptInputs(
   classType: string,
   allowedNodeIds: Set<number>,
   widgetIndexMap: Record<string, number> | null,
-  seedOverrides?: Record<number, number>
+  seedOverrides?: Record<number, number>,
+  promptKeyMap?: Map<number, string>
 ): Record<string, unknown> {
   const inputs: Record<string, unknown> = {};
 
@@ -356,7 +357,8 @@ export function buildWorkflowPromptInputs(
       const resolved = resolveSource(workflow, input.link);
       if (resolved) {
         if (allowedNodeIds.has(resolved.nodeId)) {
-          inputs[input.name] = [String(resolved.nodeId), resolved.slotIndex];
+          const nodeKey = promptKeyMap?.get(resolved.nodeId) ?? String(resolved.nodeId);
+          inputs[input.name] = [nodeKey, resolved.slotIndex];
         } else {
           const sourceNode = workflow.nodes.find((n) => n.id === resolved.nodeId);
           if (sourceNode) {

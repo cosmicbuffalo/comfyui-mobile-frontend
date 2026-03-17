@@ -2,7 +2,8 @@ import { useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { saveUserWorkflow, loadTemplateWorkflow, loadUserWorkflow } from '@/api/client';
-import { stripWorkflowClientMetadata, useWorkflowStore } from '@/hooks/useWorkflow';
+import { useWorkflowStore } from '@/hooks/useWorkflow';
+import { getWorkflowForPersistence } from '@/utils/workflowPersistence';
 import { useNavigationStore } from '@/hooks/useNavigation';
 import { useDismissOnOutsideClick } from '@/hooks/useDismissOnOutsideClick';
 import { useHistoryStore } from '@/hooks/useHistory';
@@ -65,6 +66,7 @@ export function WorkflowTopBarControls() {
   const clearWorkflowCache = useWorkflowStore((s) => s.clearWorkflowCache);
   const unloadWorkflow = useWorkflowStore((s) => s.unloadWorkflow);
   const requestAddNodeModal = useWorkflowStore((s) => s.requestAddNodeModal);
+  const addGroupNearNode = useWorkflowStore((s) => s.addGroupNearNode);
   const setCurrentPanel = useNavigationStore((s) => s.setCurrentPanel);
   const workflowLoadedAt = useWorkflowStore((s) => s.workflowLoadedAt);
   const history = useHistoryStore((s) => s.history);
@@ -103,7 +105,11 @@ export function WorkflowTopBarControls() {
     const finalFilename = filename.endsWith('.json') ? filename : `${filename}.json`;
     try {
       setLoading(true);
-      await saveUserWorkflow(finalFilename, stripWorkflowClientMetadata(workflow));
+      const workflowForPersistence = getWorkflowForPersistence(workflow);
+      if (!workflowForPersistence) {
+        throw new Error('Unable to save: embedded workflow is unavailable.');
+      }
+      await saveUserWorkflow(finalFilename, workflowForPersistence);
       setSavedWorkflow(workflow, finalFilename);
       setError(null);
       setSaveAsOpen(false);
@@ -208,6 +214,36 @@ export function WorkflowTopBarControls() {
     requestAddNodeModal({ groupId: null, subgraphId: null });
   };
 
+  const handleAddGroup = () => {
+    const container = document.querySelector<HTMLElement>("#node-list-container");
+    const nodeElements = Array.from(
+      document.querySelectorAll<HTMLElement>(
+        '#node-list-container [data-reposition-item^="node-"][data-item-key]'
+      )
+    );
+    let nearHierarchicalKey: string | null = null;
+    if (container && nodeElements.length > 0) {
+      const containerRect = container.getBoundingClientRect();
+      const centerY = containerRect.top + containerRect.height / 2;
+      let bestDistance = Number.POSITIVE_INFINITY;
+      for (const element of nodeElements) {
+        const itemKey = element.dataset.itemKey;
+        if (!itemKey) continue;
+        const rect = element.getBoundingClientRect();
+        const visibleTop = Math.max(rect.top, containerRect.top);
+        const visibleBottom = Math.min(rect.bottom, containerRect.bottom);
+        if (visibleBottom <= visibleTop) continue;
+        const elementCenterY = (visibleTop + visibleBottom) / 2;
+        const distance = Math.abs(elementCenterY - centerY);
+        if (distance < bestDistance) {
+          bestDistance = distance;
+          nearHierarchicalKey = itemKey;
+        }
+      }
+    }
+    addGroupNearNode(nearHierarchicalKey);
+  };
+
   return (
     <>
       <WorkflowTopBarMenu
@@ -219,6 +255,7 @@ export function WorkflowTopBarControls() {
         onGoToQueue={() => setCurrentPanel('queue')}
         onGoToOutputs={() => setCurrentPanel('outputs')}
         onAddNode={handleAddNode}
+        onAddGroup={handleAddGroup}
         onOpenWorkflowActions={handleOpenWorkflowActions}
       />
 

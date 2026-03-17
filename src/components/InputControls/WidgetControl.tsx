@@ -30,6 +30,7 @@ interface WidgetControlProps {
   isPinned?: boolean;
   onTogglePin?: () => void;
   containerClass?: string;
+  isPromoted?: boolean;
 }
 
 export function WidgetControl({
@@ -50,6 +51,7 @@ export function WidgetControl({
   isPinned = false,
   onTogglePin,
   containerClass,
+  isPromoted = false,
 }: WidgetControlProps) {
   const [modalOpen, setModalOpen] = useState(false);
 
@@ -82,6 +84,7 @@ export function WidgetControl({
     disabled,
     hideLabel,
     hasError,
+    isPromoted,
     forceModalOpen,
     onModalClose,
     containerClass: controlContainerClass,

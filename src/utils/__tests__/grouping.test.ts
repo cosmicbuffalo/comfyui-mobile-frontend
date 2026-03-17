@@ -75,7 +75,6 @@ describe('grouping overrides', () => {
         [makeLocationPointer({ type: 'group', groupId: 2, subgraphId: null })]: false
       },
       {},
-      undefined,
       { 1: 2 }
     );
 
@@ -91,7 +90,7 @@ describe('grouping overrides', () => {
     const node = makeNode(1, 500); // Geometrically in group 2.
     const wf = makeWorkflow([node]);
     const layout: MobileLayout = {
-      root: [{ type: 'group', id: 1, subgraphId: null, stableKey: makeLocationPointer({ type: 'group', groupId: 1, subgraphId: null }) }],
+      root: [{ type: 'group', id: 1, subgraphId: null, itemKey: makeLocationPointer({ type: 'group', groupId: 1, subgraphId: null }) }],
       groups: {
         [makeLocationPointer({ type: 'group', groupId: 1, subgraphId: null })]: [{ type: 'node', id: 1 }],
         [makeLocationPointer({ type: 'group', groupId: 2, subgraphId: null })]: []
@@ -107,7 +106,6 @@ describe('grouping overrides', () => {
         [makeLocationPointer({ type: 'group', groupId: 1, subgraphId: null })]: false,
         [makeLocationPointer({ type: 'group', groupId: 2, subgraphId: null })]: false
       },
-      {},
       {}
     );
     const groupItems = nested.filter((item) => item.type === 'group');

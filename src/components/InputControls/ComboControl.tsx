@@ -4,7 +4,7 @@ import Select, { components, createFilter } from "react-select";
 import type { OptionProps } from "react-select";
 import { FullscreenWidgetModal } from "../modals/FullscreenWidgetModal";
 import { PinButton } from "./PinButton";
-import { ChevronDownIcon, PlusIcon } from "@/components/icons";
+import { ChevronDownIcon, PlusIcon, PromotedWidgetIcon } from "@/components/icons";
 import { getImageUrl, getNodeTypes, uploadImageFile } from "@/api/client";
 import { useWorkflowStore } from "@/hooks/useWorkflow";
 import { useThemeStore } from "@/hooks/useTheme";
@@ -24,6 +24,7 @@ interface ComboControlProps {
   isPinned?: boolean;
   onTogglePin?: () => void;
   hasError?: boolean;
+  isPromoted?: boolean;
   forceModalOpen?: boolean;
   onModalClose?: () => void;
 }
@@ -40,6 +41,7 @@ export function ComboControl({
   isPinned = false,
   onTogglePin,
   hasError = false,
+  isPromoted = false,
   forceModalOpen = false,
   onModalClose,
 }: ComboControlProps) {
@@ -171,6 +173,7 @@ export function ComboControl({
     "rs-container",
     hasPin ? "rs-has-pin" : "rs-no-pin",
     hasError ? "rs-error" : "",
+    isPromoted ? "rs-promoted" : "",
     isMissingValue ? "rs-missing" : "",
     disabled ? "rs-disabled" : "",
   ]
@@ -251,12 +254,17 @@ export function ComboControl({
       >
         {!hideLabel && (
           <label className="block text-sm font-medium text-gray-700 mb-1">
-            {name}
+            <span className="inline-flex items-center gap-1">
+              <span>{name}</span>
+              {isPromoted && (
+                <PromotedWidgetIcon className="w-5 h-5 text-pink-500" />
+              )}
+            </span>
           </label>
         )}
 
         <div
-          className={`combo-control-trigger relative w-full p-3 comfy-input text-base flex items-center justify-between min-h-[46px] ${disabled ? "opacity-60 cursor-not-allowed" : ""} ${hasError ? "border-red-700 ring-1 ring-red-700" : ""}`}
+          className={`combo-control-trigger relative w-full p-3 comfy-input text-base flex items-center justify-between min-h-[46px] ${disabled ? "opacity-60 cursor-not-allowed" : ""} ${hasError ? "border-red-700 ring-1 ring-red-700" : ""} ${!hasError && isPromoted ? "border-pink-500 ring-1 ring-pink-500" : ""}`}
           onClick={() => !disabled && setInternalModalOpen(true)}
         >
           <span
@@ -374,8 +382,12 @@ export function ComboControl({
               }),
               control: (base) => ({
                 ...base,
-                borderColor: themeColors.border.focusBlue,
-                boxShadow: `0 0 0 1px ${themeColors.border.focusBlue}`,
+                borderColor: isPromoted
+                  ? themeColors.brand.promotedPink
+                  : themeColors.border.focusBlue,
+                boxShadow: `0 0 0 1px ${
+                  isPromoted ? themeColors.brand.promotedPink : themeColors.border.focusBlue
+                }`,
                 backgroundColor: isDark
                   ? base.backgroundColor
                   : themeColors.surface.white,
@@ -396,7 +408,12 @@ export function ComboControl({
     >
       {!hideLabel && (
         <label className="block text-sm font-medium text-gray-700 mb-1">
-          {name}
+          <span className="inline-flex items-center gap-1">
+            <span>{name}</span>
+            {isPromoted && (
+              <PromotedWidgetIcon className="w-3.5 h-3.5 text-pink-500" />
+            )}
+          </span>
         </label>
       )}
       <div
@@ -455,6 +472,30 @@ export function ComboControl({
               ...base,
               color: isDark ? base.color : lightSubtleText,
             }),
+            control: (base, state) => {
+              const defaultBorder = isDark ? themeColors.border.darkInput : themeColors.border.gray300;
+              const focusBorder = themeColors.status.danger;
+              const errorBorder = isDark ? themeColors.border.errorDark : themeColors.border.errorLight;
+              const promotedBorder = themeColors.brand.promotedPink;
+              const borderColor = hasError
+                ? errorBorder
+                : isPromoted
+                  ? promotedBorder
+                  : state.isFocused
+                    ? focusBorder
+                    : defaultBorder;
+              return {
+                ...base,
+                minHeight: 48,
+                borderRadius: 8,
+                borderWidth: 1,
+                borderColor,
+                boxShadow: state.isFocused || hasError || isPromoted
+                  ? `0 0 0 1px ${borderColor}`
+                  : "none",
+                backgroundColor: isDark ? themeColors.surface.darkInput : themeColors.surface.white,
+              };
+            },
           }}
           components={selectComponents}
           noOptionsMessage={() => "No matches"}

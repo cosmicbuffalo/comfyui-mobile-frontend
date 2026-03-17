@@ -18,6 +18,7 @@ export interface HistoryEntryData {
   timestamp: number;
   durationSeconds?: number;
   success?: boolean;
+  errorMessage?: string | null;
   outputs: {
     images: HistoryOutputImage[];
   };

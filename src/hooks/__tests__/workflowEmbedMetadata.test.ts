@@ -8,10 +8,6 @@ import { useBookmarksStore } from '../useBookmarks';
 import { createEmptyMobileLayout } from '@/utils/mobileLayout';
 import { queueAndGetEmbeddedWorkflow } from './helpers/queueAndGetEmbeddedWorkflow';
 
-type MobileOrigin =
-  | { scope: 'root'; nodeId: number }
-  | { scope: 'subgraph'; subgraphId: string; nodeId: number };
-
 function loadFixtureWorkflow(): Workflow {
   const fixturePath = resolve(
     process.cwd(),
@@ -23,15 +19,23 @@ function loadFixtureWorkflow(): Workflow {
 beforeEach(() => {
   useWorkflowStore.setState({
     workflow: null,
-    embedWorkflow: null,
     originalWorkflow: null,
     nodeTypes: null,
     hiddenItems: {},
     collapsedItems: {},
     connectionHighlightModes: {},
     mobileLayout: createEmptyMobileLayout(),
-    stableKeyByPointer: {},
-    pointerByStableKey: {},
+    itemKeyByPointer: {},
+    pointerByHierarchicalKey: {},
+    scopeStack: [{ type: 'root' }],
+    currentWorkflowKey: null,
+    savedWorkflowStates: {},
+    executingNodeId: null,
+    executingNodePath: null,
+    executingPromptId: null,
+    nodeOutputs: {},
+    nodeTextOutputs: {},
+    promptOutputs: {},
   });
   useBookmarksStore.setState({ bookmarkedItems: [] });
   useWorkflowErrorsStore.setState({
@@ -53,29 +57,22 @@ describe('embed workflow metadata', () => {
     useWorkflowStore.getState().setNodeTypes({} as NodeTypes);
     useWorkflowStore.getState().loadWorkflow(workflow, 'complex_i2v_example_workflow.json', { fresh: true });
 
-    // change prompt value
-    const loadedNode = useWorkflowStore.getState().workflow?.nodes.find((node) => node.id === 1020);
+    // Use a canonical root node (id 960, LoadImage) which has an array widgets_values.
+    // In the canonical model, workflow.nodes contains only root-level nodes.
+    const loadedNode = useWorkflowStore.getState().workflow?.nodes.find((node) => node.id === 960);
     expect(loadedNode).toBeDefined();
-    expect(loadedNode?.stableKey).toBeDefined();
+    expect(loadedNode?.itemKey).toBeDefined();
 
-    const updatedText = 'updated-node-1020-text';
+    const updatedValue = 'updated-node-960-image.png';
     useWorkflowStore
       .getState()
-      .updateNodeWidget(String(loadedNode?.stableKey), 0, updatedText);
-
-    const origin = (loadedNode?.properties as Record<string, unknown> | undefined)?.[
-      '__mobile_origin'
-    ] as MobileOrigin | undefined;
+      .updateNodeWidget(String(loadedNode?.itemKey), 0, updatedValue);
 
     const embedded = await queueAndGetEmbeddedWorkflow();
-    const embeddedNode =
-      origin?.scope === 'subgraph'
-        ? embedded.definitions?.subgraphs
-            ?.find((subgraph) => subgraph.id === origin.subgraphId)
-            ?.nodes.find((node) => node.id === origin.nodeId)
-        : embedded.nodes.find((node) => node.id === (origin?.nodeId ?? 1020));
+    // In canonical model, root node 960 is directly in embedded.nodes
+    const embeddedNode = embedded.nodes.find((node) => node.id === 960);
     expect(embeddedNode).toBeDefined();
     expect(Array.isArray(embeddedNode?.widgets_values)).toBe(true);
-    expect((embeddedNode?.widgets_values as unknown[])[0]).toBe(updatedText);
+    expect((embeddedNode?.widgets_values as string[])[0]).toBe(updatedValue);
   });
 });

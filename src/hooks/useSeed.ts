@@ -15,6 +15,7 @@ interface SeedModeContext {
   workflow: Workflow | null;
   nodeTypes: NodeTypes | null;
   updateNodeWidgets: (nodeId: number, updates: Record<number, unknown>) => void;
+  seedWidgetIndex?: number | null;
 }
 
 interface SeedState {
@@ -38,7 +39,10 @@ export const useSeedStore = create<SeedState>()(
           const { workflow, nodeTypes, updateNodeWidgets } = context;
           const node = workflow.nodes.find((n) => n.id === nodeId);
           if (node) {
-            const seedWidgetIndex = findSeedWidgetIndex(workflow, nodeTypes, node);
+            const seedWidgetIndex =
+              typeof context.seedWidgetIndex === 'number'
+                ? context.seedWidgetIndex
+                : findSeedWidgetIndex(workflow, nodeTypes, node);
             if (seedWidgetIndex !== null && Array.isArray(node.widgets_values)) {
               const controlWidgetIndex = seedWidgetIndex + 1;
               const hasControlWidget = typeof node.widgets_values[controlWidgetIndex] === 'string';

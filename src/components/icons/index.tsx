@@ -67,3 +67,4 @@ export { HourglassIcon } from './HourglassIcon';
 export { MoveUpDownIcon } from './MoveUpDownIcon';
 export { ProgressRingWithTrack } from './ProgressRingWithTrack';
 export type { ProgressRingWithTrackProps } from './ProgressRingWithTrack';
+export { PromotedWidgetIcon } from './PromotedWidgetIcon';

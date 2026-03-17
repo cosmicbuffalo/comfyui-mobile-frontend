@@ -9,7 +9,7 @@ describe('findLayoutPath', () => {
   const layout: MobileLayout = {
     root: [
       { type: 'node', id: 1 },
-      { type: 'group', id: 10, subgraphId: null, stableKey: groupKey },
+      { type: 'group', id: 10, subgraphId: null, itemKey: groupKey },
       { type: 'subgraph', id: 'sg-1' }
     ],
     groups: {
@@ -17,7 +17,7 @@ describe('findLayoutPath', () => {
       [nestedGroupKey]: [{ type: 'node', id: 4 }]
     },
     subgraphs: {
-      'sg-1': [{ type: 'group', id: 20, subgraphId: 'sg-1', stableKey: nestedGroupKey }]
+      'sg-1': [{ type: 'group', id: 20, subgraphId: 'sg-1', itemKey: nestedGroupKey }]
     },
     hiddenBlocks: {}
   };

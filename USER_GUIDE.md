@@ -21,6 +21,7 @@ This guide walks through every feature in the mobile frontend as of `v2.0.0`
   - [How do I organize my output files into folders?](#how-do-i-organize-my-output-files-into-folders)
   - [How do I switch between my outputs and input images?](#how-do-i-switch-between-my-outputs-and-input-images)
   - [How do I navigate between pages?](#how-do-i-navigate-between-pages)
+  - [How do I edit nodes inside a subgraph?](#how-do-i-edit-nodes-inside-a-subgraph)
 - [Main Workspace](#main-workspace)
   - [Main Menu](#main-menu)
     - [Load Workflow](#load-workflow)
@@ -33,6 +34,7 @@ This guide walks through every feature in the mobile frontend as of `v2.0.0`
 - [Workflow Page](#workflow-page)
   - [Workflow Options Menu](#workflow-options-menu)
   - [Containers (Groups and Subgraphs)](#containers-groups-and-subgraphs)
+    - [Subgraph Navigation](#subgraph-navigation)
   - [Node Cards](#node-cards)
   - [Node Connections](#node-connections)
   - [Parameters and Widgets](#parameters-and-widgets)
@@ -158,6 +160,11 @@ On the [Outputs Page](#outputs-page), tap the `...` menu in the top-right and se
 
 Use [Swipe Navigation](#swipe-navigation): swipe left from the Workflow page to reach the Queue page, or swipe right to reach the Outputs page. Swipe in the opposite direction to go back. You can also use the quick-navigation links in each page's `...` menu (e.g., "Go to queue" or "Go to outputs" in the [Workflow Options Menu](#workflow-options-menu)).
 
+<a id="how-do-i-edit-nodes-inside-a-subgraph"></a>
+### How do I edit nodes inside a subgraph?
+
+On the workflow page, find the subgraph placeholder node card. Open its `...` menu and tap **Enter subgraph** to drill into it. A breadcrumb bar appears at the top showing your current scope (e.g., _Root / My Subgraph_). You can then view and edit the inner nodes of that subgraph just like root-level nodes. Tap **Root** in the breadcrumb, use the device back button, or swipe back to return to the root workflow. If the subgraph exposes widget controls on the placeholder card itself (promoted or proxy widgets), you can edit those directly without entering the subgraph.
+
 <a id="main-workspace"></a>
 ## Main Workspace
 
@@ -263,8 +270,22 @@ Tap the `...` button in the top-right to access workflow-wide actions:
   - Add node inside container.
   - Bypass all nodes in container.
   - Delete container (container-only or container + nested contents).
+  - Change container color (via the `...` menu on the container header).
 - Nested containers are supported, including groups inside groups and groups/subgraphs within nested structures.
 - Empty containers show a placeholder action to quickly add a node.
+
+#### Subgraph Navigation
+
+- Subgraph placeholder nodes show an **Enter** action in their `...` menu (or via a dedicated button on the placeholder card) to navigate into the subgraph.
+- When inside a subgraph, a **breadcrumb bar** appears at the top of the workflow page showing the current scope path (e.g., _Root / My Subgraph_).
+  - Tap **Root** in the breadcrumb to jump back to the root workflow.
+  - Tap any intermediate crumb in a deeply nested stack to jump to that level.
+- The device's **back button or back gesture** exits the current subgraph scope (same as tapping Root).
+- While inside a subgraph, all node cards, connection traversal, and editing actions operate on the inner nodes of that subgraph.
+- Subgraph placeholder nodes also display promoted widget controls directly on their card (no need to enter the subgraph to adjust common parameters):
+  - **Slot-promoted widgets** (set by the subgraph author via the `input.widget` mechanism) appear as standard widget controls.
+  - **Proxy widgets** (set via `properties.proxyWidgets`) reference inner node widgets and route updates to those inner nodes transparently.
+  - Seed-mode controls (randomize, increment, decrement) work on promoted seed slots.
 
 <a id="node-cards"></a>
 ### Node Cards

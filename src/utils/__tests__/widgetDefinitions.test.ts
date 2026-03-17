@@ -5,7 +5,7 @@ import { getWidgetDefinitions } from '../widgetDefinitions';
 function makeNode(id: number, type: string, widgetsValues: unknown[]): WorkflowNode {
   return {
     id,
-    stableKey: `sk-${id}`,
+    itemKey: `sk-${id}`,
     type,
     pos: [0, 0],
     size: [200, 100],

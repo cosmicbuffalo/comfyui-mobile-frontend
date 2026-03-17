@@ -1,5 +1,5 @@
 import type { ItemRef, MobileLayout } from '@/utils/mobileLayout';
-import { makeLocationPointer } from '@/utils/mobileLayout';
+import { getGroupKey, makeLocationPointer } from '@/utils/mobileLayout';
 
 export interface LayoutHiddenState {
   hiddenNodeKeys: Set<string>;
@@ -13,7 +13,6 @@ export function collectLayoutHiddenState(
   options: {
     layout: MobileLayout;
     hiddenItems: Record<string, boolean>;
-    stableKeyByPointer: Record<string, string>;
   },
   context?: {
     parentHidden?: boolean;
@@ -34,15 +33,10 @@ export function collectLayoutHiddenState(
   const hiddenSubgraphIds = context?.hiddenSubgraphIds ?? new Set<string>();
   const {
     layout,
-    hiddenItems,
-    stableKeyByPointer
+    hiddenItems
   } = options;
-  const hasStableFlag = (state: Record<string, boolean>, pointer: string): boolean => {
-    if (pointer in state) return Boolean(state[pointer]);
-    const stableKey = stableKeyByPointer[pointer];
-    if (stableKey) return Boolean(state[stableKey]);
-    return Boolean(state[pointer]);
-  };
+  const hasHiddenFlag = (state: Record<string, boolean>, pointer: string): boolean =>
+    Boolean(state[pointer]);
 
   let hiddenNodeCount = 0;
   for (const ref of refs) {
@@ -52,9 +46,9 @@ export function collectLayoutHiddenState(
         nodeId: ref.id,
         subgraphId: parentSubgraphId
       });
-      const isHidden = parentHidden || hasStableFlag(hiddenItems, nodeKey);
+      const isHidden = parentHidden || hasHiddenFlag(hiddenItems, nodeKey);
       if (isHidden) hiddenNodeCount += 1;
-      if (hasStableFlag(hiddenItems, nodeKey)) hiddenNodeKeys.add(nodeKey);
+      if (hasHiddenFlag(hiddenItems, nodeKey)) hiddenNodeKeys.add(nodeKey);
       continue;
     }
 
@@ -66,20 +60,21 @@ export function collectLayoutHiddenState(
           nodeId: id,
           subgraphId: parentSubgraphId
         });
-        const isHidden = parentHidden || hasStableFlag(hiddenItems, nodeKey);
+        const isHidden = parentHidden || hasHiddenFlag(hiddenItems, nodeKey);
         if (isHidden) hiddenNodeCount += 1;
-        if (hasStableFlag(hiddenItems, nodeKey)) hiddenNodeKeys.add(nodeKey);
+        if (hasHiddenFlag(hiddenItems, nodeKey)) hiddenNodeKeys.add(nodeKey);
       }
       continue;
     }
 
     if (ref.type === 'group') {
-      if (visitedGroups.has(ref.stableKey)) continue;
-      const groupHidden = parentHidden || hasStableFlag(hiddenItems, ref.stableKey);
-      if (hasStableFlag(hiddenItems, ref.stableKey)) hiddenGroupKeys.add(ref.stableKey);
-      visitedGroups.add(ref.stableKey);
+      const groupKey = getGroupKey(ref.id, ref.subgraphId);
+      if (visitedGroups.has(groupKey)) continue;
+      const groupHidden = parentHidden || hasHiddenFlag(hiddenItems, groupKey);
+      if (hasHiddenFlag(hiddenItems, groupKey)) hiddenGroupKeys.add(groupKey);
+      visitedGroups.add(groupKey);
       const nested = collectLayoutHiddenState(
-        layout.groups[ref.stableKey] ?? [],
+        layout.groups[groupKey] ?? [],
         options,
         {
           parentHidden: groupHidden,
@@ -92,14 +87,14 @@ export function collectLayoutHiddenState(
         }
       );
       hiddenNodeCount += nested.hiddenNodeCount;
-      visitedGroups.delete(ref.stableKey);
+      visitedGroups.delete(groupKey);
       continue;
     }
 
     if (visitedSubgraphs.has(ref.id)) continue;
     const subgraphKey = makeLocationPointer({ type: 'subgraph', subgraphId: ref.id });
-    const subgraphHidden = parentHidden || hasStableFlag(hiddenItems, subgraphKey);
-    if (hasStableFlag(hiddenItems, subgraphKey)) hiddenSubgraphIds.add(ref.id);
+    const subgraphHidden = parentHidden || hasHiddenFlag(hiddenItems, subgraphKey);
+    if (hasHiddenFlag(hiddenItems, subgraphKey)) hiddenSubgraphIds.add(ref.id);
     visitedSubgraphs.add(ref.id);
     const nested = collectLayoutHiddenState(
       layout.subgraphs[ref.id] ?? [],

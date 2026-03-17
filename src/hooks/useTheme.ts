@@ -14,15 +14,21 @@ export const useThemeStore = create<ThemeState>()(
     (set) => ({
       theme: 'dark',
       setTheme: (theme) => {
-        set({ theme });
+        void theme;
+        set({ theme: 'dark' });
       },
       toggleTheme: () => {
-        set((state) => ({ theme: state.theme === 'dark' ? 'light' : 'dark' }));
+        set(() => ({ theme: 'dark' }));
       }
     }),
     {
       name: 'theme-storage',
-      storage: createJSONStorage(() => localStorage)
+      storage: createJSONStorage(() => localStorage),
+      // TEMPORARY: keep UI locked to dark mode while we fix color tuning.
+      // Light mode is intentionally disabled for now and will be restored later.
+      onRehydrateStorage: () => (state) => {
+        state?.setTheme('dark');
+      },
     }
   )
 );

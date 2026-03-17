@@ -15,6 +15,10 @@ import {
   prettyPackName
 } from '@/utils/search';
 import { resolveNodeTypeDisplayName, searchAndSortNodeTypes } from '@/utils/nodeTypeSearch';
+import {
+  findWorkflowNodeById,
+  resolveWorkflowNodeDisplayName
+} from '@/utils/subgraphPlaceholderLabels';
 import { ConnectionSearchResult } from './ConnectionModal/SearchResult';
 import { SearchActionModal } from './SearchActionModal';
 import { NodeTypeSearchResult } from './NodeTypeSearchResult';
@@ -105,17 +109,14 @@ export function ConnectionModal(props: ConnectionModalProps) {
   const [multiInputPickerNodeId, setMultiInputPickerNodeId] = useState<number | null>(null);
   const [multiInputPickerSelection, setMultiInputPickerSelection] = useState<Set<string>>(new Set());
 
-  const currentNodeStableKey = useMemo(() => {
-    if (!workflow) return null;
-    const node = workflow.nodes.find((entry) => entry.id === nodeId);
-    return node?.stableKey ?? null;
+  const currentNodeHierarchicalKey = useMemo(() => {
+    const node = findWorkflowNodeById(workflow, nodeId);
+    return node?.itemKey ?? null;
   }, [nodeId, workflow]);
 
-  const getStableKeyForNodeId = (targetNodeId: number): string | null => {
-    const latestWorkflow = useWorkflowStore.getState().workflow;
-    if (!latestWorkflow) return null;
-    const node = latestWorkflow.nodes.find((entry) => entry.id === targetNodeId);
-    return node?.stableKey ?? null;
+  const getHierarchicalKeyForNodeId = (targetNodeId: number): string | null => {
+    const node = findWorkflowNodeById(useWorkflowStore.getState().workflow, targetNodeId);
+    return node?.itemKey ?? null;
   };
 
   const compatibleNodes = useMemo(() => {
@@ -130,10 +131,7 @@ export function ConnectionModal(props: ConnectionModalProps) {
       .map((entry) => {
         const { node } = entry;
         const typeDef = nodeTypes?.[node.type];
-        const title = (node as { title?: unknown }).title;
-        const displayName = (typeof title === 'string' && title.trim())
-          ? title.trim()
-          : (typeDef?.display_name || node.type);
+        const displayName = resolveWorkflowNodeDisplayName(workflow, node, nodeTypes);
         const text = `${displayName} ${typeDef?.display_name ?? ''} ${node.type} ${String(node.id)}`;
         const matches = !query
           || fuzzyMatch(query, text)
@@ -149,7 +147,7 @@ export function ConnectionModal(props: ConnectionModalProps) {
       .filter(Boolean) as Array<(typeof compatibleNodes)[number] & { score: number }>;
     scored.sort((a, b) => b.score - a.score || a.node.id - b.node.id);
     return scored;
-  }, [mode, compatibleNodes, searchQuery, nodeTypes]);
+  }, [mode, compatibleNodes, searchQuery, nodeTypes, workflow]);
 
   const compatibleTypes = useMemo(() => {
     if (mode !== 'input' || !nodeTypes) return [];
@@ -222,10 +220,7 @@ export function ConnectionModal(props: ConnectionModalProps) {
     const candidates = compatibleTargets
       .map(({ node, inputIndex }) => {
         const typeDef = nodeTypes[node.type];
-        const title = (node as { title?: unknown }).title;
-        const displayName = (typeof title === 'string' && title.trim())
-          ? title.trim()
-          : (typeDef?.display_name || node.type);
+        const displayName = resolveWorkflowNodeDisplayName(workflow, node, nodeTypes);
         const pack = prettyPackName(String(typeDef?.python_module ?? typeDef?.category?.split('/')[0] ?? 'Core'));
         const inputSlot = node.inputs?.[inputIndex];
         if (!inputSlot) return null;
@@ -241,10 +236,9 @@ export function ConnectionModal(props: ConnectionModalProps) {
           if (existingLink) {
             hasExistingLink = true;
             const [, existingSrcNodeId] = existingLink;
-            const existingSrcNode = workflow.nodes.find((n) => n.id === existingSrcNodeId);
+            const existingSrcNode = findWorkflowNodeById(workflow, existingSrcNodeId);
             if (existingSrcNode) {
-              const existingTypeDef = nodeTypes[existingSrcNode.type];
-              existingSourceLabel = `${existingTypeDef?.display_name || existingSrcNode.type} #${existingSrcNode.id}`;
+              existingSourceLabel = `${resolveWorkflowNodeDisplayName(workflow, existingSrcNode, nodeTypes)} #${existingSrcNode.id}`;
             }
           }
         }
@@ -334,29 +328,29 @@ export function ConnectionModal(props: ConnectionModalProps) {
 
   const handleSelectNode = (srcNodeId: number, srcOutputIndex: number) => {
     if (mode !== 'input') return;
-    const srcStableKey = getStableKeyForNodeId(srcNodeId);
-    if (!srcStableKey || !currentNodeStableKey) return;
-    connectNodes(srcStableKey, srcOutputIndex, currentNodeStableKey, props.inputIndex, props.inputType);
+    const srcHierarchicalKey = getHierarchicalKeyForNodeId(srcNodeId);
+    if (!srcHierarchicalKey || !currentNodeHierarchicalKey) return;
+    connectNodes(srcHierarchicalKey, srcOutputIndex, currentNodeHierarchicalKey, props.inputIndex, props.inputType);
     onClose();
-    scrollToNode(srcStableKey);
+    scrollToNode(srcHierarchicalKey);
   };
 
   const handleDisconnect = () => {
     if (mode !== 'input') return;
-    if (!currentNodeStableKey) return;
-    disconnectInput(currentNodeStableKey, props.inputIndex);
+    if (!currentNodeHierarchicalKey) return;
+    disconnectInput(currentNodeHierarchicalKey, props.inputIndex);
     onClose();
   };
 
   const handleAddNewNode = (typeName: string) => {
     if (mode !== 'input') return;
-    if (!currentNodeStableKey) return;
-    const newNodeId = addNodeAndConnect(typeName, currentNodeStableKey, props.inputIndex);
+    if (!currentNodeHierarchicalKey) return;
+    const newNodeId = addNodeAndConnect(typeName, currentNodeHierarchicalKey, props.inputIndex);
     onClose();
     if (newNodeId !== null) {
-      const newStableKey = getStableKeyForNodeId(newNodeId);
-      if (newStableKey) {
-        scrollToNode(newStableKey);
+      const newHierarchicalKey = getHierarchicalKeyForNodeId(newNodeId);
+      if (newHierarchicalKey) {
+        scrollToNode(newHierarchicalKey);
       }
     }
   };
@@ -367,28 +361,28 @@ export function ConnectionModal(props: ConnectionModalProps) {
     suggestedInputType: string
   ) => {
     if (mode !== 'output') return;
-    if (!currentNodeStableKey) return;
+    if (!currentNodeHierarchicalKey) return;
 
     const newNodeId = addNode(typeName, {
-      nearNodeStableKey: currentNodeStableKey,
+      nearNodeHierarchicalKey: currentNodeHierarchicalKey,
     });
     if (newNodeId === null) return;
 
-    const newStableKey = getStableKeyForNodeId(newNodeId);
-    if (!newStableKey) return;
+    const newHierarchicalKey = getHierarchicalKeyForNodeId(newNodeId);
+    if (!newHierarchicalKey) return;
 
     const latestWorkflow = useWorkflowStore.getState().workflow;
     const newNode = latestWorkflow?.nodes.find((node) => node.id === newNodeId);
-    if (!newNode || !currentNodeStableKey) return;
+    if (!newNode || !currentNodeHierarchicalKey) return;
 
     const compatibleInputIndex = newNode.inputs.findIndex((input) => input.type.toUpperCase() === suggestedInputType.toUpperCase());
     const inputIndex = compatibleInputIndex >= 0 ? compatibleInputIndex : suggestedInputIndex;
     const inputType = newNode.inputs[inputIndex]?.type;
     if (inputType == null) return;
 
-    connectNodes(currentNodeStableKey, props.outputIndex, newStableKey, inputIndex, inputType);
+    connectNodes(currentNodeHierarchicalKey, props.outputIndex, newHierarchicalKey, inputIndex, inputType);
     onClose();
-    scrollToNode(newStableKey);
+    scrollToNode(newHierarchicalKey);
   };
 
   const toggleOutputTargetSelection = (nodeIdToToggle: number, inputIndexToToggle: number) => {
@@ -470,17 +464,17 @@ export function ConnectionModal(props: ConnectionModalProps) {
       if (selectedOutputTargetKeys.has(key)) continue;
       const candidate = outputCandidatesByKey.get(key);
       if (!candidate) continue;
-      const targetStableKey = getStableKeyForNodeId(candidate.nodeId);
-      if (!targetStableKey) continue;
-      disconnectInput(targetStableKey, candidate.inputIndex);
+      const targetHierarchicalKey = getHierarchicalKeyForNodeId(candidate.nodeId);
+      if (!targetHierarchicalKey) continue;
+      disconnectInput(targetHierarchicalKey, candidate.inputIndex);
     }
     for (const key of selectedOutputTargetKeys) {
       if (initialOutputSelection.has(key)) continue;
       const candidate = outputCandidatesByKey.get(key);
       if (!candidate) continue;
-      const targetStableKey = getStableKeyForNodeId(candidate.nodeId);
-      if (!targetStableKey || !currentNodeStableKey) continue;
-      connectNodes(currentNodeStableKey, props.outputIndex, targetStableKey, candidate.inputIndex, candidate.inputType);
+      const targetHierarchicalKey = getHierarchicalKeyForNodeId(candidate.nodeId);
+      if (!targetHierarchicalKey || !currentNodeHierarchicalKey) continue;
+      connectNodes(currentNodeHierarchicalKey, props.outputIndex, targetHierarchicalKey, candidate.inputIndex, candidate.inputType);
     }
     onClose();
   };
@@ -508,10 +502,7 @@ export function ConnectionModal(props: ConnectionModalProps) {
       <div className="px-3 pt-3 pb-20 flex flex-col gap-2">
         {filteredNodes.map(({ node, outputIndex }) => {
           const typeDef = nodeTypes?.[node.type];
-          const title = (node as { title?: unknown }).title;
-          const displayName = (typeof title === 'string' && title.trim())
-            ? title.trim()
-            : (typeDef?.display_name || node.type);
+          const displayName = resolveWorkflowNodeDisplayName(workflow, node, nodeTypes);
           const pack = prettyPackName(String(typeDef?.python_module ?? typeDef?.category?.split('/')[0] ?? 'Core'));
           const outputSlot = node.outputs?.[outputIndex];
           const outputName = outputSlot?.localized_name || outputSlot?.name || `Output ${outputIndex + 1}`;

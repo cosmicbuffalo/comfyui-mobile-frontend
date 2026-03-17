@@ -44,6 +44,7 @@ export const themeColors = {
   surface: {
     white: "#ffffff",
     darkPanel: "#151a23",
+    darkInput: "#0b1320",
     gray100: "#f3f4f6",
     gray200: "#e5e7eb",
   },
@@ -55,6 +56,11 @@ export const themeColors = {
   },
   border: {
     gray200: "#e5e7eb",
+    gray300: "#d1d5db",
+    darkInput: "#1b2432",
+    nodeHeaderTint: "rgba(0, 0, 0, 0.24)",
+    errorDark: "#7f1d1d",
+    errorLight: "#b91c1c",
     focusBlue: "#3b82f6",
   },
   status: {
@@ -64,7 +70,10 @@ export const themeColors = {
     danger: "#f97316",
   },
   brand: {
+    blue400: "#60a5fa",
     blue500: "#3b82f6",
+    bypassPurple: "#9333ea",
+    promotedPink: "#ec4899",
     subgraphBackground08: "rgba(59, 130, 246, 0.08)",
     subgraphBackground10: "rgba(59, 130, 246, 0.10)",
     subgraphBackground14: "rgba(59, 130, 246, 0.14)",

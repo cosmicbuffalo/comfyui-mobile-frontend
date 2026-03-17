@@ -6,7 +6,8 @@ import { PasteJsonPanel } from './AppMenu/PasteJsonPanel';
 import { SaveWorkflowPanel } from './AppMenu/SaveWorkflowPanel';
 import { TemplatesPanel } from './AppMenu/TemplatesPanel';
 import { UserWorkflowsPanel } from './AppMenu/UserWorkflowsPanel';
-import { stripWorkflowClientMetadata, useWorkflowStore } from '@/hooks/useWorkflow';
+import { useWorkflowStore } from '@/hooks/useWorkflow';
+import { getWorkflowForPersistence } from '@/utils/workflowPersistence';
 import { useThemeStore } from '@/hooks/useTheme';
 import type { Workflow } from '@/api/types';
 import {
@@ -200,7 +201,11 @@ export function AppMenu({
 
     try {
       setLoading(true);
-      await saveUserWorkflow(finalFilename, stripWorkflowClientMetadata(workflow));
+      const workflowForPersistence = getWorkflowForPersistence(workflow);
+      if (!workflowForPersistence) {
+        throw new Error('Unable to save: embedded workflow is unavailable.');
+      }
+      await saveUserWorkflow(finalFilename, workflowForPersistence);
       setSavedWorkflow(workflow, finalFilename); // Update saved state
       setError(null);
       onClose();
@@ -236,7 +241,12 @@ export function AppMenu({
   const handleDownload = () => {
     if (!workflow) return;
 
-    const json = JSON.stringify(stripWorkflowClientMetadata(workflow), null, 2);
+    const workflowForPersistence = getWorkflowForPersistence(workflow);
+    if (!workflowForPersistence) {
+      setError('Unable to download: embedded workflow is unavailable.');
+      return;
+    }
+    const json = JSON.stringify(workflowForPersistence, null, 2);
     const blob = new Blob([json], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
 

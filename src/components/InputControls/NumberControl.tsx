@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { MinusIcon, PlusIcon } from "../icons";
+import { PromotedWidgetIcon } from "../icons";
 
 interface NumberControlProps {
   containerClass?: string;
@@ -15,6 +16,7 @@ interface NumberControlProps {
   step?: number;
   isInt?: boolean;
   hasError?: boolean;
+  isPromoted?: boolean;
   // Reserved for future seed mode UI
   seedMode?: "fixed" | "randomize" | "increment" | "decrement";
   onSeedModeChange?: (
@@ -35,6 +37,7 @@ export function NumberControl({
   step: stepProp,
   isInt: isIntProp,
   hasError = false,
+  isPromoted = false,
 }: NumberControlProps) {
   const [localValue, setLocalValue] = useState(String(value || 0));
   const isInt =
@@ -72,6 +75,7 @@ export function NumberControl({
     "w-full p-3 comfy-input text-base text-gray-900",
     disabled ? "opacity-60 cursor-not-allowed" : "",
     hasError ? "border-red-700 ring-1 ring-red-700" : "",
+    !hasError && isPromoted ? "border-pink-500 ring-1 ring-pink-500" : "",
   ]
     .filter(Boolean)
     .join(" ");
@@ -88,7 +92,12 @@ export function NumberControl({
   return (
     <div className={`${containerClass ?? ""} number-control-${name}`}>
       <label className="block text-sm font-medium text-gray-700 mb-1">
-        {name}
+        <span className="inline-flex items-center gap-1">
+          <span>{name}</span>
+          {isPromoted && (
+            <PromotedWidgetIcon className="w-3.5 h-3.5 text-pink-500" />
+          )}
+        </span>
       </label>
       <div
         className={`number-stepper-container-${name} flex items-center gap-2`}

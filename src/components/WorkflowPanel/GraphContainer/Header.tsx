@@ -32,9 +32,7 @@ interface GraphContainerHeaderProps {
   isBookmarked: boolean;
   canShowBookmarkAction: boolean;
   foldAllLabel: string;
-  color?: string;
-  backgroundColor?: string;
-  borderColor?: string;
+  color: string;
   onToggleCollapse: () => void;
   onToggleFoldAll: () => void;
   onToggleBookmark: () => void;
@@ -50,6 +48,7 @@ interface GraphContainerHeaderProps {
   labelEditRequestId?: number | null;
   labelEditInitialValue?: string;
   onLabelEditRequestHandled?: () => void;
+  showBypassAllAction?: boolean;
   showUnbypassAllAction?: boolean;
   bypassState?: 'none' | 'partial' | 'all';
   bypassedNodeCount?: number;
@@ -66,8 +65,6 @@ export function GraphContainerHeader({
   canShowBookmarkAction,
   foldAllLabel,
   color,
-  backgroundColor,
-  borderColor,
   onToggleCollapse,
   onToggleFoldAll,
   onToggleBookmark,
@@ -83,6 +80,7 @@ export function GraphContainerHeader({
   labelEditRequestId = null,
   labelEditInitialValue = "",
   onLabelEditRequestHandled,
+  showBypassAllAction = true,
   showUnbypassAllAction = true,
   bypassState = 'none',
   bypassedNodeCount = 0,
@@ -114,16 +112,15 @@ export function GraphContainerHeader({
   });
 
   const displayTitle = title.trim() || `${containerType} ${containerId}`;
-  const fallbackColor = color ?? containerColor ?? "";
-  const resolvedContainerColor = resolveWorkflowColor(containerColor || fallbackColor);
-  const resolvedColor = resolveWorkflowColor(fallbackColor);
-  const resolvedBackgroundColor =
+  const resolvedContainerColor = resolveWorkflowColor(containerColor);
+  const resolvedColor = resolveWorkflowColor(color);
+  const backgroundColor =
     containerType === "subgraph"
       ? hexToRgba(resolvedColor, 0.22)
       : hexToRgba(resolvedColor, 0.15);
   const hasHiddenNodes = hiddenNodeCount > 0;
   const showBookmarkAction = isBookmarked || canShowBookmarkAction;
-  const canChangeColor = containerType === "group";
+  const canChangeColor = typeof onChangeColor === "function";
   const countClassName = containerType === "subgraph" ? "text-blue-600" : "text-gray-500";
   const handleChangeColor = (nextColor: string) => {
     if (onChangeColor) {
@@ -180,6 +177,7 @@ export function GraphContainerHeader({
   });
   useLayoutEffect(() => {
     if (!colorPopoverOpen) return;
+
     const updateColorPopoverPosition = () => {
       const button = menuButtonRef.current;
       const popover = colorPopoverRef.current;
@@ -212,6 +210,7 @@ export function GraphContainerHeader({
         visibility: "visible",
       });
     };
+
     updateColorPopoverPosition();
     const raf1 = requestAnimationFrame(updateColorPopoverPosition);
     const raf2 = requestAnimationFrame(updateColorPopoverPosition);
@@ -255,9 +254,8 @@ export function GraphContainerHeader({
       }`}
       style={{
         backgroundColor: bypassState === 'all'
-          ? hexToRgba('#9333ea', 0.12)
-          : color ? resolvedBackgroundColor : backgroundColor,
-        borderColor,
+          ? hexToRgba(themeColors.brand.bypassPurple, 0.12)
+          : backgroundColor,
       }}
       onClick={handleHeaderClick}
     >
@@ -351,7 +349,7 @@ export function GraphContainerHeader({
                     type="button"
                     title={label}
                     aria-label={`Set color: ${label}`}
-                    className={`w-9 h-9 rounded-full transition-transform active:scale-95 ${
+                    className={`w-9 aspect-square rounded-full transition-transform active:scale-95 ${
                       isSelected ? "ring-2 ring-offset-1 ring-gray-400" : ""
                     }`}
                     style={{ backgroundColor: color }}
@@ -464,7 +462,8 @@ export function GraphContainerHeader({
                     event.stopPropagation();
                     onBypassAll(true);
                     closeMenu();
-                  }
+                  },
+                  hidden: !showBypassAllAction
                 },
                 {
                   key: 'unbypass-all',

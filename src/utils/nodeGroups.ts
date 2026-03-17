@@ -2,6 +2,9 @@ import type { WorkflowGroup, WorkflowNode } from "@/api/types";
 
 type GroupLike = Pick<WorkflowGroup, "id" | "bounding">;
 
+// LiteGraph.NODE_TITLE_HEIGHT — used when computing node bounding boxes.
+const NODE_TITLE_HEIGHT = 30;
+
 export function computeNodeGroupsFor(
   nodes: WorkflowNode[],
   groups: GroupLike[] | null | undefined,
@@ -20,8 +23,15 @@ export function computeNodeGroupsFor(
   for (const node of nodes) {
     const [nodeX, nodeY] = node.pos;
     const [nodeWidth, nodeHeight] = node.size;
+    const isCollapsed = !!(node.flags as Record<string, unknown>)?.collapsed;
+
+    // Match LiteGraph's node bounding calculation (LGraphNode.measure):
+    // Non-collapsed: [x, y - titleHeight, width, height + titleHeight]
+    // Collapsed:     [x, y - titleHeight, collapsedWidth, titleHeight]
+    const boundingH = isCollapsed ? NODE_TITLE_HEIGHT : nodeHeight + NODE_TITLE_HEIGHT;
+    const boundingY = nodeY - NODE_TITLE_HEIGHT;
     const centerX = nodeX + nodeWidth / 2;
-    const centerY = nodeY + nodeHeight / 2;
+    const centerY = boundingY + boundingH / 2;
 
     for (const group of sortedGroups) {
       const [groupX, groupY, groupWidth, groupHeight] = group.bounding;

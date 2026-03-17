@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import { CaretDownIcon, CaretRightIcon, MenuIcon } from "@/components/icons";
+import { themeColors } from "@/theme/colors";
 import { hexToRgba } from "@/utils/grouping";
 
 interface ContainerItemCardProps {
@@ -15,6 +16,7 @@ interface ContainerItemCardProps {
   isDropTarget: boolean;
   isHighlighted: boolean;
   color: string;
+  allBypassed?: boolean;
   onToggleCollapse: () => void;
   childrenContent: ReactNode;
 }
@@ -32,76 +34,48 @@ export function ContainerItemCard({
   isDropTarget,
   isHighlighted,
   color,
+  allBypassed,
   onToggleCollapse,
   childrenContent,
 }: ContainerItemCardProps) {
-  const backgroundColor = hexToRgba(color, 0.15);
-  const borderColor = hexToRgba(color, 0.4);
-  const headerBackgroundColor = hexToRgba(color, 0.4);
+  const bypassPurple = themeColors.brand.bypassPurple;
+  const backgroundColor = allBypassed ? hexToRgba(bypassPurple, 0.12) : hexToRgba(color, 0.15);
+  const borderColor = allBypassed ? hexToRgba(bypassPurple, 0.3) : hexToRgba(color, 0.3);
+  const headerBackgroundColor = allBypassed ? hexToRgba(bypassPurple, 0.12) : hexToRgba(color, 0.15);
   const nodeCountLabel = `${nodeCount} node${nodeCount !== 1 ? "s" : ""}${
     containerType === "subgraph" ? " (subgraph)" : ""
   }`;
 
   return (
     <div
-      data-container-type={containerType}
-      className={`rounded-xl mb-3 shadow-md ${isDragging ? "overflow-visible" : "overflow-hidden"} transition-shadow ${
-        isTarget ? "border-blue-500 border-2 ring-2 ring-blue-400" : "border"
-      } ${isHighlighted && !isTarget ? "ring-2 ring-blue-500 transition-all" : ""} ${
-        isDropTarget ? "ring-2 ring-blue-300 ring-dashed" : ""
-      }`}
-      style={{
-        backgroundColor,
-        borderColor,
-        ...(isTarget ? { touchAction: "none" } : {}),
-        ...(isTarget
-          ? {
-              animation: isDragging
-                ? "none"
-                : "node-card-wiggle 180ms ease-in-out infinite alternate",
-            }
-          : {}),
-      }}
+      className="rounded-xl mb-3 bg-white dark:bg-neutral-900"
       data-reposition-item={dataKey}
     >
       <div
-        data-reposition-header={containerDataKey}
-        className={`flex items-center justify-between cursor-pointer gap-1 px-3 py-2 ${
-          isCollapsed ? "rounded-xl" : "rounded-t-xl mb-2"
+        data-container-type={containerType}
+        className={`rounded-xl shadow-md ${isDragging ? "overflow-visible" : "overflow-hidden"} transition-shadow ${
+          isTarget ? "border-blue-500 border-2 ring-2 ring-blue-400" : "border"
+        } ${isHighlighted && !isTarget ? "ring-2 ring-blue-500 transition-all" : ""} ${
+          isDropTarget ? "ring-2 ring-blue-300 ring-dashed" : ""
         }`}
         style={{
-          backgroundColor: headerBackgroundColor,
+          backgroundColor,
           borderColor,
-        }}
-        onClick={(e) => {
-          if (!canToggleCollapse) return;
-          e.stopPropagation();
-          onToggleCollapse();
+          ...(isTarget ? { touchAction: "none" } : {}),
+          ...(isTarget
+            ? {
+                animation: isDragging
+                  ? "none"
+                  : "node-card-wiggle 180ms ease-in-out infinite alternate",
+              }
+            : {}),
         }}
       >
-        <span
-          data-reposition-handle={dataKey}
-          className="touch-none w-8 h-8 -ml-2 flex items-center justify-center shrink-0"
-        >
-          <MenuIcon className={`w-5 h-5 ${isTarget ? "text-blue-500" : "text-gray-500"}`} />
-        </span>
-        <span className="font-semibold text-gray-900 flex-1 min-w-0 truncate">
-          {title}
-        </span>
-        <span className="ml-auto text-sm shrink-0 text-gray-500">
-          {nodeCountLabel}
-        </span>
-        {isCollapsed ? (
-          <CaretRightIcon className={`w-6 h-6 shrink-0 ${canToggleCollapse ? "text-gray-500" : "text-gray-500 opacity-50"}`} />
-        ) : (
-          <CaretDownIcon className={`w-6 h-6 shrink-0 text-gray-500`} />
-        )}
-      </div>
-      {childrenContent}
-      {!isCollapsed && (
         <div
-          data-reposition-footer={containerDataKey}
-          className={`px-3 py-1.5 rounded-b-xl select-none ${canToggleCollapse ? "cursor-pointer" : ""}`}
+          data-reposition-header={containerDataKey}
+          className={`flex items-center justify-between cursor-pointer gap-1 px-3 py-2 ${
+            isCollapsed ? "rounded-xl" : "rounded-t-xl mb-2"
+          }`}
           style={{
             backgroundColor: headerBackgroundColor,
             borderColor,
@@ -112,19 +86,53 @@ export function ContainerItemCard({
             onToggleCollapse();
           }}
         >
-          <div className="flex items-center">
-            <span className="text-xs flex-1 min-w-0 truncate text-gray-500">
-              {title}
-            </span>
-            <div className="ml-auto flex items-center gap-1">
-              <span className="text-xs shrink-0 text-gray-500">
-                {nodeCountLabel}
+          <span
+            data-reposition-handle={dataKey}
+            className="touch-none w-5 h-5 flex items-center justify-center shrink-0"
+          >
+            <MenuIcon className={`w-5 h-5 ${isTarget ? "text-blue-500" : "text-gray-500"}`} />
+          </span>
+          <span className="font-semibold text-gray-900 flex-1 min-w-0 truncate">
+            {title}
+          </span>
+          <span className="ml-auto text-sm shrink-0 text-gray-500">
+            {nodeCountLabel}
+          </span>
+          {isCollapsed ? (
+            <CaretRightIcon className={`w-6 h-6 shrink-0 ${canToggleCollapse ? "text-gray-500" : "text-gray-500 opacity-50"}`} />
+          ) : (
+            <CaretDownIcon className={`w-6 h-6 shrink-0 text-gray-500`} />
+          )}
+        </div>
+        {childrenContent}
+        {!isCollapsed && (
+          <div
+            data-reposition-footer={containerDataKey}
+            className={`px-3 py-1.5 rounded-b-xl select-none ${canToggleCollapse ? "cursor-pointer" : ""}`}
+            style={{
+              backgroundColor: headerBackgroundColor,
+              borderColor,
+            }}
+            onClick={(e) => {
+              if (!canToggleCollapse) return;
+              e.stopPropagation();
+              onToggleCollapse();
+            }}
+          >
+            <div className="flex items-center">
+              <span className="text-xs flex-1 min-w-0 truncate text-gray-500">
+                {title}
               </span>
-              <CaretDownIcon className={`w-6 h-6 shrink-0 rotate-180 ${canToggleCollapse ? "text-gray-500" : "text-gray-500 opacity-50"}`} />
+              <div className="ml-auto flex items-center gap-1">
+                <span className="text-xs shrink-0 text-gray-500">
+                  {nodeCountLabel}
+                </span>
+                <CaretDownIcon className={`w-6 h-6 shrink-0 rotate-180 ${canToggleCollapse ? "text-gray-500" : "text-gray-500 opacity-50"}`} />
+              </div>
             </div>
           </div>
-        </div>
-      )}
+        )}
+      </div>
     </div>
   );
 }

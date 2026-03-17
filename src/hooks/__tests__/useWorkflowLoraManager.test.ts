@@ -12,7 +12,7 @@ function makeNode(
 ): WorkflowNode {
   return {
     id,
-    stableKey: `sk-${id}`,
+    itemKey: `sk-${id}`,
     type,
     pos: [0, 0],
     size: [200, 100],
@@ -113,8 +113,8 @@ beforeEach(() => {
     hiddenItems: {},
     connectionHighlightModes: {},
     mobileLayout: createEmptyMobileLayout(),
-    stableKeyByPointer: {},
-    pointerByStableKey: {},
+    itemKeyByPointer: {},
+    pointerByHierarchicalKey: {},
   });
 });
 
@@ -168,26 +168,28 @@ describe('useWorkflow lora manager actions', () => {
       .spyOn(api, 'requestTriggerWords')
       .mockResolvedValue(undefined);
 
-    const subgraphLoader = makeNode(101, 'Lora Loader (LoraManager)', {
-      properties: {
-        __mobile_origin: { scope: 'subgraph', subgraphId: 'sg-a', nodeId: 1 },
-      },
+    const subgraphLoader = makeNode(1, 'Lora Loader (LoraManager)', {
       widgets_values: ['portrait', [{ name: 'old.safetensors', strength: 1, active: true }]],
       outputs: [{ name: 'MODEL', type: 'MODEL', links: [7] }],
     });
-    const subgraphTrigger = makeNode(102, 'TriggerWord Toggle (LoraManager)', {
-      properties: {
-        __mobile_origin: { scope: 'subgraph', subgraphId: 'sg-a', nodeId: 2 },
-      },
+    const subgraphTrigger = makeNode(2, 'TriggerWord Toggle (LoraManager)', {
       inputs: [{ name: 'in', type: 'MODEL', link: 7 }],
       widgets_values: [true, true, false, [{ text: 'old', active: true }], 'old'],
     });
 
+    const baseWorkflow = makeWorkflow([], []);
     useWorkflowStore.setState({
-      workflow: makeWorkflow(
-        [subgraphLoader, subgraphTrigger],
-        [[7, 101, 0, 102, 0, 'MODEL']]
-      ),
+      workflow: {
+        ...baseWorkflow,
+        definitions: {
+          subgraphs: [{
+            id: 'sg-a',
+            nodes: [subgraphLoader, subgraphTrigger],
+            links: [{ id: 7, origin_id: 1, origin_slot: 0, target_id: 2, target_slot: 0, type: 'MODEL' }],
+            groups: [],
+          }],
+        },
+      },
       nodeTypes,
     });
 
@@ -254,26 +256,30 @@ describe('useWorkflow lora manager actions', () => {
     const rootLoader = makeNode(1, 'Lora Loader (LoraManager)', {
       widgets_values: ['root', [{ name: 'root.safetensors', strength: 1, active: true }]],
     });
-    const subgraphLoader = makeNode(101, 'Lora Loader (LoraManager)', {
-      properties: {
-        __mobile_origin: { scope: 'subgraph', subgraphId: 'sg-a', nodeId: 1 },
-      },
+    const subgraphLoader = makeNode(1, 'Lora Loader (LoraManager)', {
+      itemKey: 'sk-sg-1',
       widgets_values: ['sg', [{ name: 'sg.safetensors', strength: 1, active: true }]],
       outputs: [{ name: 'MODEL', type: 'MODEL', links: [7] }],
     });
-    const subgraphTrigger = makeNode(102, 'TriggerWord Toggle (LoraManager)', {
-      properties: {
-        __mobile_origin: { scope: 'subgraph', subgraphId: 'sg-a', nodeId: 2 },
-      },
+    const subgraphTrigger = makeNode(2, 'TriggerWord Toggle (LoraManager)', {
+      itemKey: 'sk-sg-2',
       inputs: [{ name: 'in', type: 'MODEL', link: 7 }],
       widgets_values: [true, true, false, [{ text: 'sg', active: true }], 'sg'],
     });
 
+    const baseWorkflow = makeWorkflow([rootLoader], []);
     useWorkflowStore.setState({
-      workflow: makeWorkflow(
-        [rootLoader, subgraphLoader, subgraphTrigger],
-        [[7, 101, 0, 102, 0, 'MODEL']]
-      ),
+      workflow: {
+        ...baseWorkflow,
+        definitions: {
+          subgraphs: [{
+            id: 'sg-a',
+            nodes: [subgraphLoader, subgraphTrigger],
+            links: [{ id: 7, origin_id: 1, origin_slot: 0, target_id: 2, target_slot: 0, type: 'MODEL' }],
+            groups: [],
+          }],
+        },
+      },
       nodeTypes,
     });
 
@@ -297,15 +303,24 @@ describe('useWorkflow lora manager actions', () => {
     const ckptNode = makeNode(2, 'CheckpointLoaderSimple', {
       widgets_values: ['sd15.safetensors'],
     });
-    const subgraphLora = makeNode(3, 'Lora Loader (LoraManager)', {
-      properties: {
-        __mobile_origin: { scope: 'subgraph', subgraphId: 'sg-1', nodeId: 9 },
-      },
+    const subgraphLora = makeNode(9, 'Lora Loader (LoraManager)', {
+      itemKey: 'sk-sg-9',
       widgets_values: ['prompt', []],
     });
 
+    const baseWorkflow = makeWorkflow([loraNode, ckptNode], []);
     useWorkflowStore.setState({
-      workflow: makeWorkflow([loraNode, ckptNode, subgraphLora], []),
+      workflow: {
+        ...baseWorkflow,
+        definitions: {
+          subgraphs: [{
+            id: 'sg-1',
+            nodes: [subgraphLora],
+            links: [],
+            groups: [],
+          }],
+        },
+      },
       nodeTypes,
     });
 
@@ -335,8 +350,10 @@ describe('useWorkflow lora manager actions', () => {
         expect.objectContaining({
           node_id: 9,
           graph_id: 'sg-1',
+          title: 'Lora Loader (LoraManager)',
           capabilities: expect.objectContaining({
             supports_lora: true,
+            widget_names: expect.arrayContaining(['text', 'loras']),
           }),
         }),
       ])

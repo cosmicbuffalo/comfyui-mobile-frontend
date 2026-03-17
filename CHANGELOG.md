@@ -1,5 +1,34 @@
 # Changelog
 
+## 2.3.0 - 2026-03-17
+
+### Added
+
+- **Improved Subgraph Support:** subgraph placeholder nodes now render on the mobile frontend.
+  use the "Enter subgraph" action to drill into the subgraph and manipulate its inner nodes
+- Widget controls on subgraph placeholder nodes: promoted widgets (slot-promotion and
+  proxyWidgets mechanisms) now appear as editable controls on the placeholder card
+- Breadcrumb bar shows the current scope path (Root / Subgraph Name) when inside a
+  subgraph; tap a crumb to jump back up the stack
+- **Smart bookmarks:** bookmarks work across root/subgraph scopes; tapping a bookmark for a
+  node inside a different scope will automatically navigate to that scope
+- Add Group action in the workflow options menu now places the new group near the
+  currently visible nodes rather than always at the document origin
+- Reposition mode now syncs node positions and group bounding boxes in the workflow
+  geometry when nodes move between groups or scopes in the mobile layout (experimental)
+
+### Removed
+
+- Light mode (temporarily? I just don't want to waste time tweaking colors in a theme I never use)
+- Movement of nodes/groups across subgraph boundaries
+- Legacy workflow state compatibility (Back up your mobile workflows before upgrading to v2.3.0 just in case)
+
+### Fixed
+
+- **ComfyUI Frontend compatibility:** Saving a carefully crafted desktop workflow containing subgraphs
+  in the mobile frontend no longer butchers your workflow by dumping everything into the root scope!
+- **Group display:** fixed various issues with group containment logic and colors
+
 ## 2.2.3 - 2026-03-15
 
 ### Added

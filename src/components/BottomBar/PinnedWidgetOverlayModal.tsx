@@ -24,7 +24,7 @@ export function PinnedWidgetOverlayModal() {
 
   if (!pinOverlayOpen || !pinnedWidget) return null;
   const pinnedNode = workflow?.nodes.find((n) => n.id === pinnedWidget.nodeId);
-  const pinnedNodeStableKey = pinnedNode?.stableKey ?? null;
+  const pinnedNodeHierarchicalKey = pinnedNode?.itemKey ?? null;
 
   return (
     <div id="pin-overlay-hidden-anchor" className="hidden">
@@ -34,9 +34,9 @@ export function PinnedWidgetOverlayModal() {
         value={pinnedWidgetValue}
         options={pinnedWidget.options}
         onChange={(newValue) =>
-          pinnedNodeStableKey
+          pinnedNodeHierarchicalKey
             ? updateNodeWidget(
-                pinnedNodeStableKey,
+                pinnedNodeHierarchicalKey,
                 pinnedWidget.widgetIndex,
                 newValue,
                 pinnedWidget.widgetName,

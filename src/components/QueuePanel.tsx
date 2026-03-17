@@ -16,6 +16,72 @@ import { copyTextToClipboard } from '@/utils/clipboard';
 import { QueueList } from './QueuePanel/QueueList';
 import { useQueueMenuDismiss } from '@/hooks/useQueueMenuDismiss';
 
+function resolveExecutingNodeLabel(
+  executingNodePath: string | null,
+  executingNodeId: string | null,
+  workflow: Workflow | null,
+  nodeTypes: ReturnType<typeof useWorkflowStore.getState>['nodeTypes'],
+): string | null {
+  if (!workflow) return null;
+
+  const toDisplayName = (
+    node: { type: string; title?: unknown },
+    fallback: string,
+  ): string => {
+    const nodeTitle =
+      typeof node.title === "string" ? node.title.trim() : "";
+    if (nodeTitle) return nodeTitle;
+    const subgraphName = workflow.definitions?.subgraphs?.find(
+      (sg) => sg.id === node.type,
+    )?.name;
+    if (typeof subgraphName === "string" && subgraphName.trim()) {
+      return subgraphName.trim();
+    }
+    const typeDef = nodeTypes?.[node.type];
+    return typeDef?.display_name || node.type || fallback;
+  };
+
+  if (executingNodePath) {
+    const parts = executingNodePath
+      .split(':')
+      .map((part) => Number(part))
+      .filter((value) => Number.isFinite(value));
+    if (parts.length > 0) {
+      if (parts.length === 1) {
+        const rootNode = workflow.nodes.find((n) => n.id === parts[0]);
+        if (rootNode) return toDisplayName(rootNode, `Node ${parts[0]}`);
+      } else {
+        let subgraphId: string | null = null;
+        const rootPlaceholder = workflow.nodes.find((n) => n.id === parts[0]);
+        if (rootPlaceholder) subgraphId = rootPlaceholder.type;
+
+        for (let i = 1; i < parts.length; i += 1) {
+          if (!subgraphId) break;
+          const subgraph = workflow.definitions?.subgraphs?.find(
+            (sg) => sg.id === subgraphId,
+          );
+          if (!subgraph) break;
+          const nodeId = parts[i];
+          const node = (subgraph.nodes ?? []).find((n) => n.id === nodeId);
+          if (!node) break;
+          if (i === parts.length - 1) {
+            return toDisplayName(node, `Node ${nodeId}`);
+          }
+          subgraphId = node.type;
+        }
+      }
+      const leaf = parts[parts.length - 1];
+      return Number.isFinite(leaf) ? `Node ${leaf}` : `Node ${executingNodePath}`;
+    }
+    return `Node ${executingNodePath}`;
+  }
+
+  if (!executingNodeId) return null;
+  const node = workflow.nodes.find((n) => String(n.id) === executingNodeId);
+  if (!node) return `Node ${executingNodeId}`;
+  return toDisplayName(node, `Node ${executingNodeId}`);
+}
+
 interface QueuePanelProps {
   visible: boolean;
   onImageClick?: (images: Array<ViewerImage>, index: number, enableFollowQueue?: boolean) => void;
@@ -32,6 +98,7 @@ export function QueuePanel({ visible, onImageClick }: QueuePanelProps) {
   const workflow = useWorkflowStore((s) => s.workflow);
   const nodeTypes = useWorkflowStore((s) => s.nodeTypes);
   const executingNodeId = useWorkflowStore((s) => s.executingNodeId);
+  const executingNodePath = useWorkflowStore((s) => s.executingNodePath);
   const workflowDurationStats = useWorkflowStore((s) => s.workflowDurationStats);
   const promptOutputs = useWorkflowStore((s) => s.promptOutputs);
 
@@ -47,12 +114,13 @@ export function QueuePanel({ visible, onImageClick }: QueuePanelProps) {
   );
   const effectiveExecutingId = executingPromptId || (running.length === 1 ? running[0].prompt_id : null);
   const executingNodeLabel = useMemo(() => {
-    if (!workflow || !executingNodeId) return null;
-    const node = workflow.nodes.find((n) => String(n.id) === executingNodeId);
-    if (!node) return `Node ${executingNodeId}`;
-    const typeDef = nodeTypes?.[node.type];
-    return typeDef?.display_name || node.type;
-  }, [workflow, executingNodeId, nodeTypes]);
+    return resolveExecutingNodeLabel(
+      executingNodePath,
+      executingNodeId,
+      workflow,
+      nodeTypes,
+    );
+  }, [workflow, executingNodeId, executingNodePath, nodeTypes]);
   const overallProgress = useOverallProgress({
     workflow,
     runKey: executingPromptId || effectiveExecutingId,

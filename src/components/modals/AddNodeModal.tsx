@@ -55,11 +55,11 @@ export function AddNodeModal({ isOpen, onClose, addInGroupId = null, addInSubgra
     onClose();
     if (newId !== null) {
       onNodeAdded?.(newId);
-      const stableKey =
+      const itemKey =
         useWorkflowStore.getState().workflow?.nodes.find((node) => node.id === newId)
-          ?.stableKey ?? null;
-      if (stableKey) {
-        scrollToNode(stableKey);
+          ?.itemKey ?? null;
+      if (itemKey) {
+        scrollToNode(itemKey);
       }
     }
   };

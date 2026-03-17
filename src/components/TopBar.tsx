@@ -8,6 +8,7 @@ import { AppMenu } from './AppMenu';
 import { QueueTopBarControls } from './QueuePanel/QueueTopBarControls';
 import { OutputsTopBarControls } from './OutputsPanel/OutputsTopBarControls';
 import { WorkflowTopBarControls } from './WorkflowPanel/WorkflowTopBarControls';
+import { SubgraphBreadcrumb } from './WorkflowPanel/SubgraphBreadcrumb';
 import { MenuButton } from '@/components/buttons/MenuButton';
 import { TopBarTitle } from './TopBar/Title';
 
@@ -101,21 +102,9 @@ export function TopBar({ mode = 'workflow' }: TopBarProps) {
     }
 
     const hiddenSubgraphNodeCount = hasHiddenSubgraphs
-      ? workflow.nodes.reduce((count, node) => {
-          const props = node.properties as Record<string, unknown> | undefined;
-          const origin = props?.['__mobile_origin'];
-          if (!origin || typeof origin !== 'object') return count;
-          const scope = (origin as { scope?: string }).scope;
-          if (scope !== 'subgraph') return count;
-          const subgraphId = (origin as { subgraphId?: string }).subgraphId;
-          const stableSubgraphKey = subgraphId
-            ? workflow.definitions?.subgraphs?.find((sg) => sg.id === subgraphId)?.stableKey
-            : null;
-          if (
-            stableSubgraphKey &&
-            hiddenItems[stableSubgraphKey]
-          ) {
-            return count + 1;
+      ? (workflow.definitions?.subgraphs ?? []).reduce((count, sg) => {
+          if (sg.itemKey && hiddenItems[sg.itemKey]) {
+            return count + (sg.nodes?.length ?? 0);
           }
           return count;
         }, 0)
@@ -189,6 +178,7 @@ export function TopBar({ mode = 'workflow' }: TopBarProps) {
         </div>
       </div>
       <AppMenu open={appMenuOpen} onClose={() => setAppMenuOpen(false)} />
+      {mode === 'workflow' && <SubgraphBreadcrumb />}
     </div>
   );
 }
