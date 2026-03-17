@@ -48,6 +48,8 @@ function makeNode(id: number, overrides?: Partial<WorkflowNode>): WorkflowNode {
 describe('WorkflowPanel bookmark navigation', () => {
   let container: HTMLDivElement;
   let root: Root;
+  let originalScrollIntoView: typeof Element.prototype.scrollIntoView | undefined;
+  let hadOwnScrollIntoView: boolean;
 
   beforeEach(() => {
     class ResizeObserverMock {
@@ -59,12 +61,16 @@ describe('WorkflowPanel bookmark navigation', () => {
       cb(0);
       return 1;
     });
-    vi.stubGlobal('scrollIntoView', vi.fn());
-    if (!Element.prototype.scrollIntoView) {
-      Element.prototype.scrollIntoView = vi.fn();
-    } else {
-      vi.spyOn(Element.prototype, 'scrollIntoView').mockImplementation(() => {});
-    }
+    hadOwnScrollIntoView = Object.prototype.hasOwnProperty.call(
+      Element.prototype,
+      'scrollIntoView',
+    );
+    originalScrollIntoView = Element.prototype.scrollIntoView;
+    Object.defineProperty(Element.prototype, 'scrollIntoView', {
+      configurable: true,
+      writable: true,
+      value: vi.fn(),
+    });
 
     useWorkflowStore.setState({
       workflow: null,
@@ -105,6 +111,15 @@ describe('WorkflowPanel bookmark navigation', () => {
       root.unmount();
     });
     container.remove();
+    if (hadOwnScrollIntoView) {
+      Object.defineProperty(Element.prototype, 'scrollIntoView', {
+        configurable: true,
+        writable: true,
+        value: originalScrollIntoView,
+      });
+    } else {
+      delete (Element.prototype as { scrollIntoView?: unknown }).scrollIntoView;
+    }
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
   });
