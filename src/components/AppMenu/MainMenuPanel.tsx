@@ -1,6 +1,7 @@
 import { BookIcon, CaretDownIcon, ClipboardDownloadIcon, ExternalLinkIcon, FolderIcon, GithubIcon, InfoCircleOutlineIcon, SaveAsIcon, SaveDiskIcon, TemplateIcon, WorkflowIcon } from '@/components/icons';
 import type { Workflow } from '@/api/types';
 import { MenuErrorNotice } from './MenuErrorNotice';
+import { getDisplayName } from './userWorkflowHelpers';
 
 interface MenuSectionsOpen {
   load: boolean;
@@ -144,7 +145,7 @@ export function MainMenuPanel({
                            disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 <SaveDiskIcon className="w-6 h-6 text-gray-600 shrink-0" />
-                <span className="font-medium text-gray-900 truncate">Save {currentFilename.replace('.json', '')}</span>
+                <span className="font-medium text-gray-900 truncate">Save {getDisplayName(currentFilename)}</span>
               </button>
             )}
 

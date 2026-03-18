@@ -1,5 +1,17 @@
 # Changelog
 
+## 2.3.2 - 2026-03-17
+
+### Added
+
+- **Folder navigation in My Workflows:** browse into subfolders with drill-down navigation instead of a flat file list
+- Search still flattens results across all folders, with subfolder path shown as a subtitle
+
+### Fixed
+
+- Workflows saved in subfolders now load correctly (fixes #38)
+- Workflow title bar and save button display only the workflow name without folder path
+
 ## 2.3.1 - 2026-03-17
 
 ### Fixed

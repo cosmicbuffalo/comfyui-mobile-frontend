@@ -6,6 +6,7 @@ import { PasteJsonPanel } from './AppMenu/PasteJsonPanel';
 import { SaveWorkflowPanel } from './AppMenu/SaveWorkflowPanel';
 import { TemplatesPanel } from './AppMenu/TemplatesPanel';
 import { UserWorkflowsPanel } from './AppMenu/UserWorkflowsPanel';
+import { getDisplayName } from './AppMenu/userWorkflowHelpers';
 import { useWorkflowStore } from '@/hooks/useWorkflow';
 import { getWorkflowForPersistence } from '@/utils/workflowPersistence';
 import { useThemeStore } from '@/hooks/useTheme';
@@ -252,7 +253,7 @@ export function AppMenu({
 
     const a = document.createElement('a');
     a.href = url;
-    a.download = `${currentFilename || `workflow-${Date.now()}`}.json`;
+    a.download = `${currentFilename ? getDisplayName(currentFilename) : `workflow-${Date.now()}`}.json`;
     a.click();
 
     URL.revokeObjectURL(url);

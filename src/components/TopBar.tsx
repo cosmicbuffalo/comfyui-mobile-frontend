@@ -8,6 +8,7 @@ import { AppMenu } from './AppMenu';
 import { QueueTopBarControls } from './QueuePanel/QueueTopBarControls';
 import { OutputsTopBarControls } from './OutputsPanel/OutputsTopBarControls';
 import { WorkflowTopBarControls } from './WorkflowPanel/WorkflowTopBarControls';
+import { getDisplayName } from './AppMenu/userWorkflowHelpers';
 import { SubgraphBreadcrumb } from './WorkflowPanel/SubgraphBreadcrumb';
 import { MenuButton } from '@/components/buttons/MenuButton';
 import { TopBarTitle } from './TopBar/Title';
@@ -136,7 +137,7 @@ export function TopBar({ mode = 'workflow' }: TopBarProps) {
       case 'workflow':
       default:
         if (currentFilename) {
-          return currentFilename.replace('.json', '');
+          return getDisplayName(currentFilename);
         }
         return workflow ? 'Untitled' : 'ComfyUI Mobile';
     }
