@@ -17,18 +17,7 @@ interface UserWorkflowsPanelProps {
   onLoadWorkflow: (filename: string) => void;
 }
 
-/** Strip the leading "workflows/" prefix from a file path to get the API-relative name */
-function getRelativePath(file: UserDataFile): string {
-  return file.path.replace(/^workflows\//, '');
-}
-
-/** Get direct children (files and folders) of a given folder path */
-function getDirectChildren(allItems: UserDataFile[], folderPath: string): UserDataFile[] {
-  return allItems.filter((item) => {
-    const parentPath = item.path.substring(0, item.path.lastIndexOf('/'));
-    return parentPath === folderPath;
-  });
-}
+import { getRelativePath, getDirectChildren } from './userWorkflowHelpers';
 
 export function UserWorkflowsPanel({
   error,
