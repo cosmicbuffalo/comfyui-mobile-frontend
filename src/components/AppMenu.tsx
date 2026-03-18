@@ -252,7 +252,10 @@ export function AppMenu({
 
     const a = document.createElement('a');
     a.href = url;
-    a.download = `${currentFilename || `workflow-${Date.now()}`}.json`;
+    const downloadName = currentFilename?.includes('/')
+      ? currentFilename.substring(currentFilename.lastIndexOf('/') + 1)
+      : currentFilename;
+    a.download = `${downloadName || `workflow-${Date.now()}`}.json`;
     a.click();
 
     URL.revokeObjectURL(url);

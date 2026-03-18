@@ -144,7 +144,7 @@ export function MainMenuPanel({
                            disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 <SaveDiskIcon className="w-6 h-6 text-gray-600 shrink-0" />
-                <span className="font-medium text-gray-900 truncate">Save {currentFilename.replace('.json', '')}</span>
+                <span className="font-medium text-gray-900 truncate">Save {(currentFilename.includes('/') ? currentFilename.substring(currentFilename.lastIndexOf('/') + 1) : currentFilename).replace('.json', '')}</span>
               </button>
             )}
 

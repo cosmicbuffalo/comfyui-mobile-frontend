@@ -136,7 +136,11 @@ export function TopBar({ mode = 'workflow' }: TopBarProps) {
       case 'workflow':
       default:
         if (currentFilename) {
-          return currentFilename.replace('.json', '');
+          // Strip folder path and .json extension for display
+          const basename = currentFilename.includes('/')
+            ? currentFilename.substring(currentFilename.lastIndexOf('/') + 1)
+            : currentFilename;
+          return basename.replace('.json', '');
         }
         return workflow ? 'Untitled' : 'ComfyUI Mobile';
     }

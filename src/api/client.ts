@@ -97,9 +97,9 @@ export async function listUserWorkflows(): Promise<UserDataFile[]> {
     throw new Error('Failed to list user workflows');
   }
   const data = await response.json();
-  // Filter to only JSON files
+  // Keep directories and JSON files
   return data.filter((item: UserDataFile) =>
-    item.type === 'file' && item.name.endsWith('.json')
+    item.type === 'directory' || (item.type === 'file' && item.name.endsWith('.json'))
   );
 }
 
