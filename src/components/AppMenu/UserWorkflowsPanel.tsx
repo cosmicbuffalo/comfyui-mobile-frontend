@@ -1,6 +1,5 @@
 import { useState } from 'react';
-import { WorkflowIcon } from '@/components/icons';
-import { FolderIcon } from '@/components/icons';
+import { WorkflowIcon, FolderIcon } from '@/components/icons';
 import { SearchBar } from '@/components/SearchBar';
 import { LoadingSpinner } from '../LoadingSpinner';
 import { MenuSubPageHeader } from './MenuSubPageHeader';
