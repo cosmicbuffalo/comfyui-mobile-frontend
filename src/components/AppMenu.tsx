@@ -6,19 +6,27 @@ import { PasteJsonPanel } from './AppMenu/PasteJsonPanel';
 import { SaveWorkflowPanel } from './AppMenu/SaveWorkflowPanel';
 import { TemplatesPanel } from './AppMenu/TemplatesPanel';
 import { UserWorkflowsPanel } from './AppMenu/UserWorkflowsPanel';
+import { RecentWorkflowsPanel } from './AppMenu/RecentWorkflowsPanel';
 import { getDisplayName } from './AppMenu/userWorkflowHelpers';
 import { useWorkflowStore } from '@/hooks/useWorkflow';
+import { useRecentWorkflowsStore } from '@/hooks/useRecentWorkflows';
 import { getWorkflowForPersistence } from '@/utils/workflowPersistence';
 import { useThemeStore } from '@/hooks/useTheme';
 import type { Workflow } from '@/api/types';
 import {
   listUserWorkflows,
   loadUserWorkflow,
+  restartServer,
+  fetchSystemStats,
+  fetchCpuPercent,
   saveUserWorkflow,
   getWorkflowTemplates,
   loadTemplateWorkflow,
   type UserDataFile,
-  type WorkflowTemplates
+  type WorkflowTemplates,
+  type SystemStats,
+  getFileWorkflow,
+  type AssetSource
 } from '@/api/client';
 
 interface AppMenuProps {
@@ -26,7 +34,26 @@ interface AppMenuProps {
   onClose: () => void;
 }
 
-type TabType = 'menu' | 'userWorkflows' | 'templates' | 'save' | 'pasteJson' | 'aboutLegend';
+type TabType = 'menu' | 'userWorkflows' | 'recent' | 'templates' | 'save' | 'pasteJson' | 'aboutLegend';
+
+async function waitForServerToReturn(timeoutMs = 45000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+
+  while (Date.now() < deadline) {
+    try {
+      const response = await fetch('/api/object_info', { cache: 'no-store' });
+      if (response.ok) {
+        return;
+      }
+    } catch {
+      // Expected while the server is restarting.
+    }
+
+    await new Promise((resolve) => window.setTimeout(resolve, 1000));
+  }
+
+  throw new Error('ComfyUI did not come back online in time.');
+}
 
 export function AppMenu({
   open,
@@ -52,12 +79,16 @@ export function AppMenu({
   const [userWorkflows, setUserWorkflows] = useState<UserDataFile[]>([]);
   const [templates, setTemplates] = useState<WorkflowTemplates>({});
   const [loading, setLoading] = useState(false);
+  const [restartingServer, setRestartingServer] = useState(false);
+  const [systemStats, setSystemStats] = useState<SystemStats | null>(null);
+  const [cpuPercent, setCpuPercent] = useState<number | null>(null);
   const [saveFilenameInput, setSaveFilenameInput] = useState(currentFilename || ''); // Use currentFilename as initial value
   const [pastedJson, setPastedJson] = useState('');
   const [menuSectionsOpen, setMenuSectionsOpen] = useState({
     load: true,
     save: true,
     appearance: true,
+    server: false,
     info: true,
   });
 
@@ -65,6 +96,7 @@ export function AppMenu({
   const loadSectionRef = useRef<HTMLElement>(null);
   const saveSectionRef = useRef<HTMLElement>(null);
   const appearanceSectionRef = useRef<HTMLElement>(null);
+  const serverSectionRef = useRef<HTMLElement>(null);
   const infoSectionRef = useRef<HTMLElement>(null);
   const prevMenuSectionsOpen = useRef(menuSectionsOpen);
 
@@ -79,6 +111,8 @@ export function AppMenu({
       setTimeout(() => saveSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' }), 100);
     } else if (!prev.appearance && current.appearance) {
       setTimeout(() => appearanceSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' }), 100);
+    } else if (!prev.server && current.server) {
+      setTimeout(() => serverSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' }), 100);
     } else if (!prev.info && current.info) {
       setTimeout(() => infoSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' }), 100);
     }
@@ -97,6 +131,7 @@ export function AppMenu({
         load: true,
         save: true,
         appearance: true,
+        server: false,
         info: true,
       });
     }
@@ -123,6 +158,23 @@ export function AppMenu({
         .finally(() => setLoading(false));
     }
   }, [activeTab]);
+
+  // Fetch system stats when menu opens, refresh periodically while open
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    const load = () => {
+      fetchSystemStats()
+        .then((stats) => { if (!cancelled) setSystemStats(stats); })
+        .catch(() => {});
+      fetchCpuPercent()
+        .then((pct) => { if (!cancelled) setCpuPercent(pct); })
+        .catch(() => {});
+    };
+    load();
+    const interval = setInterval(load, 5000);
+    return () => { cancelled = true; clearInterval(interval); };
+  }, [open]);
 
   // Helper for haptic feedback
   const vibrate = (pattern: number | number[]) => {
@@ -188,6 +240,21 @@ export function AppMenu({
       vibrate(10);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load template');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleLoadFileWorkflow = async (filePath: string, assetSource: AssetSource) => {
+    try {
+      setLoading(true);
+      const data = await getFileWorkflow(filePath, assetSource);
+      loadWorkflow(data, filePath, { source: { type: 'file', filePath, assetSource } });
+      setError(null);
+      onClose();
+      vibrate(10);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to load workflow from file');
     } finally {
       setLoading(false);
     }
@@ -282,6 +349,27 @@ export function AppMenu({
     }
   };
 
+  const handleRestartServer = async () => {
+    if (restartingServer) return;
+
+    const confirmed = window.confirm(
+      'Restart ComfyUI now? This will interrupt any running jobs and briefly disconnect the mobile UI.'
+    );
+    if (!confirmed) return;
+
+    try {
+      setRestartingServer(true);
+      await restartServer();
+      setError(null);
+      vibrate([10, 40, 10]);
+      await waitForServerToReturn();
+      window.location.reload();
+    } catch (err) {
+      setRestartingServer(false);
+      setError(err instanceof Error ? err.message : 'Failed to restart server');
+    }
+  };
+
   return (
     <SlidePanel open={open} onClose={onClose} side="left" title="ComfyUI Mobile">
       {activeTab === 'menu' && (
@@ -291,12 +379,16 @@ export function AppMenu({
           currentFilename={currentFilename}
           isDirty={isDirty}
           loading={loading}
+          restartingServer={restartingServer}
+          systemStats={systemStats}
+          cpuPercent={cpuPercent}
           theme={theme}
           menuSectionsOpen={menuSectionsOpen}
           fileInputRef={fileInputRef}
           loadSectionRef={loadSectionRef}
           saveSectionRef={saveSectionRef}
           appearanceSectionRef={appearanceSectionRef}
+          serverSectionRef={serverSectionRef}
           infoSectionRef={infoSectionRef}
           onDismissError={() => setError(null)}
           onFileChange={handleFileChange}
@@ -304,6 +396,7 @@ export function AppMenu({
           onToggleSection={(section) =>
             setMenuSectionsOpen((prev) => ({ ...prev, [section]: !prev[section] }))
           }
+          onOpenRecent={() => setActiveTab('recent')}
           onOpenUserWorkflows={() => setActiveTab('userWorkflows')}
           onOpenTemplates={() => setActiveTab('templates')}
           onOpenPasteJson={() => setActiveTab('pasteJson')}
@@ -311,6 +404,7 @@ export function AppMenu({
           onOpenSaveAs={handleOpenSaveAs}
           onToggleTheme={toggleTheme}
           onOpenLegend={() => setActiveTab('aboutLegend')}
+          onRestartServer={handleRestartServer}
         />
       )}
       {activeTab === 'userWorkflows' && (
@@ -321,6 +415,14 @@ export function AppMenu({
           onBack={() => setActiveTab('menu')}
           onDismissError={() => setError(null)}
           onLoadWorkflow={handleLoadUserWorkflow}
+        />
+      )}
+      {activeTab === 'recent' && (
+        <RecentWorkflowsPanel
+          onBack={() => setActiveTab('menu')}
+          onLoadUserWorkflow={handleLoadUserWorkflow}
+          onLoadTemplate={handleLoadTemplate}
+          onLoadFileWorkflow={handleLoadFileWorkflow}
         />
       )}
       {activeTab === 'templates' && (
@@ -359,6 +461,33 @@ export function AppMenu({
       )}
       {activeTab === 'aboutLegend' && (
         <MenuLegend onBack={() => setActiveTab('menu')} />
+      )}
+
+      {restartingServer && (
+        <div className="fixed inset-0 z-[2400] bg-slate-950/88 backdrop-blur-md flex items-center justify-center p-6">
+          <div className="w-full max-w-sm rounded-[28px] border border-white/10 bg-slate-900/95 shadow-2xl px-6 py-7 text-white">
+            <div className="flex items-center gap-4">
+              <div className="relative h-12 w-12 shrink-0">
+                <div className="absolute inset-0 rounded-full border-2 border-cyan-400/25" />
+                <div className="absolute inset-0 rounded-full border-2 border-transparent border-t-cyan-300 animate-spin" />
+              </div>
+              <div>
+                <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-cyan-300/80">
+                  Server Restart
+                </p>
+                <h2 className="mt-1 text-lg font-semibold text-white">
+                  Restarting ComfyUI
+                </h2>
+              </div>
+            </div>
+            <p className="mt-5 text-sm leading-6 text-slate-300">
+              Waiting for the backend to come back online. The app will refresh automatically as soon as it reconnects.
+            </p>
+            <div className="mt-5 h-2 overflow-hidden rounded-full bg-white/10">
+              <div className="h-full w-1/3 rounded-full bg-cyan-300/90 animate-pulse" />
+            </div>
+          </div>
+        </div>
       )}
     </SlidePanel>
   );

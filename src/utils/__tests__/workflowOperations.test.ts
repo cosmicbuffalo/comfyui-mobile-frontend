@@ -70,8 +70,8 @@ describe('resolveViewerItemWorkflowLoad', () => {
       file: makeFile('output/sub/dir/img.png')
     };
     const resolved = resolveViewerItemWorkflowLoad(item);
-    expect(resolved?.filename).toBe('output-sub_dir_img.png.json');
-    expect(resolved?.source).toEqual({ type: 'other' });
+    expect(resolved?.filename).toBe('sub/dir/img.png');
+    expect(resolved?.source).toEqual({ type: 'file', filePath: 'sub/dir/img.png', assetSource: 'output' });
   });
 
   it('uses history filename format when promptId exists', () => {

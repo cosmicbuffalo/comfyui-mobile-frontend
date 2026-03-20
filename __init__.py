@@ -1,4 +1,5 @@
 print("[Mobile Frontend] Loading custom node...")
+import asyncio
 import os
 import shutil
 import server
@@ -12,10 +13,12 @@ import sys as _sys
 _sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 _file_utils = _import_module('file_utils')
 _mobile_metadata = _import_module('mobile_metadata')
+_restart_utils = _import_module('restart_utils')
 list_files = _file_utils.list_files
 resolve_metadata_path = _mobile_metadata.resolve_metadata_path
 extract_workflow_from_metadata = _mobile_metadata.extract_workflow_from_metadata
 MetadataPathError = _mobile_metadata.MetadataPathError
+build_restart_exec_args = _restart_utils.build_restart_exec_args
 
 # Define the path to the built frontend files
 EXTENSION_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -383,7 +386,41 @@ def setup_mobile_route():
         except Exception as e:
             return web.json_response({"error": str(e)}, status=500)
 
+    async def api_restart_server(request):
+        try:
+            data = await request.json()
+            confirm = data.get('confirm', False)
+
+            if not confirm:
+                return web.json_response({"error": "Restart requires confirm=true"}, status=400)
+
+            response = web.json_response({
+                "success": True,
+                "message": "ComfyUI is restarting",
+            })
+
+            async def delayed_restart():
+                await asyncio.sleep(0.5)
+                executable, argv = build_restart_exec_args()
+                os.execv(executable, argv)
+
+            asyncio.create_task(delayed_restart())
+            return response
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=500)
+
+    async def api_cpu_stats(request):
+        try:
+            import psutil
+            cpu_percent = psutil.cpu_percent(interval=None)
+            return web.json_response({"cpu_percent": cpu_percent})
+        except ImportError:
+            return web.json_response({"cpu_percent": None})
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=500)
+
     # Register API routes
+    mobile_app.router.add_get('/api/cpu-stats', api_cpu_stats)
     mobile_app.router.add_get('/api/files', api_list_files)
     mobile_app.router.add_delete('/api/files', api_delete_file)
     mobile_app.router.add_get('/api/thumbnail', api_get_thumbnail)
@@ -393,6 +430,7 @@ def setup_mobile_route():
     mobile_app.router.add_post('/api/files/move', api_move_files)
     mobile_app.router.add_post('/api/files/mkdir', api_mkdir)
     mobile_app.router.add_post('/api/files/rename', api_rename_file)
+    mobile_app.router.add_post('/api/restart', api_restart_server)
     # Handler to serve index.html for SPA routing (non-API routes only)
     async def serve_index(request):
         # Don't serve index.html for API routes

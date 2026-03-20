@@ -38,14 +38,20 @@ export function resolveViewerItemWorkflowLoad(
   const workflowToLoad = item.workflow ?? historyMatch?.workflow;
   const promptId = item.promptId ?? historyMatch?.promptId;
   if (!workflowToLoad) return null;
-  const source: WorkflowSource = promptId
-    ? { type: 'history', promptId }
-    : { type: 'other' };
-  const filename = promptId
-    ? `history-${promptId}.json`
-    : (item.file
-      ? buildWorkflowFilename(resolveFilePath(item.file, resolveFileSource(item.file)))
-      : 'workflow.json');
+  let source: WorkflowSource;
+  let filename: string;
+  if (promptId) {
+    source = { type: 'history', promptId };
+    filename = `history-${promptId}.json`;
+  } else if (item.file) {
+    const assetSource = resolveFileSource(item.file);
+    const filePath = resolveFilePath(item.file, assetSource);
+    source = { type: 'file', filePath, assetSource };
+    filename = filePath;
+  } else {
+    source = { type: 'other' };
+    filename = 'workflow.json';
+  }
   return { workflow: workflowToLoad, filename, source };
 }
 
@@ -61,7 +67,7 @@ export async function loadWorkflowFromFile(params: {
     const effectiveSource = source ?? resolveFileSource(file);
     const filePath = resolveFilePath(file, effectiveSource);
     const workflowData = await getFileWorkflow(filePath, effectiveSource);
-    loadWorkflow(workflowData, buildWorkflowFilename(filePath), { source: { type: 'other' } });
+    loadWorkflow(workflowData, filePath, { source: { type: 'file', filePath, assetSource: effectiveSource } });
     onLoaded?.();
   } catch (err) {
     onError?.(err);

@@ -560,7 +560,7 @@ export const NodeCard = memo(function NodeCard({
     !isExecuting &&
     rawNodeColor.length > 0;
   const nodeCardBorderClass = hasErrors
-    ? '!border-2 !border-red-700 !ring-2 !ring-red-200 shadow-red-200'
+    ? '!border-2 !border-red-700'
     : isConnectionHighlighted
       ? 'border-orange-500 shadow-orange-200'
       : isExecuting
