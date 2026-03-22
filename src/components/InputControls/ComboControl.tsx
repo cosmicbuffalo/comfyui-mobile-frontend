@@ -316,87 +316,89 @@ export function ComboControl({
           isOpen={showModal}
           onClose={handleClose}
         >
-          <Select<SelectOption, false>
-            className={selectClassName}
-            classNamePrefix="rs"
-            options={selectOptions}
-            value={selectedOption}
-            onChange={handleModalSelectChange}
-            isSearchable
-            autoFocus={!forceModalOpen}
-            menuIsOpen={forceModalOpen ? undefined : true}
-            controlShouldRenderValue={true}
-            placeholder="Search..."
-            filterOption={createFilter({
-              ignoreAccents: true,
-              ignoreCase: true,
-              trim: true,
-              matchFrom: "any",
-            })}
-            styles={{
-              menu: (base) => ({
-                ...base,
-                position: "static",
-                boxShadow: "none",
-                border: "none",
-                marginTop: "0.5rem",
-                borderRadius: 0,
-                backgroundColor: isDark
-                  ? themeColors.transparent
-                  : themeColors.surface.white,
-              }),
-              menuList: (base) => ({
-                ...base,
-                maxHeight: "calc(100vh - 160px)",
-                height: "auto",
-                paddingBottom: "2rem",
-                overflowY: "auto",
-                overflowX: "auto",
-                overscrollBehaviorY: "contain",
-                overscrollBehaviorX: "contain",
-                touchAction: "pan-y",
-              }),
-              option: (base, state) =>
-                isDark
-                  ? base
-                  : {
-                      ...base,
-                      color: lightText,
-                      backgroundColor: state.isSelected
-                        ? themeColors.surface.gray200
-                        : state.isFocused
-                          ? themeColors.surface.gray100
-                          : themeColors.transparent,
-                    },
-              singleValue: (base) => ({
-                ...base,
-                color: isDark ? base.color : lightText,
-              }),
-              input: (base) => ({
-                ...base,
-                color: isDark ? base.color : lightText,
-              }),
-              placeholder: (base) => ({
-                ...base,
-                color: isDark ? base.color : lightSubtleText,
-              }),
-              control: (base) => ({
-                ...base,
-                borderColor: isPromoted
-                  ? themeColors.brand.promotedPink
-                  : themeColors.border.focusBlue,
-                boxShadow: `0 0 0 1px ${
-                  isPromoted ? themeColors.brand.promotedPink : themeColors.border.focusBlue
-                }`,
-                backgroundColor: isDark
-                  ? base.backgroundColor
-                  : themeColors.surface.white,
-                color: isDark ? base.color : lightText,
-              }),
-            }}
-            components={selectComponents}
-            noOptionsMessage={() => "No matches"}
-          />
+          <div data-swipe-nav-ignore="true">
+            <Select<SelectOption, false>
+              className={selectClassName}
+              classNamePrefix="rs"
+              options={selectOptions}
+              value={selectedOption}
+              onChange={handleModalSelectChange}
+              isSearchable
+              autoFocus={!forceModalOpen}
+              menuIsOpen={forceModalOpen ? undefined : true}
+              controlShouldRenderValue={true}
+              placeholder="Search..."
+              filterOption={createFilter({
+                ignoreAccents: true,
+                ignoreCase: true,
+                trim: true,
+                matchFrom: "any",
+              })}
+              styles={{
+                menu: (base) => ({
+                  ...base,
+                  position: "static",
+                  boxShadow: "none",
+                  border: "none",
+                  marginTop: "0.5rem",
+                  borderRadius: 0,
+                  backgroundColor: isDark
+                    ? themeColors.transparent
+                    : themeColors.surface.white,
+                }),
+                menuList: (base) => ({
+                  ...base,
+                  maxHeight: "calc(100vh - 160px)",
+                  height: "auto",
+                  paddingBottom: "2rem",
+                  overflowY: "auto",
+                  overflowX: "auto",
+                  overscrollBehaviorY: "contain",
+                  overscrollBehaviorX: "contain",
+                  touchAction: "pan-y",
+                }),
+                option: (base, state) =>
+                  isDark
+                    ? base
+                    : {
+                        ...base,
+                        color: lightText,
+                        backgroundColor: state.isSelected
+                          ? themeColors.surface.gray200
+                          : state.isFocused
+                            ? themeColors.surface.gray100
+                            : themeColors.transparent,
+                      },
+                singleValue: (base) => ({
+                  ...base,
+                  color: isDark ? base.color : lightText,
+                }),
+                input: (base) => ({
+                  ...base,
+                  color: isDark ? base.color : lightText,
+                }),
+                placeholder: (base) => ({
+                  ...base,
+                  color: isDark ? base.color : lightSubtleText,
+                }),
+                control: (base) => ({
+                  ...base,
+                  borderColor: isPromoted
+                    ? themeColors.brand.promotedPink
+                    : themeColors.border.focusBlue,
+                  boxShadow: `0 0 0 1px ${
+                    isPromoted ? themeColors.brand.promotedPink : themeColors.border.focusBlue
+                  }`,
+                  backgroundColor: isDark
+                    ? base.backgroundColor
+                    : themeColors.surface.white,
+                  color: isDark ? base.color : lightText,
+                }),
+              }}
+              components={selectComponents}
+              noOptionsMessage={() => "No matches"}
+            />
+          </div>
         </FullscreenWidgetModal>
       </div>
     );
@@ -419,6 +421,7 @@ export function ComboControl({
       <div
         className="combo-control-input-wrapper relative rs-scroll-target"
         ref={selectWrapperRef}
+        data-swipe-nav-ignore="true"
       >
         <Select<SelectOption, false>
           className={selectClassName}

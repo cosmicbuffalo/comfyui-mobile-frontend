@@ -4,7 +4,8 @@ import {
   findCompatibleSourceNodes,
   findCompatibleNodeTypesForInput,
   findCompatibleNodeTypesForOutput,
-  findCompatibleTargetNodesForOutput
+  findCompatibleTargetNodesForOutput,
+  isWildcardOnlyMatch
 } from '@/utils/connectionUtils';
 import { CheckIcon, PlusIcon } from '@/components/icons';
 import {
@@ -524,30 +525,57 @@ export function ConnectionModal(props: ConnectionModalProps) {
   const renderInputPickContent = () => {
     if (mode !== 'input') return null;
     const inputProps = props;
+
+    const concreteNodes: typeof filteredNodes = [];
+    const wildcardNodes: typeof filteredNodes = [];
+    for (const entry of filteredNodes) {
+      const outputSlot = entry.node.outputs?.[entry.outputIndex];
+      const outputType = outputSlot?.type;
+      if (isWildcardOnlyMatch(outputType, inputProps.inputType)) {
+        wildcardNodes.push(entry);
+      } else {
+        concreteNodes.push(entry);
+      }
+    }
+
+    const renderNodeEntry = (entry: (typeof filteredNodes)[number]) => {
+      const { node, outputIndex } = entry;
+      const typeDef = nodeTypes?.[node.type];
+      const displayName = resolveWorkflowNodeDisplayName(workflow, node, nodeTypes);
+      const pack = prettyPackName(String(typeDef?.python_module ?? typeDef?.category?.split('/')[0] ?? 'Core'));
+      const outputSlot = node.outputs?.[outputIndex];
+      const outputName = outputSlot?.localized_name || outputSlot?.name || `Output ${outputIndex + 1}`;
+      const outputType = String(outputSlot?.type ?? inputProps.inputType);
+      const isConnected = node.id === inputProps.currentlyConnectedNodeId;
+      return (
+        <ConnectionSearchResult
+          key={node.id}
+          nodeId={node.id}
+          displayName={displayName}
+          pack={pack}
+          outputName={outputName}
+          outputType={outputType}
+          inputName={inputProps.inputName}
+          isConnected={isConnected}
+          onSelect={() => handleSelectNode(node.id, outputIndex)}
+        />
+      );
+    };
+
     return (
       <div className="px-3 pt-3 pb-20 flex flex-col gap-2">
-        {filteredNodes.map(({ node, outputIndex }) => {
-          const typeDef = nodeTypes?.[node.type];
-          const displayName = resolveWorkflowNodeDisplayName(workflow, node, nodeTypes);
-          const pack = prettyPackName(String(typeDef?.python_module ?? typeDef?.category?.split('/')[0] ?? 'Core'));
-          const outputSlot = node.outputs?.[outputIndex];
-          const outputName = outputSlot?.localized_name || outputSlot?.name || `Output ${outputIndex + 1}`;
-          const outputType = String(outputSlot?.type ?? inputProps.inputType);
-          const isConnected = node.id === inputProps.currentlyConnectedNodeId;
-          return (
-            <ConnectionSearchResult
-              key={node.id}
-              nodeId={node.id}
-              displayName={displayName}
-              pack={pack}
-              outputName={outputName}
-              outputType={outputType}
-              inputName={inputProps.inputName}
-              isConnected={isConnected}
-              onSelect={() => handleSelectNode(node.id, outputIndex)}
-            />
-          );
-        })}
+        {concreteNodes.map(renderNodeEntry)}
+
+        {wildcardNodes.length > 0 && (
+          <>
+            <div className="flex items-center gap-2 pt-1 pb-0.5">
+              <div className="flex-1 border-t border-gray-200" />
+              <span className="text-xs font-medium text-gray-400 whitespace-nowrap">Wildcard *</span>
+              <div className="flex-1 border-t border-gray-200" />
+            </div>
+            {wildcardNodes.map(renderNodeEntry)}
+          </>
+        )}
 
         {filteredNodes.length === 0 && (
           <SearchEmptyState query={searchQuery} message="No matching nodes found" />
@@ -580,28 +608,53 @@ export function ConnectionModal(props: ConnectionModalProps) {
   const renderInputAddNewContent = () => {
     if (mode !== 'input') return null;
     const inputProps = props;
+
+    const concreteTypes: typeof filteredTypes = [];
+    const wildcardTypes: typeof filteredTypes = [];
+    for (const entry of filteredTypes) {
+      const outputType = entry.def.output?.[entry.outputIndex];
+      if (isWildcardOnlyMatch(outputType, inputProps.inputType)) {
+        wildcardTypes.push(entry);
+      } else {
+        concreteTypes.push(entry);
+      }
+    }
+
+    const renderTypeEntry = (entry: (typeof filteredTypes)[number]) => {
+      const { typeName, def, outputIndex } = entry;
+      const pack = prettyPackName(String(def.python_module ?? def.category?.split('/')[0] ?? 'Core'));
+      const outputType = String(def.output?.[outputIndex] ?? inputProps.inputType);
+      const outputName = def.output_name?.[outputIndex] ?? def.output?.[outputIndex] ?? 'Output';
+      return (
+        <NodeTypeSearchResult
+          key={typeName}
+          title={resolveNodeTypeDisplayName(def, typeName)}
+          subtitle={pack || 'Core'}
+          outputType={outputType}
+          outputName={String(outputName)}
+          inputName={inputProps.inputName}
+          titleClassName="text-sm font-medium text-gray-900 truncate"
+          onSelect={() => handleAddNewNode(typeName)}
+        />
+      );
+    };
+
     return (
       <div className="px-3 pt-3 pb-20 flex flex-col gap-2">
         {filteredTypes.length === 0 && (
           <SearchEmptyState query={searchQuery} message="No matching node types found" />
         )}
-        {filteredTypes.map(({ typeName, def, outputIndex }) => {
-          const pack = prettyPackName(String(def.python_module ?? def.category?.split('/')[0] ?? 'Core'));
-          const outputType = String(def.output?.[outputIndex] ?? inputProps.inputType);
-          const outputName = def.output_name?.[outputIndex] ?? def.output?.[outputIndex] ?? 'Output';
-          return (
-            <NodeTypeSearchResult
-              key={typeName}
-              title={resolveNodeTypeDisplayName(def, typeName)}
-              subtitle={pack || 'Core'}
-              outputType={outputType}
-              outputName={String(outputName)}
-              inputName={inputProps.inputName}
-              titleClassName="text-sm font-medium text-gray-900 truncate"
-              onSelect={() => handleAddNewNode(typeName)}
-            />
-          );
-        })}
+        {concreteTypes.map(renderTypeEntry)}
+        {wildcardTypes.length > 0 && (
+          <>
+            <div className="flex items-center gap-2 pt-1 pb-0.5">
+              <div className="flex-1 border-t border-gray-200" />
+              <span className="text-xs font-medium text-gray-400 whitespace-nowrap">Wildcard *</span>
+              <div className="flex-1 border-t border-gray-200" />
+            </div>
+            {wildcardTypes.map(renderTypeEntry)}
+          </>
+        )}
       </div>
     );
   };
@@ -609,57 +662,84 @@ export function ConnectionModal(props: ConnectionModalProps) {
   const renderOutputSelectionContent = () => {
     if (mode !== 'output') return null;
     const outputProps = props;
+
+    const concreteOutputNodes: typeof outputNodeCandidates = [];
+    const wildcardOutputNodes: typeof outputNodeCandidates = [];
+    for (const nodeCandidate of outputNodeCandidates) {
+      const allWildcard = nodeCandidate.inputs.every((candidate) =>
+        isWildcardOnlyMatch(outputProps.outputType, candidate.inputType)
+      );
+      if (allWildcard) {
+        wildcardOutputNodes.push(nodeCandidate);
+      } else {
+        concreteOutputNodes.push(nodeCandidate);
+      }
+    }
+
+    const renderOutputNodeEntry = (nodeCandidate: OutputNodeCandidate) => {
+      const selectedCount = nodeCandidate.inputs.filter((candidate) =>
+        selectedOutputTargetKeys.has(makeOutputSelectionKey(candidate.nodeId, candidate.inputIndex))
+      ).length;
+      const isSelected = selectedCount > 0;
+      const hasExistingLink = nodeCandidate.inputs.some((candidate) => candidate.hasExistingLink);
+      const hasConnectedFromThisOutput = nodeCandidate.inputs.some((candidate) => candidate.currentlyConnectedFromThisOutput);
+      const subtitle = nodeCandidate.inputs.length > 1
+        ? `${nodeCandidate.inputs.length} compatible inputs`
+        : `${outputProps.outputName} -> ${nodeCandidate.inputs[0]?.inputName ?? 'Input'}`;
+      return (
+        <button
+          key={`output-node-${nodeCandidate.nodeId}`}
+          type="button"
+          className={`w-full text-left rounded-xl border px-4 py-3 shadow-sm transition ${
+            isSelected
+              ? 'border-blue-300 bg-blue-50'
+              : 'border-gray-200 bg-white hover:border-gray-300 active:scale-[0.998]'
+          }`}
+          onClick={() => handleOutputNodeClick(nodeCandidate)}
+        >
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0 flex-1">
+              <div className="text-sm font-semibold text-gray-900 flex items-center gap-2 min-w-0">
+                <span className="truncate">
+                  {nodeCandidate.displayName} <span className="text-gray-400">#{nodeCandidate.nodeId}</span>
+                </span>
+                {hasConnectedFromThisOutput && (
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 text-[10px] font-medium shrink-0">
+                    <CheckIcon className="w-3 h-3" />
+                    Connected
+                  </span>
+                )}
+                {hasExistingLink && (
+                  <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 text-[10px] font-medium shrink-0">
+                    Already linked
+                  </span>
+                )}
+              </div>
+              <div className="text-xs text-gray-500 truncate mt-0.5">{nodeCandidate.pack || 'Core'}</div>
+              <div className="text-xs text-gray-700 mt-1 truncate">{subtitle}</div>
+            </div>
+            <div className={`w-5 h-5 rounded border flex items-center justify-center ${isSelected ? 'bg-blue-600 border-blue-600' : 'bg-white border-gray-300'}`}>
+              {isSelected && <CheckIcon className="w-3 h-3 text-white" />}
+            </div>
+          </div>
+        </button>
+      );
+    };
+
     return (
       <div className="px-3 pt-3 pb-20 flex flex-col gap-2">
-        {outputNodeCandidates.map((nodeCandidate) => {
-          const selectedCount = nodeCandidate.inputs.filter((candidate) =>
-            selectedOutputTargetKeys.has(makeOutputSelectionKey(candidate.nodeId, candidate.inputIndex))
-          ).length;
-          const isSelected = selectedCount > 0;
-          const hasExistingLink = nodeCandidate.inputs.some((candidate) => candidate.hasExistingLink);
-          const hasConnectedFromThisOutput = nodeCandidate.inputs.some((candidate) => candidate.currentlyConnectedFromThisOutput);
-          const subtitle = nodeCandidate.inputs.length > 1
-            ? `${nodeCandidate.inputs.length} compatible inputs`
-            : `${outputProps.outputName} -> ${nodeCandidate.inputs[0]?.inputName ?? 'Input'}`;
-          return (
-            <button
-              key={`output-node-${nodeCandidate.nodeId}`}
-              type="button"
-              className={`w-full text-left rounded-xl border px-4 py-3 shadow-sm transition ${
-                isSelected
-                  ? 'border-blue-300 bg-blue-50'
-                  : 'border-gray-200 bg-white hover:border-gray-300 active:scale-[0.998]'
-              }`}
-              onClick={() => handleOutputNodeClick(nodeCandidate)}
-            >
-              <div className="flex items-start justify-between gap-3">
-                <div className="min-w-0 flex-1">
-                  <div className="text-sm font-semibold text-gray-900 flex items-center gap-2 min-w-0">
-                    <span className="truncate">
-                      {nodeCandidate.displayName} <span className="text-gray-400">#{nodeCandidate.nodeId}</span>
-                    </span>
-                    {hasConnectedFromThisOutput && (
-                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 text-[10px] font-medium shrink-0">
-                        <CheckIcon className="w-3 h-3" />
-                        Connected
-                      </span>
-                    )}
-                    {hasExistingLink && (
-                      <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 text-[10px] font-medium shrink-0">
-                        Already linked
-                      </span>
-                    )}
-                  </div>
-                  <div className="text-xs text-gray-500 truncate mt-0.5">{nodeCandidate.pack || 'Core'}</div>
-                  <div className="text-xs text-gray-700 mt-1 truncate">{subtitle}</div>
-                </div>
-                <div className={`w-5 h-5 rounded border flex items-center justify-center ${isSelected ? 'bg-blue-600 border-blue-600' : 'bg-white border-gray-300'}`}>
-                  {isSelected && <CheckIcon className="w-3 h-3 text-white" />}
-                </div>
-              </div>
-            </button>
-          );
-        })}
+        {concreteOutputNodes.map(renderOutputNodeEntry)}
+
+        {wildcardOutputNodes.length > 0 && (
+          <>
+            <div className="flex items-center gap-2 pt-1 pb-0.5">
+              <div className="flex-1 border-t border-gray-200" />
+              <span className="text-xs font-medium text-gray-400 whitespace-nowrap">Wildcard *</span>
+              <div className="flex-1 border-t border-gray-200" />
+            </div>
+            {wildcardOutputNodes.map(renderOutputNodeEntry)}
+          </>
+        )}
 
         {outputNodeCandidates.length === 0 && (
           <SearchEmptyState query={searchQuery} message="No matching target nodes found" />
@@ -682,26 +762,50 @@ export function ConnectionModal(props: ConnectionModalProps) {
   const renderOutputAddNewContent = () => {
     if (mode !== 'output') return null;
     const outputProps = props;
+
+    const concreteOutputTypes: typeof filteredOutputTypes = [];
+    const wildcardOutputTypes: typeof filteredOutputTypes = [];
+    for (const entry of filteredOutputTypes) {
+      if (isWildcardOnlyMatch(outputProps.outputType, entry.inputType)) {
+        wildcardOutputTypes.push(entry);
+      } else {
+        concreteOutputTypes.push(entry);
+      }
+    }
+
+    const renderOutputTypeEntry = (entry: (typeof filteredOutputTypes)[number]) => {
+      const { typeName, def, inputIndex, inputType, inputName } = entry;
+      const pack = prettyPackName(String(def.python_module ?? def.category?.split('/')[0] ?? 'Core'));
+      return (
+        <NodeTypeSearchResult
+          key={typeName}
+          title={resolveNodeTypeDisplayName(def, typeName)}
+          subtitle={pack || 'Core'}
+          outputType={outputProps.outputType}
+          outputName={outputProps.outputName}
+          inputName={String(inputName)}
+          titleClassName="text-sm font-medium text-gray-900 truncate"
+          onSelect={() => handleAddNewNodeFromOutput(typeName, inputIndex, inputType)}
+        />
+      );
+    };
+
     return (
       <div className="px-3 pt-3 pb-20 flex flex-col gap-2">
         {filteredOutputTypes.length === 0 && (
           <SearchEmptyState query={searchQuery} message="No matching node types found" />
         )}
-        {filteredOutputTypes.map(({ typeName, def, inputIndex, inputType, inputName }) => {
-          const pack = prettyPackName(String(def.python_module ?? def.category?.split('/')[0] ?? 'Core'));
-          return (
-            <NodeTypeSearchResult
-              key={typeName}
-              title={resolveNodeTypeDisplayName(def, typeName)}
-              subtitle={pack || 'Core'}
-              outputType={outputProps.outputType}
-              outputName={outputProps.outputName}
-              inputName={String(inputName)}
-              titleClassName="text-sm font-medium text-gray-900 truncate"
-              onSelect={() => handleAddNewNodeFromOutput(typeName, inputIndex, inputType)}
-            />
-          );
-        })}
+        {concreteOutputTypes.map(renderOutputTypeEntry)}
+        {wildcardOutputTypes.length > 0 && (
+          <>
+            <div className="flex items-center gap-2 pt-1 pb-0.5">
+              <div className="flex-1 border-t border-gray-200" />
+              <span className="text-xs font-medium text-gray-400 whitespace-nowrap">Wildcard *</span>
+              <div className="flex-1 border-t border-gray-200" />
+            </div>
+            {wildcardOutputTypes.map(renderOutputTypeEntry)}
+          </>
+        )}
       </div>
     );
   };

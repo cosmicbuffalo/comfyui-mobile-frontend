@@ -85,6 +85,7 @@ export function NodeCardHeader({
             value={labelValue}
             onChange={(e) => onLabelChange(e.target.value)}
             onBlur={onLabelBlur}
+            data-swipe-nav-ignore="true"
             onKeyDown={(event) => {
               if (event.key === 'Enter' || event.key === 'Escape') {
                 event.currentTarget.blur();

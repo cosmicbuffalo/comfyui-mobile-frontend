@@ -278,6 +278,7 @@ export function GraphContainerHeader({
             ref={labelInputRef}
             value={labelValue}
             onChange={(e) => setLabelValue(e.target.value)}
+            data-swipe-nav-ignore="true"
             onBlur={() => {
               onCommitTitle(labelValue);
               setIsEditingLabel(false);

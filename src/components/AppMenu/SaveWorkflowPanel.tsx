@@ -39,6 +39,7 @@ export function SaveWorkflowPanel({
             value={saveFilenameInput}
             onChange={(e) => onSaveFilenameChange(e.target.value)}
             placeholder="Enter filename (e.g., my_workflow.json)"
+            data-swipe-nav-ignore="true"
             className="w-full p-3 border border-gray-300 rounded-lg mb-3"
           />
           <button

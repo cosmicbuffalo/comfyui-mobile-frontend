@@ -866,6 +866,7 @@ export function OutputsPanel({ visible }: { visible: boolean }) {
                      value={newFolderName}
                      onChange={(event) => setNewFolderName(event.target.value)}
                      placeholder="New folder"
+                     data-swipe-nav-ignore="true"
                      className="flex-1 border border-gray-200 rounded-lg px-3 py-2 text-sm"
                    />
                    <button
@@ -954,6 +955,7 @@ export function OutputsPanel({ visible }: { visible: boolean }) {
               onChange={(event) => setRenameValue(event.target.value)}
               onKeyDown={(event) => { if (event.key === 'Enter') void confirmRename(); }}
               placeholder={renameTarget.type === 'folder' ? 'Folder name' : 'File name'}
+              data-swipe-nav-ignore="true"
               className="mt-3 w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
               autoFocus
             />
@@ -994,6 +996,7 @@ export function OutputsPanel({ visible }: { visible: boolean }) {
               onChange={(event) => setCreateFolderName(event.target.value)}
               onKeyDown={(event) => { if (event.key === 'Enter') handleCreateNewFolder(); }}
               placeholder="Folder name"
+              data-swipe-nav-ignore="true"
               className="mt-3 w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
               autoFocus
             />

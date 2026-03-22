@@ -58,6 +58,7 @@ export function useSwipeNavigation({
 
     const isEditableTarget = (target: EventTarget | null) => {
       if (!(target instanceof HTMLElement)) return false;
+      if (target.closest('[data-swipe-nav-ignore="true"]')) return true;
       if (target.isContentEditable) return true;
       const tag = target.tagName.toLowerCase();
       return tag === 'input' || tag === 'textarea' || tag === 'select';

@@ -108,6 +108,7 @@ export function NumberControl({
           value={localValue}
           onChange={handleInputChange}
           onBlur={handleBlur}
+          data-swipe-nav-ignore="true"
           disabled={disabled}
           aria-label={type ? `${name} ${type}` : name}
         />

@@ -53,6 +53,7 @@ export function NodeCardNote({
           value={noteText}
           onChange={handleTextareaChange}
           onBlur={() => setIsEditingNote(false)}
+          data-swipe-nav-ignore="true"
           className="w-full p-3 border rounded-lg text-base resize-none note-display"
           rows={Math.min(8, Math.max(3, noteText.split('\n').length))}
         />
