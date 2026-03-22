@@ -19,7 +19,12 @@ function getSourceLabel(entry: RecentWorkflowEntry): string | null {
     case 'user': return null;
     case 'template': return 'Template';
     case 'history': return 'History';
-    case 'file': return entry.source.assetSource === 'input' ? 'Input' : 'Output';
+    case 'file':
+      switch (entry.source.assetSource) {
+        case 'input': return 'Input';
+        case 'temp': return 'Temp';
+        default: return 'Output';
+      }
     case 'other': return null;
   }
 }

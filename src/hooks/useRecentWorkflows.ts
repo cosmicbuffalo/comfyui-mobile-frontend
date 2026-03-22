@@ -45,6 +45,8 @@ function dedupeKey(entry: {
       return `file:${entry.source.assetSource}:${entry.source.filePath}`;
     case "other":
       return `other:${entry.filename}`;
+    default:
+      return `other:${entry.filename}`;
   }
 }
 
@@ -139,6 +141,7 @@ export const useRecentWorkflowsStore = create<RecentWorkflowsState>()(
 let syncTimer: ReturnType<typeof setTimeout> | null = null;
 
 function scheduleServerSync() {
+  if (!useRecentWorkflowsStore.getState().serverSynced) return;
   if (syncTimer) clearTimeout(syncTimer);
   syncTimer = setTimeout(() => {
     syncTimer = null;
