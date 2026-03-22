@@ -2,7 +2,6 @@ import { describe, it, expect } from 'vitest';
 import {
   resolveFileSource,
   resolveFilePath,
-  buildWorkflowFilename,
   resolveViewerItemWorkflowLoad,
 } from '../workflowOperations';
 import type { FileItem } from '@/api/client';
@@ -42,20 +41,6 @@ describe('resolveFilePath', () => {
   it('respects explicit source parameter', () => {
     expect(resolveFilePath(makeFile('input/img.png'), 'output')).toBe('input/img.png');
     expect(resolveFilePath(makeFile('output/img.png'), 'input')).toBe('output/img.png');
-  });
-});
-
-describe('buildWorkflowFilename', () => {
-  it('converts path to workflow filename', () => {
-    expect(buildWorkflowFilename('img.png')).toBe('output-img.png.json');
-  });
-
-  it('replaces slashes with underscores', () => {
-    expect(buildWorkflowFilename('sub/dir/img.png')).toBe('output-sub_dir_img.png.json');
-  });
-
-  it('replaces backslashes with underscores', () => {
-    expect(buildWorkflowFilename('sub\\dir\\img.png')).toBe('output-sub_dir_img.png.json');
   });
 });
 

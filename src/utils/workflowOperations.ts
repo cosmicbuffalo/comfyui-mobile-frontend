@@ -23,10 +23,6 @@ export function resolveFilePath(file: FileItem, source?: AssetSource): string {
   return file.id.startsWith(prefix) ? file.id.slice(prefix.length) : file.id;
 }
 
-export function buildWorkflowFilename(filePath: string): string {
-  return `output-${filePath.replace(/[\\/]/g, '_')}.json`;
-}
-
 export function resolveViewerItemWorkflowLoad(
   item: ViewerImage,
   historyWorkflowByFileId?: ReadonlyMap<string, { workflow: Workflow; promptId: string }>,
