@@ -1,6 +1,5 @@
 // Debug logging utility - writes logs to server via userdata API
 
-import { API_BASE } from '@/api/client';
 
 type LogEntry = {
   timestamp: number;
@@ -32,7 +31,7 @@ async function flushLogsToServer() {
     // Append to existing log file by reading first, then writing
     let existingContent = '';
     try {
-      const readResponse = await fetch(`${API_BASE}/api/userdata/${encodeUserDataPath('mobile-debug.log')}`);
+      const readResponse = await fetch(`/api/userdata/${encodeUserDataPath('mobile-debug.log')}`);
       if (readResponse.ok) {
         existingContent = await readResponse.text();
       }
@@ -42,7 +41,7 @@ async function flushLogsToServer() {
 
     const newContent = existingContent + logText;
 
-    await fetch(`${API_BASE}/api/userdata/${encodeUserDataPath('mobile-debug.log')}?overwrite=true`, {
+    await fetch(`/api/userdata/${encodeUserDataPath('mobile-debug.log')}?overwrite=true`, {
       method: 'POST',
       headers: { 'Content-Type': 'text/plain' },
       body: newContent
@@ -92,7 +91,7 @@ export async function flushDebugLogs() {
 // Clear the server log file
 export async function clearServerLogs() {
   try {
-    await fetch(`${API_BASE}/api/userdata/${encodeUserDataPath('mobile-debug.log')}?overwrite=true`, {
+    await fetch(`/api/userdata/${encodeUserDataPath('mobile-debug.log')}?overwrite=true`, {
       method: 'POST',
       headers: { 'Content-Type': 'text/plain' },
       body: ''

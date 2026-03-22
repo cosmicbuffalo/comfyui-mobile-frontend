@@ -2,7 +2,6 @@ import { describe, it, expect } from 'vitest';
 import {
   resolveFileSource,
   resolveFilePath,
-  buildWorkflowFilename,
   resolveViewerItemWorkflowLoad,
 } from '../workflowOperations';
 import type { FileItem } from '@/api/client';
@@ -45,20 +44,6 @@ describe('resolveFilePath', () => {
   });
 });
 
-describe('buildWorkflowFilename', () => {
-  it('converts path to workflow filename', () => {
-    expect(buildWorkflowFilename('img.png')).toBe('output-img.png.json');
-  });
-
-  it('replaces slashes with underscores', () => {
-    expect(buildWorkflowFilename('sub/dir/img.png')).toBe('output-sub_dir_img.png.json');
-  });
-
-  it('replaces backslashes with underscores', () => {
-    expect(buildWorkflowFilename('sub\\dir\\img.png')).toBe('output-sub_dir_img.png.json');
-  });
-});
-
 describe('resolveViewerItemWorkflowLoad', () => {
   const mockWorkflow = { nodes: [], links: [] } as unknown as Workflow;
 
@@ -70,8 +55,8 @@ describe('resolveViewerItemWorkflowLoad', () => {
       file: makeFile('output/sub/dir/img.png')
     };
     const resolved = resolveViewerItemWorkflowLoad(item);
-    expect(resolved?.filename).toBe('output-sub_dir_img.png.json');
-    expect(resolved?.source).toEqual({ type: 'other' });
+    expect(resolved?.filename).toBe('sub/dir/img.png');
+    expect(resolved?.source).toEqual({ type: 'file', filePath: 'sub/dir/img.png', assetSource: 'output' });
   });
 
   it('uses history filename format when promptId exists', () => {

@@ -1,7 +1,7 @@
 import { useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { createPortal } from 'react-dom';
-import { saveUserWorkflow, loadTemplateWorkflow, loadUserWorkflow } from '@/api/client';
+import { saveUserWorkflow, loadTemplateWorkflow, loadUserWorkflow, getFileWorkflow } from '@/api/client';
 import { useWorkflowStore } from '@/hooks/useWorkflow';
 import { getWorkflowForPersistence } from '@/utils/workflowPersistence';
 import { useNavigationStore } from '@/hooks/useNavigation';
@@ -155,6 +155,12 @@ export function WorkflowTopBarControls() {
           source: workflowSource
         });
       }
+      return;
+    }
+
+    if (workflowSource.type === 'file') {
+      const data = await getFileWorkflow(workflowSource.filePath, workflowSource.assetSource);
+      loadWorkflow(data, workflowSource.filePath, { fresh: true, source: workflowSource });
       return;
     }
 

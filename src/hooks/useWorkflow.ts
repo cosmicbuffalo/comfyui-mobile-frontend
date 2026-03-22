@@ -19,6 +19,7 @@ import * as api from "@/api/client";
 import { useQueueStore } from "@/hooks/useQueue";
 import { useNavigationStore } from "@/hooks/useNavigation";
 import { usePinnedWidgetStore } from "@/hooks/usePinnedWidget";
+import { useRecentWorkflowsStore } from "@/hooks/useRecentWorkflows";
 import { useSeedStore } from "@/hooks/useSeed";
 import {
   buildWorkflowPromptInputs,
@@ -740,6 +741,7 @@ export type WorkflowSource =
   | { type: "user"; filename: string }
   | { type: "history"; promptId: string }
   | { type: "template"; moduleName: string; templateName: string }
+  | { type: "file"; filePath: string; assetSource: "output" | "input" | "temp" }
   | { type: "other" };
 
 interface WorkflowState {
@@ -3705,6 +3707,11 @@ export const useWorkflowStore = create<WorkflowState>()(
             useWorkflowErrorsStore.getState().clearNodeErrors();
           }
         }
+
+        // Track in recent workflows
+        if (filename) {
+          useRecentWorkflowsStore.getState().addEntry(filename, source);
+        }
       };
 
       const unloadWorkflow: WorkflowState["unloadWorkflow"] = () => {
@@ -5114,7 +5121,7 @@ export const useWorkflowStore = create<WorkflowState>()(
             // Embed the canonical workflow (not expanded) so desktop ComfyUI can reload it correctly.
             // Run validateAndNormalizeWorkflow to repair any stale SubgraphIO.linkIds before embedding.
             const queuedWorkflow = validateAndNormalizeWorkflow(stripWorkflowClientMetadata(currentWorkflow));
-            const response = await fetch(`${api.API_BASE}/api/prompt`, {
+            const response = await fetch('/api/prompt', {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({

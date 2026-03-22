@@ -80,7 +80,7 @@ export function NodeCardErrorPopover({
     <div
       ref={popoverRef}
       id={`error-popover-${nodeId}`}
-      className="error-popover-root fixed z-[2000] bg-red-50 border border-red-700 rounded-lg shadow-lg w-72 max-h-64 overflow-hidden"
+      className="error-popover-root fixed z-[2000] bg-red-50 rounded-lg shadow-lg w-72 max-h-64 overflow-hidden"
       style={{ top: position.top, left: position.left }}
     >
       <div id={`error-popover-header-${nodeId}`} className="popover-header flex items-center justify-between px-3 py-2 border-b border-red-200 bg-red-700">
@@ -118,7 +118,7 @@ export function NodeCardErrorPopover({
                 )}
                 <div className="error-message-text text-red-800">{err.message}</div>
                 {!isDetailsRedundant && (
-                  <div className="error-details-text text-xs text-red-700 mt-0.5 break-words">{err.details}</div>
+                  <div className="error-details-text text-xs text-red-600 mt-0.5 break-words">{err.details}</div>
                 )}
               </div>
             </div>

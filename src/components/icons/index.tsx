@@ -68,3 +68,5 @@ export { MoveUpDownIcon } from './MoveUpDownIcon';
 export { ProgressRingWithTrack } from './ProgressRingWithTrack';
 export type { ProgressRingWithTrackProps } from './ProgressRingWithTrack';
 export { PromotedWidgetIcon } from './PromotedWidgetIcon';
+export { ServerIcon } from './ServerIcon';
+export { ClockIcon } from './ClockIcon';
