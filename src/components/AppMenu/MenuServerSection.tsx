@@ -84,7 +84,7 @@ function ServerStatsCard({ systemStats, cpuPercent }: { systemStats: SystemStats
               used={vramUsed}
               total={device.vram_total}
               label="VRAM"
-              color={vramUsed / device.vram_total > 0.9 ? 'bg-red-500' : vramUsed / device.vram_total > 0.7 ? 'bg-amber-500' : 'bg-blue-500'}
+              color={device.vram_total > 0 && vramUsed / device.vram_total > 0.9 ? 'bg-red-500' : device.vram_total > 0 && vramUsed / device.vram_total > 0.7 ? 'bg-amber-500' : 'bg-blue-500'}
             />
           </div>
         );

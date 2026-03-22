@@ -512,7 +512,7 @@ export interface SystemStats {
 }
 
 export async function fetchSystemStats(): Promise<SystemStats> {
-  const response = await fetch('/system_stats', { cache: 'no-store' });
+  const response = await fetch(`${API_BASE}/system_stats`, { cache: 'no-store' });
   if (!response.ok) {
     throw new Error('Failed to fetch system stats');
   }

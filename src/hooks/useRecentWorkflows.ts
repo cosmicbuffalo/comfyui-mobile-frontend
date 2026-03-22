@@ -122,6 +122,8 @@ export const useRecentWorkflowsStore = create<RecentWorkflowsState>()(
           entries: mergeEntries(state.entries, validRemote),
           serverSynced: true,
         }));
+        // Push merged result back so any local-only entries reach the server
+        scheduleServerSync();
       },
 
       syncToServer: async () => {

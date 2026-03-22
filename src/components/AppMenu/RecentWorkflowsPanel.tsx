@@ -34,6 +34,15 @@ function isReloadable(entry: RecentWorkflowEntry): boolean {
   return entry.source.type === 'user' || entry.source.type === 'template' || entry.source.type === 'file';
 }
 
+function getEntryDisplayName(entry: RecentWorkflowEntry): string {
+  // For file sources, show the original file path basename instead of the synthetic workflow filename
+  if (entry.source?.type === 'file') {
+    const filePath = entry.source.filePath;
+    return filePath.includes('/') ? filePath.substring(filePath.lastIndexOf('/') + 1) : filePath;
+  }
+  return getDisplayName(entry.filename);
+}
+
 function getEntryIcon(entry: RecentWorkflowEntry) {
   if (entry.source?.type === 'template') return TemplateIcon;
   if (entry.source?.type === 'file') return DocumentIcon;
@@ -63,8 +72,12 @@ export function RecentWorkflowsPanel({
     Promise.all(
       fileEntries.map(async ({ entry, index }) => {
         if (entry.source?.type !== 'file') return null;
-        const available = await getFileWorkflowAvailability(entry.source.filePath, entry.source.assetSource);
-        return available ? null : index;
+        try {
+          const available = await getFileWorkflowAvailability(entry.source.filePath, entry.source.assetSource);
+          return available ? null : index;
+        } catch {
+          return index;
+        }
       }),
     ).then((results) => {
       if (cancelled) return;
@@ -129,7 +142,7 @@ export function RecentWorkflowsPanel({
                 <Icon className="w-5 h-5 text-gray-600 shrink-0" />
                 <div className="flex-1 min-w-0">
                   <p className="font-medium text-gray-900 truncate">
-                    {getDisplayName(entry.filename)}
+                    {getEntryDisplayName(entry)}
                   </p>
                   <div className="flex items-center gap-2 text-xs text-gray-500">
                     <span>{formatRelativeDate(entry.timestamp / 1000)}</span>
