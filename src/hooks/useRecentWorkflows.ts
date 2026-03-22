@@ -29,7 +29,8 @@ interface RecentWorkflowsState {
   syncToServer: () => Promise<void>;
 }
 
-function dedupeKey(entry: {
+/** @internal exported for testing */
+export function dedupeKey(entry: {
   filename: string;
   source: WorkflowSource | null;
 }): string {
@@ -50,7 +51,8 @@ function dedupeKey(entry: {
   }
 }
 
-function isValidEntry(entry: unknown): entry is RecentWorkflowEntry {
+/** @internal exported for testing */
+export function isValidEntry(entry: unknown): entry is RecentWorkflowEntry {
   if (!entry || typeof entry !== "object") return false;
   const e = entry as Record<string, unknown>;
   return (
@@ -60,8 +62,11 @@ function isValidEntry(entry: unknown): entry is RecentWorkflowEntry {
   );
 }
 
+/** @internal exported for testing */
+export const MAX_RECENT_ENTRIES = MAX_RECENT;
+
 /** Merge two entry lists, keeping the newest per dedupe key, sorted by most recent first, capped at MAX_RECENT */
-function mergeEntries(
+export function mergeEntries(
   local: RecentWorkflowEntry[],
   remote: RecentWorkflowEntry[],
 ): RecentWorkflowEntry[] {

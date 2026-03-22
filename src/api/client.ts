@@ -1,6 +1,5 @@
 import type { NodeTypes, QueueInfo, History, Workflow } from './types';
 
-export const API_BASE = '';
 
 function getOrCreateClientId(): string {
   const storageKey = 'comfyui-mobile-client-id';
@@ -15,21 +14,21 @@ function getOrCreateClientId(): string {
 export const clientId = getOrCreateClientId();
 
 export async function getNodeTypes(): Promise<NodeTypes> {
-  const response = await fetch(`${API_BASE}/api/object_info`);
+  const response = await fetch(`/api/object_info`);
   if (!response.ok) throw new Error('Failed to fetch node types');
   return response.json();
 }
 
 export async function getQueue(): Promise<QueueInfo> {
-  const response = await fetch(`${API_BASE}/api/queue`);
+  const response = await fetch(`/api/queue`);
   if (!response.ok) throw new Error('Failed to fetch queue');
   return response.json();
 }
 
 export async function getHistory(maxItems?: number): Promise<History> {
   const url = maxItems
-    ? `${API_BASE}/api/history?max_items=${maxItems}`
-    : `${API_BASE}/api/history`;
+    ? `/api/history?max_items=${maxItems}`
+    : `/api/history`;
   const response = await fetch(url);
   if (!response.ok) throw new Error('Failed to fetch history');
   return response.json();
@@ -51,7 +50,7 @@ export interface LoraManagerRegistryNode {
 
 export async function registerLoraManagerNodes(nodes: LoraManagerRegistryNode[]): Promise<void> {
   if (nodes.length === 0) return;
-  const response = await fetch(`${API_BASE}/api/lm/register-nodes`, {
+  const response = await fetch(`/api/lm/register-nodes`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ nodes })
@@ -69,7 +68,7 @@ export async function requestTriggerWords(
   nodeIds: TriggerWordTargetReference[]
 ): Promise<void> {
   if (!nodeIds || nodeIds.length === 0) return;
-  const response = await fetch(`${API_BASE}/api/lm/loras/get_trigger_words`, {
+  const response = await fetch(`/api/lm/loras/get_trigger_words`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -90,7 +89,7 @@ export interface UserDataFile {
 }
 
 export async function listUserWorkflows(): Promise<UserDataFile[]> {
-  const response = await fetch(`${API_BASE}/api/v2/userdata?path=workflows`);
+  const response = await fetch(`/api/v2/userdata?path=workflows`);
   if (!response.ok) {
     // Folder may not exist yet
     if (response.status === 404) return [];
@@ -109,7 +108,7 @@ function encodeUserDataPath(path: string): string {
 }
 
 export async function loadUserWorkflow(filename: string): Promise<Workflow> {
-  const response = await fetch(`${API_BASE}/api/userdata/${encodeUserDataPath('workflows/' + filename)}`, {
+  const response = await fetch(`/api/userdata/${encodeUserDataPath('workflows/' + filename)}`, {
     cache: 'no-store',
   });
   if (!response.ok) throw new Error('Failed to load workflow');
@@ -117,7 +116,7 @@ export async function loadUserWorkflow(filename: string): Promise<Workflow> {
 }
 
 export async function saveUserWorkflow(filename: string, workflow: Workflow): Promise<void> {
-  const response = await fetch(`${API_BASE}/api/userdata/${encodeUserDataPath('workflows/' + filename)}?overwrite=true`, {
+  const response = await fetch(`/api/userdata/${encodeUserDataPath('workflows/' + filename)}?overwrite=true`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(workflow)
@@ -126,7 +125,7 @@ export async function saveUserWorkflow(filename: string, workflow: Workflow): Pr
 }
 
 export async function deleteUserWorkflow(filename: string): Promise<void> {
-  const response = await fetch(`${API_BASE}/api/userdata/${encodeUserDataPath('workflows/' + filename)}`, {
+  const response = await fetch(`/api/userdata/${encodeUserDataPath('workflows/' + filename)}`, {
     method: 'DELETE'
   });
   if (!response.ok) throw new Error('Failed to delete workflow');
@@ -138,25 +137,25 @@ export interface WorkflowTemplates {
 }
 
 export async function getWorkflowTemplates(): Promise<WorkflowTemplates> {
-  const response = await fetch(`${API_BASE}/api/workflow_templates`);
+  const response = await fetch(`/api/workflow_templates`);
   if (!response.ok) throw new Error('Failed to fetch templates');
   return response.json();
 }
 
 export async function loadTemplateWorkflow(moduleName: string, templateName: string): Promise<Workflow> {
   const response = await fetch(
-    `${API_BASE}/api/workflow_templates/${encodeURIComponent(moduleName)}/${encodeURIComponent(templateName)}`
+    `/api/workflow_templates/${encodeURIComponent(moduleName)}/${encodeURIComponent(templateName)}`
   );
   if (!response.ok) throw new Error('Failed to load template');
   return response.json();
 }
 
 export async function interruptExecution(): Promise<void> {
-  await fetch(`${API_BASE}/api/interrupt`, { method: 'POST' });
+  await fetch(`/api/interrupt`, { method: 'POST' });
 }
 
 export async function clearQueue(): Promise<void> {
-  await fetch(`${API_BASE}/api/queue`, {
+  await fetch(`/api/queue`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ clear: true })
@@ -164,7 +163,7 @@ export async function clearQueue(): Promise<void> {
 }
 
 export async function deleteQueueItem(promptId: string): Promise<void> {
-  await fetch(`${API_BASE}/api/queue`, {
+  await fetch(`/api/queue`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ delete: [promptId] })
@@ -187,7 +186,7 @@ export async function uploadImageFile(
     form.append('overwrite', options.overwrite ? 'true' : 'false');
   }
 
-  const response = await fetch(`${API_BASE}/upload/image`, {
+  const response = await fetch(`/upload/image`, {
     method: 'POST',
     body: form
   });
@@ -200,7 +199,7 @@ export async function uploadImageFile(
 }
 
 export async function deleteHistoryItem(promptId: string): Promise<void> {
-  await fetch(`${API_BASE}/api/history`, {
+  await fetch(`/api/history`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ delete: [promptId] })
@@ -209,7 +208,7 @@ export async function deleteHistoryItem(promptId: string): Promise<void> {
 
 export async function deleteHistoryItems(promptIds: string[]): Promise<void> {
   if (promptIds.length === 0) return;
-  await fetch(`${API_BASE}/api/history`, {
+  await fetch(`/api/history`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ delete: promptIds })
@@ -217,7 +216,7 @@ export async function deleteHistoryItems(promptIds: string[]): Promise<void> {
 }
 
 export async function clearHistory(): Promise<void> {
-  await fetch(`${API_BASE}/api/history`, {
+  await fetch(`/api/history`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ clear: true })
@@ -225,7 +224,7 @@ export async function clearHistory(): Promise<void> {
 }
 
 export function getImageUrl(filename: string, subfolder: string, type: string): string {
-  return `${API_BASE}/view?filename=${encodeURIComponent(filename)}&subfolder=${encodeURIComponent(subfolder)}&type=${encodeURIComponent(type)}`;
+  return `/view?filename=${encodeURIComponent(filename)}&subfolder=${encodeURIComponent(subfolder)}&type=${encodeURIComponent(type)}`;
 }
 
 export function connectWebSocket(
@@ -308,7 +307,7 @@ async function fetchMobileFiles(
   if (source) params.set('source', source);
   if (showHidden) params.set('showHidden', 'true');
 
-  const response = await fetch(`${API_BASE}/mobile/api/files?${params}`);
+  const response = await fetch(`/mobile/api/files?${params}`);
   if (!response.ok) throw new Error('Failed to fetch files');
   return response.json();
 }
@@ -360,8 +359,8 @@ export async function getUserImages(
       id: `${mode}/${f.path}`,
       name: f.name,
       type: f.type as 'image' | 'video',
-      previewUrl: `${API_BASE}/mobile/api/thumbnail?filename=${encodeURIComponent(f.name)}&subfolder=${encodeURIComponent(folder)}&source=${mode}`,
-      fullUrl: `${API_BASE}/view?filename=${encodeURIComponent(f.name)}&type=${mode}&subfolder=${encodeURIComponent(folder)}`,
+      previewUrl: `/mobile/api/thumbnail?filename=${encodeURIComponent(f.name)}&subfolder=${encodeURIComponent(folder)}&source=${mode}`,
+      fullUrl: `/view?filename=${encodeURIComponent(f.name)}&type=${mode}&subfolder=${encodeURIComponent(folder)}`,
       date: f.date,
       size: f.size,
     };
@@ -369,7 +368,7 @@ export async function getUserImages(
 }
 
 export async function deleteFile(path: string, source: AssetSource = 'output'): Promise<void> {
-  const response = await fetch(`${API_BASE}/mobile/api/files`, {
+  const response = await fetch(`/mobile/api/files`, {
     method: 'DELETE',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ path, source })
@@ -386,7 +385,7 @@ export async function getFileWorkflow(
   options?: { signal?: AbortSignal },
 ): Promise<Workflow> {
   const params = new URLSearchParams({ path, source });
-  const response = await fetch(`${API_BASE}/mobile/api/file-metadata?${params.toString()}`, {
+  const response = await fetch(`/mobile/api/file-metadata?${params.toString()}`, {
     signal: options?.signal,
   });
   if (!response.ok) {
@@ -406,7 +405,7 @@ export async function getFileWorkflowAvailability(
   options?: { signal?: AbortSignal },
 ): Promise<boolean> {
   const params = new URLSearchParams({ path, source });
-  const response = await fetch(`${API_BASE}/mobile/api/workflow-availability?${params.toString()}`, {
+  const response = await fetch(`/mobile/api/workflow-availability?${params.toString()}`, {
     signal: options?.signal,
   });
   if (!response.ok) {
@@ -422,7 +421,7 @@ export async function getImageMetadata(
   source: AssetSource = 'output'
 ): Promise<{ prompt?: unknown; workflow?: unknown }> {
   const params = new URLSearchParams({ path, source });
-  const response = await fetch(`${API_BASE}/mobile/api/image-metadata?${params.toString()}`);
+  const response = await fetch(`/mobile/api/image-metadata?${params.toString()}`);
   if (!response.ok) {
     const error = await response.json().catch(() => ({}));
     throw new Error(error.error || 'Failed to load image metadata');
@@ -435,7 +434,7 @@ export async function moveFiles(
   destination: string | null,
   source: AssetSource = 'output'
 ): Promise<void> {
-  const response = await fetch(`${API_BASE}/mobile/api/files/move`, {
+  const response = await fetch(`/mobile/api/files/move`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ sources: paths, destination: destination ?? '', source })
@@ -447,7 +446,7 @@ export async function moveFiles(
 }
 
 export async function createFolder(path: string, source: AssetSource = 'output'): Promise<void> {
-  const response = await fetch(`${API_BASE}/mobile/api/files/mkdir`, {
+  const response = await fetch(`/mobile/api/files/mkdir`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ path, source })
@@ -463,7 +462,7 @@ export async function renameFile(
   newName: string,
   source: AssetSource = 'output'
 ): Promise<void> {
-  const response = await fetch(`${API_BASE}/mobile/api/files/rename`, {
+  const response = await fetch(`/mobile/api/files/rename`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ path, newName, source })
@@ -475,7 +474,7 @@ export async function renameFile(
 }
 
 export async function restartServer(): Promise<void> {
-  const response = await fetch(`${API_BASE}/mobile/api/restart`, {
+  const response = await fetch(`/mobile/api/restart`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ confirm: true })
@@ -512,7 +511,7 @@ export interface SystemStats {
 }
 
 export async function fetchSystemStats(): Promise<SystemStats> {
-  const response = await fetch(`${API_BASE}/system_stats`, { cache: 'no-store' });
+  const response = await fetch(`/system_stats`, { cache: 'no-store' });
   if (!response.ok) {
     throw new Error('Failed to fetch system stats');
   }
@@ -524,7 +523,7 @@ const RECENT_WORKFLOWS_PATH = 'mobile/recent_workflows.json';
 export async function loadRecentWorkflowsFromServer(): Promise<unknown[]> {
   try {
     const response = await fetch(
-      `${API_BASE}/api/userdata/${encodeUserDataPath(RECENT_WORKFLOWS_PATH)}`,
+      `/api/userdata/${encodeUserDataPath(RECENT_WORKFLOWS_PATH)}`,
       { cache: 'no-store' },
     );
     if (!response.ok) return [];
@@ -538,7 +537,7 @@ export async function loadRecentWorkflowsFromServer(): Promise<unknown[]> {
 export async function saveRecentWorkflowsToServer(entries: unknown[]): Promise<void> {
   try {
     await fetch(
-      `${API_BASE}/api/userdata/${encodeUserDataPath(RECENT_WORKFLOWS_PATH)}?overwrite=true`,
+      `/api/userdata/${encodeUserDataPath(RECENT_WORKFLOWS_PATH)}?overwrite=true`,
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -552,7 +551,7 @@ export async function saveRecentWorkflowsToServer(entries: unknown[]): Promise<v
 
 export async function fetchCpuPercent(): Promise<number | null> {
   try {
-    const response = await fetch(`${API_BASE}/mobile/api/cpu-stats`, { cache: 'no-store' });
+    const response = await fetch(`/mobile/api/cpu-stats`, { cache: 'no-store' });
     if (!response.ok) return null;
     const data = await response.json();
     return data.cpu_percent ?? null;

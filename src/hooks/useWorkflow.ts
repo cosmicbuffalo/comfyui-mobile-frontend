@@ -5121,7 +5121,7 @@ export const useWorkflowStore = create<WorkflowState>()(
             // Embed the canonical workflow (not expanded) so desktop ComfyUI can reload it correctly.
             // Run validateAndNormalizeWorkflow to repair any stale SubgraphIO.linkIds before embedding.
             const queuedWorkflow = validateAndNormalizeWorkflow(stripWorkflowClientMetadata(currentWorkflow));
-            const response = await fetch(`${api.API_BASE}/api/prompt`, {
+            const response = await fetch('/api/prompt', {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({

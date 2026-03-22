@@ -67,7 +67,10 @@ export function RecentWorkflowsPanel({
       .map((e, i) => ({ entry: e, index: i }))
       .filter((x) => x.entry.source?.type === 'file');
 
-    if (fileEntries.length === 0) return;
+    if (fileEntries.length === 0) {
+      setUnavailable(new Set());
+      return;
+    }
 
     Promise.all(
       fileEntries.map(async ({ entry, index }) => {
