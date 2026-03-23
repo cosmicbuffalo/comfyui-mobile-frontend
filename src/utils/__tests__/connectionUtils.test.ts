@@ -2,8 +2,9 @@ import { describe, expect, it } from 'vitest';
 import type { NodeTypes, Workflow, WorkflowLink, WorkflowNode } from '@/api/types';
 import {
   areTypesCompatible,
-  areTypesCompatibleStrict,
+  isWildcardOnlyMatch,
   findCompatibleNodeTypesForInput,
+  findCompatibleNodeTypesForOutput,
   findCompatibleSourceNodes,
   findCompatibleTargetNodesForOutput
 } from '../connectionUtils';
@@ -77,7 +78,7 @@ describe('findCompatibleSourceNodes', () => {
     expect(result[0].outputIndex).toBe(0);
   });
 
-  it('does not include wildcard-like outputs for strict picker compatibility', () => {
+  it('includes wildcard-like outputs for picker compatibility', () => {
     const wildcardNode = makeNode(1, 'Wildcard', {
       outputs: [{ name: 'out', type: '*', links: null }]
     });
@@ -93,7 +94,7 @@ describe('findCompatibleSourceNodes', () => {
 
     const wf = makeWorkflow([wildcardNode, optConnectionNode, imageNode, target], []);
     const result = findCompatibleSourceNodes(wf, 4, 0);
-    expect(result.map((r) => r.node.id)).toEqual([3]);
+    expect(result.map((r) => r.node.id)).toEqual([1, 3]);
   });
 
   it('excludes downstream nodes that would create circular connections', () => {
@@ -186,6 +187,24 @@ describe('findCompatibleTargetNodesForOutput', () => {
     expect(result.filter((r) => r.node.id === 2)).toHaveLength(2);
     expect(result.map((r) => r.inputIndex)).toEqual([0, 1]);
   });
+
+  it('includes wildcard-like target inputs for picker compatibility', () => {
+    const source = makeNode(1, 'Source', {
+      outputs: [{ name: 'out', type: 'IMAGE', links: null }]
+    });
+    const wildcardTarget = makeNode(2, 'WildcardTarget', {
+      inputs: [{ name: 'in', type: '*', link: null }],
+      outputs: []
+    });
+    const imageTarget = makeNode(3, 'ImageTarget', {
+      inputs: [{ name: 'in', type: 'IMAGE', link: null }],
+      outputs: []
+    });
+
+    const wf = makeWorkflow([source, wildcardTarget, imageTarget], []);
+    const result = findCompatibleTargetNodesForOutput(wf, 1, 0);
+    expect(result.map((r) => r.node.id)).toEqual([2, 3]);
+  });
 });
 
 describe('findCompatibleNodeTypesForInput', () => {
@@ -217,7 +236,7 @@ describe('findCompatibleNodeTypesForInput', () => {
     expect(typeB?.outputIndex).toBe(1);
   });
 
-  it('excludes wildcard-like node outputs for strict picker compatibility', () => {
+  it('includes wildcard-like node outputs for picker compatibility', () => {
     const nodeTypes: NodeTypes = {
       Wildcard: {
         input: {},
@@ -249,14 +268,81 @@ describe('findCompatibleNodeTypesForInput', () => {
     };
 
     const result = findCompatibleNodeTypesForInput(nodeTypes, 'IMAGE');
-    expect(result.map((r) => r.typeName)).toEqual(['ImageSource']);
+    expect(result.map((r) => r.typeName)).toEqual(['Wildcard', 'ImageSource']);
   });
 });
 
-describe('areTypesCompatibleStrict', () => {
-  it('requires concrete type intersection and rejects wildcard-like tokens', () => {
-    expect(areTypesCompatibleStrict('IMAGE', 'IMAGE')).toBe(true);
-    expect(areTypesCompatibleStrict('*', 'IMAGE')).toBe(false);
-    expect(areTypesCompatibleStrict('OPT_CONNECTION', 'IMAGE')).toBe(false);
+describe('findCompatibleNodeTypesForOutput', () => {
+  it('includes wildcard-like node inputs for picker compatibility', () => {
+    const nodeTypes: NodeTypes = {
+      WildcardSink: {
+        input: {
+          required: {
+            any_input: ['*']
+          }
+        },
+        output: [],
+        name: 'WildcardSink',
+        display_name: 'WildcardSink',
+        description: '',
+        python_module: '',
+        category: 'test'
+      },
+      ImageSink: {
+        input: {
+          required: {
+            image: ['IMAGE']
+          }
+        },
+        output: [],
+        name: 'ImageSink',
+        display_name: 'ImageSink',
+        description: '',
+        python_module: '',
+        category: 'test'
+      },
+      StringWidgetOnly: {
+        input: {
+          required: {
+            text: ['STRING']
+          }
+        },
+        output: [],
+        name: 'StringWidgetOnly',
+        display_name: 'StringWidgetOnly',
+        description: '',
+        python_module: '',
+        category: 'test'
+      }
+    };
+
+    const result = findCompatibleNodeTypesForOutput(nodeTypes, 'IMAGE');
+    expect(result.map((r) => r.typeName)).toEqual(['WildcardSink', 'ImageSink']);
+    expect(result.find((r) => r.typeName === 'WildcardSink')?.inputIndex).toBe(0);
+  });
+});
+
+describe('isWildcardOnlyMatch', () => {
+  it('returns true when match is only via wildcard', () => {
+    expect(isWildcardOnlyMatch('*', 'IMAGE')).toBe(true);
+    expect(isWildcardOnlyMatch('IMAGE', '*')).toBe(true);
+    expect(isWildcardOnlyMatch('*', '*')).toBe(true);
+  });
+
+  it('returns false when concrete types overlap', () => {
+    expect(isWildcardOnlyMatch('IMAGE', 'IMAGE')).toBe(false);
+    expect(isWildcardOnlyMatch('IMAGE,*', 'IMAGE')).toBe(false);
+  });
+
+  it('returns false when types are incompatible', () => {
+    expect(isWildcardOnlyMatch('IMAGE', 'MODEL')).toBe(false);
+  });
+
+  it('handles multi-type with wildcard and no concrete overlap', () => {
+    expect(isWildcardOnlyMatch('*,MODEL', 'IMAGE')).toBe(true);
+  });
+
+  it('treats OPT_CONNECTION as non-wildcard', () => {
+    expect(isWildcardOnlyMatch('OPT_CONNECTION', 'IMAGE')).toBe(false);
   });
 });

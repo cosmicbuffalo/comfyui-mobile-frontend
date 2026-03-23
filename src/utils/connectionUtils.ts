@@ -96,14 +96,18 @@ export function areTypesCompatible(typeA: unknown, typeB: unknown): boolean {
 }
 
 /**
- * Strict compatibility used by connection pickers.
- * Excludes generic wildcard-like tokens such as "*" and "OPT_CONNECTION".
+ * Check if two types are compatible but ONLY via the "*" wildcard token.
+ * Returns true when at least one side has "*", types are compatible,
+ * and there is no concrete type overlap.
  */
-export function areTypesCompatibleStrict(typeA: unknown, typeB: unknown): boolean {
-  const typesA = normalizeTypeTokens(typeA).filter(isConcreteToken);
-  const typesB = normalizeTypeTokens(typeB).filter(isConcreteToken);
-  if (typesA.length === 0 || typesB.length === 0) return false;
-  return typesA.some((a) => typesB.includes(a));
+export function isWildcardOnlyMatch(typeA: unknown, typeB: unknown): boolean {
+  if (!areTypesCompatible(typeA, typeB)) return false;
+  const tokensA = normalizeTypeTokens(typeA);
+  const tokensB = normalizeTypeTokens(typeB);
+  if (!tokensA.includes('*') && !tokensB.includes('*')) return false;
+  const concreteA = tokensA.filter(isConcreteToken);
+  const concreteB = tokensB.filter(isConcreteToken);
+  return !concreteA.some((a) => concreteB.includes(a));
 }
 
 /**
@@ -132,7 +136,7 @@ export function findCompatibleSourceNodes(
 
     for (let i = 0; i < node.outputs.length; i++) {
       const output = node.outputs[i];
-      if (areTypesCompatibleStrict(output.type, input.type)) {
+      if (areTypesCompatible(output.type, input.type)) {
         results.push({ node, outputIndex: i });
         break; // Only include first compatible output per node
       }
@@ -154,7 +158,7 @@ export function findCompatibleNodeTypesForInput(
   for (const [typeName, def] of Object.entries(nodeTypes)) {
     const outputs = def.output ?? [];
     for (let i = 0; i < outputs.length; i++) {
-      if (areTypesCompatibleStrict(outputs[i], inputType)) {
+      if (areTypesCompatible(outputs[i], inputType)) {
         results.push({ typeName, def, outputIndex: i });
         break; // Only include first compatible output per type
       }
@@ -209,7 +213,7 @@ export function findCompatibleNodeTypesForOutput(
   for (const [typeName, def] of Object.entries(nodeTypes)) {
     const connectableInputs = getConnectableInputSlots(def);
     for (const input of connectableInputs) {
-      if (areTypesCompatibleStrict(outputType, input.inputType)) {
+      if (areTypesCompatible(outputType, input.inputType)) {
         results.push({
           typeName,
           def,
@@ -253,7 +257,7 @@ export function findCompatibleTargetNodesForOutput(
     if (nodesThatCanReachSource.has(node.id)) continue;
     for (let i = 0; i < (node.inputs?.length ?? 0); i += 1) {
       const input = node.inputs[i];
-      if (areTypesCompatibleStrict(output.type, input.type)) {
+      if (areTypesCompatible(output.type, input.type)) {
         results.push({ node, inputIndex: i });
       }
     }

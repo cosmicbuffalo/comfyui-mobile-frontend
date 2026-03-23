@@ -371,6 +371,7 @@ export function WorkflowTopBarControls() {
                 type="text"
                 value={saveAsFilename}
                 onChange={(event) => setSaveAsFilename(event.target.value)}
+                data-swipe-nav-ignore="true"
                 className="w-full border border-gray-300 rounded-lg px-3 pr-9 py-2 text-sm text-gray-900 focus:outline-none focus:border-2 focus:border-blue-500"
                 placeholder="workflow.json"
                 autoFocus

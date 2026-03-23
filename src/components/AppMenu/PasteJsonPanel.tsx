@@ -47,6 +47,7 @@ export function PasteJsonPanel({
             value={pastedJson}
             onChange={(e) => onChangeJson(e.target.value)}
             placeholder='{"last_node_id": ...}'
+            data-swipe-nav-ignore="true"
             className="w-full flex-1 p-3 border border-gray-300 rounded-lg font-mono text-xs resize-none outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
           />
         </div>
