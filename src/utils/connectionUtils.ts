@@ -96,26 +96,18 @@ export function areTypesCompatible(typeA: unknown, typeB: unknown): boolean {
 }
 
 /**
- * Check if two types are compatible but ONLY via wildcard tokens.
- * Returns true when there is no concrete type overlap and the match
- * relies on "*" or similar generic tokens.
+ * Check if two types are compatible but ONLY via the "*" wildcard token.
+ * Returns true when at least one side has "*", types are compatible,
+ * and there is no concrete type overlap.
  */
 export function isWildcardOnlyMatch(typeA: unknown, typeB: unknown): boolean {
   if (!areTypesCompatible(typeA, typeB)) return false;
-  const concreteA = normalizeTypeTokens(typeA).filter(isConcreteToken);
-  const concreteB = normalizeTypeTokens(typeB).filter(isConcreteToken);
+  const tokensA = normalizeTypeTokens(typeA);
+  const tokensB = normalizeTypeTokens(typeB);
+  if (!tokensA.includes('*') && !tokensB.includes('*')) return false;
+  const concreteA = tokensA.filter(isConcreteToken);
+  const concreteB = tokensB.filter(isConcreteToken);
   return !concreteA.some((a) => concreteB.includes(a));
-}
-
-/**
- * Strict compatibility used by connection pickers.
- * Excludes generic wildcard-like tokens such as "*" and "OPT_CONNECTION".
- */
-export function areTypesCompatibleStrict(typeA: unknown, typeB: unknown): boolean {
-  const typesA = normalizeTypeTokens(typeA).filter(isConcreteToken);
-  const typesB = normalizeTypeTokens(typeB).filter(isConcreteToken);
-  if (typesA.length === 0 || typesB.length === 0) return false;
-  return typesA.some((a) => typesB.includes(a));
 }
 
 /**

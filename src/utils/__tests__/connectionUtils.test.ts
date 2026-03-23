@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest';
 import type { NodeTypes, Workflow, WorkflowLink, WorkflowNode } from '@/api/types';
 import {
   areTypesCompatible,
-  areTypesCompatibleStrict,
   isWildcardOnlyMatch,
   findCompatibleNodeTypesForInput,
   findCompatibleNodeTypesForOutput,
@@ -323,14 +322,6 @@ describe('findCompatibleNodeTypesForOutput', () => {
   });
 });
 
-describe('areTypesCompatibleStrict', () => {
-  it('requires concrete type intersection and rejects wildcard-like tokens', () => {
-    expect(areTypesCompatibleStrict('IMAGE', 'IMAGE')).toBe(true);
-    expect(areTypesCompatibleStrict('*', 'IMAGE')).toBe(false);
-    expect(areTypesCompatibleStrict('OPT_CONNECTION', 'IMAGE')).toBe(false);
-  });
-});
-
 describe('isWildcardOnlyMatch', () => {
   it('returns true when match is only via wildcard', () => {
     expect(isWildcardOnlyMatch('*', 'IMAGE')).toBe(true);
@@ -351,8 +342,7 @@ describe('isWildcardOnlyMatch', () => {
     expect(isWildcardOnlyMatch('*,MODEL', 'IMAGE')).toBe(true);
   });
 
-  it('handles OPT_CONNECTION as wildcard-like', () => {
+  it('treats OPT_CONNECTION as non-wildcard', () => {
     expect(isWildcardOnlyMatch('OPT_CONNECTION', 'IMAGE')).toBe(false);
-    // OPT_CONNECTION is not a wildcard in areTypesCompatible, so no match
   });
 });
