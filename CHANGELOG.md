@@ -1,5 +1,19 @@
 # Changelog
 
+## 2.3.3 - 2026-03-22
+
+### Added
+
+- **Server Info** shown in app menu, includes GPU/VRAM/RAM, etc
+- **Recent Workflows:** new "Recent" button in the Load section shows the 10 most recently opened workflows, including workflows loaded from output/queue files. Persisted locally with server backup sync
+- **Wildcard connection grouping:** connection picker now shows concrete type matches at the top, with wildcard-compatible nodes listed below a "Wildcard *" separator
+- Clear button on the Recent Workflows panel to reset the list
+
+### Fixed
+
+- Workflows loaded from output files now track their source file, display the filename, and can be reloaded from the Recent list
+- Reload from source now supports file-sourced workflows
+
 ## 2.3.2 - 2026-03-17
 
 ### Added
