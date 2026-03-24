@@ -25,9 +25,9 @@ export function NodeCardOutputPreview({
 }: NodeCardOutputPreviewProps) {
   if (!show || (!previewImage && !previewText && !latentPreviewUrl)) return null;
 
-  const displaySrc = latentPreviewUrl
-    ? latentPreviewUrl
-    : (previewImage ? getImageUrl(previewImage.filename, previewImage.subfolder, previewImage.type) : null);
+  const displaySrc = previewImage
+    ? getImageUrl(previewImage.filename, previewImage.subfolder, previewImage.type)
+    : latentPreviewUrl;
 
   return (
     <div className="mb-3">
@@ -37,7 +37,7 @@ export function NodeCardOutputPreview({
       {displaySrc && (
         <div className="relative">
           <img
-            key={latentPreviewUrl ? 'latent' : 'preview'}
+            key={previewImage ? 'preview' : 'latent'}
             src={displaySrc}
             alt={`${displayName} output`}
             className="w-full h-auto rounded-lg border border-gray-100"
