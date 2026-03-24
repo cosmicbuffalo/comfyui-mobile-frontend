@@ -169,7 +169,7 @@ On the workflow page, find the subgraph placeholder node card. Open its `...` me
 <a id="how-do-i-turn-on-latent-previews"></a>
 ### How do I turn on latent previews?
 
-Open the [Main Menu](#main-menu) and expand the **Server** section. Tap **Generation Settings**, then toggle **Show live preview** on. You can choose between two preview methods:
+Open the [Main Menu](#main-menu) and expand the **Server** section. Tap **Preferences**, then toggle **Show latent previews** on. You can choose between two preview methods:
 
 - **Fast (latent2rgb)** — a quick approximate preview that updates during sampling with minimal performance impact.
 - **Accurate (TAESD)** — a higher-quality preview using a tiny autoencoder, slightly slower but much closer to the final image.

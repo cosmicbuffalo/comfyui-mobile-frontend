@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactElement } from "react";
 import type { WorkflowLink, WorkflowNode } from "@/api/types";
 import { useWorkflowStore, type ScopeFrame } from "@/hooks/useWorkflow";
+import { useGenerationSettingsStore } from "@/hooks/useGenerationSettings";
 import { useBookmarksStore } from "@/hooks/useBookmarks";
 import { useWorkflowErrorsStore } from "@/hooks/useWorkflowErrors";
 import { useRepositionMode } from "@/hooks/useRepositionMode";
@@ -84,7 +85,16 @@ export function WorkflowPanel({
   ) => void;
 }) {
   const workflow = useWorkflowStore((s) => s.workflow);
+  const isExecuting = useWorkflowStore((s) => s.isExecuting);
+  const executingNodeId = useWorkflowStore((s) => s.executingNodeId);
   const executingNodePath = useWorkflowStore((s) => s.executingNodePath);
+  const executingNodeHierarchicalKey = useWorkflowStore(
+    (s) => s.executingNodeHierarchicalKey,
+  );
+  const expandedNodeIdMap = useWorkflowStore((s) => s.expandedNodeIdMap);
+  const followIntoSubgraphs = useGenerationSettingsStore(
+    (s) => s.followIntoSubgraphs,
+  );
   const connectionHighlightModes = useWorkflowStore(
     (s) => s.connectionHighlightModes,
   );
@@ -168,6 +178,13 @@ export function WorkflowPanel({
   const bookmarkLongPressRef = useRef<number | null>(null);
   const bookmarkLongPressTriggeredRef = useRef(false);
   const previousTopBarHeightRef = useRef<number | null>(null);
+  const followExecutingNodeRef = useRef(false);
+  const autoScrollLockUntilRef = useRef(0);
+  const followPointerRef = useRef<{
+    pointerId: number;
+    startX: number;
+    startY: number;
+  } | null>(null);
   const bookmarkPointerRef = useRef<{
     startX: number;
     startY: number;
@@ -204,6 +221,44 @@ export function WorkflowPanel({
       ),
     [workflow],
   );
+
+  const scrollToExecutingNode = useCallback(() => {
+    const executionItemKey =
+      executingNodeHierarchicalKey ??
+      (executingNodePath ? expandedNodeIdMap[executingNodePath] : null) ??
+      (executingNodeId ? expandedNodeIdMap[executingNodeId] : null) ??
+      null;
+    if (!executionItemKey) return false;
+
+    // Navigate into subgraph scope if the executing node is inside one
+    if (followIntoSubgraphs) {
+      const subgraphSegments = executionItemKey.match(/subgraph:([^/]+)/g);
+      if (subgraphSegments) {
+        const trail = subgraphSegments.map((s) => s.replace('subgraph:', ''));
+        navigateToSubgraphTrail(trail);
+      } else {
+        // Executing node is at root — exit any subgraph scope
+        const currentScope = useWorkflowStore.getState().scopeStack;
+        if (currentScope.length > 1) {
+          useWorkflowStore.getState().exitToRoot();
+        }
+      }
+    }
+
+    revealNodeWithParents(executionItemKey);
+    autoScrollLockUntilRef.current = Date.now() + 1500;
+    requestAnimationFrame(() => scrollToNode(executionItemKey, "Running"));
+    return true;
+  }, [
+    executingNodeHierarchicalKey,
+    executingNodeId,
+    executingNodePath,
+    expandedNodeIdMap,
+    followIntoSubgraphs,
+    navigateToSubgraphTrail,
+    revealNodeWithParents,
+    scrollToNode,
+  ]);
 
   // Scope-aware workflow and layout for subgraph navigation
   const currentScopeFrame = scopeStack[scopeStack.length - 1];
@@ -1245,6 +1300,110 @@ export function WorkflowPanel({
         handleScrollToNode as EventListener,
       );
   }, [setItemCollapsed, scrollToNode, workflow]);
+
+  useEffect(() => {
+    const handleFollowExecutingNode = () => {
+      followExecutingNodeRef.current = true;
+      scrollToExecutingNode();
+    };
+
+    window.addEventListener(
+      "workflow-follow-executing-node",
+      handleFollowExecutingNode as EventListener,
+    );
+    return () =>
+      window.removeEventListener(
+        "workflow-follow-executing-node",
+        handleFollowExecutingNode as EventListener,
+      );
+  }, [scrollToExecutingNode]);
+
+  useEffect(() => {
+    if (!visible || !followExecutingNodeRef.current || !isExecuting) return;
+    scrollToExecutingNode();
+  }, [
+    executingNodeId,
+    executingNodePath,
+    isExecuting,
+    scrollToExecutingNode,
+    visible,
+  ]);
+
+  useEffect(() => {
+    if (isExecuting) return;
+    followExecutingNodeRef.current = false;
+    followPointerRef.current = null;
+  }, [isExecuting]);
+
+  useEffect(() => {
+    const container = parentRef.current;
+    if (!container) return;
+
+    const stopFollowingIfUserControlled = () => {
+      if (!followExecutingNodeRef.current) return;
+      if (Date.now() <= autoScrollLockUntilRef.current) return;
+      followExecutingNodeRef.current = false;
+      followPointerRef.current = null;
+    };
+
+    const handlePointerDown = (event: PointerEvent) => {
+      if (!followExecutingNodeRef.current) return;
+      followPointerRef.current = {
+        pointerId: event.pointerId,
+        startX: event.clientX,
+        startY: event.clientY,
+      };
+    };
+
+    const handlePointerMove = (event: PointerEvent) => {
+      const active = followPointerRef.current;
+      if (!active || active.pointerId !== event.pointerId) return;
+      const deltaX = Math.abs(event.clientX - active.startX);
+      const deltaY = Math.abs(event.clientY - active.startY);
+      if (deltaX >= 8 || deltaY >= 8) {
+        stopFollowingIfUserControlled();
+      }
+    };
+
+    const clearPointer = (event: PointerEvent) => {
+      const active = followPointerRef.current;
+      if (active && active.pointerId === event.pointerId) {
+        followPointerRef.current = null;
+      }
+    };
+
+    const handleTouchMove = () => {
+      stopFollowingIfUserControlled();
+    };
+
+    const handleWheel = () => {
+      stopFollowingIfUserControlled();
+    };
+
+    container.addEventListener("pointerdown", handlePointerDown, {
+      passive: true,
+    });
+    container.addEventListener("pointermove", handlePointerMove, {
+      passive: true,
+    });
+    container.addEventListener("pointerup", clearPointer, { passive: true });
+    container.addEventListener("pointercancel", clearPointer, {
+      passive: true,
+    });
+    container.addEventListener("touchmove", handleTouchMove, {
+      passive: true,
+    });
+    container.addEventListener("wheel", handleWheel, { passive: true });
+
+    return () => {
+      container.removeEventListener("pointerdown", handlePointerDown);
+      container.removeEventListener("pointermove", handlePointerMove);
+      container.removeEventListener("pointerup", clearPointer);
+      container.removeEventListener("pointercancel", clearPointer);
+      container.removeEventListener("touchmove", handleTouchMove);
+      container.removeEventListener("wheel", handleWheel);
+    };
+  }, []);
 
   useEffect(() => {
     if (!searchOpen) return;

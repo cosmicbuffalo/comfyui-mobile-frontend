@@ -4,8 +4,9 @@
 
 ### Added
 
-- **Latent previews:** live preview images on sampler nodes during generation. Enable via Main Menu → Server → Generation Settings. Choose between Fast (latent2rgb) or Accurate (TAESD) preview methods. Off by default
-- **Generation Settings panel:** new submenu under Server section for configuring generation behavior
+- **Latent previews:** live preview images on sampler nodes during generation. Enable via Main Menu → Server → Preferences. Choose between Fast (latent2rgb) or Accurate (TAESD) preview methods. Off by default
+- **Follow executing node:** tap the progress overlay during generation to scroll to and follow the currently executing node. Automatically navigates into subgraphs when enabled (configurable in Preferences)
+- **Preferences panel:** new submenu under Server section for configuring generation and execution behavior
 
 ### Fixed
 

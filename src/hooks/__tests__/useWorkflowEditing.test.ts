@@ -151,6 +151,48 @@ afterEach(() => {
 });
 
 describe('useWorkflow editing actions', () => {
+  it('clears stale executing node details when a new prompt starts without node identity', () => {
+    useWorkflowStore.setState({
+      workflow: makeWorkflow([makeNode(1), makeNode(2)], []),
+      ...rootNodeStableRegistry([1, 2]),
+      executingNodeId: rootNodeHierarchicalKey(1),
+      executingNodePath: '1',
+      executingPromptId: 'prompt-a',
+      isExecuting: true
+    });
+
+    useWorkflowStore.getState().setExecutionState(true, null, 'prompt-b', 0);
+
+    expect(useWorkflowStore.getState()).toMatchObject({
+      isExecuting: true,
+      executingPromptId: 'prompt-b',
+      executingNodeId: null,
+      executingNodePath: null,
+      progress: 0
+    });
+  });
+
+  it('keeps the current executing node when progress updates omit node identity for the same prompt', () => {
+    useWorkflowStore.setState({
+      workflow: makeWorkflow([makeNode(1), makeNode(2)], []),
+      ...rootNodeStableRegistry([1, 2]),
+      executingNodeId: rootNodeHierarchicalKey(1),
+      executingNodePath: '1',
+      executingPromptId: 'prompt-a',
+      isExecuting: true
+    });
+
+    useWorkflowStore.getState().setExecutionState(true, null, 'prompt-a', 42);
+
+    expect(useWorkflowStore.getState()).toMatchObject({
+      isExecuting: true,
+      executingPromptId: 'prompt-a',
+      executingNodeId: rootNodeHierarchicalKey(1),
+      executingNodePath: '1',
+      progress: 42
+    });
+  });
+
   it('deleteNode reconnects compatible links and cleans ui state', () => {
     const source = makeNode(1, {
       outputs: [{ name: 'MODEL', type: 'MODEL', links: [1] }]

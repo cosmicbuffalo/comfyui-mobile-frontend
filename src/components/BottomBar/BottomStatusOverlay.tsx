@@ -117,6 +117,30 @@ export function BottomStatusOverlay() {
     setDismissedRunKey(runKey);
   };
 
+  const handleProgressDismissPointerDown = (
+    event: PointerEvent<HTMLButtonElement>,
+  ) => {
+    event.stopPropagation();
+  };
+
+  const handleProgressDismissClick = (
+    event: MouseEvent<HTMLButtonElement>,
+  ) => {
+    event.stopPropagation();
+    handleProgressDismiss();
+  };
+
+  const handleProgressCardClick = () => {
+    window.dispatchEvent(new CustomEvent("workflow-follow-executing-node"));
+  };
+
+  const handleProgressCardKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      handleProgressCardClick();
+    }
+  };
+
   if (!visible) return null;
 
   return (
@@ -164,12 +188,17 @@ export function BottomStatusOverlay() {
         <div
           id="execution-progress-card"
           className="relative bg-white border border-gray-200 rounded-xl shadow-lg px-4 py-2 w-[70vw] max-w-sm pointer-events-auto"
+          role="button"
+          tabIndex={0}
+          onClick={handleProgressCardClick}
+          onKeyDown={handleProgressCardKeyDown}
         >
           <button
             type="button"
             aria-label="Dismiss progress"
             className="absolute top-2 right-2 w-7 h-7 rounded-full flex items-center justify-center text-gray-400 hover:text-gray-600"
-            onClick={handleProgressDismiss}
+            onPointerDown={handleProgressDismissPointerDown}
+            onClick={handleProgressDismissClick}
           >
             <XMarkIcon className="w-4 h-4" />
           </button>

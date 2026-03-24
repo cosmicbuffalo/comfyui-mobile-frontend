@@ -184,7 +184,7 @@ export function MenuServerSection({
                        rounded-xl text-left hover:bg-gray-50 min-h-[56px]"
           >
             <GearIcon className="w-6 h-6 text-gray-600" />
-            <span className="font-medium text-gray-900">Generation Settings</span>
+            <span className="font-medium text-gray-900">Preferences</span>
           </button>
 
           <button

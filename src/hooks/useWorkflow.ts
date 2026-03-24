@@ -3252,17 +3252,30 @@ export const useWorkflowStore = create<WorkflowState>()(
           const nextExecutingPromptId = isExecuting
             ? (executingPromptId ?? state.executingPromptId)
             : null;
-          const nextExecutingNodeId = isExecuting
-            ? (resolvedExecutingNodeId ?? state.executingNodeId)
-            : null;
-          const nextExecutingHierarchicalKey = isExecuting
-            ? (executingNodeHierarchicalKey ?? state.executingNodeHierarchicalKey)
-            : null;
-          const nextExecutingNodePath = isExecuting
-            ? (executingNodePath !== undefined
-                ? executingNodePath
-                : state.executingNodePath)
-            : null;
+          const promptChanged =
+            Boolean(nextExecutingPromptId) &&
+            nextExecutingPromptId !== state.executingPromptId;
+          const nextExecutingNodeId = !isExecuting
+            ? null
+            : resolvedExecutingNodeId !== null
+              ? resolvedExecutingNodeId
+              : promptChanged
+                ? null
+                : state.executingNodeId;
+          const nextExecutingHierarchicalKey = !isExecuting
+            ? null
+            : executingNodeHierarchicalKey !== null
+              ? executingNodeHierarchicalKey
+              : promptChanged
+                ? null
+                : state.executingNodeHierarchicalKey;
+          const nextExecutingNodePath = !isExecuting
+            ? null
+            : executingNodePath !== undefined
+              ? executingNodePath
+              : promptChanged
+                ? null
+                : state.executingNodePath;
           const nextState: Partial<WorkflowState> = {
             isExecuting,
             executingNodeId: nextExecutingNodeId,
@@ -3322,9 +3335,6 @@ export const useWorkflowStore = create<WorkflowState>()(
             return nextState;
           }
 
-          const promptChanged =
-            nextExecutingPromptId &&
-            nextExecutingPromptId !== state.executingPromptId;
           const nodeChanged =
             nextExecutingNodeId &&
             nextExecutingNodeId !== state.executingNodeId;
