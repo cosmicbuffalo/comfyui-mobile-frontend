@@ -643,6 +643,13 @@ export function WorkflowPanel({
     pendingBookmarkEntry,
   ]);
 
+  const stopBookmarkRepositioning = useCallback(() => {
+    bookmarkLongPressTriggeredRef.current = false;
+    setIsBookmarkRepositioning(false);
+    setIsBookmarkDragging(false);
+    setBookmarkDragPosition(null);
+  }, []);
+
   const handleBookmarkButtonClick = useCallback(
     (entry: BookmarkEntry, index: number) => () => {
       if (bookmarkLongPressTriggeredRef.current) {
@@ -687,13 +694,6 @@ export function WorkflowPanel({
       bookmarkLongPressRef.current = null;
     }
   }, []);
-
-  function stopBookmarkRepositioning() {
-    bookmarkLongPressTriggeredRef.current = false;
-    setIsBookmarkRepositioning(false);
-    setIsBookmarkDragging(false);
-    setBookmarkDragPosition(null);
-  }
 
   const getBottomBarOffset = useCallback(() => {
     const value = getComputedStyle(document.documentElement).getPropertyValue(

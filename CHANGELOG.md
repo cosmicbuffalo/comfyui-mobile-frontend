@@ -7,10 +7,13 @@
 - **Latent previews:** live preview images on sampler nodes during generation. Enable via Main Menu → Server → Preferences. Choose between Fast (latent2rgb) or Accurate (TAESD) preview methods. Off by default
 - **Follow executing node:** tap the progress overlay during generation to scroll to and follow the currently executing node. Automatically navigates into subgraphs when enabled (configurable in Preferences)
 - **Preferences panel:** new submenu under Server section for configuring generation and execution behavior
+- **Video upload:** combo widgets that accept video files (e.g. VHS LoadVideo) now show an "Upload video from device" button, auto-detected by widget name or file extensions
+- **Use from outputs:** upload-capable combo widgets gain a "Use from outputs" button that opens a browsable folder picker over the ComfyUI output directory, letting you copy a generated image or video into inputs without leaving the mobile UI
 
 ### Fixed
 
 - Subgraph inner nodes now correctly resolve for execution tracking (progress, outputs, errors) even when the user hasn't navigated into that subgraph scope
+- Upload and output picker errors now surface in the error toast instead of failing silently
 
 ## 2.3.3 - 2026-03-22
 

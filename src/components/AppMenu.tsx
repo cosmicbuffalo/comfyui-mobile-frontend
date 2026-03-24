@@ -10,7 +10,6 @@ import { RecentWorkflowsPanel } from './AppMenu/RecentWorkflowsPanel';
 import { GenerationSettingsPanel } from './AppMenu/GenerationSettingsPanel';
 import { getDisplayName } from './AppMenu/userWorkflowHelpers';
 import { useWorkflowStore } from '@/hooks/useWorkflow';
-import { useRecentWorkflowsStore } from '@/hooks/useRecentWorkflows';
 import { getWorkflowForPersistence } from '@/utils/workflowPersistence';
 import { useThemeStore } from '@/hooks/useTheme';
 import type { Workflow } from '@/api/types';
