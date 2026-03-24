@@ -171,6 +171,15 @@ function collectLayoutObjectKeys(layout: MobileLayout): string[] {
         continue;
       }
       if (ref.type === "subgraph") {
+        if (ref.nodeId !== undefined) {
+          keys.push(
+            makeLocationPointer({
+              type: "node",
+              nodeId: ref.nodeId,
+              subgraphId: currentSubgraphId,
+            }),
+          );
+        }
         // Each placeholder instance gets a unique pointer keyed by its node ID.
         // This ensures two instances of the same definition occupy separate pointer-keyed
         // slots in collapsedItems / pointerByHierarchicalKey rather than colliding on the
@@ -862,6 +871,10 @@ interface WorkflowState {
     innerNodeId: number,
     innerWidgetIndex: number,
     value: unknown,
+  ) => void;
+  updateNodeProperties: (
+    itemKey: HierarchicalKey,
+    properties: Record<string, unknown>,
   ) => void;
   updateNodeTitle: (itemKey: HierarchicalKey, title: string | null) => void;
   toggleBypass: (itemKey: HierarchicalKey) => void;
@@ -3068,6 +3081,29 @@ export const useWorkflowStore = create<WorkflowState>()(
             subgraphs: updatedSubgraphs,
           },
         };
+        set({ workflow: nextWorkflow });
+      };
+
+      const updateNodeProperties: WorkflowState["updateNodeProperties"] = (
+        itemKey,
+        properties,
+      ) => {
+        const { workflow, scopeStack } = get();
+        if (!workflow) return;
+        const scope = resolveCurrentScope(scopeStack, workflow);
+        const node = resolveNodeByHierarchicalKey(scope.nodes, itemKey);
+        if (!node) return;
+        const nextNodes = scope.nodes.map((n) => {
+          if (n.id !== node.id) return n;
+          return {
+            ...n,
+            properties: {
+              ...(n.properties ?? {}),
+              ...properties,
+            },
+          };
+        });
+        const nextWorkflow = scope.applyPatch(workflow, { nodes: nextNodes });
         set({ workflow: nextWorkflow });
       };
 
@@ -5338,6 +5374,8 @@ export const useWorkflowStore = create<WorkflowState>()(
         updateNodeWidget,
         updateNodeWidgets,
         updateSubgraphInnerNodeWidget,
+
+        updateNodeProperties,
 
         // Cosmetic workflow editing
         updateNodeTitle,

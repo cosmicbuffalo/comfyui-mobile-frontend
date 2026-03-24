@@ -923,6 +923,35 @@ describe('useWorkflow editing actions', () => {
     expect(next.workflow?.nodes.find((node) => node.id === 1)?.widgets_values).toEqual([222]);
   });
 
+  it('preserves collapsed root subgraph placeholder nodes when reloading the same workflow', () => {
+    const placeholderNodeId = 7;
+    const placeholderItemKey = rootNodeHierarchicalKey(placeholderNodeId);
+    const workflow = makeWorkflow([
+      makeNode(placeholderNodeId, { type: 'sg-fast' })
+    ], []);
+    workflow.definitions = {
+      subgraphs: [{
+        id: 'sg-fast',
+        itemKey: makeLocationPointer({ type: 'subgraph', subgraphId: 'sg-fast' }),
+        name: 'Fast Graph',
+        nodes: [],
+        links: [],
+        groups: []
+      }]
+    };
+
+    useWorkflowStore.getState().loadWorkflow(workflow, 'placeholder.json');
+    useWorkflowStore.setState({
+      collapsedItems: {
+        [placeholderItemKey]: true
+      }
+    });
+
+    useWorkflowStore.getState().loadWorkflow(workflow, 'placeholder.json');
+
+    expect(useWorkflowStore.getState().collapsedItems[placeholderItemKey]).toBe(true);
+  });
+
   it('canonicalizes legacy pointer-style group keys before building layout on load', () => {
     const groupPointer = makeLocationPointer({
       type: 'group',
