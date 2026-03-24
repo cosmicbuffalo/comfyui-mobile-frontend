@@ -22,6 +22,7 @@ This guide walks through every feature in the mobile frontend as of `v2.0.0`
   - [How do I switch between my outputs and input images?](#how-do-i-switch-between-my-outputs-and-input-images)
   - [How do I navigate between pages?](#how-do-i-navigate-between-pages)
   - [How do I edit nodes inside a subgraph?](#how-do-i-edit-nodes-inside-a-subgraph)
+  - [How do I turn on latent previews?](#how-do-i-turn-on-latent-previews)
 - [Main Workspace](#main-workspace)
   - [Main Menu](#main-menu)
     - [Load Workflow](#load-workflow)
@@ -164,6 +165,19 @@ Use [Swipe Navigation](#swipe-navigation): swipe left from the Workflow page to 
 ### How do I edit nodes inside a subgraph?
 
 On the workflow page, find the subgraph placeholder node card. Open its `...` menu and tap **Enter subgraph** to drill into it. A breadcrumb bar appears at the top showing your current scope (e.g., _Root / My Subgraph_). You can then view and edit the inner nodes of that subgraph just like root-level nodes. Tap **Root** in the breadcrumb, use the device back button, or swipe back to return to the root workflow. If the subgraph exposes widget controls on the placeholder card itself (promoted or proxy widgets), you can edit those directly without entering the subgraph.
+
+<a id="how-do-i-turn-on-latent-previews"></a>
+### How do I turn on latent previews?
+
+Open the [Main Menu](#main-menu) and expand the **Server** section. Tap **Generation Settings**, then toggle **Show live preview** on. You can choose between two preview methods:
+
+- **Fast (latent2rgb)** — a quick approximate preview that updates during sampling with minimal performance impact.
+- **Accurate (TAESD)** — a higher-quality preview using a tiny autoencoder, slightly slower but much closer to the final image.
+
+When enabled, any node that produces latent samples (e.g., KSampler) will show a live preview image on its card during generation. The preview updates in real time and is replaced by the final output when the node finishes. Latent previews are off by default to avoid unnecessary overhead for users who don't need them.
+
+> [!NOTE]
+> If your sampler node is inside a subgraph, navigate into that subgraph to see its latent preview — the preview appears on the inner node's card, not on the placeholder.
 
 <a id="main-workspace"></a>
 ## Main Workspace

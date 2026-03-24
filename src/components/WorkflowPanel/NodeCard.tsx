@@ -75,6 +75,9 @@ export const NodeCard = memo(function NodeCard({
   const bookmarkedItems = useBookmarksStore((s) => s.bookmarkedItems);
   const toggleBookmark = useBookmarksStore((s) => s.toggleBookmark);
   const nodeImages = useWorkflowStore((s) => s.nodeOutputs[String(node.id)]);
+  const latentPreviewUrl = useWorkflowStore((s) =>
+    s.latentPreviews[nodeHierarchicalKey] ?? null
+  );
   const nodeTextOutput = useWorkflowStore((s) => s.nodeTextOutputs[String(node.id)] ?? null);
   const nodeErrors = useWorkflowErrorsStore((s) => s.nodeErrors[String(node.id)]);
   const progress = useWorkflowStore((s) => s.progress);
@@ -714,8 +717,9 @@ export const NodeCard = memo(function NodeCard({
             )}
 
             <NodeCardOutputPreview
-              show={showImagePreview || showTextPreview}
+              show={showImagePreview || showTextPreview || !!latentPreviewUrl}
               previewImage={effectivePreviewImage}
+              latentPreviewUrl={latentPreviewUrl}
               previewText={showTextPreview ? nodeTextOutput : null}
               displayName={displayName}
               onImageClick={() => onImageClick?.(previewList, 0)}

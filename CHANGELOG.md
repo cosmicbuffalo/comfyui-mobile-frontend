@@ -1,5 +1,16 @@
 # Changelog
 
+## 2.4.0 - 2026-03-23
+
+### Added
+
+- **Latent previews:** live preview images on sampler nodes during generation. Enable via Main Menu → Server → Generation Settings. Choose between Fast (latent2rgb) or Accurate (TAESD) preview methods. Off by default
+- **Generation Settings panel:** new submenu under Server section for configuring generation behavior
+
+### Fixed
+
+- Subgraph inner nodes now correctly resolve for execution tracking (progress, outputs, errors) even when the user hasn't navigated into that subgraph scope
+
 ## 2.3.3 - 2026-03-22
 
 ### Added

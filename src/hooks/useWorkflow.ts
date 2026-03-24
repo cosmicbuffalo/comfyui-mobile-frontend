@@ -21,6 +21,7 @@ import { useNavigationStore } from "@/hooks/useNavigation";
 import { usePinnedWidgetStore } from "@/hooks/usePinnedWidget";
 import { useRecentWorkflowsStore } from "@/hooks/useRecentWorkflows";
 import { useSeedStore } from "@/hooks/useSeed";
+import { useGenerationSettingsStore } from "@/hooks/useGenerationSettings";
 import {
   buildWorkflowPromptInputs,
   getWorkflowWidgetIndexMap,
@@ -765,6 +766,7 @@ interface WorkflowState {
   // Execution state
   isExecuting: boolean;
   executingNodeId: string | null;
+  executingNodeHierarchicalKey: string | null;
   executingNodePath: string | null;
   executingPromptId: string | null; // Track the ID of the prompt being executed
   progress: number;
@@ -877,6 +879,9 @@ interface WorkflowState {
   setNodeOutput: (itemKey: HierarchicalKey, images: NodeOutputImage[]) => void;
   setNodeTextOutput: (itemKey: HierarchicalKey, text: string) => void;
   clearNodeOutputs: () => void;
+  latentPreviews: Record<string, string>;
+  setLatentPreview: (url: string, itemKey: string | null) => void;
+  clearAllLatentPreviews: () => void;
   addPromptOutputs: (promptId: string, images: HistoryOutputImage[]) => void;
   clearPromptOutputs: (promptId?: string) => void;
   setRunCount: (count: number) => void;
@@ -3250,6 +3255,9 @@ export const useWorkflowStore = create<WorkflowState>()(
           const nextExecutingNodeId = isExecuting
             ? (resolvedExecutingNodeId ?? state.executingNodeId)
             : null;
+          const nextExecutingHierarchicalKey = isExecuting
+            ? (executingNodeHierarchicalKey ?? state.executingNodeHierarchicalKey)
+            : null;
           const nextExecutingNodePath = isExecuting
             ? (executingNodePath !== undefined
                 ? executingNodePath
@@ -3258,6 +3266,7 @@ export const useWorkflowStore = create<WorkflowState>()(
           const nextState: Partial<WorkflowState> = {
             isExecuting,
             executingNodeId: nextExecutingNodeId,
+            executingNodeHierarchicalKey: nextExecutingHierarchicalKey,
             executingNodePath: nextExecutingNodePath,
             executingPromptId: nextExecutingPromptId,
             progress,
@@ -3741,6 +3750,7 @@ export const useWorkflowStore = create<WorkflowState>()(
           runCount: 1,
           nodeOutputs: {},
           nodeTextOutputs: {},
+          latentPreviews: {},
           promptOutputs: {},
           followQueue: false,
           workflowLoadedAt: Date.now(),
@@ -3883,6 +3893,23 @@ export const useWorkflowStore = create<WorkflowState>()(
 
       const clearNodeOutputs: WorkflowState["clearNodeOutputs"] = () => {
         set({ nodeOutputs: {}, nodeTextOutputs: {} });
+      };
+
+      const setLatentPreview: WorkflowState["setLatentPreview"] = (url, itemKey) => {
+        if (!itemKey) { URL.revokeObjectURL(url); return; }
+        const prev = get().latentPreviews[itemKey];
+        if (prev) URL.revokeObjectURL(prev);
+        set((state) => ({
+          latentPreviews: { ...state.latentPreviews, [itemKey]: url },
+        }));
+      };
+
+      const clearAllLatentPreviews: WorkflowState["clearAllLatentPreviews"] = () => {
+        const previews = get().latentPreviews;
+        for (const url of Object.values(previews)) {
+          URL.revokeObjectURL(url);
+        }
+        set({ latentPreviews: {} });
       };
 
       const addPromptOutputs: WorkflowState["addPromptOutputs"] = (
@@ -5065,11 +5092,41 @@ export const useWorkflowStore = create<WorkflowState>()(
             {
               const idMap: Record<string, string> = {};
               const pathMap: Record<string, string> = {};
+
+              // Build lookup: placeholder node ID → subgraph definition UUID.
+              // Needed for deriving itemKeys of expanded inner nodes that lack one.
+              const placeholderToSgId = new Map<string, string>();
+              const subgraphDefs = currentWorkflow.definitions?.subgraphs ?? [];
+              const sgIdSet = new Set(subgraphDefs.map((sg) => sg.id));
+              for (const node of currentWorkflow.nodes) {
+                if (sgIdSet.has(node.type)) {
+                  placeholderToSgId.set(String(node.id), node.type);
+                }
+              }
+
               for (const node of expandedForQueue.nodes) {
-                if (!node.itemKey) continue;
-                idMap[String(node.id)] = node.itemKey;
                 const promptKey = promptKeyMap.get(node.id);
-                if (promptKey) idMap[promptKey] = node.itemKey;
+                let resolvedKey = node.itemKey ?? null;
+
+                // Expanded subgraph inner nodes may lack itemKey when the user
+                // hasn't navigated into that subgraph scope yet.  Derive from
+                // the prompt key hierarchy: "placeholderId:innerNodeId".
+                if (!resolvedKey && promptKey) {
+                  const colonIdx = promptKey.indexOf(':');
+                  if (colonIdx !== -1) {
+                    const placeholderId = promptKey.substring(0, colonIdx);
+                    const innerNodeId = promptKey.substring(colonIdx + 1);
+                    const sgId = placeholderToSgId.get(placeholderId);
+                    // Only handle single-level nesting (no further colons)
+                    if (sgId && !innerNodeId.includes(':')) {
+                      resolvedKey = `root/subgraph:${sgId}/node:${innerNodeId}`;
+                    }
+                  }
+                }
+
+                if (!resolvedKey) continue;
+                idMap[String(node.id)] = resolvedKey;
+                if (promptKey) idMap[promptKey] = resolvedKey;
               }
               for (const [expandedId, promptKey] of promptKeyMap) {
                 pathMap[String(expandedId)] = promptKey;
@@ -5121,6 +5178,7 @@ export const useWorkflowStore = create<WorkflowState>()(
             // Embed the canonical workflow (not expanded) so desktop ComfyUI can reload it correctly.
             // Run validateAndNormalizeWorkflow to repair any stale SubgraphIO.linkIds before embedding.
             const queuedWorkflow = validateAndNormalizeWorkflow(stripWorkflowClientMetadata(currentWorkflow));
+            const previewMethod = useGenerationSettingsStore.getState().previewMethod;
             const response = await fetch('/api/prompt', {
               method: "POST",
               headers: { "Content-Type": "application/json" },
@@ -5131,6 +5189,7 @@ export const useWorkflowStore = create<WorkflowState>()(
                   extra_pnginfo: {
                     workflow: queuedWorkflow,
                   },
+                  ...(previewMethod !== 'none' ? { preview_method: previewMethod } : {}),
                 },
               }),
             });
@@ -5215,6 +5274,7 @@ export const useWorkflowStore = create<WorkflowState>()(
         savedWorkflowStates: {},
         isExecuting: false,
         executingNodeId: null,
+        executingNodeHierarchicalKey: null,
         executingNodePath: null,
         executingPromptId: null,
         progress: 0,
@@ -5226,6 +5286,7 @@ export const useWorkflowStore = create<WorkflowState>()(
         workflowDurationStats: {},
         nodeOutputs: {},
         nodeTextOutputs: {},
+        latentPreviews: {},
         promptOutputs: {},
         runCount: 1,
         followQueue: false,
@@ -5257,6 +5318,8 @@ export const useWorkflowStore = create<WorkflowState>()(
         setNodeOutput,
         setNodeTextOutput,
         clearNodeOutputs,
+        setLatentPreview,
+        clearAllLatentPreviews,
         requestAddNodeModal,
         clearAddNodeModalRequest,
         clearEditContainerLabelRequest,
@@ -5333,6 +5396,7 @@ export const useWorkflowStore = create<WorkflowState>()(
         mobileLayout: state.mobileLayout,
         isExecuting: state.isExecuting,
         executingNodeId: state.executingNodeId,
+        executingNodeHierarchicalKey: state.executingNodeHierarchicalKey,
         executingNodePath: state.executingNodePath,
         executingPromptId: state.executingPromptId,
         progress: state.progress,

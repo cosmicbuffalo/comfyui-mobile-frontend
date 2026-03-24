@@ -7,6 +7,7 @@ import { SaveWorkflowPanel } from './AppMenu/SaveWorkflowPanel';
 import { TemplatesPanel } from './AppMenu/TemplatesPanel';
 import { UserWorkflowsPanel } from './AppMenu/UserWorkflowsPanel';
 import { RecentWorkflowsPanel } from './AppMenu/RecentWorkflowsPanel';
+import { GenerationSettingsPanel } from './AppMenu/GenerationSettingsPanel';
 import { getDisplayName } from './AppMenu/userWorkflowHelpers';
 import { useWorkflowStore } from '@/hooks/useWorkflow';
 import { useRecentWorkflowsStore } from '@/hooks/useRecentWorkflows';
@@ -34,7 +35,7 @@ interface AppMenuProps {
   onClose: () => void;
 }
 
-type TabType = 'menu' | 'userWorkflows' | 'recent' | 'templates' | 'save' | 'pasteJson' | 'aboutLegend';
+type TabType = 'menu' | 'userWorkflows' | 'recent' | 'templates' | 'save' | 'pasteJson' | 'aboutLegend' | 'generationSettings';
 
 async function waitForServerToReturn(timeoutMs = 45000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
@@ -405,6 +406,7 @@ export function AppMenu({
           onToggleTheme={toggleTheme}
           onOpenLegend={() => setActiveTab('aboutLegend')}
           onRestartServer={handleRestartServer}
+          onOpenGenerationSettings={() => setActiveTab('generationSettings')}
         />
       )}
       {activeTab === 'userWorkflows' && (
@@ -461,6 +463,9 @@ export function AppMenu({
       )}
       {activeTab === 'aboutLegend' && (
         <MenuLegend onBack={() => setActiveTab('menu')} />
+      )}
+      {activeTab === 'generationSettings' && (
+        <GenerationSettingsPanel onBack={() => setActiveTab('menu')} />
       )}
 
       {restartingServer && (

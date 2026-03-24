@@ -3,6 +3,7 @@ import { getImageUrl } from '@/api/client';
 interface NodeCardOutputPreviewProps {
   show: boolean;
   previewImage: { filename: string; subfolder: string; type: string } | null;
+  latentPreviewUrl?: string | null;
   previewText?: string | null;
   displayName: string;
   onImageClick?: () => void;
@@ -14,6 +15,7 @@ interface NodeCardOutputPreviewProps {
 export function NodeCardOutputPreview({
   show,
   previewImage,
+  latentPreviewUrl = null,
   previewText = null,
   displayName,
   onImageClick,
@@ -21,18 +23,22 @@ export function NodeCardOutputPreview({
   overallProgress,
   displayNodeProgress
 }: NodeCardOutputPreviewProps) {
-  if (!show || (!previewImage && !previewText)) return null;
+  if (!show || (!previewImage && !previewText && !latentPreviewUrl)) return null;
+
+  const displaySrc = latentPreviewUrl
+    ? latentPreviewUrl
+    : (previewImage ? getImageUrl(previewImage.filename, previewImage.subfolder, previewImage.type) : null);
 
   return (
     <div className="mb-3">
       <div className="text-xs text-gray-500 mb-1.5 uppercase tracking-wide">
         Output Preview
       </div>
-      {previewImage && (
+      {displaySrc && (
         <div className="relative">
           <img
-            key={`preview`}
-            src={getImageUrl(previewImage.filename, previewImage.subfolder, previewImage.type)}
+            key={latentPreviewUrl ? 'latent' : 'preview'}
+            src={displaySrc}
             alt={`${displayName} output`}
             className="w-full h-auto rounded-lg border border-gray-100"
             loading="lazy"

@@ -232,23 +232,29 @@ export function connectWebSocket(
   onMessage: (msg: unknown) => void,
   onOpen?: () => void,
   onClose?: () => void,
-  onError?: (error: Event) => void
+  onError?: (error: Event) => void,
+  onBinaryMessage?: (data: ArrayBuffer) => void,
 ): WebSocket {
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
   const wsUrl = `${protocol}//${window.location.host}/ws?clientId=${clientId}`;
 
   const ws = new WebSocket(wsUrl);
+  ws.binaryType = 'arraybuffer';
 
   ws.onopen = () => {
     onOpen?.();
   };
 
   ws.onmessage = (event) => {
-    try {
-      const data = JSON.parse(event.data);
-      onMessage(data);
-    } catch (e) {
-      console.error('[WS] Failed to parse message:', e);
+    if (typeof event.data === 'string') {
+      try {
+        const data = JSON.parse(event.data);
+        onMessage(data);
+      } catch (e) {
+        console.error('[WS] Failed to parse message:', e);
+      }
+    } else if (event.data instanceof ArrayBuffer) {
+      onBinaryMessage?.(event.data);
     }
   };
 
