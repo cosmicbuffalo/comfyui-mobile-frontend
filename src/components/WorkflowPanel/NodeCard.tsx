@@ -75,6 +75,9 @@ export const NodeCard = memo(function NodeCard({
   const bookmarkedItems = useBookmarksStore((s) => s.bookmarkedItems);
   const toggleBookmark = useBookmarksStore((s) => s.toggleBookmark);
   const nodeImages = useWorkflowStore((s) => s.nodeOutputs[String(node.id)]);
+  const latentPreviewUrl = useWorkflowStore((s) =>
+    s.latentPreviews[nodeHierarchicalKey] ?? null
+  );
   const nodeTextOutput = useWorkflowStore((s) => s.nodeTextOutputs[String(node.id)] ?? null);
   const nodeErrors = useWorkflowErrorsStore((s) => s.nodeErrors[String(node.id)]);
   const progress = useWorkflowStore((s) => s.progress);
@@ -114,6 +117,7 @@ export const NodeCard = memo(function NodeCard({
   const errorIconRef = useRef<HTMLButtonElement>(null);
   const [highlightLabel, setHighlightLabel] = useState<string | null>(null);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [showFastGroupConfig, setShowFastGroupConfig] = useState(false);
   const deleteNode = useWorkflowStore((s) => s.deleteNode);
 
   useEffect(() => {
@@ -172,6 +176,7 @@ export const NodeCard = memo(function NodeCard({
   const displayName: string = nodeTitle || placeholderSubgraphName || typeDef?.display_name || node.type;
   const isKSampler = node.type === 'KSampler';
   const isLoraManagerNode = isLoraManagerNodeType(node.type);
+  const isFastGroupsBypasser = /fast\s+groups/i.test(node.type) && /\(rgthree\)/i.test(node.type);
   const isBypassed = node.mode === 4;
   const isCollapsed = Boolean(collapsedItems[nodeHierarchicalKey]);
   const isLoadImageNode = /LoadImage/i.test(node.type);
@@ -630,9 +635,11 @@ export const NodeCard = memo(function NodeCard({
             nodeId={node.id}
             nodeHierarchicalKey={nodeHierarchicalKey}
             isLoraManagerNode={isLoraManagerNode}
+            showFastGroupsConfigAction={isFastGroupsBypasser}
             isBypassed={isBypassed}
             onEnterSubgraph={onEnterSubgraph}
             onEditLabel={handleEditLabel}
+            onEditFastGroupsConfig={() => setShowFastGroupConfig(true)}
             nodeColor={nodeColor}
             onChangeColor={(color) => updateWorkflowItemColor(nodeHierarchicalKey, color)}
             pinnableWidgets={pinnableWidgets}
@@ -699,6 +706,8 @@ export const NodeCard = memo(function NodeCard({
               isWidgetPinned={isWidgetPinned}
               toggleWidgetPin={toggleWidgetPin}
               resolveWidgetValue={resolveWidgetValue}
+              showFastGroupConfig={showFastGroupConfig}
+              setShowFastGroupConfig={setShowFastGroupConfig}
             />
             {noteText && (
               <NodeCardNote
@@ -714,8 +723,9 @@ export const NodeCard = memo(function NodeCard({
             )}
 
             <NodeCardOutputPreview
-              show={showImagePreview || showTextPreview}
+              show={showImagePreview || showTextPreview || !!latentPreviewUrl}
               previewImage={effectivePreviewImage}
+              latentPreviewUrl={latentPreviewUrl}
               previewText={showTextPreview ? nodeTextOutput : null}
               displayName={displayName}
               onImageClick={() => onImageClick?.(previewList, 0)}

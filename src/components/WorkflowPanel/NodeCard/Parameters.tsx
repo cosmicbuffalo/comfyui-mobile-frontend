@@ -1,9 +1,8 @@
 import { useMemo } from 'react';
 import { WidgetControl } from '../../InputControls/WidgetControl';
 import { NumberControl } from '../../InputControls/NumberControl';
-import type { WorkflowGroup, WorkflowNode } from '@/api/types';
+import type { WorkflowNode } from '@/api/types';
 import {
-  collectBypassGroupTargetNodes,
   generateSeedFromNode,
   getSpecialSeedMode,
   isSpecialSeedValue,
@@ -30,9 +29,7 @@ import {
   isTriggerWordToggleNodeType,
   normalizeTriggerWordEntry
 } from '@/utils/triggerWordToggle';
-import { themeColors } from '@/theme/colors';
-import { cssColorToHex, hexToHsl, normalizeColorTokens, normalizeHexColor } from '@/utils/colorUtils';
-import { requireHierarchicalKey } from '@/utils/itemKeys';
+import { FastGroupsBypasserControls } from './FastGroupsBypasserControls';
 
 interface WidgetDescriptor {
   widgetIndex: number;
@@ -64,6 +61,8 @@ interface NodeCardParametersProps {
   isWidgetPinned: (widgetIndex: number) => boolean;
   toggleWidgetPin: (widgetIndex: number, widgetName: string, widgetType: string, options?: Record<string, unknown> | unknown[]) => void;
   resolveWidgetValue?: (widgetIndex: number) => unknown;
+  showFastGroupConfig: boolean;
+  setShowFastGroupConfig: (open: boolean) => void;
 }
 
 export function NodeCardParameters({
@@ -82,14 +81,15 @@ export function NodeCardParameters({
   setSeedMode,
   isWidgetPinned,
   toggleWidgetPin,
-  resolveWidgetValue
+  resolveWidgetValue,
+  showFastGroupConfig,
+  setShowFastGroupConfig
 }: NodeCardParametersProps) {
   const widgetValues = Array.isArray(node.widgets_values) ? node.widgets_values : [];
   const nodeTypes = useWorkflowStore((state) => state.nodeTypes);
   const workflow = useWorkflowStore((state) => state.workflow);
   const scopeStack = useWorkflowStore((state) => state.scopeStack);
   const syncTriggerWordsForNode = useLoraManagerStore((state) => state.syncTriggerWordsForNode);
-  const bypassAllInContainer = useWorkflowStore((state) => state.bypassAllInContainer);
   const storedSeedMode = useSeedStore((state) => state.seedModes[node.id]);
   const lastSeedValue = useSeedStore((state) => state.seedLastValues[node.id] ?? null);
   const isFastGroupsBypasser = /fast\s+groups/i.test(node.type) && /\(rgthree\)/i.test(node.type);
@@ -152,209 +152,12 @@ export function NodeCardParameters({
 
     return names;
   }, [workflow, inSubgraphScope, scopeStack, node.id]);
-
   const isPromotedWidget = (widgetName: string): boolean => {
     if (promotedWidgetNames.size === 0) return false;
     const direct = widgetName.trim();
     if (promotedWidgetNames.has(direct)) return true;
     const base = direct.split(': ').pop()?.trim() ?? direct;
     return promotedWidgetNames.has(base);
-  };
-  const fastGroupToggles = useMemo(() => {
-    if (!isFastGroupsBypasser || !workflow) return [];
-
-    const props = (node.properties ?? {}) as Record<string, unknown>;
-    const readString = (...keys: string[]) => {
-      for (const key of keys) {
-        const value = props[key];
-        if (typeof value === 'string') return value;
-      }
-      return '';
-    };
-    const readBoolean = (fallback: boolean, ...keys: string[]) => {
-      for (const key of keys) {
-        const value = props[key];
-        if (typeof value === 'boolean') return value;
-      }
-      return fallback;
-    };
-    // Support both camelCase and snake_case keys because serialized custom-node properties
-    // can vary across extension/backend versions and previously saved workflows.
-    const matchColors = readString('matchColors', 'match_colors');
-    const matchTitle = readString('matchTitle', 'match_title');
-    const showAllGraphs = readBoolean(true, 'showAllGraphs', 'show_all_graphs');
-    const sortMode = readString('sort', 'sort_mode') || 'position';
-    const customSortAlphabet = readString('customSortAlphabet', 'custom_sort_alphabet');
-
-    const comfyGroupColors: Record<string, string> =
-      themeColors.workflow.fastGroupBypassColors;
-
-    const filterColors = matchColors
-      .split(',')
-      .map((color) => color.trim())
-      .filter(Boolean)
-      .flatMap((color) => normalizeColorTokens(color, comfyGroupColors));
-    const filterColorSet = new Set(filterColors);
-    const filterHueMatchers = filterColors
-      .map((token) => normalizeHexColor(token) ?? cssColorToHex(token))
-      .filter((hex): hex is string => Boolean(hex))
-      .map((hex) => hexToHsl(hex))
-      .filter((hsl): hsl is { h: number; s: number; l: number } => Boolean(hsl));
-
-    let titleRegex: RegExp | null = null;
-    if (matchTitle.trim()) {
-      try {
-        titleRegex = new RegExp(matchTitle, 'i');
-      } catch (e) {
-        console.error(e);
-        return [];
-      }
-    }
-
-    let customAlphabet: string[] | null = null;
-    if (sortMode === 'custom alphabet') {
-      const trimmed = customSortAlphabet.replace(/\n/g, '').trim().toLowerCase();
-      if (trimmed) {
-        customAlphabet = trimmed.includes(',')
-          ? trimmed.split(',').map((entry) => entry.trim()).filter(Boolean)
-          : trimmed.split('');
-      }
-      if (!customAlphabet?.length) {
-        customAlphabet = null;
-      }
-    }
-
-    const rootNodesById = new Map(workflow.nodes.map((n) => [n.id, n]));
-    const subgraphNodesById = new Map<string, Map<number, WorkflowNode>>();
-    for (const sg of workflow.definitions?.subgraphs ?? []) {
-      subgraphNodesById.set(sg.id, new Map((sg.nodes ?? []).map((n) => [n.id, n])));
-    }
-    const resolveNode = (nodeId: number, sgId: string | null): WorkflowNode | undefined => {
-      if (sgId) {
-        return subgraphNodesById.get(sgId)?.get(nodeId) ?? rootNodesById.get(nodeId);
-      }
-      return rootNodesById.get(nodeId);
-    };
-    const entries: Array<{
-      key: string;
-      label: string;
-      itemKey: string;
-      color?: string;
-      isEngaged: boolean;
-      isDisabled: boolean;
-      group: WorkflowGroup;
-    }> = [];
-
-    const shouldIncludeGroup = (group: WorkflowGroup) => {
-      if (filterColorSet.size > 0) {
-        const groupTokens = group.color ? normalizeColorTokens(group.color, comfyGroupColors) : [];
-        const groupHex = group.color ? normalizeHexColor(group.color) : null;
-        const groupHsl = groupHex ? hexToHsl(groupHex) : null;
-        const hasExactMatch = groupTokens.some((token) => filterColorSet.has(token)) ||
-          (groupHex ? filterColorSet.has(groupHex) : false);
-        const hasHueMatch = Boolean(
-          groupHsl &&
-            filterHueMatchers.some((matcher) => {
-              const delta = Math.abs(matcher.h - groupHsl.h);
-              const hueDelta = Math.min(delta, 360 - delta);
-              return hueDelta <= 25;
-            })
-        );
-        if (!hasExactMatch && !hasHueMatch) {
-          return false;
-        }
-      }
-      if (titleRegex && !titleRegex.test(group.title || '')) {
-        return false;
-      }
-      return true;
-    };
-
-    const pushGroup = (group: WorkflowGroup, subgraphId: string | null) => {
-      if (!shouldIncludeGroup(group)) return;
-      const itemKey = requireHierarchicalKey(
-        group.itemKey,
-        `group ${group.id}${subgraphId ? ` in subgraph ${subgraphId}` : ' in root graph'}`
-      );
-      const targetNodes = collectBypassGroupTargetNodes(workflow, group.id, subgraphId);
-      let isEngaged = false;
-      for (const target of targetNodes) {
-        const node = resolveNode(target.nodeId, target.subgraphId);
-        if (!node || node.mode === 4) continue;
-        isEngaged = true;
-        break;
-      }
-      entries.push({
-        key: `${subgraphId ?? 'root'}-${group.id}`,
-        label: group.title?.trim() || `Group ${group.id}`,
-        itemKey,
-        color: group.color,
-        isEngaged,
-        isDisabled: targetNodes.length === 0,
-        group
-      });
-    };
-
-    const scopeStack = useWorkflowStore.getState().scopeStack ?? [];
-    const currentScope = scopeStack[scopeStack.length - 1];
-    const originScope = currentScope?.type === 'subgraph' ? currentScope.id : null;
-
-    if (showAllGraphs) {
-      for (const group of workflow.groups ?? []) {
-        pushGroup(group, null);
-      }
-      for (const subgraph of workflow.definitions?.subgraphs ?? []) {
-        for (const group of subgraph.groups ?? []) {
-          pushGroup(group, subgraph.id);
-        }
-      }
-    } else if (originScope) {
-      const subgraph = workflow.definitions?.subgraphs?.find((sg) => sg.id === originScope);
-      for (const group of subgraph?.groups ?? []) {
-        pushGroup(group, originScope);
-      }
-    } else {
-      for (const group of workflow.groups ?? []) {
-        pushGroup(group, null);
-      }
-    }
-
-    if (sortMode === 'alphanumeric') {
-      entries.sort((a, b) => a.label.localeCompare(b.label));
-    } else if (customAlphabet?.length) {
-      entries.sort((a, b) => {
-        const aLabel = a.label.toLowerCase();
-        const bLabel = b.label.toLowerCase();
-        let aIndex = -1;
-        let bIndex = -1;
-        for (const [index, alpha] of customAlphabet.entries()) {
-          if (aIndex < 0 && aLabel.startsWith(alpha)) aIndex = index;
-          if (bIndex < 0 && bLabel.startsWith(alpha)) bIndex = index;
-          if (aIndex > -1 && bIndex > -1) break;
-        }
-        if (aIndex > -1 && bIndex > -1) {
-          const ret = aIndex - bIndex;
-          return ret === 0 ? aLabel.localeCompare(bLabel) : ret;
-        }
-        if (aIndex > -1) return -1;
-        if (bIndex > -1) return 1;
-        return aLabel.localeCompare(bLabel);
-      });
-    } else {
-      entries.sort((a, b) => {
-        const aBound = a.group.bounding;
-        const bBound = b.group.bounding;
-        if (aBound[1] !== bBound[1]) return aBound[1] - bBound[1];
-        return aBound[0] - bBound[0];
-      });
-    }
-
-    return entries;
-  }, [isFastGroupsBypasser, node.properties, workflow]);
-
-  const handleFastGroupToggle = (entry: { isDisabled: boolean; itemKey: string; isEngaged: boolean }) => () => {
-    if (entry.isDisabled) return;
-    bypassAllInContainer(entry.itemKey, entry.isEngaged);
   };
 
   const handleSeedModeValue = (newValue: unknown) => {
@@ -759,52 +562,17 @@ export function NodeCardParameters({
     handleWidgetChange(widget)(newValue);
   };
 
-  if (!showParameters && fastGroupToggles.length === 0) return null;
+  if (!showParameters && !isFastGroupsBypasser && !showFastGroupConfig) return null;
 
   return (
     <div className="node-parameters mb-2">
-      {fastGroupToggles.length > 0 && (
-        <div className="mb-4">
-          <div className="text-xs text-gray-400 dark:text-gray-300 mb-1.5 uppercase tracking-wide">
-            Groups
-          </div>
-          <div className="space-y-2">
-            {fastGroupToggles.map((entry) => (
-              <div
-                key={entry.key}
-                className={`flex items-center justify-between gap-3 rounded-lg border px-3 py-2 ${!entry.isEngaged && !entry.isDisabled ? 'bg-purple-50/60 dark:bg-purple-900/20 border-purple-300 dark:border-purple-400/30' : `bg-gray-50/40 dark:bg-gray-900/60 ${entry.isDisabled ? 'border-gray-200 dark:border-white/10 opacity-60' : 'border-gray-200 dark:border-white/15'}`}`}
-              >
-                <div className="flex items-center gap-2 min-w-0">
-                  <span
-                    className="h-2.5 w-2.5 rounded-full"
-                    style={{
-                      backgroundColor:
-                        entry.color || themeColors.workflow.defaultGroupDot,
-                    }}
-                  />
-                  <span className="text-sm font-medium text-gray-800 dark:text-gray-100 truncate">
-                    {entry.label}
-                  </span>
-                </div>
-                <button
-                  type="button"
-                  role="switch"
-                  aria-checked={entry.isEngaged}
-                  onClick={handleFastGroupToggle(entry)}
-                  className={`relative inline-flex h-6 w-11 items-center rounded-full transition ${
-                    entry.isEngaged ? 'bg-emerald-500' : 'bg-gray-300'
-                  } ${entry.isDisabled ? 'cursor-not-allowed' : 'cursor-pointer'}`}
-                >
-                  <span
-                    className={`inline-block h-5 w-5 transform rounded-full bg-white transition ${
-                      entry.isEngaged ? 'translate-x-5' : 'translate-x-1'
-                    }`}
-                  />
-                </button>
-              </div>
-            ))}
-          </div>
-        </div>
+      {isFastGroupsBypasser && (
+        <FastGroupsBypasserControls
+          node={node}
+          isBypassed={isBypassed}
+          showFastGroupConfig={showFastGroupConfig}
+          setShowFastGroupConfig={setShowFastGroupConfig}
+        />
       )}
       {showParameters && (
         <>

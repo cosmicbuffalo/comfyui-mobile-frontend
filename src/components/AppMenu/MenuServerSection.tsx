@@ -1,5 +1,5 @@
 import { Component, type ReactNode } from 'react';
-import { CaretDownIcon, ReloadIcon, ServerIcon, WarningTriangleIcon } from '@/components/icons';
+import { CaretDownIcon, GearIcon, ReloadIcon, ServerIcon, WarningTriangleIcon } from '@/components/icons';
 import type { SystemStats } from '@/api/client';
 
 function formatBytes(bytes: number): string {
@@ -142,6 +142,7 @@ interface MenuServerSectionProps {
   sectionRef: React.RefObject<HTMLElement | null>;
   onToggle: () => void;
   onRestartServer: () => void;
+  onOpenGenerationSettings: () => void;
 }
 
 export function MenuServerSection({
@@ -152,6 +153,7 @@ export function MenuServerSection({
   sectionRef,
   onToggle,
   onRestartServer,
+  onOpenGenerationSettings,
 }: MenuServerSectionProps) {
   return (
     <section ref={sectionRef} className="mb-6">
@@ -175,6 +177,15 @@ export function MenuServerSection({
               </div>
             )}
           </StatsErrorBoundary>
+
+          <button
+            onClick={onOpenGenerationSettings}
+            className="w-full flex items-center gap-3 p-4 bg-white border border-gray-200
+                       rounded-xl text-left hover:bg-gray-50 min-h-[56px]"
+          >
+            <GearIcon className="w-6 h-6 text-gray-600" />
+            <span className="font-medium text-gray-900">Preferences</span>
+          </button>
 
           <button
             onClick={onRestartServer}

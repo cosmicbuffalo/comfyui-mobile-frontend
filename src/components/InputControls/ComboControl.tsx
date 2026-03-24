@@ -4,13 +4,18 @@ import Select, { components, createFilter } from "react-select";
 import type { OptionProps } from "react-select";
 import { FullscreenWidgetModal } from "../modals/FullscreenWidgetModal";
 import { PinButton } from "./PinButton";
-import { ChevronDownIcon, PlusIcon, PromotedWidgetIcon } from "@/components/icons";
+import { ChevronDownIcon, PlusIcon, FolderIcon, PromotedWidgetIcon } from "@/components/icons";
 import { getImageUrl, getNodeTypes, uploadImageFile } from "@/api/client";
 import { useWorkflowStore } from "@/hooks/useWorkflow";
+import { useWorkflowErrorsStore } from "@/hooks/useWorkflowErrors";
 import { useThemeStore } from "@/hooks/useTheme";
+import { OutputFilePicker } from "./OutputFilePicker";
+import { resolveUploadFolder } from "./outputPickerUtils";
 import { useCoarsePointer } from "@/hooks/useCoarsePointer";
 import { themeColors } from "@/theme/colors";
 import { resolveComboOption } from "@/utils/workflowInputs";
+
+const VIDEO_EXTENSIONS = new Set(["mp4", "webm", "mkv", "gif", "mov", "avi", "wmv"]);
 
 interface ComboControlProps {
   containerClass: string;
@@ -48,6 +53,7 @@ export function ComboControl({
   type SelectOption = { value: string; label: string; isMissing?: boolean };
 
   const setNodeTypes = useWorkflowStore((s) => s.setNodeTypes);
+  const setError = useWorkflowErrorsStore((s) => s.setError);
   const theme = useThemeStore((s) => s.theme);
   const isDark = theme === "dark";
   const [internalModalOpen, setInternalModalOpen] = useState(false);
@@ -64,11 +70,29 @@ export function ComboControl({
     return options?.[key];
   };
 
-  const rawChoices = Array.isArray(options)
-    ? options
-    : ((getOption("options") as unknown[]) ?? []);
+  const rawChoices = useMemo(() => {
+    if (Array.isArray(options)) return options;
+    return (options?.options as unknown[]) ?? [];
+  }, [options]);
   const supportsImageUpload = Boolean(getOption("image_upload"));
   const imageFolder = (getOption("image_folder") as string) ?? "input";
+  const supportsVideoUpload = useMemo(() => {
+    if (supportsImageUpload) return false;
+    // Detect video combo widgets: either the widget is named "video" (VHS convention)
+    // or any existing choice has a video file extension
+    const widgetName = name.toLowerCase();
+    if (widgetName === "video") return true;
+    return rawChoices.length > 0 && rawChoices.some((opt) => {
+      const s = String(opt);
+      const ext = s.split(".").pop()?.toLowerCase() ?? "";
+      return VIDEO_EXTENSIONS.has(ext);
+    });
+  }, [supportsImageUpload, name, rawChoices]);
+  const supportsUpload = supportsImageUpload || supportsVideoUpload;
+  const uploadFolder = resolveUploadFolder(supportsVideoUpload, imageFolder);
+  const uploadAccept = supportsVideoUpload ? "video/*" : "image/*";
+  const uploadLabel = supportsVideoUpload ? "Upload video from device" : "Load from camera roll";
+  const [outputPickerOpen, setOutputPickerOpen] = useState(false);
   const stripSafetensorsSuffix = Boolean(getOption("stripSafetensorsSuffix"));
   const NULL_OPTION_VALUE = "__null__";
   const hasNullChoice = rawChoices.some((opt) => opt === null);
@@ -208,7 +232,7 @@ export function ComboControl({
     if (!file) return;
     setIsUploading(true);
     try {
-      const result = await uploadImageFile(file, { type: imageFolder });
+      const result = await uploadImageFile(file, { type: uploadFolder });
       const nextValue = result.subfolder
         ? `${result.subfolder}/${result.name}`
         : result.name;
@@ -223,25 +247,65 @@ export function ComboControl({
       }
       onChange(nextValue);
     } catch (err) {
-      console.error("Failed to upload image:", err);
+      console.error("Failed to upload file:", err);
+      setError(`Failed to upload "${file.name}"`);
     } finally {
       setIsUploading(false);
       event.target.value = "";
     }
   };
 
-  const uploadButton = supportsImageUpload ? (
-    <button
-      type="button"
-      className={`w-full py-2 px-3 rounded-lg border text-sm font-medium transition-colors ${disabled || isUploading ? "opacity-60 cursor-not-allowed border-gray-200 text-gray-400 bg-white" : "border-gray-200 text-gray-700 bg-white hover:border-gray-300 hover:text-gray-900"}`}
-      onClick={handleUploadClick}
-      disabled={disabled || isUploading}
-    >
-      <span className="inline-flex items-center justify-center gap-2">
-        <PlusIcon className="w-4 h-4" />
-        {isUploading ? "Uploading..." : "Load from camera roll"}
-      </span>
-    </button>
+  const handleOpenOutputPicker = () => {
+    setOutputPickerOpen(true);
+  };
+
+  const handlePickOutputFile = async (nextValue: string) => {
+    setIsUploading(true);
+    try {
+      setUploadedChoices((prev) =>
+        prev.includes(nextValue) ? prev : [...prev, nextValue],
+      );
+      try {
+        const freshTypes = await getNodeTypes();
+        setNodeTypes(freshTypes);
+      } catch {
+        // Non-critical
+      }
+      onChange(nextValue);
+    } catch (err) {
+      console.error("Failed to sync output file choice:", err);
+      setError("Failed to sync output file selection");
+    } finally {
+      setIsUploading(false);
+      setOutputPickerOpen(false);
+    }
+  };
+
+  const uploadButtons = supportsUpload ? (
+    <div className="flex flex-col gap-2">
+      <button
+        type="button"
+        className={`w-full py-2 px-3 rounded-lg border text-sm font-medium transition-colors ${disabled || isUploading ? "opacity-60 cursor-not-allowed border-gray-200 text-gray-400 bg-white dark:border-gray-600 dark:text-gray-500 dark:bg-gray-800" : "border-gray-200 text-gray-700 bg-white hover:border-gray-300 hover:text-gray-900 dark:border-gray-600 dark:text-gray-300 dark:bg-gray-800 dark:hover:border-gray-500"}`}
+        onClick={handleUploadClick}
+        disabled={disabled || isUploading}
+      >
+        <span className="inline-flex items-center justify-center gap-2">
+          <PlusIcon className="w-4 h-4" />
+          {isUploading ? "Uploading..." : uploadLabel}
+        </span>
+      </button>
+      <button
+        type="button"
+        className={`w-full py-2 px-3 rounded-lg border text-sm font-medium transition-colors ${disabled || isUploading ? "opacity-60 cursor-not-allowed border-gray-200 text-gray-400 bg-white dark:border-gray-600 dark:text-gray-500 dark:bg-gray-800" : "border-gray-200 text-gray-700 bg-white hover:border-gray-300 hover:text-gray-900 dark:border-gray-600 dark:text-gray-300 dark:bg-gray-800 dark:hover:border-gray-500"}`}
+        onClick={handleOpenOutputPicker}
+        disabled={disabled || isUploading}
+      >
+        <span className="inline-flex items-center justify-center gap-2">
+          <FolderIcon className="w-4 h-4" />
+          Use from outputs
+        </span>
+      </button>
+    </div>
   ) : null;
 
   const lightText = themeColors.text.primary;
@@ -298,18 +362,25 @@ export function ComboControl({
             Missing on ComfyUI server
           </div>
         )}
-        {supportsImageUpload && (
+        {supportsUpload && (
           <div className="combo-control-upload mt-2">
-            {uploadButton}
+            {uploadButtons}
             <input
               ref={uploadInputRef}
               type="file"
-              accept="image/*"
+              accept={uploadAccept}
               className="hidden"
               onChange={handleUploadChange}
             />
           </div>
         )}
+        <OutputFilePicker
+          open={outputPickerOpen}
+          onClose={() => setOutputPickerOpen(false)}
+          onPick={handlePickOutputFile}
+          uploadFolder={uploadFolder}
+          supportsVideoUpload={supportsVideoUpload}
+        />
 
         <FullscreenWidgetModal
           title={name}
@@ -523,18 +594,25 @@ export function ComboControl({
           Missing on ComfyUI server
         </div>
       )}
-      {supportsImageUpload && (
+      {supportsUpload && (
         <div className="mt-2">
-          {uploadButton}
+          {uploadButtons}
           <input
             ref={uploadInputRef}
             type="file"
-            accept="image/*"
+            accept={uploadAccept}
             className="hidden"
             onChange={handleUploadChange}
           />
         </div>
       )}
+      <OutputFilePicker
+        open={outputPickerOpen}
+        onClose={() => setOutputPickerOpen(false)}
+        onPick={handlePickOutputFile}
+        uploadFolder={uploadFolder}
+        supportsVideoUpload={supportsVideoUpload}
+      />
     </div>
   );
 }

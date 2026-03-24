@@ -151,6 +151,48 @@ afterEach(() => {
 });
 
 describe('useWorkflow editing actions', () => {
+  it('clears stale executing node details when a new prompt starts without node identity', () => {
+    useWorkflowStore.setState({
+      workflow: makeWorkflow([makeNode(1), makeNode(2)], []),
+      ...rootNodeStableRegistry([1, 2]),
+      executingNodeId: rootNodeHierarchicalKey(1),
+      executingNodePath: '1',
+      executingPromptId: 'prompt-a',
+      isExecuting: true
+    });
+
+    useWorkflowStore.getState().setExecutionState(true, null, 'prompt-b', 0);
+
+    expect(useWorkflowStore.getState()).toMatchObject({
+      isExecuting: true,
+      executingPromptId: 'prompt-b',
+      executingNodeId: null,
+      executingNodePath: null,
+      progress: 0
+    });
+  });
+
+  it('keeps the current executing node when progress updates omit node identity for the same prompt', () => {
+    useWorkflowStore.setState({
+      workflow: makeWorkflow([makeNode(1), makeNode(2)], []),
+      ...rootNodeStableRegistry([1, 2]),
+      executingNodeId: rootNodeHierarchicalKey(1),
+      executingNodePath: '1',
+      executingPromptId: 'prompt-a',
+      isExecuting: true
+    });
+
+    useWorkflowStore.getState().setExecutionState(true, null, 'prompt-a', 42);
+
+    expect(useWorkflowStore.getState()).toMatchObject({
+      isExecuting: true,
+      executingPromptId: 'prompt-a',
+      executingNodeId: rootNodeHierarchicalKey(1),
+      executingNodePath: '1',
+      progress: 42
+    });
+  });
+
   it('deleteNode reconnects compatible links and cleans ui state', () => {
     const source = makeNode(1, {
       outputs: [{ name: 'MODEL', type: 'MODEL', links: [1] }]
@@ -879,6 +921,35 @@ describe('useWorkflow editing actions', () => {
     useWorkflowStore.getState().loadWorkflow(workflowB, 'workflow-b.json');
     const next = useWorkflowStore.getState();
     expect(next.workflow?.nodes.find((node) => node.id === 1)?.widgets_values).toEqual([222]);
+  });
+
+  it('preserves collapsed root subgraph placeholder nodes when reloading the same workflow', () => {
+    const placeholderNodeId = 7;
+    const placeholderItemKey = rootNodeHierarchicalKey(placeholderNodeId);
+    const workflow = makeWorkflow([
+      makeNode(placeholderNodeId, { type: 'sg-fast' })
+    ], []);
+    workflow.definitions = {
+      subgraphs: [{
+        id: 'sg-fast',
+        itemKey: makeLocationPointer({ type: 'subgraph', subgraphId: 'sg-fast' }),
+        name: 'Fast Graph',
+        nodes: [],
+        links: [],
+        groups: []
+      }]
+    };
+
+    useWorkflowStore.getState().loadWorkflow(workflow, 'placeholder.json');
+    useWorkflowStore.setState({
+      collapsedItems: {
+        [placeholderItemKey]: true
+      }
+    });
+
+    useWorkflowStore.getState().loadWorkflow(workflow, 'placeholder.json');
+
+    expect(useWorkflowStore.getState().collapsedItems[placeholderItemKey]).toBe(true);
   });
 
   it('canonicalizes legacy pointer-style group keys before building layout on load', () => {

@@ -63,30 +63,35 @@ export function RecentWorkflowsPanel({
 
   useEffect(() => {
     let cancelled = false;
-    const fileEntries = entries
-      .map((e, i) => ({ entry: e, index: i }))
-      .filter((x) => x.entry.source?.type === 'file');
+    const updateUnavailable = async () => {
+      const fileEntries = entries
+        .map((e, i) => ({ entry: e, index: i }))
+        .filter((x) => x.entry.source?.type === 'file');
 
-    if (fileEntries.length === 0) {
-      setUnavailable(new Set());
-      return;
-    }
-
-    Promise.all(
-      fileEntries.map(async ({ entry, index }) => {
-        if (entry.source?.type !== 'file') return null;
-        try {
-          const available = await getFileWorkflowAvailability(entry.source.filePath, entry.source.assetSource);
-          return available ? null : index;
-        } catch {
-          return index;
+      if (fileEntries.length === 0) {
+        if (!cancelled) {
+          setUnavailable(new Set());
         }
-      }),
-    ).then((results) => {
+        return;
+      }
+
+      const results = await Promise.all(
+        fileEntries.map(async ({ entry, index }) => {
+          if (entry.source?.type !== 'file') return null;
+          try {
+            const available = await getFileWorkflowAvailability(entry.source.filePath, entry.source.assetSource);
+            return available ? null : index;
+          } catch {
+            return index;
+          }
+        }),
+      );
       if (cancelled) return;
       const missing = new Set(results.filter((i): i is number => i !== null));
       setUnavailable(missing);
-    });
+    };
+
+    void updateUnavailable();
 
     return () => { cancelled = true; };
   }, [entries]);

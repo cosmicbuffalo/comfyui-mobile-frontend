@@ -19,9 +19,11 @@ interface NodeCardMenuProps {
   nodeId: number;
   nodeHierarchicalKey: string;
   isLoraManagerNode: boolean;
+  showFastGroupsConfigAction: boolean;
   isBypassed: boolean;
   onEnterSubgraph?: () => void;
   onEditLabel: () => void;
+  onEditFastGroupsConfig?: () => void;
   nodeColor?: string;
   onChangeColor: (color: string) => void;
   pinnableWidgets: PinnableWidget[];
@@ -58,9 +60,11 @@ export function NodeCardMenu({
   nodeId,
   nodeHierarchicalKey,
   isLoraManagerNode,
+  showFastGroupsConfigAction,
   isBypassed,
   onEnterSubgraph,
   onEditLabel,
+  onEditFastGroupsConfig,
   nodeColor = '',
   onChangeColor,
   pinnableWidgets,
@@ -351,6 +355,17 @@ export function NodeCardMenu({
                   resetMenuPosition();
                   setColorPopoverOpen(true);
                 }
+              },
+              {
+                key: 'edit-fast-groups-config',
+                label: 'Edit config',
+                icon: <EditIcon className="w-4 h-4" />,
+                onClick: (event) => {
+                  event.stopPropagation();
+                  onEditFastGroupsConfig?.();
+                  closeMenu();
+                },
+                hidden: !showFastGroupsConfigAction
               },
               {
                 type: 'divider',

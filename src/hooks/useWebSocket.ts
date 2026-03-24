@@ -66,6 +66,8 @@ export function useWebSocket() {
     setNodeOutput: useWorkflowStore.getState().setNodeOutput,
     setNodeTextOutput: useWorkflowStore.getState().setNodeTextOutput,
     clearNodeOutputs: useWorkflowStore.getState().clearNodeOutputs,
+    setLatentPreview: useWorkflowStore.getState().setLatentPreview,
+    clearAllLatentPreviews: useWorkflowStore.getState().clearAllLatentPreviews,
     addPromptOutputs: useWorkflowStore.getState().addPromptOutputs,
     clearPromptOutputs: useWorkflowStore.getState().clearPromptOutputs,
     applyControlAfterGenerate: useWorkflowStore.getState().applyControlAfterGenerate,
@@ -86,6 +88,8 @@ export function useWebSocket() {
       setNodeOutput: useWorkflowStore.getState().setNodeOutput,
       setNodeTextOutput: useWorkflowStore.getState().setNodeTextOutput,
       clearNodeOutputs: useWorkflowStore.getState().clearNodeOutputs,
+      setLatentPreview: useWorkflowStore.getState().setLatentPreview,
+      clearAllLatentPreviews: useWorkflowStore.getState().clearAllLatentPreviews,
       addPromptOutputs: useWorkflowStore.getState().addPromptOutputs,
       clearPromptOutputs: useWorkflowStore.getState().clearPromptOutputs,
       applyControlAfterGenerate: useWorkflowStore.getState().applyControlAfterGenerate,
@@ -103,19 +107,24 @@ export function useWebSocket() {
   const lastPromptIdRef = useRef<string | null>(null);
 
   useEffect(() => {
-    const resolveStableNodeKey = (rawNodeId: number | string | null | undefined): string | null => {
+    /** Maps a raw WS node ID (expanded numeric or hierarchical prompt key) to
+     *  the canonical hierarchical key used by the store (e.g. "root/node:5" or
+     *  "root/subgraph:{uuid}/node:10").
+     *
+     *  Two lookup paths:
+     *  1. expandedNodeIdMap — populated when the mobile frontend queues a prompt.
+     *  2. Direct match on workflow.nodes — fallback for prompts queued by the
+     *     desktop frontend, where WS node IDs are root-level canonical IDs. */
+    const resolveNodeHierarchicalKey = (rawNodeId: number | string | null | undefined): string | null => {
       if (rawNodeId == null) return null;
       const idStr = String(rawNodeId);
       const workflowState = useWorkflowStore.getState();
       const workflow = workflowState.workflow;
       if (!workflow) return null;
 
-      // First try the execution expansion map; WS node IDs may be hierarchical keys
-      // (e.g. "50:7") or expanded numeric IDs that don't exist in canonical workflow.nodes.
       const mappedKey = workflowState.expandedNodeIdMap[idStr];
       if (mappedKey) return mappedKey;
 
-      // Fast path: non-hierarchical ID — try direct match on root-level canonical nodes
       if (!idStr.includes(':')) {
         const numericNodeId = Number(idStr);
         if (Number.isFinite(numericNodeId)) {
@@ -139,7 +148,10 @@ export function useWebSocket() {
       return workflowState.expandedNodePathMap[idStr] ?? idStr;
     };
 
-    const resolveStableNodeKeysForOutput = (
+    /** Like resolveNodeHierarchicalKey but returns ALL matching keys.
+     *  Needed for the `executed` handler where a single WS node ID may map to
+     *  multiple canonical keys (e.g. same subgraph definition used more than once). */
+    const resolveNodeHierarchicalKeysForOutput = (
       rawNodeId: number | string | null | undefined,
     ): string[] => {
       if (rawNodeId == null) return [];
@@ -153,7 +165,6 @@ export function useWebSocket() {
       const mappedKey = workflowState.expandedNodeIdMap[idStr];
       if (mappedKey) keys.add(mappedKey);
 
-      // Fast path: non-hierarchical ID — try direct match on root-level canonical nodes
       if (!idStr.includes(':')) {
         const numericNodeId = Number(idStr);
         if (Number.isFinite(numericNodeId)) {
@@ -205,6 +216,7 @@ export function useWebSocket() {
 
           if (queueRemaining === 0) {
             setExecutionState(false, null, null, 0);
+            storeActionsRef.current.clearAllLatentPreviews();
           }
           break;
         }
@@ -215,7 +227,7 @@ export function useWebSocket() {
           const progress = Math.round((value / max) * 100);
           setExecutionState(
             true,
-            resolveStableNodeKey(node),
+            resolveNodeHierarchicalKey(node),
             prompt_id || null,
             progress,
             resolveExecutionNodePath(node),
@@ -231,6 +243,7 @@ export function useWebSocket() {
           if (nodeId === null) {
             // Execution finished
             setExecutionState(false, null, null, 0);
+            storeActionsRef.current.clearAllLatentPreviews();
 
             // Apply control_after_generate for PrimitiveNodes
             storeActionsRef.current.applyControlAfterGenerate();
@@ -264,7 +277,7 @@ export function useWebSocket() {
             // Execution started/is continuing for a node
             setExecutionState(
               true,
-              resolveStableNodeKey(nodeId),
+              resolveNodeHierarchicalKey(nodeId),
               promptId || null,
               0,
               resolveExecutionNodePath(nodeId),
@@ -281,8 +294,8 @@ export function useWebSocket() {
         case 'executed': {
           const executedMsg = msg as WSExecutedMessage;
           const { node, prompt_id, output } = executedMsg.data;
-          const itemKey = resolveStableNodeKey(node);
-          const itemKeysForOutput = resolveStableNodeKeysForOutput(node);
+          const itemKey = resolveNodeHierarchicalKey(node);
+          const itemKeysForOutput = resolveNodeHierarchicalKeysForOutput(node);
           const images = output.images;
           if (images) {
              // Store for history
@@ -353,6 +366,7 @@ export function useWebSocket() {
           });
 
           setExecutionState(false, null, null, 0);
+          storeActionsRef.current.clearAllLatentPreviews();
           clearPromptOutputs();
           fetchQueue();
           fetchHistory();
@@ -386,6 +400,44 @@ export function useWebSocket() {
       }
     };
 
+    const handleBinaryMessage = (data: ArrayBuffer) => {
+      if (data.byteLength < 8) return;
+
+      const view = new DataView(data);
+      const type = view.getUint32(0, false); // big-endian
+
+      // Both type 1 and type 4 preview frames read executingNodeHierarchicalKey
+      // directly from the store. Type 1 frames carry no node ID, and type 4
+      // metadata node IDs are unreliable for subgraph inner nodes whose canonical
+      // ID differs from their expanded prompt ID.
+      if (type === 1) {
+        // Legacy: [type(4B)][imageType(4B)][imageData]
+        const imageType = view.getUint32(4, false);
+        const mime = imageType === 2 ? 'image/png' : 'image/jpeg';
+        const imageData = data.slice(8);
+        const blob = new Blob([imageData], { type: mime });
+        const url = URL.createObjectURL(blob);
+        const itemKey = useWorkflowStore.getState().executingNodeHierarchicalKey;
+        if (!itemKey) { URL.revokeObjectURL(url); return; }
+        storeActionsRef.current.setLatentPreview(url, itemKey);
+      } else if (type === 4) {
+        // Modern: [type(4B)][jsonLen(4B)][JSON metadata][imageData]
+        try {
+          const jsonLen = view.getUint32(4, false);
+          const imageData = data.slice(8 + jsonLen);
+          const header = new Uint8Array(imageData.slice(0, 4));
+          const mime = (header[0] === 0x89 && header[1] === 0x50) ? 'image/png' : 'image/jpeg';
+          const blob = new Blob([imageData], { type: mime });
+          const url = URL.createObjectURL(blob);
+          const itemKey = useWorkflowStore.getState().executingNodeHierarchicalKey;
+          if (!itemKey) { URL.revokeObjectURL(url); return; }
+          storeActionsRef.current.setLatentPreview(url, itemKey);
+        } catch (e) {
+          console.error('[WS] Failed to parse binary type 4 message:', e);
+        }
+      }
+    };
+
     const connect = () => {
       if (wsRef.current?.readyState === WebSocket.OPEN) {
         return;
@@ -415,7 +467,8 @@ export function useWebSocket() {
         },
         () => {
           setIsConnected(false);
-        }
+        },
+        handleBinaryMessage,
       );
     };
 

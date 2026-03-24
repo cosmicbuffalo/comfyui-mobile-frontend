@@ -44,6 +44,7 @@ interface MainMenuPanelProps {
   onToggleTheme: () => void;
   onOpenLegend: () => void;
   onRestartServer: () => void;
+  onOpenGenerationSettings: () => void;
 }
 
 export function MainMenuPanel({
@@ -73,6 +74,7 @@ export function MainMenuPanel({
   onOpenSaveAs,
   onOpenLegend,
   onRestartServer,
+  onOpenGenerationSettings,
 }: MainMenuPanelProps) {
   return (
     <>
@@ -86,6 +88,7 @@ export function MainMenuPanel({
         sectionRef={serverSectionRef}
         onToggle={() => onToggleSection('server')}
         onRestartServer={onRestartServer}
+        onOpenGenerationSettings={onOpenGenerationSettings}
       />
 
       <MenuLoadSection
