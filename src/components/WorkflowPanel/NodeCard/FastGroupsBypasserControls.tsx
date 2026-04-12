@@ -409,18 +409,20 @@ export function FastGroupsBypasserControls({
                   placeholder="default"
                 />
               </label>
-              <label className="flex items-center justify-between rounded-lg border border-slate-200 px-3 py-2">
-                <span className="text-sm font-medium text-slate-700">Show all graphs</span>
+              <label className="flex items-center justify-between rounded-lg border border-slate-200 dark:border-white/15 px-3 py-2 text-slate-700 dark:text-gray-100">
+                <span className="text-sm font-medium text-slate-700 dark:text-gray-100">Show all graphs</span>
                 <input
                   type="checkbox"
+                  className="h-4 w-4 accent-blue-600"
                   checked={fastGroupDraft.showAllGraphs}
                   onChange={(event) => setFastGroupDraft((current) => ({ ...current, showAllGraphs: event.target.checked }))}
                 />
               </label>
-              <label className="flex items-center justify-between rounded-lg border border-slate-200 px-3 py-2">
-                <span className="text-sm font-medium text-slate-700">Show nav</span>
+              <label className="flex items-center justify-between rounded-lg border border-slate-200 dark:border-white/15 px-3 py-2 text-slate-700 dark:text-gray-100">
+                <span className="text-sm font-medium text-slate-700 dark:text-gray-100">Show nav</span>
                 <input
                   type="checkbox"
+                  className="h-4 w-4 accent-blue-600"
                   checked={fastGroupDraft.showNav}
                   onChange={(event) => setFastGroupDraft((current) => ({ ...current, showNav: event.target.checked }))}
                 />
