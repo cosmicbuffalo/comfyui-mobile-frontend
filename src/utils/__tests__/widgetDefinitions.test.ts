@@ -52,6 +52,49 @@ describe('widgetDefinitions lora manager support', () => {
     expect(loraDef?.options).toMatchObject({ entryIndex: 0 });
   });
 
+  it('uses LoRA Manager widget ids to skip metadata widgets', () => {
+    const nodeTypes: NodeTypes = {
+      'Lora Loader (LoraManager)': {
+        input: {
+          required: {
+            text: ['AUTOCOMPLETE_TEXT_LORAS', {}],
+          },
+          optional: {},
+        },
+        input_order: {
+          required: ['text'],
+          optional: [],
+        },
+        output: [],
+        output_name: [],
+        name: 'Lora Loader (LoraManager)',
+        display_name: 'Lora Loader (LoraManager)',
+        description: '',
+        python_module: '',
+        category: '',
+      },
+    };
+
+    const node = makeNode(1, 'Lora Loader (LoraManager)', [
+      { version: 1, textWidgetName: 'text' },
+      '<lora:a:1.00>',
+      [{ name: 'a', strength: 1, active: true }],
+    ]);
+    node.properties = {
+      __lm_widget_ids: ['__lm_autocomplete_meta_text', 'text', 'loras'],
+    };
+
+    const defs = getWidgetDefinitions(nodeTypes, node);
+    const textDef = defs.find((def) => def.name === 'text');
+    expect(textDef).toMatchObject({
+      value: '<lora:a:1.00>',
+      widgetIndex: 1,
+    });
+    expect(defs.find((def) => def.type === 'LM_LORA')).toMatchObject({
+      widgetIndex: 2,
+    });
+  });
+
   it('builds trigger-word synthetic widgets and carries allowStrengthAdjustment', () => {
     const nodeTypes: NodeTypes = {
       'TriggerWord Toggle (LoraManager)': {

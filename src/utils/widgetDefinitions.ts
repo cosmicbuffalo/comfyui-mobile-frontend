@@ -1,5 +1,5 @@
 import type { WorkflowNode, NodeTypes, NodeTypeDefinition, Workflow } from '@/api/types';
-import { getWidgetValue, isWidgetInputType } from '@/utils/workflowInputs';
+import { getNodePropertyWidgetIndexMap, getWidgetValue, isWidgetInputType } from '@/utils/workflowInputs';
 import { findLoraListIndex, isLoraList, isLoraManagerNodeType } from '@/utils/loraManager';
 import {
   extractTriggerWordList,
@@ -255,10 +255,11 @@ function collectWidgetDefinitions(
       return [];
     }
 
-    const requiredOrder = typeDef.input_order?.required || Object.keys(typeDef.input.required || {});
-    const optionalOrder = typeDef.input_order?.optional || Object.keys(typeDef.input.optional || {});
-    const definitions: WidgetDefinition[] = [];
-    let widgetIndex = 0;
+  const requiredOrder = typeDef.input_order?.required || Object.keys(typeDef.input.required || {});
+  const optionalOrder = typeDef.input_order?.optional || Object.keys(typeDef.input.optional || {});
+  const definitions: WidgetDefinition[] = [];
+  const propertyWidgetIndexMap = getNodePropertyWidgetIndexMap(node);
+  let widgetIndex = 0;
 
     const processInput = (name: string, input: [string | unknown[], Record<string, unknown>?]) => {
       if (!input) return; // Defensive check
@@ -289,13 +290,14 @@ function collectWidgetDefinitions(
         comboOptions.multiline = true;
       }
       if (isWidgetType) {
-        const value = getWidgetValue(node, name, widgetIndex);
+        const resolvedWidgetIndex = propertyWidgetIndexMap?.[name] ?? widgetIndex;
+        const value = getWidgetValue(node, name, resolvedWidgetIndex);
         definitions.push({
           name,
           type: isCombo ? 'COMBO' : (isAutocompleteTextInput ? 'STRING' : normalizedType),
           options: comboOptions,
           value,
-          widgetIndex,
+          widgetIndex: resolvedWidgetIndex,
           isCombo,
           connected: Boolean(isConnected),
           inputIndex

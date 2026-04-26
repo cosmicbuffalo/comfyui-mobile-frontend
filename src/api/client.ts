@@ -42,6 +42,8 @@ export interface LoraManagerRegistryNode {
   title: string;
   type: string;
   comfy_class: string;
+  widget_names?: string[];
+  mode?: number;
   capabilities: {
     supports_lora: boolean;
     widget_names: string[];

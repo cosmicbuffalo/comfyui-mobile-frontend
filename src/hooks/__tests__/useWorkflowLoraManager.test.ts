@@ -154,13 +154,52 @@ describe('useWorkflow lora manager actions', () => {
       : [];
     expect(nextLoaderValues[0]).toBe('<lora:new.safetensors:0.7>');
     expect(nextLoaderValues[1]).toEqual([
-      { name: 'new.safetensors', strength: 0.7, clipStrength: 0.7, active: true },
+      { name: 'new', strength: 0.7, clipStrength: 0.7, active: true },
     ]);
 
     expect(requestTriggerWordsSpy).toHaveBeenCalledWith(
-      ['new.safetensors'],
+      ['new'],
       [{ node_id: 2, graph_id: 'root' }]
     );
+  });
+
+  it('applyWidgetUpdate(text) uses LoRA Manager widget ids when metadata widget is present', () => {
+    const loader = makeNode(1, 'Lora Loader (LoraManager)', {
+      properties: {
+        __lm_widget_ids: ['__lm_autocomplete_meta_text', 'text', 'loras'],
+      },
+      widgets_values: [
+        { version: 1, textWidgetName: 'text' },
+        'portrait',
+        [{ name: 'old', strength: 1, active: true }],
+      ],
+    });
+
+    useWorkflowStore.setState({
+      workflow: {
+        ...makeWorkflow([loader], []),
+        widget_idx_map: {},
+      },
+      nodeTypes,
+    });
+
+    useLoraManagerStore.getState().applyWidgetUpdate({
+      node_id: 1,
+      graph_id: 'root',
+      widget_name: 'text',
+      value: '<lora:new.safetensors:0.7>',
+    });
+
+    const nextLoader = useWorkflowStore.getState().workflow?.nodes.find((n) => n.id === 1);
+    const nextLoaderValues = Array.isArray(nextLoader?.widgets_values)
+      ? nextLoader.widgets_values
+      : [];
+
+    expect(nextLoaderValues[0]).toEqual({ version: 1, textWidgetName: 'text' });
+    expect(nextLoaderValues[1]).toBe('<lora:new.safetensors:0.7>');
+    expect(nextLoaderValues[2]).toEqual([
+      { name: 'new', strength: 0.7, clipStrength: 0.7, active: true },
+    ]);
   });
 
   it('applyWidgetUpdate(text) on subgraph node syncs using origin node id', () => {
@@ -201,7 +240,7 @@ describe('useWorkflow lora manager actions', () => {
     });
 
     expect(requestTriggerWordsSpy).toHaveBeenCalledWith(
-      ['new.safetensors'],
+      ['new'],
       [{ node_id: 2, graph_id: 'sg-a' }]
     );
   });

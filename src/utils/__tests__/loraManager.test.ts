@@ -12,6 +12,7 @@ import {
   isLoraLoaderNodeType,
   isLoraManagerNodeType,
   mergeLoras,
+  normalizeLoraManagerName,
   normalizeLoraEntry,
 } from '../loraManager';
 
@@ -35,6 +36,7 @@ function makeNode(id: number, type: string, widgetsValues: unknown[]): WorkflowN
 describe('loraManager utilities', () => {
   it('detects supported lora manager node types', () => {
     expect(isLoraLoaderNodeType('Lora Loader (LoraManager)')).toBe(true);
+    expect(isLoraManagerNodeType('LoRA Text Loader (LoraManager)')).toBe(true);
     expect(isLoraChainProviderNodeType('Lora Cycler (LoraManager)')).toBe(true);
     expect(isLoraDirectProviderNodeType('WanVideo Lora Select (LoraManager)')).toBe(true);
     expect(isLoraCyclerNodeType('Custom Lora Cycler (LoraManager)')).toBe(true);
@@ -66,6 +68,8 @@ describe('loraManager utilities', () => {
   });
 
   it('normalizes lora entries and creates default entry from choices', () => {
+    expect(normalizeLoraManagerName('styles\\foo.safetensors')).toBe('foo');
+
     expect(normalizeLoraEntry({ name: 'foo', strength: '0.5' })).toMatchObject({
       name: 'foo',
       strength: 0.5,
@@ -79,7 +83,7 @@ describe('loraManager utilities', () => {
     });
 
     expect(createDefaultLoraEntry(['a.safetensors'])).toMatchObject({
-      name: 'a.safetensors',
+      name: 'a',
       active: true,
       strength: 1,
       clipStrength: 1,
@@ -87,8 +91,8 @@ describe('loraManager utilities', () => {
   });
 
   it('merges lora syntax text with existing list entries', () => {
-    const merged = mergeLoras('<lora:a:0.8> <lora:b:1.2:0.9>', [
-      { name: 'a', strength: 0.7, active: false },
+    const merged = mergeLoras('<lora:folder/a.safetensors:0.8> <lora:b:1.2:0.9>', [
+      { name: 'a.safetensors', strength: 0.7, active: false },
     ]);
 
     expect(merged).toEqual([
