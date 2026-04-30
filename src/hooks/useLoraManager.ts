@@ -453,13 +453,13 @@ export const useLoraManagerStore = create<LoraManagerState>((set, get) => {
 
     targets.forEach((scoped) => {
       const { node } = scoped;
-      const textWidgetName = isLoraTextLoaderNodeType(node.type) ? "lora_syntax" : "text";
       const textIndex = nodeTypes
         ? getWidgetIndexForInput(workflow, nodeTypes, node, "text")
         : null;
-      const loraSyntaxIndex = nodeTypes && textIndex === null
-        ? getWidgetIndexForInput(workflow, nodeTypes, node, textWidgetName)
-        : null;
+      const loraSyntaxIndex =
+        textIndex === null && nodeTypes && isLoraTextLoaderNodeType(node.type)
+          ? getWidgetIndexForInput(workflow, nodeTypes, node, "lora_syntax")
+          : null;
       const effectiveTextIndex = textIndex ?? loraSyntaxIndex;
       const listIndex = findLoraListIndex(node, textIndex);
       if (effectiveTextIndex === null && listIndex === null) return;

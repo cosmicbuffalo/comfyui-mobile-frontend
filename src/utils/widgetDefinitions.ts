@@ -255,11 +255,11 @@ function collectWidgetDefinitions(
       return [];
     }
 
-  const requiredOrder = typeDef.input_order?.required || Object.keys(typeDef.input.required || {});
-  const optionalOrder = typeDef.input_order?.optional || Object.keys(typeDef.input.optional || {});
-  const definitions: WidgetDefinition[] = [];
-  const propertyWidgetIndexMap = getNodePropertyWidgetIndexMap(node);
-  let widgetIndex = 0;
+    const requiredOrder = typeDef.input_order?.required || Object.keys(typeDef.input.required || {});
+    const optionalOrder = typeDef.input_order?.optional || Object.keys(typeDef.input.optional || {});
+    const definitions: WidgetDefinition[] = [];
+    const propertyWidgetIndexMap = getNodePropertyWidgetIndexMap(node);
+    let widgetIndex = 0;
 
     const processInput = (name: string, input: [string | unknown[], Record<string, unknown>?]) => {
       if (!input) return; // Defensive check
