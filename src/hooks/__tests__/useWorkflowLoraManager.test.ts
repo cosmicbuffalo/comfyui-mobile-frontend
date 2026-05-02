@@ -62,6 +62,25 @@ const nodeTypes: NodeTypes = {
     python_module: '',
     category: '',
   },
+  'LoRA Text Loader (LoraManager)': {
+    input: {
+      required: {
+        lora_syntax: ['STRING'],
+      },
+      optional: {},
+    },
+    input_order: {
+      required: ['lora_syntax'],
+      optional: [],
+    },
+    output: ['STRING'],
+    output_name: ['STRING'],
+    name: 'LoRA Text Loader (LoraManager)',
+    display_name: 'LoRA Text Loader (LoraManager)',
+    description: '',
+    python_module: '',
+    category: '',
+  },
   'TriggerWord Toggle (LoraManager)': {
     input: {
       required: {
@@ -245,6 +264,36 @@ describe('useWorkflow lora manager actions', () => {
     );
   });
 
+  it('applyLoraCodeUpdate on LoRA Text Loader updates lora_syntax without appending a lora list', () => {
+    const textLoader = makeNode(11, 'LoRA Text Loader (LoraManager)', {
+      inputs: [{ name: 'lora_syntax', type: 'STRING', link: null }],
+      widgets_values: ['portrait'],
+    });
+
+    useWorkflowStore.setState({
+      workflow: {
+        ...makeWorkflow([textLoader], []),
+        widget_idx_map: {
+          '11': {
+            lora_syntax: 0,
+          },
+        },
+      },
+      nodeTypes,
+    });
+
+    useLoraManagerStore.setState({ isLoraManagerAvailable: true });
+    useLoraManagerStore.getState().applyLoraCodeUpdate({
+      node_id: 11,
+      graph_id: 'root',
+      lora_code: '<lora:foo:0.8>',
+      mode: 'replace',
+    });
+
+    const nextNode = useWorkflowStore.getState().workflow?.nodes.find((n) => n.id === 11);
+    expect(nextNode?.widgets_values).toEqual(['<lora:foo:0.8>']);
+  });
+
   it('applyTriggerWordUpdate rebuilds trigger list and writes message widget', () => {
     const trigger = makeNode(5, 'TriggerWord Toggle (LoraManager)', {
       widgets_values: [
@@ -393,6 +442,57 @@ describe('useWorkflow lora manager actions', () => {
           capabilities: expect.objectContaining({
             supports_lora: true,
             widget_names: expect.arrayContaining(['text', 'loras']),
+          }),
+        }),
+      ])
+    );
+  });
+
+  it('registerLoraManagerNodes includes subgraph names, mode, and excludes phantom lora widgets for text loaders', async () => {
+    const registerSpy = vi
+      .spyOn(api, 'registerLoraManagerNodes')
+      .mockResolvedValue(undefined);
+
+    const subgraphTextLoader = makeNode(11, 'LoRA Text Loader (LoraManager)', {
+      itemKey: 'sk-sg-11',
+      mode: 4,
+      inputs: [{ name: 'lora_syntax', type: 'STRING', link: null }],
+      widgets_values: ['<lora:foo:0.8>'],
+    });
+
+    const baseWorkflow = makeWorkflow([], []);
+    useWorkflowStore.setState({
+      workflow: {
+        ...baseWorkflow,
+        definitions: {
+          subgraphs: [{
+            id: 'sg-style',
+            name: 'Style Loras',
+            nodes: [subgraphTextLoader],
+            links: [],
+            groups: [],
+          }],
+        },
+      },
+      nodeTypes,
+    });
+
+    useLoraManagerStore.setState({ isLoraManagerAvailable: true });
+    await useLoraManagerStore.getState().registerLoraManagerNodes();
+
+    expect(registerSpy).toHaveBeenCalledTimes(1);
+    const payload = registerSpy.mock.calls[0]?.[0] ?? [];
+    expect(payload).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          node_id: 11,
+          graph_id: 'sg-style',
+          graph_name: 'Style Loras',
+          mode: 4,
+          widget_names: ['lora_syntax'],
+          capabilities: expect.objectContaining({
+            supports_lora: true,
+            widget_names: ['lora_syntax'],
           }),
         }),
       ])

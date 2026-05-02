@@ -95,6 +95,42 @@ describe('widgetDefinitions lora manager support', () => {
     });
   });
 
+  it('does not synthesize a phantom lora list for LoRA Text Loader nodes without a list widget', () => {
+    const nodeTypes: NodeTypes = {
+      'LoRA Text Loader (LoraManager)': {
+        input: {
+          required: {
+            lora_syntax: ['STRING'],
+          },
+          optional: {},
+        },
+        input_order: {
+          required: ['lora_syntax'],
+          optional: [],
+        },
+        output: [],
+        output_name: [],
+        name: 'LoRA Text Loader (LoraManager)',
+        display_name: 'LoRA Text Loader (LoraManager)',
+        description: '',
+        python_module: '',
+        category: '',
+      },
+    };
+
+    const node = makeNode(11, 'LoRA Text Loader (LoraManager)', ['<lora:foo:0.8>']);
+    const defs = getWidgetDefinitions(nodeTypes, node);
+
+    expect(defs).toHaveLength(1);
+    expect(defs[0]).toMatchObject({
+      name: 'lora_syntax',
+      value: '<lora:foo:0.8>',
+      widgetIndex: 0,
+    });
+    expect(defs.some((def) => def.type === 'LM_LORA')).toBe(false);
+    expect(defs.some((def) => def.type === 'LM_LORA_ADD')).toBe(false);
+  });
+
   it('builds trigger-word synthetic widgets and carries allowStrengthAdjustment', () => {
     const nodeTypes: NodeTypes = {
       'TriggerWord Toggle (LoraManager)': {
