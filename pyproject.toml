@@ -1,7 +1,7 @@
 [project]
 name = "comfyui-mobile-frontend"
 description = "A mobile-friendly user interface for ComfyUI mounted in parallel with the main frontend at /mobile"
-version = "2.4.0"
+version = "2.4.1"
 license = {file = "LICENSE"}
 
 [project.urls]
@@ -13,4 +13,3 @@ Documentation = "https://github.com/cosmicbuffalo/comfyui-mobile-frontend/blob/m
 PublisherId = "cosmicbuffalo"
 DisplayName = "ComfyUI-Mobile-Frontend"
 Icon = "https://avatars.githubusercontent.com/u/25158675"
-

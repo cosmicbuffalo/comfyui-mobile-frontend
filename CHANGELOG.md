@@ -1,5 +1,15 @@
 # Changelog
 
+## 2.4.1 - 2026-05-02
+
+### Fixed
+
+- Fast Groups Bypasser config modal now stays within the visible viewport on mobile screens
+- Improved LoRA Manager node registration for subgraphs by sending the subgraph name and node bypass mode to the backend
+- Fixed LoRA Manager text-widget resolution when metadata widgets are present, preventing metadata blobs from appearing in prompt fields
+- Fixed LoRA name normalization so trigger-word lookups use the basename without model file extensions
+- Prevented LoRA Text Loader nodes from gaining a phantom LoRA list widget when saving from mobile
+
 ## 2.4.0 - 2026-03-24
 
 ### Added
