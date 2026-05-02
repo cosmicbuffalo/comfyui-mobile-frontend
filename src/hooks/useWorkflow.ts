@@ -24,7 +24,7 @@ import { useSeedStore } from "@/hooks/useSeed";
 import { useGenerationSettingsStore } from "@/hooks/useGenerationSettings";
 import {
   buildWorkflowPromptInputs,
-  getWorkflowWidgetIndexMap,
+  getNodeWidgetIndexMap,
   getWidgetValue,
   normalizeWidgetValue,
   resolveComboOption,
@@ -5213,7 +5213,7 @@ export const useWorkflowStore = create<WorkflowState>()(
                 node,
                 classType,
                 allowedNodeIds,
-                getWorkflowWidgetIndexMap(expandedForQueue, node.id),
+                getNodeWidgetIndexMap(expandedForQueue, node),
                 seedOverrides,
                 promptKeyMap,
               );

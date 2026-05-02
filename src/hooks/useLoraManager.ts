@@ -3,7 +3,7 @@ import type { NodeTypes, Workflow, WorkflowLink, WorkflowNode, WorkflowSubgraphL
 import * as api from "@/api/client";
 import { useWorkflowStore } from "@/hooks/useWorkflow";
 import { getWidgetIndexForInput } from "@/utils/seedUtils";
-import { resolveComboOption, resolveSource } from "@/utils/workflowInputs";
+import { getNodeWidgetIndexMap, resolveComboOption, resolveSource } from "@/utils/workflowInputs";
 import {
   getLinkId,
   getLinkTargetId,
@@ -19,6 +19,7 @@ import {
   isLoraDirectProviderNodeType,
   isLoraLoaderNodeType,
   isLoraManagerNodeType,
+  isLoraTextLoaderNodeType,
   mergeLoras,
 } from "@/utils/loraManager";
 import {
@@ -455,11 +456,16 @@ export const useLoraManagerStore = create<LoraManagerState>((set, get) => {
       const textIndex = nodeTypes
         ? getWidgetIndexForInput(workflow, nodeTypes, node, "text")
         : null;
+      const loraSyntaxIndex =
+        textIndex === null && nodeTypes && isLoraTextLoaderNodeType(node.type)
+          ? getWidgetIndexForInput(workflow, nodeTypes, node, "lora_syntax")
+          : null;
+      const effectiveTextIndex = textIndex ?? loraSyntaxIndex;
       const listIndex = findLoraListIndex(node, textIndex);
-      if (textIndex === null && listIndex === null) return;
+      if (effectiveTextIndex === null && listIndex === null) return;
 
       const widgetValues = Array.isArray(node.widgets_values) ? node.widgets_values : [];
-      const currentText = textIndex !== null ? String(widgetValues[textIndex] ?? "") : "";
+      const currentText = effectiveTextIndex !== null ? String(widgetValues[effectiveTextIndex] ?? "") : "";
       const nextText =
         mode === "replace"
           ? loraCode
@@ -476,7 +482,7 @@ export const useLoraManagerStore = create<LoraManagerState>((set, get) => {
       );
 
       const updates: Record<number, unknown> = {};
-      if (textIndex !== null) updates[textIndex] = nextText;
+      if (effectiveTextIndex !== null) updates[effectiveTextIndex] = nextText;
       if (listIndex !== null) updates[listIndex] = mergedList;
       if (Object.keys(updates).length > 0) {
         updateScopedNodeWidgets(scoped, updates);
@@ -546,7 +552,7 @@ export const useLoraManagerStore = create<LoraManagerState>((set, get) => {
       });
 
       const updates: Record<number, unknown> = { [listIndex]: nextList };
-      const nodeWidgetMap = workflow.widget_idx_map?.[String(node.id)];
+      const nodeWidgetMap = getNodeWidgetIndexMap(workflow, node);
       const mappedMessageIndex =
         nodeWidgetMap?.originalMessage ?? nodeWidgetMap?.orinalMessage;
       const messageIndex =
@@ -585,7 +591,7 @@ export const useLoraManagerStore = create<LoraManagerState>((set, get) => {
           index = getWidgetIndexForInput(workflow, nodeTypes, node, name);
         }
         if (index === null) {
-          const map = workflow.widget_idx_map?.[String(node.id)];
+          const map = getNodeWidgetIndexMap(workflow, node);
           const mapped = map?.[name];
           index = mapped !== undefined ? mapped : null;
         }
@@ -686,12 +692,21 @@ export const useLoraManagerStore = create<LoraManagerState>((set, get) => {
 
     const targetWidgetNames = new Set(["ckpt_name", "unet_name"]);
     const nodesToRegister: api.LoraManagerRegistryNode[] = [];
+    const subgraphNames = new Map(
+      (workflow.definitions?.subgraphs ?? []).map((subgraph) => [
+        subgraph.id,
+        typeof subgraph.name === "string" && subgraph.name.trim()
+          ? subgraph.name.trim()
+          : subgraph.id,
+      ]),
+    );
 
     const allScoped = getAllScopedNodes(workflow);
     allScoped.forEach(({ node, subgraphId }) => {
       const nodeId = node.id;
       const graphId = subgraphId ?? "root";
       const supportsLora = isLoraManagerNodeType(node.type);
+      const supportsLoraList = supportsLora && !isLoraTextLoaderNodeType(node.type);
       const resolvedType = resolveNodeTypeKey(nodeTypes, node.type);
       const typeDef = resolvedType ? nodeTypes?.[resolvedType] : null;
 
@@ -700,7 +715,7 @@ export const useLoraManagerStore = create<LoraManagerState>((set, get) => {
       const optionalInputs = typeDef?.input?.optional ?? {};
       Object.keys(requiredInputs).forEach((name) => widgetNames.add(name));
       Object.keys(optionalInputs).forEach((name) => widgetNames.add(name));
-      if (supportsLora) {
+      if (supportsLoraList) {
         widgetNames.add("loras");
       }
 
@@ -721,11 +736,13 @@ export const useLoraManagerStore = create<LoraManagerState>((set, get) => {
       nodesToRegister.push({
         node_id: nodeId,
         graph_id: graphId,
-        graph_name: null,
+        graph_name: subgraphId ? (subgraphNames.get(subgraphId) ?? subgraphId) : null,
         bgcolor: node.bgcolor ?? node.color ?? null,
         title,
         type: node.type,
         comfy_class: node.type,
+        widget_names: Array.from(widgetNames),
+        mode: node.mode,
         capabilities: {
           supports_lora: supportsLora,
           widget_names: Array.from(widgetNames),

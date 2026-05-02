@@ -13,6 +13,9 @@ export interface LoraManagerEntry {
 const LORA_LOADER_NODE_TYPES = new Set([
   'Lora Loader (LoraManager)'
 ]);
+const LORA_TEXT_LOADER_NODE_TYPES = new Set([
+  'LoRA Text Loader (LoraManager)'
+]);
 const LORA_CHAIN_PROVIDER_NODE_TYPES = new Set([
   'Lora Stacker (LoraManager)',
   'Lora Randomizer (LoraManager)',
@@ -34,15 +37,26 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
   Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 
 export const LORA_PATTERN = /<lora:([^:>]+):([-\d.]+)(?::([-\d.]+))?>/g;
+const MODEL_EXTENSION_PATTERN = /\.(safetensors|ckpt|pt|pth|bin)$/i;
 
 export function isLoraManagerNodeType(nodeType: string): boolean {
-  return isLoraLoaderNodeType(nodeType) || isLoraDirectProviderNodeType(nodeType);
+  return (
+    isLoraLoaderNodeType(nodeType) ||
+    isLoraTextLoaderNodeType(nodeType) ||
+    isLoraDirectProviderNodeType(nodeType)
+  );
 }
 
 export function isLoraLoaderNodeType(nodeType: string): boolean {
   if (LORA_LOADER_NODE_TYPES.has(nodeType)) return true;
   const lowered = nodeType.toLowerCase();
   return lowered.includes('(loramanager)') && lowered.includes('lora loader');
+}
+
+export function isLoraTextLoaderNodeType(nodeType: string): boolean {
+  if (LORA_TEXT_LOADER_NODE_TYPES.has(nodeType)) return true;
+  const lowered = nodeType.toLowerCase();
+  return lowered.includes('(loramanager)') && lowered.includes('lora text loader');
 }
 
 export function isLoraChainProviderNodeType(nodeType: string): boolean {
@@ -70,6 +84,13 @@ export function isLoraCyclerNodeType(nodeType: string): boolean {
   if (LORA_CYCLER_NODE_TYPES.has(nodeType)) return true;
   const lowered = nodeType.toLowerCase();
   return lowered.includes('(loramanager)') && lowered.includes('lora cycler');
+}
+
+export function normalizeLoraManagerName(name: string): string {
+  const normalized = name.replace(/\\/g, '/').trim();
+  if (!normalized) return '';
+  const baseName = normalized.split('/').filter(Boolean).pop() ?? normalized;
+  return baseName.replace(MODEL_EXTENSION_PATTERN, '');
 }
 
 export function isLoraList(value: unknown): value is LoraManagerEntry[] {
@@ -127,6 +148,7 @@ function coerceNumber(value: unknown, fallback: number): number {
 }
 
 export function normalizeLoraEntry(entry: LoraManagerEntry): LoraManagerEntry {
+  const name = normalizeLoraManagerName(entry.name);
   const strength = coerceNumber(entry.strength, 1);
   const clipStrength = coerceNumber(entry.clipStrength ?? strength, strength);
   const active = entry.active !== undefined ? Boolean(entry.active) : true;
@@ -136,6 +158,7 @@ export function normalizeLoraEntry(entry: LoraManagerEntry): LoraManagerEntry {
 
   return {
     ...entry,
+    name,
     strength,
     clipStrength,
     active,
@@ -145,7 +168,7 @@ export function normalizeLoraEntry(entry: LoraManagerEntry): LoraManagerEntry {
 
 export function createDefaultLoraEntry(choices?: unknown[]): LoraManagerEntry {
   const firstChoice = Array.isArray(choices) && choices.length > 0
-    ? String(choices[0])
+    ? normalizeLoraManagerName(String(choices[0]))
     : '';
   const active = Boolean(firstChoice);
   return normalizeLoraEntry({
@@ -165,7 +188,8 @@ export function mergeLoras(
   let match: RegExpExecArray | null;
   LORA_PATTERN.lastIndex = 0;
   while ((match = LORA_PATTERN.exec(lorasText)) !== null) {
-    const name = match[1];
+    const name = normalizeLoraManagerName(match[1]);
+    if (!name) continue;
     const modelStrength = Number(match[2]);
     const clipStrength = match[3] ? Number(match[3]) : modelStrength;
     parsedLoras[name] = { strength: modelStrength, clipStrength };
@@ -175,16 +199,18 @@ export function mergeLoras(
   const usedNames = new Set<string>();
 
   for (const lora of lorasArr) {
-    if (!lora || !parsedLoras[lora.name]) continue;
-    const parsed = parsedLoras[lora.name];
+    const name = lora ? normalizeLoraManagerName(lora.name) : '';
+    if (!lora || !name || !parsedLoras[name]) continue;
+    const parsed = parsedLoras[name];
     result.push({
       ...lora,
+      name,
       strength: lora.strength !== undefined ? lora.strength : parsed.strength,
       clipStrength: lora.clipStrength !== undefined ? lora.clipStrength : parsed.clipStrength,
       active: lora.active !== undefined ? lora.active : true,
       expanded: lora.expanded !== undefined ? lora.expanded : false
     });
-    usedNames.add(lora.name);
+    usedNames.add(name);
   }
 
   for (const name of Object.keys(parsedLoras)) {
@@ -265,7 +291,9 @@ export function applyLoraValuesToText(
 
   loraArray.forEach((lora) => {
     if (!lora || !lora.name) return;
-    loraMap.set(lora.name, lora);
+    const name = normalizeLoraManagerName(lora.name);
+    if (!name) return;
+    loraMap.set(name, normalizeLoraEntry({ ...lora, name }));
   });
 
   LORA_PATTERN.lastIndex = 0;
@@ -273,7 +301,8 @@ export function applyLoraValuesToText(
 
   const updated = baseText.replace(
     LORA_PATTERN,
-    (_match, name, strength, clipStrength) => {
+    (_match, rawName, strength, clipStrength) => {
+      const name = normalizeLoraManagerName(rawName);
       const lora = loraMap.get(name);
       if (!lora) {
         return '';

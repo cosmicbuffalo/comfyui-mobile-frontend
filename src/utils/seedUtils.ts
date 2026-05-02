@@ -1,5 +1,5 @@
 import type { Workflow, WorkflowNode, NodeTypes } from '@/api/types';
-import { getWorkflowWidgetIndexMap, isWidgetInputType } from '@/utils/workflowInputs';
+import { getNodeWidgetIndexMap, isWidgetInputType } from '@/utils/workflowInputs';
 
 // Seed mode type
 export type SeedMode = 'fixed' | 'randomize' | 'increment' | 'decrement';
@@ -47,7 +47,7 @@ export function getWidgetIndexForInput(
 ): number | null {
   if (!nodeTypes) return null;
 
-  const widgetIndexMap = getWorkflowWidgetIndexMap(workflow, node.id);
+  const widgetIndexMap = getNodeWidgetIndexMap(workflow, node);
   const mappedIndex = widgetIndexMap?.[inputName];
   if (mappedIndex !== undefined) {
     return mappedIndex;
@@ -137,7 +137,7 @@ export function findSeedWidgetIndex(
     return null;
   }
 
-  const widgetIndexMap = getWorkflowWidgetIndexMap(workflow, node.id);
+  const widgetIndexMap = getNodeWidgetIndexMap(workflow, node);
   const requiredOrder = typeDef.input_order?.required || Object.keys(typeDef.input.required || {});
   const optionalOrder = typeDef.input_order?.optional || Object.keys(typeDef.input.optional || {});
   const orderedInputs = [...requiredOrder, ...optionalOrder];

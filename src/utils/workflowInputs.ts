@@ -172,6 +172,29 @@ export function getWorkflowWidgetIndexMap(
   return extraMap?.[String(nodeId)] ?? null;
 }
 
+export function getNodePropertyWidgetIndexMap(
+  node: WorkflowNode
+): Record<string, number> | null {
+  const widgetIds = node.properties?.__lm_widget_ids;
+  if (!Array.isArray(widgetIds)) return null;
+
+  const result: Record<string, number> = {};
+  widgetIds.forEach((value, index) => {
+    if (typeof value !== 'string' || !value) return;
+    if (value.startsWith('__lm_')) return;
+    result[value] = index;
+  });
+
+  return Object.keys(result).length > 0 ? result : null;
+}
+
+export function getNodeWidgetIndexMap(
+  workflow: Workflow,
+  node: WorkflowNode
+): Record<string, number> | null {
+  return getWorkflowWidgetIndexMap(workflow, node.id) ?? getNodePropertyWidgetIndexMap(node);
+}
+
 export function isWidgetInputType(typeOrOptions: string | unknown[]): boolean {
   if (Array.isArray(typeOrOptions)) {
     const signature = typeOrOptions.map((entry) => String(entry)).join(',').toUpperCase();
