@@ -1,8 +1,14 @@
-import { BookIcon, CaretDownIcon, ExternalLinkIcon, GithubIcon, InfoCircleOutlineIcon } from '@/components/icons';
+import { useState } from 'react';
+import { BookIcon, CaretDownIcon, ExternalLinkIcon, GithubIcon, InfoCircleOutlineIcon, MegaphoneIcon } from '@/components/icons';
+import type { SystemStats } from '@/api/client';
+import type { Workflow } from '@/api/types';
+import { FeedbackDialog } from './FeedbackDialog';
 
 interface MenuAboutSectionProps {
   open: boolean;
   sectionRef: React.RefObject<HTMLElement | null>;
+  systemStats: SystemStats | null;
+  workflow: Workflow | null;
   onToggle: () => void;
   onOpenLegend: () => void;
 }
@@ -10,9 +16,13 @@ interface MenuAboutSectionProps {
 export function MenuAboutSection({
   open,
   sectionRef,
+  systemStats,
+  workflow,
   onToggle,
   onOpenLegend,
 }: MenuAboutSectionProps) {
+  const [feedbackDialogOpen, setFeedbackDialogOpen] = useState(false);
+
   return (
     <section ref={sectionRef} className="mt-auto pt-6 border-t border-gray-200">
       <button
@@ -26,6 +36,17 @@ export function MenuAboutSection({
       </button>
       {open && (
         <div className="space-y-2 pb-4">
+          <button
+            type="button"
+            onClick={() => setFeedbackDialogOpen(true)}
+            className="w-full flex items-center gap-3 p-4 bg-white border border-gray-200
+                       rounded-xl text-left hover:bg-gray-50 min-h-[56px]"
+          >
+            <MegaphoneIcon className="w-6 h-6 text-gray-600" />
+            <span className="font-medium text-gray-900">Send Feedback</span>
+            <span className="ml-auto text-gray-400">&rarr;</span>
+          </button>
+
           <a
             href="https://github.com/cosmicbuffalo/comfyui-mobile-frontend"
             target="_blank"
@@ -60,6 +81,13 @@ export function MenuAboutSection({
             <ExternalLinkIcon className="w-4 h-4 ml-auto text-gray-400" />
           </a>
         </div>
+      )}
+      {feedbackDialogOpen && (
+        <FeedbackDialog
+          systemStats={systemStats}
+          workflow={workflow}
+          onClose={() => setFeedbackDialogOpen(false)}
+        />
       )}
     </section>
   );

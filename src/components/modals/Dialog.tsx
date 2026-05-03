@@ -7,14 +7,27 @@ interface DialogAction {
   variant?: 'secondary' | 'danger' | 'primary';
 }
 
+type DialogSize = 'sm' | 'md' | 'lg' | 'xl' | '2xl';
+type DialogAlign = 'center' | 'top';
+
 interface DialogProps {
   onClose: () => void;
   title: ReactNode;
   description?: ReactNode;
   actions: DialogAction[];
   actionsLayout?: 'stack' | 'inline';
+  size?: DialogSize;
+  align?: DialogAlign;
   zIndex?: number;
 }
+
+const SIZE_CLASS: Record<DialogSize, string> = {
+  sm: 'max-w-sm',
+  md: 'max-w-md',
+  lg: 'max-w-lg',
+  xl: 'max-w-xl',
+  '2xl': 'max-w-2xl',
+};
 
 export function Dialog({
   onClose,
@@ -22,6 +35,8 @@ export function Dialog({
   description,
   actions,
   actionsLayout = 'inline',
+  size = 'sm',
+  align = 'center',
   zIndex = 2200
 }: DialogProps) {
   const defaultActionClass = (variant: DialogAction['variant']) => {
@@ -34,9 +49,11 @@ export function Dialog({
     return 'px-3 py-2 rounded-lg text-sm font-medium text-gray-600 hover:bg-gray-100';
   };
 
+  const alignClass = align === 'top' ? 'items-start pt-6' : 'items-center';
+
   return (
     <div
-      className="fixed left-0 right-0 bg-black/50 flex items-center justify-center p-4 overscroll-contain"
+      className={`fixed left-0 right-0 bg-black/50 flex ${alignClass} justify-center p-4 overscroll-contain`}
       style={{
         zIndex,
         top: 'var(--top-bar-offset, 0px)',
@@ -50,7 +67,7 @@ export function Dialog({
       aria-modal="true"
     >
       <div
-        className="w-full max-w-sm max-h-full flex flex-col bg-white border border-gray-200 rounded-xl shadow-lg p-4"
+        className={`w-full ${SIZE_CLASS[size]} max-h-full flex flex-col bg-white border border-gray-200 rounded-xl shadow-lg p-4`}
         onClick={(event) => event.stopPropagation()}
         onTouchMove={(event) => event.stopPropagation()}
       >

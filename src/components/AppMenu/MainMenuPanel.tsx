@@ -124,6 +124,8 @@ export function MainMenuPanel({
       <MenuAboutSection
         open={menuSectionsOpen.info}
         sectionRef={infoSectionRef}
+        systemStats={systemStats}
+        workflow={workflow}
         onToggle={() => onToggleSection('info')}
         onOpenLegend={onOpenLegend}
       />
