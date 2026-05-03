@@ -21,6 +21,10 @@ type SubmitState =
   | { kind: 'success'; url: string }
   | { kind: 'error'; message: string };
 
+const FIELD_LABEL_CLASS = 'block text-xs font-medium text-gray-700 mb-1';
+const INPUT_CLASS =
+  'w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-inset focus:ring-blue-500';
+
 export function FeedbackDialog({ systemStats, workflow, onClose }: FeedbackDialogProps) {
   const endpointConfigured = isFeedbackEndpointConfigured();
 
@@ -31,14 +35,19 @@ export function FeedbackDialog({ systemStats, workflow, onClose }: FeedbackDialo
   const [includeDiagnostics, setIncludeDiagnostics] = useState(false);
   const [submit, setSubmit] = useState<SubmitState>({ kind: 'idle' });
 
+  const isSubmitting = submit.kind === 'submitting';
   const diagnosticsPreview = buildDiagnosticsBlock({ systemStats, workflow });
-  const githubFallbackUrl = buildFeedbackIssueUrl({ systemStats, workflow }, { includeDiagnostics });
+  const githubFallbackUrl = buildFeedbackIssueUrl(
+    { systemStats, workflow },
+    { includeDiagnostics },
+    { title, body, contact },
+  );
 
   const canSubmit =
     endpointConfigured &&
     title.trim().length > 0 &&
     body.trim().length >= 10 &&
-    submit.kind !== 'submitting';
+    !isSubmitting;
 
   const handleSubmit = async () => {
     if (!canSubmit) return;
@@ -120,49 +129,50 @@ export function FeedbackDialog({ systemStats, workflow, onClose }: FeedbackDialo
       title="Send Feedback"
       size="2xl"
       align="top"
+      disableClose={isSubmitting}
       description={
         <div className="space-y-3">
           <p className="text-sm">
             Report a bug or request a feature. Your feedback becomes a public GitHub issue.
           </p>
 
-          <div>
-            <label className="block text-xs font-medium text-gray-700 mb-1">Title</label>
+          <label className="block">
+            <span className={FIELD_LABEL_CLASS}>Title</span>
             <input
               type="text"
               value={title}
               onChange={(e) => setTitle(e.target.value)}
               maxLength={200}
               placeholder="Short summary"
-              className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-inset focus:ring-blue-500"
+              className={INPUT_CLASS}
             />
-          </div>
+          </label>
 
-          <div>
-            <label className="block text-xs font-medium text-gray-700 mb-1">Description</label>
+          <label className="block">
+            <span className={FIELD_LABEL_CLASS}>Description</span>
             <textarea
               value={body}
               onChange={(e) => setBody(e.target.value)}
               maxLength={8000}
               rows={5}
               placeholder="What happened? What were you trying to do? Steps to reproduce if it's a bug."
-              className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-inset focus:ring-blue-500 resize-y"
+              className={`${INPUT_CLASS} resize-y`}
             />
-          </div>
+          </label>
 
-          <div>
-            <label className="block text-xs font-medium text-gray-700 mb-1">
+          <label className="block">
+            <span className={FIELD_LABEL_CLASS}>
               Contact <span className="text-gray-400 font-normal">(optional)</span>
-            </label>
+            </span>
             <input
               type="text"
               value={contact}
               onChange={(e) => setContact(e.target.value)}
               maxLength={200}
               placeholder="GitHub @username or email if you'd like a reply"
-              className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-inset focus:ring-blue-500"
+              className={INPUT_CLASS}
             />
-          </div>
+          </label>
 
           {/* Honeypot — visually and a11y-hidden, but not display:none (some bots skip those). */}
           <div aria-hidden="true" style={{ position: 'absolute', left: '-10000px', top: 'auto', width: 1, height: 1, overflow: 'hidden' }}>
@@ -203,12 +213,17 @@ export function FeedbackDialog({ systemStats, workflow, onClose }: FeedbackDialo
         </div>
       }
       actions={[
-        { label: 'Cancel', onClick: onClose, variant: 'secondary' },
         {
-          label: submit.kind === 'submitting' ? 'Sending...' : 'Send',
+          label: 'Cancel',
+          onClick: onClose,
+          variant: 'secondary',
+          disabled: isSubmitting,
+        },
+        {
+          label: isSubmitting ? 'Sending...' : 'Send',
           onClick: handleSubmit,
           variant: 'primary',
-          className: canSubmit ? '' : 'opacity-50 cursor-not-allowed',
+          disabled: !canSubmit,
         },
       ]}
     />

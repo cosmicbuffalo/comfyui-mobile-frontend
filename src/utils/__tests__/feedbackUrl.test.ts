@@ -106,4 +106,31 @@ describe('buildFeedbackIssueUrl', () => {
     const body = new URL(url).searchParams.get('body') ?? '';
     expect(body).not.toContain('ComfyUI:');
   });
+
+  it('uses prefill content when provided instead of the template', () => {
+    const url = buildFeedbackIssueUrl(
+      { systemStats: makeStats(), workflow: makeWorkflow() },
+      { includeDiagnostics: true },
+      { title: 'thing is broken', body: 'when I do X, Y happens', contact: '@alice' },
+    );
+    const params = new URL(url).searchParams;
+    expect(params.get('title')).toBe('thing is broken');
+    const body = params.get('body') ?? '';
+    expect(body).toContain('when I do X, Y happens');
+    expect(body).toContain('**Contact:** @alice');
+    expect(body).toContain('ComfyUI: 0.3.45');
+    // template-only artifacts must be absent
+    expect(body).not.toContain('Steps to reproduce');
+  });
+
+  it('falls back to the template when prefill body is empty', () => {
+    const url = buildFeedbackIssueUrl(
+      { systemStats: makeStats(), workflow: makeWorkflow() },
+      { includeDiagnostics: false },
+      { title: 'just a title', body: '   ' },
+    );
+    const params = new URL(url).searchParams;
+    expect(params.get('title')).toBe('just a title');
+    expect(params.get('body')).toContain('Steps to reproduce');
+  });
 });

@@ -5,6 +5,7 @@ interface DialogAction {
   onClick: () => void;
   className?: string;
   variant?: 'secondary' | 'danger' | 'primary';
+  disabled?: boolean;
 }
 
 type DialogSize = 'sm' | 'md' | 'lg' | 'xl' | '2xl';
@@ -18,6 +19,7 @@ interface DialogProps {
   actionsLayout?: 'stack' | 'inline';
   size?: DialogSize;
   align?: DialogAlign;
+  disableClose?: boolean;
   zIndex?: number;
 }
 
@@ -37,19 +39,21 @@ export function Dialog({
   actionsLayout = 'inline',
   size = 'sm',
   align = 'center',
+  disableClose = false,
   zIndex = 2200
 }: DialogProps) {
   const defaultActionClass = (variant: DialogAction['variant']) => {
     if (variant === 'danger') {
-      return 'px-3 py-2 rounded-lg text-sm font-medium text-white bg-red-600 hover:bg-red-700';
+      return 'px-3 py-2 rounded-lg text-sm font-medium text-white bg-red-600 hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-red-600';
     }
     if (variant === 'primary') {
-      return 'px-3 py-2 rounded-lg text-sm font-medium text-white bg-blue-600 hover:bg-blue-700';
+      return 'px-3 py-2 rounded-lg text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-blue-600';
     }
-    return 'px-3 py-2 rounded-lg text-sm font-medium text-gray-600 hover:bg-gray-100';
+    return 'px-3 py-2 rounded-lg text-sm font-medium text-gray-600 hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-transparent';
   };
 
   const alignClass = align === 'top' ? 'items-start pt-6' : 'items-center';
+  const handleBackdropClick = disableClose ? undefined : onClose;
 
   return (
     <div
@@ -59,7 +63,7 @@ export function Dialog({
         top: 'var(--top-bar-offset, 0px)',
         bottom: 'var(--bottom-bar-offset, 0px)',
       }}
-      onClick={onClose}
+      onClick={handleBackdropClick}
       onTouchMove={(event) => {
         if (event.target === event.currentTarget) event.preventDefault();
       }}
@@ -83,6 +87,7 @@ export function Dialog({
               key={action.label}
               className={`${defaultActionClass(action.variant)} ${action.className ?? ''}`.trim()}
               onClick={action.onClick}
+              disabled={action.disabled}
             >
               {action.label}
             </button>

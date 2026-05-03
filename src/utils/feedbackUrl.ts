@@ -71,13 +71,47 @@ export function buildFeedbackIssueBody(
   return lines.join('\n');
 }
 
+export interface FeedbackPrefill {
+  title?: string;
+  body?: string;
+  contact?: string;
+}
+
 export function buildFeedbackIssueUrl(
   context: FeedbackContext,
   options: FeedbackOptions,
+  prefill: FeedbackPrefill = {},
 ): string {
+  const title = (prefill.title ?? '').trim();
+  const body = (prefill.body ?? '').trim();
+  const contact = (prefill.contact ?? '').trim();
+
+  let issueBody: string;
+  if (body) {
+    const lines: string[] = [body];
+    if (contact) {
+      lines.push('', '---', '', `**Contact:** ${contact}`);
+    }
+    if (options.includeDiagnostics) {
+      lines.push(
+        '',
+        '---',
+        '',
+        '<details><summary>Environment</summary>',
+        '',
+        buildDiagnosticsBlock(context),
+        '',
+        '</details>',
+      );
+    }
+    issueBody = lines.join('\n');
+  } else {
+    issueBody = buildFeedbackIssueBody(context, options);
+  }
+
   const params = new URLSearchParams({
-    title: '',
-    body: buildFeedbackIssueBody(context, options),
+    title,
+    body: issueBody,
     labels: 'feedback',
   });
   return `${REPO_URL}/issues/new?${params.toString()}`;
