@@ -28,19 +28,31 @@ export function isFeedbackEndpointConfigured(): boolean {
   return Boolean(FEEDBACK_ENDPOINT);
 }
 
+export const SUBMIT_TIMEOUT_MS = 30_000;
+
 export async function submitFeedback(
   endpoint: string,
   submission: FeedbackSubmission,
 ): Promise<FeedbackResult> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), SUBMIT_TIMEOUT_MS);
+
   let response: Response;
   try {
     response = await fetch(endpoint, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(submission),
+      signal: controller.signal,
     });
-  } catch {
+  } catch (err) {
+    const name = (err as { name?: string } | null)?.name;
+    if (name === 'AbortError') {
+      return { ok: false, error: 'timeout' };
+    }
     return { ok: false, error: 'network_error' };
+  } finally {
+    clearTimeout(timeoutId);
   }
 
   let data: { url?: string; number?: number; error?: string };

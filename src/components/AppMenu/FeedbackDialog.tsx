@@ -235,9 +235,11 @@ function errorMessageFor(error: string, status?: number): string {
     case 'rate_limited':
       return 'Too many submissions in a short window. Please try again in a minute.';
     case 'invalid_fields':
-      return 'The submission was rejected as invalid. Try shortening the title or expanding the description, or';
+      return 'The submission was rejected as invalid. Please review your inputs, or';
     case 'github_create_failed':
       return "We couldn't create the issue right now (the feedback service is having trouble). Please";
+    case 'timeout':
+      return 'The request timed out. The feedback service may be slow — please try again, or';
     case 'network_error':
       return "Couldn't reach the feedback service. Check your connection, or";
     default:

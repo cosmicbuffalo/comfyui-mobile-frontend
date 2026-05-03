@@ -45,6 +45,13 @@ describe('submitFeedback', () => {
     expect(result).toEqual({ ok: false, error: 'network_error' });
   });
 
+  it('returns timeout when fetch is aborted', async () => {
+    const abortErr = Object.assign(new Error('aborted'), { name: 'AbortError' });
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(abortErr));
+    const result = await submitFeedback(ENDPOINT, baseSubmission);
+    expect(result).toEqual({ ok: false, error: 'timeout' });
+  });
+
   it('returns invalid_response when 200 body is malformed', async () => {
     mockFetch({ jsonBody: { url: 'not-a-number-for-number' } });
     const result = await submitFeedback(ENDPOINT, baseSubmission);
