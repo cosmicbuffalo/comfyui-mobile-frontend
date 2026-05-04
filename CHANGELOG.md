@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.5.0 - 2026-05-04
+
+### Added
+
+- **In-app feedback:** new "Send Feedback" button in the About section of the app menu opens a modal that lets you file a GitHub issue without needing a GitHub account. Submissions are forwarded through a small Cloudflare Worker that creates the issue on the project's GitHub repo on your behalf
+- Optional **diagnostic info** checkbox attaches your ComfyUI version, OS, and other system info to help with debugging — opt-in only, with a preview shown before you submit so you can see exactly what's included
+- Optional **contact field** for follow-up. Verified GitHub handles get `@-mentioned` in the public issue; anything else (email addresses, phone numbers, free text) is treated as private and forwarded to the maintainer's inbox instead of being written into the public issue body
+
 ## 2.4.1 - 2026-05-02
 
 ### Fixed
