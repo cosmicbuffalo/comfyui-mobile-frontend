@@ -22,7 +22,15 @@ export interface FeedbackFailure {
 
 export type FeedbackResult = FeedbackSuccess | FeedbackFailure;
 
-export const FEEDBACK_ENDPOINT = (import.meta.env.VITE_FEEDBACK_ENDPOINT ?? '') as string;
+// Production worker URL is the default so every build ships with a working
+// endpoint baked in; no env file required. Forks can override with
+// VITE_FEEDBACK_ENDPOINT at build time. Set to an empty string to disable.
+const DEFAULT_FEEDBACK_ENDPOINT = 'https://feedback.comfyui-mobile-frontend.com/feedback';
+
+export const FEEDBACK_ENDPOINT = ((): string => {
+  const override = import.meta.env.VITE_FEEDBACK_ENDPOINT;
+  return typeof override === 'string' ? override : DEFAULT_FEEDBACK_ENDPOINT;
+})();
 
 export function isFeedbackEndpointConfigured(): boolean {
   return Boolean(FEEDBACK_ENDPOINT);

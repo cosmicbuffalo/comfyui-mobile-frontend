@@ -11,6 +11,11 @@ export interface FeedbackOptions {
   includeDiagnostics: boolean;
 }
 
+// Mirrors the worker's GitHub username regex. We don't (and can't) verify the
+// user actually exists from the client, but this lets us avoid leaking arbitrary
+// contact strings (e.g. emails) into a public GitHub issue via the fallback URL.
+const GITHUB_HANDLE_REGEX = /^@?[a-z\d](?:[a-z\d]|-(?=[a-z\d])){0,38}$/i;
+
 function nodeCounts(workflow: Workflow | null): { root: number; subgraphs: number } {
   if (!workflow) return { root: 0, subgraphs: 0 };
   const root = Array.isArray(workflow.nodes) ? workflow.nodes.length : 0;
@@ -38,6 +43,18 @@ export function buildDiagnosticsBlock({ systemStats, workflow }: FeedbackContext
   ].join('\n');
 }
 
+function diagnosticsSection(context: FeedbackContext): string[] {
+  return [
+    '---',
+    '',
+    '<details><summary>Environment</summary>',
+    '',
+    buildDiagnosticsBlock(context),
+    '',
+    '</details>',
+  ];
+}
+
 export function buildFeedbackIssueBody(
   context: FeedbackContext,
   options: FeedbackOptions,
@@ -57,15 +74,7 @@ export function buildFeedbackIssueBody(
   ];
 
   if (options.includeDiagnostics) {
-    lines.push(
-      '---',
-      '',
-      '<details><summary>Environment</summary>',
-      '',
-      buildDiagnosticsBlock(context),
-      '',
-      '</details>',
-    );
+    lines.push(...diagnosticsSection(context));
   }
 
   return lines.join('\n');
@@ -77,6 +86,17 @@ export interface FeedbackPrefill {
   contact?: string;
 }
 
+// Render a contact value safely for the public fallback URL. We only emit
+// something if it looks like a GitHub handle — anything else (notably email
+// addresses) is dropped so that hitting the GitHub fallback doesn't publish
+// the user's contact info into a public issue body.
+function renderFallbackContact(contact: string): string | null {
+  const trimmed = contact.trim();
+  if (!trimmed || !GITHUB_HANDLE_REGEX.test(trimmed)) return null;
+  const handle = trimmed.startsWith('@') ? trimmed.slice(1) : trimmed;
+  return `cc @${handle}`;
+}
+
 export function buildFeedbackIssueUrl(
   context: FeedbackContext,
   options: FeedbackOptions,
@@ -84,25 +104,16 @@ export function buildFeedbackIssueUrl(
 ): string {
   const title = (prefill.title ?? '').trim();
   const body = (prefill.body ?? '').trim();
-  const contact = (prefill.contact ?? '').trim();
+  const contactLine = renderFallbackContact(prefill.contact ?? '');
 
   let issueBody: string;
   if (body) {
     const lines: string[] = [body];
-    if (contact) {
-      lines.push('', '---', '', `**Contact:** ${contact}`);
+    if (contactLine) {
+      lines.push('', '---', '', contactLine);
     }
     if (options.includeDiagnostics) {
-      lines.push(
-        '',
-        '---',
-        '',
-        '<details><summary>Environment</summary>',
-        '',
-        buildDiagnosticsBlock(context),
-        '',
-        '</details>',
-      );
+      lines.push('', ...diagnosticsSection(context));
     }
     issueBody = lines.join('\n');
   } else {

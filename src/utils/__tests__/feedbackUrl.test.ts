@@ -107,7 +107,7 @@ describe('buildFeedbackIssueUrl', () => {
     expect(body).not.toContain('ComfyUI:');
   });
 
-  it('uses prefill content when provided instead of the template', () => {
+  it('uses prefill content with cc @handle for valid GitHub handles', () => {
     const url = buildFeedbackIssueUrl(
       { systemStats: makeStats(), workflow: makeWorkflow() },
       { includeDiagnostics: true },
@@ -117,10 +117,23 @@ describe('buildFeedbackIssueUrl', () => {
     expect(params.get('title')).toBe('thing is broken');
     const body = params.get('body') ?? '';
     expect(body).toContain('when I do X, Y happens');
-    expect(body).toContain('**Contact:** @alice');
+    expect(body).toContain('cc @alice');
+    expect(body).not.toContain('**Contact:**');
     expect(body).toContain('ComfyUI: 0.3.45');
     // template-only artifacts must be absent
     expect(body).not.toContain('Steps to reproduce');
+  });
+
+  it('drops non-handle contact values (e.g. emails) from the fallback URL', () => {
+    const url = buildFeedbackIssueUrl(
+      { systemStats: makeStats(), workflow: makeWorkflow() },
+      { includeDiagnostics: false },
+      { title: 't', body: 'a body of text', contact: 'private@example.com' },
+    );
+    const body = new URL(url).searchParams.get('body') ?? '';
+    expect(body).not.toContain('private@example.com');
+    expect(body).not.toContain('cc @');
+    expect(body).not.toContain('**Contact:**');
   });
 
   it('falls back to the template when prefill body is empty', () => {

@@ -58,6 +58,17 @@ describe('submitFeedback', () => {
     expect(result).toMatchObject({ ok: false, error: 'invalid_response' });
   });
 
+  it('returns invalid_response when the response body is not JSON', async () => {
+    // e.g. a proxy or upstream serving an HTML 502 page
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: false,
+      status: 502,
+      json: async () => { throw new SyntaxError('Unexpected token < in JSON at position 0'); },
+    } as unknown as Response));
+    const result = await submitFeedback(ENDPOINT, baseSubmission);
+    expect(result).toEqual({ ok: false, error: 'invalid_response', status: 502 });
+  });
+
   it('serializes the full submission to JSON in the request body', async () => {
     const fetchMock = mockFetch({
       jsonBody: { url: 'https://github.com/x/y/issues/1', number: 1 },

@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import { useEffect, type ReactNode } from 'react';
 
 interface DialogAction {
   label: string;
@@ -54,6 +54,21 @@ export function Dialog({
 
   const alignClass = align === 'top' ? 'items-start pt-6' : 'items-center';
   const handleBackdropClick = disableClose ? undefined : onClose;
+
+  // While `disableClose` is set we swallow Escape on the capture phase so any
+  // ancestor (e.g. SlidePanel) can't close us via its own document-level
+  // keydown handler.
+  useEffect(() => {
+    if (!disableClose) return;
+    const handler = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+      }
+    };
+    document.addEventListener('keydown', handler, true);
+    return () => document.removeEventListener('keydown', handler, true);
+  }, [disableClose]);
 
   return (
     <div
