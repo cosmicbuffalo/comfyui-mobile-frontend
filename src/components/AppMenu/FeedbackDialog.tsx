@@ -172,6 +172,10 @@ export function FeedbackDialog({ systemStats, workflow, onClose }: FeedbackDialo
               placeholder="GitHub @username or email if you'd like a reply"
               className={INPUT_CLASS}
             />
+            <span className="block mt-1 text-xs text-gray-500">
+              GitHub handles get @-mentioned in the public issue. Email addresses are
+              forwarded privately to the maintainer and never appear in the issue body.
+            </span>
           </label>
 
           {/* Honeypot — visually and a11y-hidden, but not display:none (some bots skip those). */}
