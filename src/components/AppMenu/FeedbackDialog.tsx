@@ -173,8 +173,9 @@ export function FeedbackDialog({ systemStats, workflow, onClose }: FeedbackDialo
               className={INPUT_CLASS}
             />
             <span className="block mt-1 text-xs text-gray-500">
-              GitHub handles get @-mentioned in the public issue. Email addresses are
-              forwarded privately to the maintainer and never appear in the issue body.
+              GitHub handles get @-mentioned in the public issue. Anything else
+              (emails, phone numbers, etc.) is forwarded privately to the maintainer
+              and never appears in the issue body.
             </span>
           </label>
 
