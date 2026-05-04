@@ -71,3 +71,4 @@ export { PromotedWidgetIcon } from './PromotedWidgetIcon';
 export { ServerIcon } from './ServerIcon';
 export { ClockIcon } from './ClockIcon';
 export { GearIcon } from './GearIcon';
+export { MegaphoneIcon } from './MegaphoneIcon';
