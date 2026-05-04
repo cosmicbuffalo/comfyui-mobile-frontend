@@ -10,6 +10,7 @@ const baseSubmission = {
 
 afterEach(() => {
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
 });
 
 function mockFetch(response: Partial<Response> & { jsonBody?: unknown }) {

@@ -100,7 +100,7 @@ export function FeedbackDialog({ systemStats, workflow, onClose }: FeedbackDialo
       onClick={onClose}
       className="text-blue-600 hover:underline"
     >
-      Open a GitHub issue directly
+      open a GitHub issue directly
     </a>
   );
 
@@ -201,7 +201,7 @@ export function FeedbackDialog({ systemStats, workflow, onClose }: FeedbackDialo
               onChange={(e) => setIncludeDiagnostics(e.target.checked)}
             />
             <span className="text-sm text-gray-700">
-              Include diagnostic info (ComfyUI version, OS, node counts) to help with debugging
+              Include system info to help with debugging (see preview when checked)
             </span>
           </label>
           {includeDiagnostics && (
