@@ -3,12 +3,13 @@ import { useWorkflowStore } from '@/hooks/useWorkflow';
 export function RunButton() {
   const workflow = useWorkflowStore((s) => s.workflow);
   const runCount = useWorkflowStore((s) => s.runCount);
+  const infiniteLoop = useWorkflowStore((s) => s.infiniteLoop);
   const queueWorkflow = useWorkflowStore((s) => s.queueWorkflow);
   const canRun = workflow !== null;
 
   const handleRun = () => {
     if (canRun) {
-      queueWorkflow(runCount);
+      queueWorkflow(infiniteLoop ? 1 : runCount);
       if ('vibrate' in navigator) {
         navigator.vibrate(20);
       }

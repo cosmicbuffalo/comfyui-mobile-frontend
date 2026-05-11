@@ -2,8 +2,10 @@ import { useEffect, useRef } from "react";
 import { useWorkflowStore } from "@/hooks/useWorkflow";
 import { useOverallProgress } from "@/hooks/useOverallProgress";
 import { useQueueStore } from "@/hooks/useQueue";
+import { useInfiniteLoop } from "@/hooks/useInfiniteLoop";
 import { BottomStatusOverlay } from "./BottomBar/BottomStatusOverlay";
 import { FollowQueueButton } from "./BottomBar/FollowQueueButton";
+import { InfiniteLoopToggle } from "./BottomBar/InfiniteLoopToggle";
 import { PinnedWidgetOverlayModal } from "./BottomBar/PinnedWidgetOverlayModal";
 import { OutputsActionButton } from "./BottomBar/OutputsActionButton";
 import { PinnedWidgetButton } from "./BottomBar/PinnedWidgetButton";
@@ -28,6 +30,8 @@ export function BottomBar(props: BottomBarProps) {
   } = props;
   const isOutputsPanel = currentPanel === 'outputs';
   const workflow = useWorkflowStore((s) => s.workflow);
+  const infiniteLoop = useWorkflowStore((s) => s.infiniteLoop);
+  useInfiniteLoop();
   const isExecuting = useWorkflowStore((s) => s.isExecuting);
   const executingPromptId = useWorkflowStore((s) => s.executingPromptId);
   const workflowDurationStats = useWorkflowStore(
@@ -73,9 +77,11 @@ export function BottomBar(props: BottomBarProps) {
         id="bottom-bar-content"
         className="flex items-center gap-3 px-3 py-2 max-w-lg mx-auto"
       >
-        <RunCountSelector />
+        {!infiniteLoop && <RunCountSelector />}
 
         <RunButton />
+
+        <InfiniteLoopToggle />
 
         {isOutputsPanel && <OutputsActionButton />}
 
