@@ -332,8 +332,12 @@ export function isValueCompatible(value: unknown, typeOrOptions: string | unknow
 
 export function resolveSource(
   workflow: Workflow,
-  linkId: number
+  linkId: number,
+  visitedLinkIds: Set<number> = new Set()
 ): { nodeId: number; slotIndex: number } | null {
+  if (visitedLinkIds.has(linkId)) return null;
+  visitedLinkIds.add(linkId);
+
   const link = workflow.links.find((l) => l[0] === linkId);
   if (!link) return null;
 
@@ -342,6 +346,26 @@ export function resolveSource(
   const sourceNode = workflow.nodes.find((n) => n.id === sourceNodeId);
 
   if (!sourceNode) return null;
+
+  if (sourceNode.type === 'GetNode') {
+    const getterName = getKJSetGetNodeName(sourceNode);
+    if (!getterName) return null;
+
+    const setterNode = workflow.nodes.find(
+      (node) => node.type === 'SetNode' && getKJSetGetNodeName(node) === getterName
+    );
+    const setterInputLink = setterNode?.inputs?.[0]?.link;
+    if (setterInputLink == null) return null;
+
+    return resolveSource(workflow, setterInputLink, visitedLinkIds);
+  }
+
+  if (sourceNode.type === 'SetNode') {
+    const setterInputLink = sourceNode.inputs?.[0]?.link;
+    if (setterInputLink == null) return null;
+
+    return resolveSource(workflow, setterInputLink, visitedLinkIds);
+  }
 
   if (sourceNode.mode === 4 || sourceNode.type === 'Reroute') {
     const outputDef = sourceNode.outputs[sourceSlotIndex];
@@ -355,12 +379,25 @@ export function resolveSource(
     });
 
     if (matchingInput?.link != null) {
-      return resolveSource(workflow, matchingInput.link);
+      return resolveSource(workflow, matchingInput.link, visitedLinkIds);
     }
     return null;
   }
 
   return { nodeId: sourceNodeId, slotIndex: sourceSlotIndex };
+}
+
+function getKJSetGetNodeName(node: WorkflowNode): string | null {
+  const values = node.widgets_values;
+  if (Array.isArray(values)) {
+    const value = values[0];
+    return typeof value === 'string' && value ? value : null;
+  }
+  if (isRecord(values)) {
+    const value = values[0] ?? values.value ?? values.name;
+    return typeof value === 'string' && value ? value : null;
+  }
+  return null;
 }
 
 export function buildWorkflowPromptInputs(

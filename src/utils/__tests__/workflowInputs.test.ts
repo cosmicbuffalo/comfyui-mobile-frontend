@@ -344,6 +344,60 @@ describe('resolveSource', () => {
     const result = resolveSource(wf, 1);
     expect(result).toBeNull();
   });
+
+  it('follows KJNodes GetNode/SetNode virtual links', () => {
+    const wf: Workflow = {
+      last_node_id: 4,
+      last_link_id: 2,
+      nodes: [
+        makeNode(1, 'Loader', {
+          outputs: [{ name: 'MODEL', type: 'MODEL', links: [1] }],
+        }),
+        makeNode(2, 'SetNode', {
+          inputs: [{ name: 'MODEL', type: 'MODEL', link: 1 }],
+          widgets_values: ['shared_model'],
+        }),
+        makeNode(3, 'GetNode', {
+          outputs: [{ name: 'MODEL', type: 'MODEL', links: [2] }],
+          widgets_values: ['shared_model'],
+        }),
+        makeNode(4, 'KSampler', {
+          inputs: [{ name: 'model', type: 'MODEL', link: 2 }],
+        }),
+      ],
+      links: [
+        [1, 1, 0, 2, 0, 'MODEL'],
+        [2, 3, 0, 4, 0, 'MODEL'],
+      ],
+      groups: [],
+      config: {},
+      version: 1,
+    };
+
+    expect(resolveSource(wf, 2)).toEqual({ nodeId: 1, slotIndex: 0 });
+  });
+
+  it('returns null for GetNode without a matching SetNode', () => {
+    const wf: Workflow = {
+      last_node_id: 2,
+      last_link_id: 1,
+      nodes: [
+        makeNode(1, 'GetNode', {
+          outputs: [{ name: 'MODEL', type: 'MODEL', links: [1] }],
+          widgets_values: ['missing_model'],
+        }),
+        makeNode(2, 'KSampler', {
+          inputs: [{ name: 'model', type: 'MODEL', link: 1 }],
+        }),
+      ],
+      links: [[1, 1, 0, 2, 0, 'MODEL']],
+      groups: [],
+      config: {},
+      version: 1,
+    };
+
+    expect(resolveSource(wf, 1)).toBeNull();
+  });
 });
 
 describe('resolveComboOption', () => {
