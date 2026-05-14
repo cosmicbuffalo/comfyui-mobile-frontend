@@ -1,7 +1,7 @@
 {
   "name": "comfyui-mobile-frontend",
   "private": true,
-  "version": "0.1.0",
+  "version": "2.5.1",
   "type": "module",
   "scripts": {
     "dev": "vite",

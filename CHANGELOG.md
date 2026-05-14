@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.5.1 - 2026-05-14
+
+### Fixed
+
+- Mobile prompt generation now resolves KJNodes `GetNode`/`SetNode` virtual links, fixing workflows with subgraphs that previously failed validation with missing inputs.
+
 ## 2.5.0 - 2026-05-04
 
 ### Added
