@@ -333,7 +333,8 @@ export function isValueCompatible(value: unknown, typeOrOptions: string | unknow
 export function resolveSource(
   workflow: Workflow,
   linkId: number,
-  visitedLinkIds: Set<number> = new Set()
+  visitedLinkIds: Set<number> = new Set(),
+  promptKeyMap?: Map<number, string>
 ): { nodeId: number; slotIndex: number } | null {
   if (visitedLinkIds.has(linkId)) return null;
   visitedLinkIds.add(linkId);
@@ -351,20 +352,18 @@ export function resolveSource(
     const getterName = getKJSetGetNodeName(sourceNode);
     if (!getterName) return null;
 
-    const setterNode = workflow.nodes.find(
-      (node) => node.type === 'SetNode' && getKJSetGetNodeName(node) === getterName
-    );
+    const setterNode = findKJSetterNode(workflow, sourceNode, getterName, promptKeyMap);
     const setterInputLink = setterNode?.inputs?.[0]?.link;
     if (setterInputLink == null) return null;
 
-    return resolveSource(workflow, setterInputLink, visitedLinkIds);
+    return resolveSource(workflow, setterInputLink, visitedLinkIds, promptKeyMap);
   }
 
   if (sourceNode.type === 'SetNode') {
     const setterInputLink = sourceNode.inputs?.[0]?.link;
     if (setterInputLink == null) return null;
 
-    return resolveSource(workflow, setterInputLink, visitedLinkIds);
+    return resolveSource(workflow, setterInputLink, visitedLinkIds, promptKeyMap);
   }
 
   if (sourceNode.mode === 4 || sourceNode.type === 'Reroute') {
@@ -379,7 +378,7 @@ export function resolveSource(
     });
 
     if (matchingInput?.link != null) {
-      return resolveSource(workflow, matchingInput.link, visitedLinkIds);
+      return resolveSource(workflow, matchingInput.link, visitedLinkIds, promptKeyMap);
     }
     return null;
   }
@@ -400,6 +399,31 @@ function getKJSetGetNodeName(node: WorkflowNode): string | null {
   return null;
 }
 
+function getPromptScope(promptKey: string | undefined): string | null {
+  if (!promptKey) return null;
+  const scopeEnd = promptKey.lastIndexOf(':');
+  return scopeEnd === -1 ? '' : promptKey.slice(0, scopeEnd);
+}
+
+function findKJSetterNode(
+  workflow: Workflow,
+  getterNode: WorkflowNode,
+  getterName: string,
+  promptKeyMap?: Map<number, string>
+): WorkflowNode | undefined {
+  const candidates = workflow.nodes.filter(
+    (node) => node.type === 'SetNode' && getKJSetGetNodeName(node) === getterName
+  );
+  if (candidates.length <= 1) return candidates[0];
+
+  const getterScope = getPromptScope(promptKeyMap?.get(getterNode.id));
+  if (getterScope === null) return candidates[0];
+
+  return candidates.find(
+    (node) => getPromptScope(promptKeyMap?.get(node.id)) === getterScope
+  ) ?? candidates[0];
+}
+
 export function buildWorkflowPromptInputs(
   workflow: Workflow,
   nodeTypes: NodeTypes,
@@ -414,7 +438,7 @@ export function buildWorkflowPromptInputs(
 
   for (const input of node.inputs) {
     if (input.link != null) {
-      const resolved = resolveSource(workflow, input.link);
+      const resolved = resolveSource(workflow, input.link, new Set(), promptKeyMap);
       if (resolved) {
         if (allowedNodeIds.has(resolved.nodeId)) {
           const nodeKey = promptKeyMap?.get(resolved.nodeId) ?? String(resolved.nodeId);

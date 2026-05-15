@@ -377,6 +377,54 @@ describe('resolveSource', () => {
     expect(resolveSource(wf, 2)).toEqual({ nodeId: 1, slotIndex: 0 });
   });
 
+  it('scopes KJNodes GetNode/SetNode resolution to the expanded subgraph instance', () => {
+    const wf: Workflow = {
+      last_node_id: 104,
+      last_link_id: 3,
+      nodes: [
+        makeNode(1, 'FirstLoader', {
+          outputs: [{ name: 'MODEL', type: 'MODEL', links: [1] }],
+        }),
+        makeNode(2, 'SetNode', {
+          inputs: [{ name: 'MODEL', type: 'MODEL', link: 1 }],
+          widgets_values: ['shared_model'],
+        }),
+        makeNode(101, 'SecondLoader', {
+          outputs: [{ name: 'MODEL', type: 'MODEL', links: [2] }],
+        }),
+        makeNode(102, 'SetNode', {
+          inputs: [{ name: 'MODEL', type: 'MODEL', link: 2 }],
+          widgets_values: ['shared_model'],
+        }),
+        makeNode(103, 'GetNode', {
+          outputs: [{ name: 'MODEL', type: 'MODEL', links: [3] }],
+          widgets_values: ['shared_model'],
+        }),
+        makeNode(104, 'KSampler', {
+          inputs: [{ name: 'model', type: 'MODEL', link: 3 }],
+        }),
+      ],
+      links: [
+        [1, 1, 0, 2, 0, 'MODEL'],
+        [2, 101, 0, 102, 0, 'MODEL'],
+        [3, 103, 0, 104, 0, 'MODEL'],
+      ],
+      groups: [],
+      config: {},
+      version: 1,
+    };
+    const promptKeyMap = new Map<number, string>([
+      [2, '10:2'],
+      [102, '20:2'],
+      [103, '20:3'],
+    ]);
+
+    expect(resolveSource(wf, 3, new Set(), promptKeyMap)).toEqual({
+      nodeId: 101,
+      slotIndex: 0,
+    });
+  });
+
   it('returns null for GetNode without a matching SetNode', () => {
     const wf: Workflow = {
       last_node_id: 2,
