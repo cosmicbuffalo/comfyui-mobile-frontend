@@ -11,6 +11,7 @@ import { OutputsActionButton } from "./BottomBar/OutputsActionButton";
 import { PinnedWidgetButton } from "./BottomBar/PinnedWidgetButton";
 import { RunButton } from "./BottomBar/RunButton";
 import { RunCountSelector } from "./BottomBar/RunCountSelector";
+import { SkipButton } from "./BottomBar/SkipButton";
 
 export type BottomBarProps = {
   currentPanel: 'workflow' | 'queue' | 'outputs';
@@ -78,6 +79,8 @@ export function BottomBar(props: BottomBarProps) {
         className="flex items-center gap-3 px-3 py-2 max-w-lg mx-auto"
       >
         {!infiniteLoop && <RunCountSelector />}
+
+        <SkipButton />
 
         <RunButton />
 
