@@ -414,14 +414,13 @@ function findKJSetterNode(
   const candidates = workflow.nodes.filter(
     (node) => node.type === 'SetNode' && getKJSetGetNodeName(node) === getterName
   );
-  if (candidates.length <= 1) return candidates[0];
 
   const getterScope = getPromptScope(promptKeyMap?.get(getterNode.id));
   if (getterScope === null) return candidates[0];
 
   return candidates.find(
     (node) => getPromptScope(promptKeyMap?.get(node.id)) === getterScope
-  ) ?? candidates[0];
+  );
 }
 
 export function buildWorkflowPromptInputs(

@@ -425,6 +425,42 @@ describe('resolveSource', () => {
     });
   });
 
+  it('does not resolve scoped KJNodes GetNode to a SetNode from another scope', () => {
+    const wf: Workflow = {
+      last_node_id: 4,
+      last_link_id: 2,
+      nodes: [
+        makeNode(1, 'Loader', {
+          outputs: [{ name: 'MODEL', type: 'MODEL', links: [1] }],
+        }),
+        makeNode(2, 'SetNode', {
+          inputs: [{ name: 'MODEL', type: 'MODEL', link: 1 }],
+          widgets_values: ['shared_model'],
+        }),
+        makeNode(3, 'GetNode', {
+          outputs: [{ name: 'MODEL', type: 'MODEL', links: [2] }],
+          widgets_values: ['shared_model'],
+        }),
+        makeNode(4, 'KSampler', {
+          inputs: [{ name: 'model', type: 'MODEL', link: 2 }],
+        }),
+      ],
+      links: [
+        [1, 1, 0, 2, 0, 'MODEL'],
+        [2, 3, 0, 4, 0, 'MODEL'],
+      ],
+      groups: [],
+      config: {},
+      version: 1,
+    };
+    const promptKeyMap = new Map<number, string>([
+      [2, '10:2'],
+      [3, '20:3'],
+    ]);
+
+    expect(resolveSource(wf, 2, new Set(), promptKeyMap)).toBeNull();
+  });
+
   it('returns null for GetNode without a matching SetNode', () => {
     const wf: Workflow = {
       last_node_id: 2,
