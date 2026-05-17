@@ -3,6 +3,7 @@ import { useWorkflowStore } from "@/hooks/useWorkflow";
 import { useOverallProgress } from "@/hooks/useOverallProgress";
 import { useQueueStore } from "@/hooks/useQueue";
 import { useInfiniteLoop } from "@/hooks/useInfiniteLoop";
+import { useGenerationSettingsStore } from "@/hooks/useGenerationSettings";
 import { BottomStatusOverlay } from "./BottomBar/BottomStatusOverlay";
 import { FollowQueueButton } from "./BottomBar/FollowQueueButton";
 import { InfiniteLoopToggle } from "./BottomBar/InfiniteLoopToggle";
@@ -32,6 +33,8 @@ export function BottomBar(props: BottomBarProps) {
   const isOutputsPanel = currentPanel === 'outputs';
   const workflow = useWorkflowStore((s) => s.workflow);
   const infiniteLoop = useWorkflowStore((s) => s.infiniteLoop);
+  const setInfiniteLoop = useWorkflowStore((s) => s.setInfiniteLoop);
+  const infiniteModeEnabled = useGenerationSettingsStore((s) => s.infiniteModeEnabled);
   useInfiniteLoop();
   const isExecuting = useWorkflowStore((s) => s.isExecuting);
   const executingPromptId = useWorkflowStore((s) => s.executingPromptId);
@@ -68,6 +71,12 @@ export function BottomBar(props: BottomBarProps) {
     return () => window.removeEventListener("resize", update);
   }, []);
 
+  useEffect(() => {
+    if (!infiniteModeEnabled && infiniteLoop) {
+      setInfiniteLoop(false);
+    }
+  }, [infiniteModeEnabled, infiniteLoop, setInfiniteLoop]);
+
   return (
     <div
       id="bottom-bar-root"
@@ -84,7 +93,7 @@ export function BottomBar(props: BottomBarProps) {
 
         <RunButton />
 
-        <InfiniteLoopToggle />
+        {infiniteModeEnabled && <InfiniteLoopToggle />}
 
         {isOutputsPanel && <OutputsActionButton />}
 

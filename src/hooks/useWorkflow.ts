@@ -3656,6 +3656,7 @@ export const useWorkflowStore = create<WorkflowState>()(
             itemKeyByPointer: reconciled.layoutToStable,
             pointerByHierarchicalKey: reconciled.stableToLayout,
             runCount: 1,
+            infiniteLoop: false,
             followQueue: false,
             workflowLoadedAt: Date.now(),
           });
@@ -3727,6 +3728,7 @@ export const useWorkflowStore = create<WorkflowState>()(
             pointerByHierarchicalKey: reconciled.stableToLayout,
             hiddenItems: normalizedHiddenNodesStable,
             runCount: 1,
+            infiniteLoop: false,
             followQueue: false,
             workflowLoadedAt: Date.now(),
           });
@@ -3796,6 +3798,7 @@ export const useWorkflowStore = create<WorkflowState>()(
           itemKeyByPointer: {},
           pointerByHierarchicalKey: {},
           runCount: 1,
+          infiniteLoop: false,
           nodeOutputs: {},
           nodeTextOutputs: {},
           latentPreviews: {},
@@ -4841,6 +4844,7 @@ export const useWorkflowStore = create<WorkflowState>()(
             };
           })(),
           runCount: 1,
+          infiniteLoop: false,
           workflowLoadedAt: Date.now(),
         });
       };

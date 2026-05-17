@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react';
 import { useWorkflowStore } from '@/hooks/useWorkflow';
 import { useQueueStore } from '@/hooks/useQueue';
 
@@ -7,14 +8,31 @@ export function RunButton() {
   const infiniteLoop = useWorkflowStore((s) => s.infiniteLoop);
   const setInfiniteLoop = useWorkflowStore((s) => s.setInfiniteLoop);
   const isExecuting = useWorkflowStore((s) => s.isExecuting);
+  const isLoading = useWorkflowStore((s) => s.isLoading);
   const queueWorkflow = useWorkflowStore((s) => s.queueWorkflow);
   const interrupt = useQueueStore((s) => s.interrupt);
+  const running = useQueueStore((s) => s.running);
+  const pending = useQueueStore((s) => s.pending);
+  const [isStopping, setIsStopping] = useState(false);
   const canRun = workflow !== null;
 
-  const showStop = infiniteLoop && isExecuting;
+  // Bridge the brief gap between iterations (when isExecuting flips false
+  // before useInfiniteLoop re-queues) so the Stop button doesn't flash back to Run.
+  const hasActiveRun =
+    isExecuting || isLoading || running.length > 0 || pending.length > 0;
+  const showStop = (infiniteLoop && hasActiveRun) || isStopping;
+
+  useEffect(() => {
+    if (!hasActiveRun && isStopping) {
+      queueMicrotask(() => {
+        setIsStopping(false);
+      });
+    }
+  }, [hasActiveRun, isStopping]);
 
   const handleRun = () => {
     if (canRun) {
+      setIsStopping(false);
       queueWorkflow(infiniteLoop ? 1 : runCount);
       if ('vibrate' in navigator) {
         navigator.vibrate(20);
@@ -23,6 +41,8 @@ export function RunButton() {
   };
 
   const handleStop = async () => {
+    if (isStopping) return;
+    setIsStopping(true);
     setInfiniteLoop(false);
     await interrupt();
     if ('vibrate' in navigator) {
@@ -34,9 +54,10 @@ export function RunButton() {
     return (
       <button
         onClick={handleStop}
-        className="flex-1 py-3 px-6 rounded-xl font-semibold text-lg min-h-[48px] transition-all bg-red-500 text-white active:bg-red-600"
+        disabled={isStopping}
+        className="flex-1 py-3 px-6 rounded-xl font-semibold text-lg min-h-[48px] transition-all bg-red-500 text-white active:bg-red-600 disabled:opacity-70"
       >
-        Stop
+        {isStopping ? 'Stopping...' : 'Stop'}
       </button>
     );
   }

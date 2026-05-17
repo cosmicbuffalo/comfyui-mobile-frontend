@@ -4,6 +4,8 @@ import { createJSONStorage, persist } from 'zustand/middleware';
 export type PreviewMethod = 'none' | 'latent2rgb' | 'taesd';
 
 interface GenerationSettingsState {
+  infiniteModeEnabled: boolean;
+  setInfiniteModeEnabled: (value: boolean) => void;
   previewMethod: PreviewMethod;
   setPreviewMethod: (method: PreviewMethod) => void;
   followIntoSubgraphs: boolean;
@@ -13,6 +15,8 @@ interface GenerationSettingsState {
 export const useGenerationSettingsStore = create<GenerationSettingsState>()(
   persist(
     (set) => ({
+      infiniteModeEnabled: false,
+      setInfiniteModeEnabled: (value) => set({ infiniteModeEnabled: value }),
       previewMethod: 'none',
       setPreviewMethod: (method) => set({ previewMethod: method }),
       followIntoSubgraphs: true,

@@ -57,7 +57,7 @@ export function BottomStatusOverlay() {
     );
   }, [workflow, executingNodeId, executingNodePath, nodeTypes]);
 
-  const runKey = executingPromptId;
+  const runKey = executingPromptId || (running[0]?.prompt_id ?? null);
   const overallProgress = useOverallProgress({
     workflow,
     runKey,
