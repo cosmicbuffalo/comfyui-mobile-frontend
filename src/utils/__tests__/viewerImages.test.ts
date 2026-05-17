@@ -63,4 +63,32 @@ describe('buildViewerImages', () => {
       'preview-b.png',
     ]);
   });
+
+  it('applies the output preference per item in a mixed history', () => {
+    const mixedItems: HistoryImageItem[] = [
+      {
+        outputs: {
+          images: [
+            { filename: 'newest-preview.png', subfolder: 'tmp', type: 'temp' },
+          ],
+        },
+        prompt: {},
+      },
+      {
+        outputs: {
+          images: [
+            { filename: 'older-saved.png', subfolder: 'out', type: 'output' },
+            { filename: 'older-preview.png', subfolder: 'tmp', type: 'temp' },
+          ],
+        },
+        prompt: {},
+      },
+    ];
+
+    const images = buildOutputPreferredViewerImages(mixedItems, { alt: 'Generation' });
+    expect(images.map((img) => img.filename)).toEqual([
+      'newest-preview.png',
+      'older-saved.png',
+    ]);
+  });
 });
