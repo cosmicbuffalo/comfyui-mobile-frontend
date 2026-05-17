@@ -796,6 +796,7 @@ interface WorkflowState {
   // Prompt output images (keyed by prompt ID)
   promptOutputs: Record<string, HistoryOutputImage[]>;
   runCount: number;
+  infiniteLoop: boolean;
   followQueue: boolean;
   workflowLoadedAt: number;
   connectionHighlightModes: Record<
@@ -898,6 +899,7 @@ interface WorkflowState {
   addPromptOutputs: (promptId: string, images: HistoryOutputImage[]) => void;
   clearPromptOutputs: (promptId?: string) => void;
   setRunCount: (count: number) => void;
+  setInfiniteLoop: (val: boolean) => void;
   setFollowQueue: (followQueue: boolean) => void;
   cycleConnectionHighlight: (itemKey: HierarchicalKey) => void;
   setConnectionHighlightMode: (
@@ -3654,6 +3656,7 @@ export const useWorkflowStore = create<WorkflowState>()(
             itemKeyByPointer: reconciled.layoutToStable,
             pointerByHierarchicalKey: reconciled.stableToLayout,
             runCount: 1,
+            infiniteLoop: false,
             followQueue: false,
             workflowLoadedAt: Date.now(),
           });
@@ -3725,6 +3728,7 @@ export const useWorkflowStore = create<WorkflowState>()(
             pointerByHierarchicalKey: reconciled.stableToLayout,
             hiddenItems: normalizedHiddenNodesStable,
             runCount: 1,
+            infiniteLoop: false,
             followQueue: false,
             workflowLoadedAt: Date.now(),
           });
@@ -3794,6 +3798,7 @@ export const useWorkflowStore = create<WorkflowState>()(
           itemKeyByPointer: {},
           pointerByHierarchicalKey: {},
           runCount: 1,
+          infiniteLoop: false,
           nodeOutputs: {},
           nodeTextOutputs: {},
           latentPreviews: {},
@@ -3988,6 +3993,10 @@ export const useWorkflowStore = create<WorkflowState>()(
 
       const setRunCount: WorkflowState["setRunCount"] = (count) => {
         set({ runCount: Math.max(1, Math.floor(count)) });
+      };
+
+      const setInfiniteLoop: WorkflowState["setInfiniteLoop"] = (val) => {
+        set({ infiniteLoop: val });
       };
 
       const setFollowQueue: WorkflowState["setFollowQueue"] = (followQueue) => {
@@ -4835,6 +4844,7 @@ export const useWorkflowStore = create<WorkflowState>()(
             };
           })(),
           runCount: 1,
+          infiniteLoop: false,
           workflowLoadedAt: Date.now(),
         });
       };
@@ -5335,6 +5345,7 @@ export const useWorkflowStore = create<WorkflowState>()(
         latentPreviews: {},
         promptOutputs: {},
         runCount: 1,
+        infiniteLoop: false,
         followQueue: false,
         workflowLoadedAt: 0,
         connectionHighlightModes: {},
@@ -5391,6 +5402,7 @@ export const useWorkflowStore = create<WorkflowState>()(
 
         // bottom bar button related
         setRunCount,
+        setInfiniteLoop,
         setFollowQueue,
 
         // Cosmetic navigation

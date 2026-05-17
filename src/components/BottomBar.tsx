@@ -2,13 +2,17 @@ import { useEffect, useRef } from "react";
 import { useWorkflowStore } from "@/hooks/useWorkflow";
 import { useOverallProgress } from "@/hooks/useOverallProgress";
 import { useQueueStore } from "@/hooks/useQueue";
+import { useInfiniteLoop } from "@/hooks/useInfiniteLoop";
+import { useGenerationSettingsStore } from "@/hooks/useGenerationSettings";
 import { BottomStatusOverlay } from "./BottomBar/BottomStatusOverlay";
 import { FollowQueueButton } from "./BottomBar/FollowQueueButton";
+import { InfiniteLoopToggle } from "./BottomBar/InfiniteLoopToggle";
 import { PinnedWidgetOverlayModal } from "./BottomBar/PinnedWidgetOverlayModal";
 import { OutputsActionButton } from "./BottomBar/OutputsActionButton";
 import { PinnedWidgetButton } from "./BottomBar/PinnedWidgetButton";
 import { RunButton } from "./BottomBar/RunButton";
 import { RunCountSelector } from "./BottomBar/RunCountSelector";
+import { SkipButton } from "./BottomBar/SkipButton";
 
 export type BottomBarProps = {
   currentPanel: 'workflow' | 'queue' | 'outputs';
@@ -28,6 +32,10 @@ export function BottomBar(props: BottomBarProps) {
   } = props;
   const isOutputsPanel = currentPanel === 'outputs';
   const workflow = useWorkflowStore((s) => s.workflow);
+  const infiniteLoop = useWorkflowStore((s) => s.infiniteLoop);
+  const setInfiniteLoop = useWorkflowStore((s) => s.setInfiniteLoop);
+  const infiniteModeEnabled = useGenerationSettingsStore((s) => s.infiniteModeEnabled);
+  useInfiniteLoop();
   const isExecuting = useWorkflowStore((s) => s.isExecuting);
   const executingPromptId = useWorkflowStore((s) => s.executingPromptId);
   const workflowDurationStats = useWorkflowStore(
@@ -63,6 +71,12 @@ export function BottomBar(props: BottomBarProps) {
     return () => window.removeEventListener("resize", update);
   }, []);
 
+  useEffect(() => {
+    if (!infiniteModeEnabled && infiniteLoop) {
+      setInfiniteLoop(false);
+    }
+  }, [infiniteModeEnabled, infiniteLoop, setInfiniteLoop]);
+
   return (
     <div
       id="bottom-bar-root"
@@ -73,9 +87,13 @@ export function BottomBar(props: BottomBarProps) {
         id="bottom-bar-content"
         className="flex items-center gap-3 px-3 py-2 max-w-lg mx-auto"
       >
-        <RunCountSelector />
+        {!infiniteLoop && <RunCountSelector />}
+
+        <SkipButton />
 
         <RunButton />
+
+        {infiniteModeEnabled && <InfiniteLoopToggle />}
 
         {isOutputsPanel && <OutputsActionButton />}
 

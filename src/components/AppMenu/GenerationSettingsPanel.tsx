@@ -6,6 +6,8 @@ interface GenerationSettingsPanelProps {
 }
 
 export function GenerationSettingsPanel({ onBack }: GenerationSettingsPanelProps) {
+  const infiniteModeEnabled = useGenerationSettingsStore((s) => s.infiniteModeEnabled);
+  const setInfiniteModeEnabled = useGenerationSettingsStore((s) => s.setInfiniteModeEnabled);
   const previewMethod = useGenerationSettingsStore((s) => s.previewMethod);
   const setPreviewMethod = useGenerationSettingsStore((s) => s.setPreviewMethod);
   const followIntoSubgraphs = useGenerationSettingsStore((s) => s.followIntoSubgraphs);
@@ -19,7 +21,29 @@ export function GenerationSettingsPanel({ onBack }: GenerationSettingsPanelProps
       <div className="space-y-4">
         <div>
           <div className="rounded-xl border border-gray-200 bg-white overflow-hidden divide-y divide-gray-100">
-            {/* Enable toggle */}
+            <div className="flex items-center justify-between px-4 py-3">
+              <div className="text-sm font-medium text-gray-900">Enable infinite mode</div>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={infiniteModeEnabled}
+                className={`relative inline-flex h-6 w-11 shrink-0 rounded-full border-2 border-transparent transition-colors duration-200 ${
+                  infiniteModeEnabled ? 'bg-blue-600' : 'bg-gray-300'
+                }`}
+                onClick={() => setInfiniteModeEnabled(!infiniteModeEnabled)}
+              >
+                <span
+                  className={`pointer-events-none inline-block h-5 w-5 rounded-full bg-white shadow transform transition-transform duration-200 ${
+                    infiniteModeEnabled ? 'translate-x-5' : 'translate-x-0'
+                  }`}
+                />
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div>
+          <div className="rounded-xl border border-gray-200 bg-white overflow-hidden divide-y divide-gray-100">
             <div className="flex items-center justify-between px-4 py-3">
               <div className="text-sm font-medium text-gray-900">Show latent previews</div>
               <button

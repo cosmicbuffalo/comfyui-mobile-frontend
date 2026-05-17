@@ -29,6 +29,7 @@ export { ClipboardIcon } from './ClipboardIcon';
 export { MinusCircleIcon } from './MinusCircleIcon';
 export { ChevronDownIcon } from './ChevronDownIcon';
 export { BookmarkIconSvg } from './BookmarkIconSvg';
+export { InfiniteLoopIcon } from './InfiniteLoopIcon';
 export { QueueStackIcon } from './QueueStackIcon';
 export type { QueueStackIconProps } from './QueueStackIcon';
 export { ProgressRing } from './ProgressRing';
