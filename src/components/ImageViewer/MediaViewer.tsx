@@ -247,11 +247,22 @@ export function MediaViewer({
   useEffect(() => {
     if (!open) return;
     const handleKey = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') onClose();
+      if (event.key === 'Escape') {
+        onClose();
+        return;
+      }
+      if (isInputFocused) return;
+      if (event.key === 'ArrowLeft' && index > 0) {
+        event.preventDefault();
+        onIndexChange(index - 1);
+      } else if (event.key === 'ArrowRight' && index < items.length - 1) {
+        event.preventDefault();
+        onIndexChange(index + 1);
+      }
     };
     document.addEventListener('keydown', handleKey);
     return () => document.removeEventListener('keydown', handleKey);
-  }, [open, onClose]);
+  }, [open, onClose, isInputFocused, index, items.length, onIndexChange]);
 
   /* eslint-disable react-hooks/set-state-in-effect */
   useEffect(() => {
