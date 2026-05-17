@@ -691,6 +691,7 @@ export function MediaViewer({
                   willChange: 'transform',
                   backfaceVisibility: 'hidden',
                   WebkitBackfaceVisibility: 'hidden',
+                  visibility: baseSize ? 'visible' : 'hidden',
                 }}
               />
             )}
