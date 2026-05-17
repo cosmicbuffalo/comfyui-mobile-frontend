@@ -6,7 +6,7 @@ import { useWorkflowStore } from '@/hooks/useWorkflow';
 import { useNavigationStore } from '@/hooks/useNavigation';
 import { useOverallProgress } from '@/hooks/useOverallProgress';
 import type { Workflow } from '@/api/types';
-import { buildViewerImages } from '@/utils/viewerImages';
+import { buildOutputPreferredViewerImages } from '@/utils/viewerImages';
 import type { QueueItemData, UnifiedItem, ViewerImage } from './QueuePanel/types';
 import { QueueImageMenu } from './QueuePanel/QueueImageMenu';
 import { QueueToast } from './QueuePanel/QueueToast';
@@ -178,7 +178,7 @@ export function QueuePanel({ visible, onImageClick }: QueuePanelProps) {
 
   const viewerImages = useMemo(() => {
     const doneItems = unifiedList.filter((item) => item.status === 'done').map((item) => item.data);
-    return buildViewerImages(doneItems, { alt: 'Generation' });
+    return buildOutputPreferredViewerImages(doneItems, { alt: 'Generation' });
   }, [unifiedList]);
 
   const firstDoneItemId = useMemo(() => {

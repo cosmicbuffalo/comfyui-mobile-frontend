@@ -77,3 +77,13 @@ export function buildViewerImages(
 
   return images;
 }
+
+export function buildOutputPreferredViewerImages(
+  items: HistoryImageItem[],
+  options: Omit<BuildViewerImageOptions, 'onlyOutput'> = {}
+): ViewerImage[] {
+  const outputImages = buildViewerImages(items, { ...options, onlyOutput: true });
+  return outputImages.length > 0
+    ? outputImages
+    : buildViewerImages(items, options);
+}

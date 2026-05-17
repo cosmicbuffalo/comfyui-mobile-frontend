@@ -16,7 +16,7 @@ import { useSwipeNavigation } from './hooks/useSwipeNavigation';
 import { useTextareaFocus } from './hooks/useTextareaFocus';
 import { useBookmarksStore } from './hooks/useBookmarks';
 import * as api from './api/client';
-import { buildViewerImages, type ViewerImage } from './utils/viewerImages';
+import { buildOutputPreferredViewerImages, type ViewerImage } from './utils/viewerImages';
 import { OutputsPanel } from './components/OutputsPanel';
 import { useOutputsStore } from './hooks/useOutputs';
 
@@ -134,7 +134,7 @@ function App() {
 
   // Open viewer in follow queue mode (from bottom bar button)
   const openFollowQueueViewer = () => {
-    const allImages = buildViewerImages(history, { alt: 'Generation' });
+    const allImages = buildOutputPreferredViewerImages(history, { alt: 'Generation' });
 
     // Disable swipe navigation before opening viewer
     setSwipeEnabled(false);
