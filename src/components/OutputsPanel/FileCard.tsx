@@ -2,7 +2,7 @@ import { useEffect, useState, type MouseEvent } from 'react';
 import type { FileItem } from '@/api/client';
 import {
   FolderIcon, CheckIcon,
-  BookmarkIconSvg, VideoCameraIcon
+  HeartIcon, VideoCameraIcon
 } from '@/components/icons';
 import { ContextMenuButton } from '@/components/buttons/ContextMenuButton';
 
@@ -89,7 +89,7 @@ export function FileCard({
         </div>
         <div className="file-actions-container flex items-center gap-2">
           {isFavorited && (
-            <BookmarkIconSvg className="w-4 h-4 text-yellow-500" />
+            <HeartIcon className="w-4 h-4 text-red-500" />
           )}
           <ContextMenuButton
             onClick={handleMenuButtonClick}
@@ -144,7 +144,7 @@ export function FileCard({
               iconSize={4}
             />
             {isFavorited && (
-              <BookmarkIconSvg className="w-4 h-4 text-yellow-400 drop-shadow" />
+              <HeartIcon className="w-4 h-4 text-red-500 drop-shadow" />
             )}
           </div>
         )}

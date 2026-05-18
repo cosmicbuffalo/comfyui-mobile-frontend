@@ -897,6 +897,7 @@ export function OutputsPanel({ visible }: { visible: boolean }) {
        )}
        {deleteTarget && (
          <Dialog
+           fullscreen={viewerOpen}
            onClose={closeDeleteModal}
            title="Delete file?"
            description={
@@ -1067,6 +1068,8 @@ export function OutputsPanel({ visible }: { visible: boolean }) {
          onDelete={handleOutputsViewerDelete}
          onLoadInWorkflow={handleOutputsViewerLoadInWorkflow}
          onLoadWorkflow={handleOutputsViewerLoadWorkflow}
+         onToggleFavorite={(item) => item.file && toggleFavorite(item.file.id)}
+         isFavorited={(item) => Boolean(item.file && favorites.includes(item.file.id))}
          showMetadataToggle
         />
       </div>

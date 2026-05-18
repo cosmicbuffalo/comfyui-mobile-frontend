@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useWorkflowStore } from '@/hooks/useWorkflow';
 import { useQueueStore } from '@/hooks/useQueue';
+import { SkipForwardIcon } from '@/components/icons';
 
 export function SkipButton() {
   const infiniteLoop = useWorkflowStore((s) => s.infiniteLoop);
@@ -38,10 +39,10 @@ export function SkipButton() {
       onClick={handleSkip}
       disabled={isSkipping}
       title="Skip to next iteration"
-      className="relative w-12 h-12 rounded-xl flex items-center justify-center text-2xl transition-colors bg-amber-100 text-amber-600 active:bg-amber-200 disabled:opacity-70"
+      className="relative w-12 h-12 rounded-xl flex items-center justify-center transition-colors bg-amber-100 text-amber-600 active:bg-amber-200 disabled:opacity-70"
       aria-label="Skip to next iteration"
     >
-      ⏭
+      <SkipForwardIcon className="w-6 h-6" />
     </button>
   );
 }

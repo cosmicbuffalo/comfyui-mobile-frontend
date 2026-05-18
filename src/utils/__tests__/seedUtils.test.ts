@@ -1,15 +1,34 @@
 import { describe, it, expect } from 'vitest';
 import {
   findSeedWidgetIndex,
+  hasSeedControlWidget,
   isSpecialSeedValue,
   getSpecialSeedMode,
   getSpecialSeedValueForMode,
   getSeedRandomBounds,
+  RGTHREE_SEED_NODE_TYPE,
   SPECIAL_SEED_RANDOM,
   SPECIAL_SEED_INCREMENT,
   SPECIAL_SEED_DECREMENT,
   DEFAULT_SPECIAL_SEED_RANGE
 } from '../seedUtils';
+import type { WorkflowNode } from '@/api/types';
+
+function makeSeedNode(type: string, widgetsValues: unknown[]): WorkflowNode {
+  return {
+    id: 1,
+    type,
+    pos: [0, 0],
+    size: [200, 100],
+    flags: {},
+    order: 0,
+    mode: 0,
+    inputs: [],
+    outputs: [],
+    properties: {},
+    widgets_values: widgetsValues,
+  } as unknown as WorkflowNode;
+}
 
 describe('isSpecialSeedValue', () => {
   it('returns true for -1, -2, -3', () => {
@@ -90,6 +109,36 @@ describe('getSeedRandomBounds', () => {
   it('handles non-finite values gracefully', () => {
     const result = getSeedRandomBounds(makeNode({ randomMin: NaN, randomMax: Infinity }));
     expect(result).toEqual({ min: 0, max: DEFAULT_SPECIAL_SEED_RANGE });
+  });
+});
+
+describe('hasSeedControlWidget', () => {
+  it('returns false for rgthree Seed regardless of widget value', () => {
+    const node = makeSeedNode(RGTHREE_SEED_NODE_TYPE, [-1]);
+    expect(hasSeedControlWidget(node, undefined)).toBe(false);
+    expect(hasSeedControlWidget(node, '')).toBe(false);
+    expect(hasSeedControlWidget(node, 'randomize')).toBe(false);
+  });
+
+  it('returns false for blank/missing values on other node types', () => {
+    const node = makeSeedNode('KSampler', [123]);
+    expect(hasSeedControlWidget(node, undefined)).toBe(false);
+    expect(hasSeedControlWidget(node, null)).toBe(false);
+    expect(hasSeedControlWidget(node, '')).toBe(false);
+  });
+
+  it('returns true when a non-empty control mode string is present', () => {
+    const node = makeSeedNode('KSampler', [123, 'fixed']);
+    expect(hasSeedControlWidget(node, 'fixed')).toBe(true);
+    expect(hasSeedControlWidget(node, 'randomize')).toBe(true);
+    expect(hasSeedControlWidget(node, 'anything-non-empty')).toBe(true);
+  });
+
+  it('returns false for non-string control values', () => {
+    const node = makeSeedNode('KSampler', [123, 0]);
+    expect(hasSeedControlWidget(node, 0)).toBe(false);
+    expect(hasSeedControlWidget(node, 42)).toBe(false);
+    expect(hasSeedControlWidget(node, true)).toBe(false);
   });
 });
 

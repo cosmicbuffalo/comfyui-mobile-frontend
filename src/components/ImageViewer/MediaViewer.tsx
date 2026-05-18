@@ -20,6 +20,8 @@ interface MediaViewerProps {
   onDelete: (item: ViewerImage) => void;
   onLoadWorkflow: (item: ViewerImage) => void;
   onLoadInWorkflow: (item: ViewerImage) => void;
+  onToggleFavorite?: (item: ViewerImage) => void;
+  isFavorited?: (item: ViewerImage) => boolean;
   showMetadataToggle?: boolean;
   showLoadingPlaceholder?: boolean;
   loadingProgress?: number;
@@ -48,6 +50,8 @@ export function MediaViewer({
   onDelete,
   onLoadWorkflow,
   onLoadInWorkflow,
+  onToggleFavorite,
+  isFavorited,
   showMetadataToggle = false,
   showLoadingPlaceholder = false,
   loadingProgress = 0,
@@ -169,6 +173,19 @@ export function MediaViewer({
     resetIdleTimer();
     onLoadInWorkflow(currentItem);
   }, [currentItem, onLoadInWorkflow, resetIdleTimer]);
+
+  const handleToggleFavoriteClick = useCallback(() => {
+    if (!currentItem) return;
+    resetIdleTimer();
+    onToggleFavorite?.(currentItem);
+  }, [currentItem, onToggleFavorite, resetIdleTimer]);
+
+  const currentIsFavorited = Boolean(
+    currentItem && isFavorited && isFavorited(currentItem),
+  );
+  const canFavoriteCurrent = Boolean(
+    currentItem?.file && onToggleFavorite,
+  );
 
   useEffect(() => {
     if (open) {
@@ -833,10 +850,13 @@ export function MediaViewer({
               canLoadWorkflow={canLoadWorkflow}
               showMetadataToggle={showMetadataToggle}
               canToggleMetadata={canToggleMetadata}
+              canFavorite={canFavoriteCurrent}
+              isFavorited={currentIsFavorited}
               onDelete={handleDeleteClick}
               onLoadWorkflow={handleLoadWorkflowClick}
               onUseInWorkflow={handleLoadInWorkflowClick}
               onToggleMetadata={handleToggleMetadata}
+              onToggleFavorite={handleToggleFavoriteClick}
             />
             <MediaViewerMetadata
               isVideo={isVideo}

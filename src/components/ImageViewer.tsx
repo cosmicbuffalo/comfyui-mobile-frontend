@@ -6,6 +6,7 @@ import { useNavigationStore } from '@/hooks/useNavigation';
 import { useImageViewerStore } from '@/hooks/useImageViewer';
 import { useQueueStore } from '@/hooks/useQueue';
 import { useHistoryStore } from '@/hooks/useHistory';
+import { useOutputsStore } from '@/hooks/useOutputs';
 import { useOverallProgress } from '@/hooks/useOverallProgress';
 import { useHistoryWorkflowByFileId } from '@/hooks/useHistoryWorkflowByFileId';
 import { buildOutputPreferredViewerImages, type ViewerImage } from '@/utils/viewerImages';
@@ -40,6 +41,8 @@ export function ImageViewer({ onClose }: ImageViewerProps) {
   const loadWorkflow = useWorkflowStore((s) => s.loadWorkflow);
   const running = useQueueStore((s) => s.running);
   const history = useHistoryStore((s) => s.history);
+  const favorites = useOutputsStore((s) => s.favorites);
+  const toggleFavorite = useOutputsStore((s) => s.toggleFavorite);
   const [deleteTarget, setDeleteTarget] = useState<FileItem | null>(null);
   const [loadWorkflowTarget, setLoadWorkflowTarget] = useState<ViewerImage | null>(null);
   const [loadNodeTarget, setLoadNodeTarget] = useState<FileItem | null>(null);
@@ -189,6 +192,16 @@ export function ImageViewer({ onClose }: ImageViewerProps) {
     setLoadNodeOpen(true);
   };
 
+  const handleToggleFavorite = (item: ViewerImage) => {
+    if (!item.file) return;
+    toggleFavorite(item.file.id);
+  };
+
+  const isItemFavorited = (item: ViewerImage): boolean => {
+    if (!item.file) return false;
+    return favorites.includes(item.file.id);
+  };
+
   const handleLoadNodeClose = () => {
     setLoadNodeOpen(false);
     setLoadNodeTarget(null);
@@ -213,6 +226,8 @@ export function ImageViewer({ onClose }: ImageViewerProps) {
         onDelete={handleDeleteRequest}
         onLoadWorkflow={handleLoadWorkflowRequest}
         onLoadInWorkflow={handleLoadInWorkflow}
+        onToggleFavorite={handleToggleFavorite}
+        isFavorited={isItemFavorited}
         showMetadataToggle
         showLoadingPlaceholder={showLoadingPlaceholder}
         loadingProgress={displayProgress}
@@ -224,6 +239,7 @@ export function ImageViewer({ onClose }: ImageViewerProps) {
       />
       {loadWorkflowTarget && createPortal(
         <Dialog
+          fullscreen
           onClose={() => setLoadWorkflowTarget(null)}
           title="Unsaved changes"
           description="Are you sure you want to load this workflow? You have unsaved changes."
@@ -256,6 +272,7 @@ export function ImageViewer({ onClose }: ImageViewerProps) {
       />
       {deleteTarget && createPortal(
         <Dialog
+          fullscreen
           onClose={() => setDeleteTarget(null)}
           title="Delete file?"
           description={`This will permanently delete "${deleteTarget.name}" from the server. This cannot be undone.`}

@@ -5,9 +5,9 @@ import type { WorkflowNode } from '@/api/types';
 import {
   generateSeedFromNode,
   getSpecialSeedMode,
-  isSpecialSeedValue,
   useWorkflowStore
 } from '@/hooks/useWorkflow';
+import { RGTHREE_SEED_NODE_TYPE, hasSeedControlWidget } from '@/utils/seedUtils';
 import { useLoraManagerStore } from '@/hooks/useLoraManager';
 import { useSeedStore } from '@/hooks/useSeed';
 import {
@@ -93,6 +93,7 @@ export function NodeCardParameters({
   const storedSeedMode = useSeedStore((state) => state.seedModes[node.id]);
   const lastSeedValue = useSeedStore((state) => state.seedLastValues[node.id] ?? null);
   const isFastGroupsBypasser = /fast\s+groups/i.test(node.type) && /\(rgthree\)/i.test(node.type);
+  const isRgthreeSeedNode = node.type === RGTHREE_SEED_NODE_TYPE;
   const isCrLoraStackNode = /cr\s*lora\s*stack/i.test(node.type);
   const isLoraManagerNode = isLoraManagerNodeType(node.type);
   const isTriggerWordToggleNode = isTriggerWordToggleNodeType(node.type);
@@ -103,8 +104,8 @@ export function NodeCardParameters({
   const seedControlValue = seedControlIndex !== null
     ? (resolveWidgetValue ? resolveWidgetValue(seedControlIndex) : widgetValues[seedControlIndex])
     : undefined;
-  const hasSeedControlWidget = typeof seedControlValue === 'string';
-  const hideSeedInputWidget = !isKSampler && seedWidgetIndex !== null && !hasSeedControlWidget;
+  const hasSeedControl = hasSeedControlWidget(node, seedControlValue);
+  const hideSeedInputWidget = !isKSampler && seedWidgetIndex !== null && !hasSeedControl;
   const inputWidgetsToRender = hideSeedInputWidget
     ? visibleInputWidgets.filter((widget) => widget.name !== 'seed' && widget.name !== 'noise_seed')
     : visibleInputWidgets;
@@ -625,7 +626,7 @@ export function NodeCardParameters({
             );
             if (seedInputEntry?.link != null) return null;
 
-            if (hasSeedControlWidget) {
+            if (hasSeedControl) {
               const controlIndex = seedIndex + 1;
               return (
                 <div className="mb-3">
@@ -651,9 +652,10 @@ export function NodeCardParameters({
             const rawSeedValue = Number((resolveWidgetValue ? resolveWidgetValue(seedIndex) : widgetValues[seedIndex]) ?? 0);
             const specialMode = getSpecialSeedMode(rawSeedValue);
             const seedMode = storedSeedMode ?? specialMode ?? 'fixed';
-            const displaySeedValue = isSpecialSeedValue(rawSeedValue)
-              ? (typeof lastSeedValue === 'number' ? lastSeedValue : 0)
-              : rawSeedValue;
+            // Display the special seed value (-1/-2/-3) directly when in a
+            // special mode, matching the desktop rgthree behavior. The actual
+            // seed used at queue time is resolved from this special value.
+            const displaySeedValue = rawSeedValue;
             const hasSeedError = errorInputNames.has('seed') || errorInputNames.has('noise_seed');
 
             return (
@@ -669,38 +671,42 @@ export function NodeCardParameters({
                   hasError={hasSeedError}
                   isPromoted={isPromotedWidget('seed')}
                 />
-                <WidgetControl
-                  name="Seed control"
-                  type="COMBO"
-                  value={seedMode}
-                  options={baseChoices}
-                  onChange={handleSeedModeValue}
-                  isPromoted={isPromotedWidget('control_after_generate')}
-                />
+                {!isRgthreeSeedNode && (
+                  <WidgetControl
+                    name="Seed control"
+                    type="COMBO"
+                    value={seedMode}
+                    options={baseChoices}
+                    onChange={handleSeedModeValue}
+                    isPromoted={isPromotedWidget('control_after_generate')}
+                  />
+                )}
                 <div className="grid gap-2 mt-2">
                   <button
                     type="button"
-                    className="w-full py-2 px-3 border border-gray-200 rounded-lg text-sm font-medium text-gray-600 hover:text-blue-600 hover:border-blue-500 transition"
+                    className="w-full py-2 px-3 bg-gray-100 border border-gray-200 rounded-lg text-sm font-medium text-gray-700 enabled:hover:bg-gray-200 enabled:hover:text-blue-600 enabled:hover:border-blue-500 transition disabled:opacity-50 disabled:cursor-not-allowed"
                     onClick={() => setSeedMode(node.id, 'randomize')}
                     disabled={isBypassed}
                   >
-                    Randomize each time
+                    🎲 Randomize each time
                   </button>
                   <button
                     type="button"
-                    className="w-full py-2 px-3 border border-gray-200 rounded-lg text-sm font-medium text-gray-600 hover:text-blue-600 hover:border-blue-500 transition"
+                    className="w-full py-2 px-3 bg-gray-100 border border-gray-200 rounded-lg text-sm font-medium text-gray-700 enabled:hover:bg-gray-200 enabled:hover:text-blue-600 enabled:hover:border-blue-500 transition disabled:opacity-50 disabled:cursor-not-allowed"
                     onClick={handleSeedNewFixedRandomClick(seedIndex)}
                     disabled={isBypassed}
                   >
-                    New fixed random
+                    🎲 New fixed random
                   </button>
                   <button
                     type="button"
-                    className="w-full py-2 px-3 border border-gray-200 rounded-lg text-sm font-medium text-gray-600 hover:text-blue-600 hover:border-blue-500 transition"
+                    className="w-full py-2 px-3 bg-gray-100 border border-gray-200 rounded-lg text-sm font-medium text-gray-700 enabled:hover:bg-gray-200 enabled:hover:text-blue-600 enabled:hover:border-blue-500 transition disabled:opacity-50 disabled:cursor-not-allowed"
                     onClick={handleSeedUseLastClick(seedIndex)}
                     disabled={isBypassed || typeof lastSeedValue !== 'number'}
                   >
-                    Use last queued seed
+                    {typeof lastSeedValue === 'number'
+                      ? `♻️ Use last queued seed (${lastSeedValue})`
+                      : '♻️ Use last queued seed'}
                   </button>
                 </div>
               </div>

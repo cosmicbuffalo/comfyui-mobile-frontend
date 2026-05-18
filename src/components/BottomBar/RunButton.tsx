@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect } from 'react';
 import { useWorkflowStore } from '@/hooks/useWorkflow';
 import { useQueueStore } from '@/hooks/useQueue';
 
@@ -7,13 +7,14 @@ export function RunButton() {
   const runCount = useWorkflowStore((s) => s.runCount);
   const infiniteLoop = useWorkflowStore((s) => s.infiniteLoop);
   const setInfiniteLoop = useWorkflowStore((s) => s.setInfiniteLoop);
+  const isStopping = useWorkflowStore((s) => s.isStopping);
+  const setIsStopping = useWorkflowStore((s) => s.setIsStopping);
   const isExecuting = useWorkflowStore((s) => s.isExecuting);
   const isLoading = useWorkflowStore((s) => s.isLoading);
   const queueWorkflow = useWorkflowStore((s) => s.queueWorkflow);
   const interrupt = useQueueStore((s) => s.interrupt);
   const running = useQueueStore((s) => s.running);
   const pending = useQueueStore((s) => s.pending);
-  const [isStopping, setIsStopping] = useState(false);
   const canRun = workflow !== null;
 
   // Bridge the brief gap between iterations (when isExecuting flips false

@@ -15,6 +15,30 @@ export const SPECIAL_SEED_INCREMENT = -2;
 export const SPECIAL_SEED_DECREMENT = -3;
 export const DEFAULT_SPECIAL_SEED_RANGE = 1125899906842624;
 
+export const RGTHREE_SEED_NODE_TYPE = 'Seed (rgthree)';
+
+// Node types that explicitly strip the auto-added control_after_generate widget
+// from their seed input. For these, the seed widget itself encodes the mode via
+// special values (-1/-2/-3), and any value at widgets_values[seedIndex + 1] is
+// unrelated stale data — typically an empty string left over from older saves.
+const NODE_TYPES_WITHOUT_SEED_CONTROL: ReadonlySet<string> = new Set([
+  RGTHREE_SEED_NODE_TYPE,
+]);
+
+/**
+ * True when the value at widgets_values[seedIndex + 1] represents a real
+ * control_after_generate widget driving the seed mode. False for nodes that
+ * explicitly remove that widget (e.g. rgthree's Seed) and for blank/missing
+ * values that would otherwise be misread as a control mode.
+ */
+export function hasSeedControlWidget(
+  node: WorkflowNode,
+  controlWidgetValue: unknown,
+): boolean {
+  if (NODE_TYPES_WITHOUT_SEED_CONTROL.has(node.type)) return false;
+  return typeof controlWidgetValue === 'string' && controlWidgetValue.length > 0;
+}
+
 const SPECIAL_SEED_VALUES = new Set([
   SPECIAL_SEED_RANDOM,
   SPECIAL_SEED_INCREMENT,

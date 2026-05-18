@@ -45,6 +45,7 @@ import {
   getSeedStep,
   getSeedRandomBounds,
   generateSeedFromNode,
+  hasSeedControlWidget,
   resolveSpecialSeedToUse,
 } from "@/utils/seedUtils";
 import {
@@ -797,6 +798,7 @@ interface WorkflowState {
   promptOutputs: Record<string, HistoryOutputImage[]>;
   runCount: number;
   infiniteLoop: boolean;
+  isStopping: boolean;
   followQueue: boolean;
   workflowLoadedAt: number;
   connectionHighlightModes: Record<
@@ -900,6 +902,7 @@ interface WorkflowState {
   clearPromptOutputs: (promptId?: string) => void;
   setRunCount: (count: number) => void;
   setInfiniteLoop: (val: boolean) => void;
+  setIsStopping: (val: boolean) => void;
   setFollowQueue: (followQueue: boolean) => void;
   cycleConnectionHighlight: (itemKey: HierarchicalKey) => void;
   setConnectionHighlightMode: (
@@ -3657,6 +3660,7 @@ export const useWorkflowStore = create<WorkflowState>()(
             pointerByHierarchicalKey: reconciled.stableToLayout,
             runCount: 1,
             infiniteLoop: false,
+            isStopping: false,
             followQueue: false,
             workflowLoadedAt: Date.now(),
           });
@@ -3729,6 +3733,7 @@ export const useWorkflowStore = create<WorkflowState>()(
             hiddenItems: normalizedHiddenNodesStable,
             runCount: 1,
             infiniteLoop: false,
+            isStopping: false,
             followQueue: false,
             workflowLoadedAt: Date.now(),
           });
@@ -3799,6 +3804,7 @@ export const useWorkflowStore = create<WorkflowState>()(
           pointerByHierarchicalKey: {},
           runCount: 1,
           infiniteLoop: false,
+          isStopping: false,
           nodeOutputs: {},
           nodeTextOutputs: {},
           latentPreviews: {},
@@ -3997,6 +4003,10 @@ export const useWorkflowStore = create<WorkflowState>()(
 
       const setInfiniteLoop: WorkflowState["setInfiniteLoop"] = (val) => {
         set({ infiniteLoop: val });
+      };
+
+      const setIsStopping: WorkflowState["setIsStopping"] = (val) => {
+        set({ isStopping: val });
       };
 
       const setFollowQueue: WorkflowState["setFollowQueue"] = (followQueue) => {
@@ -4845,6 +4855,7 @@ export const useWorkflowStore = create<WorkflowState>()(
           })(),
           runCount: 1,
           infiniteLoop: false,
+          isStopping: false,
           workflowLoadedAt: Date.now(),
         });
       };
@@ -5068,8 +5079,10 @@ export const useWorkflowStore = create<WorkflowState>()(
               seedModes[node.id] ??
               inferSeedMode(currentWorkflow, nodeTypes, node);
             const controlWidgetIndex = seedIndex + 1;
-            const controlValue = node.widgets_values[controlWidgetIndex];
-            const hasControlWidget = typeof controlValue === "string";
+            const hasControlWidget = hasSeedControlWidget(
+              node,
+              node.widgets_values[controlWidgetIndex],
+            );
 
             if (hasControlWidget) {
               if (!mode || mode === "fixed") return node;
@@ -5346,6 +5359,7 @@ export const useWorkflowStore = create<WorkflowState>()(
         promptOutputs: {},
         runCount: 1,
         infiniteLoop: false,
+        isStopping: false,
         followQueue: false,
         workflowLoadedAt: 0,
         connectionHighlightModes: {},
@@ -5403,6 +5417,7 @@ export const useWorkflowStore = create<WorkflowState>()(
         // bottom bar button related
         setRunCount,
         setInfiniteLoop,
+        setIsStopping,
         setFollowQueue,
 
         // Cosmetic navigation

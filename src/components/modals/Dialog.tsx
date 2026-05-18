@@ -21,6 +21,13 @@ interface DialogProps {
   align?: DialogAlign;
   disableClose?: boolean;
   zIndex?: number;
+  /**
+   * When true the backdrop covers the entire viewport instead of leaving
+   * space for the top/bottom chrome bars. Use this when the dialog is
+   * rendered above a fullscreen overlay (e.g. the image viewer) where the
+   * chrome is not visible.
+   */
+  fullscreen?: boolean;
 }
 
 const SIZE_CLASS: Record<DialogSize, string> = {
@@ -40,7 +47,8 @@ export function Dialog({
   size = 'sm',
   align = 'center',
   disableClose = false,
-  zIndex = 2200
+  zIndex = 2200,
+  fullscreen = false,
 }: DialogProps) {
   const defaultActionClass = (variant: DialogAction['variant']) => {
     if (variant === 'danger') {
@@ -75,8 +83,8 @@ export function Dialog({
       className={`fixed left-0 right-0 bg-black/50 flex ${alignClass} justify-center p-4 overscroll-contain`}
       style={{
         zIndex,
-        top: 'var(--top-bar-offset, 0px)',
-        bottom: 'var(--bottom-bar-offset, 0px)',
+        top: fullscreen ? 0 : 'var(--top-bar-offset, 0px)',
+        bottom: fullscreen ? 0 : 'var(--bottom-bar-offset, 0px)',
       }}
       onClick={handleBackdropClick}
       onTouchMove={(event) => {

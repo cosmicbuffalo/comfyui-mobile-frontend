@@ -34,6 +34,7 @@ export function BottomBar(props: BottomBarProps) {
   const workflow = useWorkflowStore((s) => s.workflow);
   const infiniteLoop = useWorkflowStore((s) => s.infiniteLoop);
   const setInfiniteLoop = useWorkflowStore((s) => s.setInfiniteLoop);
+  const isStopping = useWorkflowStore((s) => s.isStopping);
   const infiniteModeEnabled = useGenerationSettingsStore((s) => s.infiniteModeEnabled);
   useInfiniteLoop();
   const isExecuting = useWorkflowStore((s) => s.isExecuting);
@@ -87,7 +88,7 @@ export function BottomBar(props: BottomBarProps) {
         id="bottom-bar-content"
         className="flex items-center gap-3 px-3 py-2 max-w-lg mx-auto"
       >
-        {!infiniteLoop && <RunCountSelector />}
+        {!infiniteLoop && !isStopping && <RunCountSelector />}
 
         <SkipButton />
 

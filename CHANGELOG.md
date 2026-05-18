@@ -1,5 +1,24 @@
 # Changelog
 
+## 2.6.1 - 2026-05-18
+
+### Added
+
+- **Image favorites in the viewer:** new heart button next to the load-workflow and use-in-workflow buttons. Outline when not favorited, solid red when favorited. Toggling works the same in the queue follow-mode viewer and the outputs panel viewer — state is shared, so favoriting an image anywhere updates it everywhere
+- **Seed (rgthree) node support:** dedicated controls matching the desktop rgthree Seed node — 🎲 Randomize each time, 🎲 New fixed random, and ♻️ Use last queued seed (with the last queued value shown in the button label). When randomize mode is selected the seed field displays `-1`, matching the desktop behavior
+
+### Changed
+
+- Heart icon (solid red) replaces the yellow bookmark indicator on favorited files in the Outputs panel
+- Skip button in the bottom bar uses an SVG icon instead of an emoji
+- Image viewer modals (delete, unsaved changes) now cover the full viewport instead of leaving an unstyled gap at the top where the (hidden) top bar would be
+- Trash icon in the image viewer's delete button is nudged for better optical centering
+
+### Fixed
+
+- Run-count picker no longer briefly appears between clicking Stop and execution actually ending in infinite generation mode
+- "Seed control" dropdown no longer renders blank for rgthree Seed nodes (and no longer overrides the seed widget with a real number on queue when the node has a stale empty control value)
+
 ## 2.6.0 - 2026-05-17
 
 ### Added

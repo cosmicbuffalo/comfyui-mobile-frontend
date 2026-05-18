@@ -1,4 +1,5 @@
 import { DeleteButton } from "@/components/buttons/DeleteButton";
+import { FavoriteButton } from "@/components/buttons/FavoriteButton";
 import { LoadWorkflowButton } from "@/components/buttons/LoadWorkflowButton";
 import { UseInWorkflowButton } from "@/components/buttons/UseInWorkflowButton";
 import { MetadataButton } from "@/components/buttons/MetadataButton";
@@ -8,10 +9,13 @@ interface MediaViewerActionsProps {
   canLoadWorkflow: boolean;
   showMetadataToggle?: boolean;
   canToggleMetadata: boolean;
+  canFavorite: boolean;
+  isFavorited: boolean;
   onDelete: () => void;
   onLoadWorkflow: () => void;
   onUseInWorkflow: () => void;
   onToggleMetadata: () => void;
+  onToggleFavorite: () => void;
 }
 
 export function MediaViewerActions({
@@ -19,10 +23,13 @@ export function MediaViewerActions({
   canLoadWorkflow,
   showMetadataToggle,
   canToggleMetadata,
+  canFavorite,
+  isFavorited,
   onDelete,
   onLoadWorkflow,
   onUseInWorkflow,
   onToggleMetadata,
+  onToggleFavorite,
 }: MediaViewerActionsProps) {
   return (
     <div
@@ -31,6 +38,9 @@ export function MediaViewerActions({
     >
       <DeleteButton onClick={onDelete} />
       <div className="flex items-center gap-2">
+        {canFavorite && (
+          <FavoriteButton onClick={onToggleFavorite} isFavorited={isFavorited} />
+        )}
         {canLoadWorkflow && <LoadWorkflowButton onClick={onLoadWorkflow} />}
         {!isVideo && (
           <>

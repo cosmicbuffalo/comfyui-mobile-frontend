@@ -5,6 +5,7 @@ import type { SeedMode } from '@/hooks/useWorkflow';
 import {
   findSeedWidgetIndex,
   getSpecialSeedValueForMode,
+  hasSeedControlWidget,
   isSpecialSeedValue,
   generateSeedFromNode,
 } from '@/utils/seedUtils';
@@ -45,7 +46,10 @@ export const useSeedStore = create<SeedState>()(
                 : findSeedWidgetIndex(workflow, nodeTypes, node);
             if (seedWidgetIndex !== null && Array.isArray(node.widgets_values)) {
               const controlWidgetIndex = seedWidgetIndex + 1;
-              const hasControlWidget = typeof node.widgets_values[controlWidgetIndex] === 'string';
+              const hasControlWidget = hasSeedControlWidget(
+                node,
+                node.widgets_values[controlWidgetIndex],
+              );
               const updates: Record<number, unknown> = {};
 
               if (hasControlWidget) {
