@@ -1,5 +1,16 @@
 # Changelog
 
+## 2.6.0 - 2026-05-17
+
+### Added
+
+- **Infinite generation:** new ∞ toggle beside the run button starts an unbounded loop where each finished run automatically queues the next, similar to desktop's "Run (Instant)" (#54, thanks @mario-marin!). The run button becomes Stop, with a Skip button for advancing past the current iteration without ending the loop. Gated behind an opt-in "Enable infinite mode" preference under Menu → Server → Preferences
+- **Image viewer keyboard navigation:** left/right arrow keys step through images (left → newer, right → older), and Escape closes the viewer
+
+### Fixed
+
+- Image viewer no longer hides in-progress previews when older runs in the same history already produced saved outputs — the preference is now applied per item, so each run shows its outputs if it has any and its previews otherwise
+
 ## 2.5.1 - 2026-05-14
 
 ### Fixed

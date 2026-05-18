@@ -8,7 +8,7 @@ import { useQueueStore } from '@/hooks/useQueue';
 import { useHistoryStore } from '@/hooks/useHistory';
 import { useOverallProgress } from '@/hooks/useOverallProgress';
 import { useHistoryWorkflowByFileId } from '@/hooks/useHistoryWorkflowByFileId';
-import { buildViewerImages, type ViewerImage } from '@/utils/viewerImages';
+import { buildOutputPreferredViewerImages, type ViewerImage } from '@/utils/viewerImages';
 import { deleteFile, type FileItem } from '@/api/client';
 import { Dialog } from '@/components/modals/Dialog';
 import { UseImageModal } from '@/components/modals/UseImageModal';
@@ -86,7 +86,7 @@ export function ImageViewer({ onClose }: ImageViewerProps) {
     if (lastFollowPromptRef.current === latest.prompt_id) return;
     if (latest.outputs.images.length === 0) return;
 
-    const allImages = buildViewerImages(history, { alt: 'Generation' });
+    const allImages = buildOutputPreferredViewerImages(history, { alt: 'Generation' });
     if (allImages.length === 0) return;
 
     lastFollowPromptRef.current = latest.prompt_id;

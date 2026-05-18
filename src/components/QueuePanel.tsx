@@ -6,7 +6,7 @@ import { useWorkflowStore } from '@/hooks/useWorkflow';
 import { useNavigationStore } from '@/hooks/useNavigation';
 import { useOverallProgress } from '@/hooks/useOverallProgress';
 import type { Workflow } from '@/api/types';
-import { buildViewerImages } from '@/utils/viewerImages';
+import { buildOutputPreferredViewerImages, buildViewerImages } from '@/utils/viewerImages';
 import type { QueueItemData, UnifiedItem, ViewerImage } from './QueuePanel/types';
 import { QueueImageMenu } from './QueuePanel/QueueImageMenu';
 import { QueueToast } from './QueuePanel/QueueToast';
@@ -28,6 +28,8 @@ export function QueuePanel({ visible, onImageClick }: QueuePanelProps) {
   const fetchQueue = useQueueStore((s) => s.fetchQueue);
   const deleteQueueItem = useQueueStore((s) => s.deleteItem);
   const interrupt = useQueueStore((s) => s.interrupt);
+  const previewVisibility = useQueueStore((s) => s.previewVisibility);
+  const previewVisibilityDefault = useQueueStore((s) => s.previewVisibilityDefault);
   const loadWorkflow = useWorkflowStore((s) => s.loadWorkflow);
   const setCurrentPanel = useNavigationStore((s) => s.setCurrentPanel);
   const workflow = useWorkflowStore((s) => s.workflow);
@@ -178,8 +180,15 @@ export function QueuePanel({ visible, onImageClick }: QueuePanelProps) {
 
   const viewerImages = useMemo(() => {
     const doneItems = unifiedList.filter((item) => item.status === 'done').map((item) => item.data);
-    return buildViewerImages(doneItems, { alt: 'Generation' });
-  }, [unifiedList]);
+    return doneItems.flatMap((item) => {
+      const previewsVisible = item.prompt_id
+        ? previewVisibility[item.prompt_id] ?? previewVisibilityDefault
+        : previewVisibilityDefault;
+      return previewsVisible
+        ? buildViewerImages([item], { alt: 'Generation' })
+        : buildOutputPreferredViewerImages([item], { alt: 'Generation' });
+    });
+  }, [unifiedList, previewVisibility, previewVisibilityDefault]);
 
   const firstDoneItemId = useMemo(() => {
     const firstDone = unifiedList.find((item) => item.status === 'done');

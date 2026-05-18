@@ -33,6 +33,7 @@ export interface HistoryImageItem {
 
 interface BuildViewerImageOptions {
   onlyOutput?: boolean;
+  preferOutputPerItem?: boolean;
   alt?: string | ((imageIndex: number, itemIndex: number) => string);
 }
 
@@ -40,7 +41,7 @@ export function buildViewerImages(
   items: HistoryImageItem[],
   options: BuildViewerImageOptions = {}
 ): ViewerImage[] {
-  const { onlyOutput = false, alt } = options;
+  const { onlyOutput = false, preferOutputPerItem = false, alt } = options;
   const images: ViewerImage[] = [];
 
   items.forEach((item, itemIndex) => {
@@ -48,9 +49,12 @@ export function buildViewerImages(
     const metadata = extractMetadata(item.prompt);
     const durationSeconds = item.durationSeconds;
     const success = item.success !== false;
+    const itemHasOutput =
+      preferOutputPerItem && outputs.some((img) => img.type === 'output');
 
     outputs.forEach((img, imageIndex) => {
       if (onlyOutput && img.type !== 'output') return;
+      if (itemHasOutput && img.type !== 'output') return;
       const altText = typeof alt === 'function' ? alt(imageIndex, itemIndex) : alt;
       const filePath = img.subfolder ? `${img.subfolder}/${img.filename}` : img.filename;
       const mediaType = getMediaType(img.filename);
@@ -76,4 +80,11 @@ export function buildViewerImages(
   });
 
   return images;
+}
+
+export function buildOutputPreferredViewerImages(
+  items: HistoryImageItem[],
+  options: Omit<BuildViewerImageOptions, 'onlyOutput' | 'preferOutputPerItem'> = {}
+): ViewerImage[] {
+  return buildViewerImages(items, { ...options, preferOutputPerItem: true });
 }

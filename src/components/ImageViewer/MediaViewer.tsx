@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useTextareaFocus } from '@/hooks/useTextareaFocus';
 import type { ViewerImage } from '@/utils/viewerImages';
@@ -62,10 +62,17 @@ export function MediaViewer({
   const imageRef = useRef<HTMLImageElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const naturalSizeRef = useRef<{ width: number; height: number } | null>(null);
-  const [scale, setScale] = useState(1);
-  const [translate, setTranslate] = useState({ x: 0, y: 0 });
-  const scaleRef = useRef(1);
-  const translateRef = useRef({ x: 0, y: 0 });
+  // MediaViewer remounts whenever the viewer opens (ImageViewer returns null
+  // when closed), so initializing from props is sufficient — no useLayoutEffect
+  // needed to re-sync. Re-syncing on every initialScale/initialTranslate prop
+  // change creates a feedback loop with onTransformChange: store updates
+  // produce new object refs for initialTranslate, the effect calls
+  // setTranslate(newRef), state changes, onTransformChange sends it back to
+  // the store, which produces another new ref, and so on.
+  const [scale, setScale] = useState(initialScale);
+  const [translate, setTranslate] = useState(initialTranslate);
+  const scaleRef = useRef(initialScale);
+  const translateRef = useRef(initialTranslate);
 
   const dragRef = useRef<{ x: number; y: number } | null>(null);
   const swipeRef = useRef<{ x: number; y: number; time: number } | null>(null);
@@ -96,6 +103,25 @@ export function MediaViewer({
     currentItem?.mediaType === 'video' ||
     currentItem?.file?.type === 'video' ||
     (fallbackName && isVideoFilename(fallbackName))
+  );
+
+  // Double-buffered display: keep the previously rendered item visible until the
+  // next image is decoded, then swap atomically with its computed transform so
+  // there's no black flash or top-left jump between images.
+  const [displayedItem, setDisplayedItem] = useState<ViewerImage | null>(
+    () => (index >= 0 ? (items[index] ?? items[0] ?? null) : null),
+  );
+  const displayedItemRef = useRef<ViewerImage | null>(null);
+  displayedItemRef.current = displayedItem;
+  // When there is no previous item to preserve (initial display, or follow-queue
+  // arriving from an empty state) render the current item directly to avoid a
+  // one-render-gap black frame before the swap effect fires.
+  const renderItem = displayedItem ?? currentItem;
+  const renderFallbackName = renderItem?.filename ?? renderItem?.file?.name ?? renderItem?.alt ?? renderItem?.src ?? '';
+  const renderIsVideo = Boolean(
+    renderItem?.mediaType === 'video' ||
+    renderItem?.file?.type === 'video' ||
+    (renderFallbackName && isVideoFilename(renderFallbackName))
   );
   const fileId = currentItem?.file?.id ?? null;
   const fetchedMetadata = fileId ? metadataById[fileId] : undefined;
@@ -158,20 +184,105 @@ export function MediaViewer({
     };
   }, [open, resetIdleTimer]);
 
-  /* eslint-disable react-hooks/set-state-in-effect */
-  useLayoutEffect(() => {
+  useEffect(() => {
     if (!open) return;
-    setScale(initialScale);
-    setTranslate(initialTranslate);
-    scaleRef.current = initialScale;
-    translateRef.current = initialTranslate;
-
+    targetZoomModeRef.current = 'fit';
     dragRef.current = null;
     swipeRef.current = null;
     pinchRef.current = null;
     lastTapRef.current = null;
-    targetZoomModeRef.current = 'fit';
-  }, [open, index, initialScale, initialTranslate]);
+  }, [open, index]);
+
+  /* eslint-disable react-hooks/set-state-in-effect */
+  useEffect(() => {
+    if (!open) {
+      setDisplayedItem(null);
+      return;
+    }
+    if (!currentItem) {
+      setDisplayedItem(null);
+      return;
+    }
+
+    const displayed = displayedItemRef.current;
+    if (!displayed || currentItem.src === displayed.src) {
+      setDisplayedItem(currentItem);
+      return;
+    }
+
+    // Videos handle their own loading state via <video>; swap immediately.
+    const displayedName = displayed.filename ?? displayed.file?.name ?? displayed.alt ?? displayed.src ?? '';
+    const displayedIsVideoItem = displayed.mediaType === 'video'
+      || displayed.file?.type === 'video'
+      || (displayedName ? isVideoFilename(displayedName) : false);
+    const currentName = currentItem.filename ?? currentItem.file?.name ?? currentItem.alt ?? currentItem.src ?? '';
+    const currentIsVideoItem = currentItem.mediaType === 'video'
+      || currentItem.file?.type === 'video'
+      || (currentName ? isVideoFilename(currentName) : false);
+    if (displayedIsVideoItem || currentIsVideoItem) {
+      setDisplayedItem(currentItem);
+      return;
+    }
+
+    let cancelled = false;
+    const preload = new Image();
+    preload.src = currentItem.src;
+
+    const finish = () => {
+      if (cancelled) return;
+
+      const container = containerRef.current;
+      if (container && preload.naturalWidth > 0) {
+        const containerWidth = container.clientWidth;
+        const containerHeight = container.clientHeight;
+        const ratio = containerWidth / preload.naturalWidth;
+        const newBaseSize = { width: containerWidth, height: preload.naturalHeight * ratio };
+        const newContainerSize = { width: containerWidth, height: containerHeight };
+
+        const fitHeightScale = containerHeight / newBaseSize.height;
+        const newFitScale = Math.min(1, fitHeightScale);
+        const newCoverScale = Math.max(1, fitHeightScale);
+        const targetScale = targetZoomModeRef.current === 'cover' ? newCoverScale : newFitScale;
+        const scaledWidth = newBaseSize.width * targetScale;
+        const scaledHeight = newBaseSize.height * targetScale;
+        // Mirror clampTranslate: translate is the pan offset, NOT the centering
+        // offset (getBaseOffset handles centering in the render). When the
+        // scaled image fits inside the container, pan is forced to 0; for cover
+        // mode we clamp the centered offset to keep the image within bounds.
+        const centeredX = (containerWidth - scaledWidth) / 2;
+        const centeredY = (containerHeight - scaledHeight) / 2;
+        const clampedTranslate = {
+          x: scaledWidth <= containerWidth
+            ? 0
+            : Math.max(containerWidth - scaledWidth, Math.min(0, centeredX)),
+          y: scaledHeight <= containerHeight
+            ? 0
+            : Math.max(containerHeight - scaledHeight, Math.min(0, centeredY)),
+        };
+
+        naturalSizeRef.current = { width: preload.naturalWidth, height: preload.naturalHeight };
+        scaleRef.current = targetScale;
+        translateRef.current = clampedTranslate;
+        setBaseSize(newBaseSize);
+        setContainerSize(newContainerSize);
+        setScale(targetScale);
+        setTranslate(clampedTranslate);
+      }
+
+      setDisplayedItem(currentItem);
+    };
+
+    if (typeof preload.decode === 'function') {
+      preload.decode().then(finish, finish);
+    } else {
+      preload.onload = finish;
+      preload.onerror = finish;
+    }
+
+    return () => {
+      cancelled = true;
+    };
+  }, [open, currentItem]);
   /* eslint-enable react-hooks/set-state-in-effect */
 
   /* eslint-disable react-hooks/set-state-in-effect */
@@ -224,10 +335,8 @@ export function MediaViewer({
 
   /* eslint-disable react-hooks/set-state-in-effect */
   useEffect(() => {
-    naturalSizeRef.current = null;
-    setBaseSize(null);
     setVideoError(false);
-  }, [currentItem?.src]);
+  }, [renderItem?.src]);
   /* eslint-enable react-hooks/set-state-in-effect */
 
   useEffect(() => {
@@ -247,11 +356,22 @@ export function MediaViewer({
   useEffect(() => {
     if (!open) return;
     const handleKey = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') onClose();
+      if (event.key === 'Escape') {
+        onClose();
+        return;
+      }
+      if (isInputFocused) return;
+      if (event.key === 'ArrowLeft' && index > 0) {
+        event.preventDefault();
+        onIndexChange(index - 1);
+      } else if (event.key === 'ArrowRight' && index < items.length - 1) {
+        event.preventDefault();
+        onIndexChange(index + 1);
+      }
     };
     document.addEventListener('keydown', handleKey);
     return () => document.removeEventListener('keydown', handleKey);
-  }, [open, onClose]);
+  }, [open, onClose, isInputFocused, index, items.length, onIndexChange]);
 
   /* eslint-disable react-hooks/set-state-in-effect */
   useEffect(() => {
@@ -375,7 +495,7 @@ export function MediaViewer({
   };
 
   useEffect(() => {
-    if (isVideo) return;
+    if (renderIsVideo) return;
     if (!open) return;
     const img = imageRef.current;
     const container = containerRef.current;
@@ -399,13 +519,13 @@ export function MediaViewer({
     const observer = new ResizeObserver(updateSizes);
     observer.observe(container);
     return () => observer.disconnect();
-  }, [open, currentItem?.src, isVideo]);
+  }, [open, renderItem?.src, renderIsVideo]);
 
   useEffect(() => {
-    if (isVideo) return;
+    if (renderIsVideo) return;
     if (!open || !baseSize || !containerSize) return;
     applyZoomModeRef.current(targetZoomModeRef.current);
-  }, [open, currentItem?.src, baseSize, containerSize, isVideo]);
+  }, [open, renderItem?.src, baseSize, containerSize, renderIsVideo]);
 
   useEffect(() => {
     if (!open) return;
@@ -644,13 +764,13 @@ export function MediaViewer({
               {loadingLabel ?? `${Math.min(100, Math.max(0, loadingProgress))}%`}
             </div>
           </div>
-        ) : currentItem && (
+        ) : renderItem && (
           <>
-            {isVideo ? (
+            {renderIsVideo ? (
               <>
                 <video
                   ref={videoRef}
-                  src={currentItem.src}
+                  src={renderItem.src}
                   controls
                   autoPlay
                   loop
@@ -669,8 +789,8 @@ export function MediaViewer({
             ) : (
               <img
                 ref={imageRef}
-                src={currentItem.src}
-                alt={currentItem.alt || 'Generation'}
+                src={renderItem.src}
+                alt={renderItem.alt || 'Generation'}
                 className="w-full h-auto block select-none relative"
                 draggable={false}
                 onLoad={handleImageLoad}
