@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.6.3 - 2026-05-24
+
+### Fixed
+
+- KSampler SDXL (Eff.) and other Efficient Nodes samplers now work correctly when the saved workflow keeps the `control_after_generate` slot but stores `null` in it. The previous fix in 2.6.2 only handled the case where the slot was stripped entirely; nulled slots still caused widget values to be read one position off, producing spurious "Missing on ComfyUI server" badges on `sampler_name`, `preview_method`, etc., and sometimes rejected queues (#57)
+
 ## 2.6.2 - 2026-05-23
 
 ### Fixed

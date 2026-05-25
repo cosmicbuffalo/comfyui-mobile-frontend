@@ -1,5 +1,5 @@
 import type { WorkflowNode, NodeTypes, NodeTypeDefinition, Workflow } from '@/api/types';
-import { getNodePropertyWidgetIndexMap, getWidgetValue, isWidgetInputType } from '@/utils/workflowInputs';
+import { getNodePropertyWidgetIndexMap, getWidgetValue, isWidgetInputType, skipImplicitSeedControlSlot } from '@/utils/workflowInputs';
 import { findLoraListIndex, isLoraList, isLoraManagerNodeType } from '@/utils/loraManager';
 import {
   extractTriggerWordList,
@@ -307,16 +307,15 @@ function collectWidgetDefinitions(
       if (isWidgetType) {
         widgetIndex += 1;
         if (String(typeOrOptions) === 'INT' && (name === 'seed' || name === 'noise_seed')) {
-          // ComfyUI auto-adds a control_after_generate string widget after
-          // every INT seed input, but some custom nodes (Efficient KSampler
-          // family) strip it on the JS side, so widgets_values is shorter
-          // than the declared widget order. Only skip past the slot when it
-          // actually holds a string — otherwise every later widget reads
-          // from the wrong array index.
-          const nextValue = Array.isArray(node.widgets_values)
-            ? node.widgets_values[widgetIndex]
-            : undefined;
-          if (typeof nextValue === 'string' && nextValue.length > 0) {
+          // ComfyUI auto-adds a control_after_generate widget after every INT
+          // seed input. Some custom nodes (Efficient KSampler family) strip it
+          // on the JS side, so widgets_values may be one slot shorter — or
+          // keep the slot but leave it null. Skip past the slot only when it
+          // doesn't look like a real subsequent widget value; bump for
+          // strings ('fixed'/'randomize'/etc.), null, and out-of-bounds
+          // (slot absent entirely), but NOT for numbers/booleans/objects
+          // which would be the value of the next real widget.
+          if (skipImplicitSeedControlSlot(node, widgetIndex)) {
             widgetIndex += 1;
           }
         }

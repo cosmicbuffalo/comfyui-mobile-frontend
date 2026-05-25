@@ -1,5 +1,5 @@
 import type { Workflow, WorkflowNode, NodeTypes } from '@/api/types';
-import { getNodeWidgetIndexMap, isWidgetInputType } from '@/utils/workflowInputs';
+import { getNodeWidgetIndexMap, isWidgetInputType, skipImplicitSeedControlSlot } from '@/utils/workflowInputs';
 
 // Seed mode type
 export type SeedMode = 'fixed' | 'randomize' | 'increment' | 'decrement';
@@ -104,14 +104,7 @@ export function getWidgetIndexForInput(
       widgetIndex += 1;
 
       if (String(typeOrOptions) === 'INT' && (name === 'seed' || name === 'noise_seed')) {
-        // See note in widgetDefinitions.ts: only skip the auto control_after_generate
-        // slot when a string is actually present there. Some custom nodes (Efficient
-        // KSampler family) strip the widget client-side so it's absent from saved
-        // workflows.
-        const nextValue = Array.isArray(node.widgets_values)
-          ? node.widgets_values[widgetIndex]
-          : undefined;
-        if (typeof nextValue === 'string' && nextValue.length > 0) {
+        if (skipImplicitSeedControlSlot(node, widgetIndex)) {
           widgetIndex += 1;
         }
       }
@@ -198,12 +191,7 @@ export function findSeedWidgetIndex(
 
       widgetIndex += 1;
       if (String(typeOrOptions) === 'INT' && (name === 'seed' || name === 'noise_seed')) {
-        // See note above: skip the auto control_after_generate slot only when
-        // a string is actually present at that position in widgets_values.
-        const nextValue = Array.isArray(node.widgets_values)
-          ? node.widgets_values[widgetIndex]
-          : undefined;
-        if (typeof nextValue === 'string' && nextValue.length > 0) {
+        if (skipImplicitSeedControlSlot(node, widgetIndex)) {
           widgetIndex += 1;
         }
       }

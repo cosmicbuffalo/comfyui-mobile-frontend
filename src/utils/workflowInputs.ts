@@ -172,6 +172,35 @@ export function getWorkflowWidgetIndexMap(
   return extraMap?.[String(nodeId)] ?? null;
 }
 
+/**
+ * Decide whether to skip past ComfyUI's auto-added control_after_generate slot
+ * that conventionally follows an INT seed widget.
+ *
+ * Most ComfyUI nodes have this widget; some custom nodes (Efficient KSampler
+ * family) strip it in their own JS. The resulting saved workflows can be in
+ * any of three shapes at the control slot:
+ *   - present, string value (stock ComfyUI: 'fixed' / 'randomize' / etc.)
+ *   - present, null value (Efficient Nodes leaves the slot but blanks it)
+ *   - absent entirely (slot index >= widgets_values.length)
+ *
+ * Returns true (bump past the slot) when the value at controlSlotIndex is a
+ * string, null, or out of bounds. Returns false when the slot holds a real
+ * widget value (number / boolean / non-null object) — that means
+ * control_after_generate wasn't there to begin with and the slot belongs to
+ * the next declared widget.
+ */
+export function skipImplicitSeedControlSlot(
+  node: WorkflowNode,
+  controlSlotIndex: number,
+): boolean {
+  if (!Array.isArray(node.widgets_values)) return false;
+  if (controlSlotIndex >= node.widgets_values.length) return false;
+  const value = node.widgets_values[controlSlotIndex];
+  if (value === null) return true;
+  if (typeof value === 'string') return true;
+  return false;
+}
+
 export function getNodePropertyWidgetIndexMap(
   node: WorkflowNode
 ): Record<string, number> | null {
@@ -532,15 +561,8 @@ export function buildWorkflowPromptInputs(
         }
 
         if (String(typeOrOptions) === 'INT' && (name === 'seed' || name === 'noise_seed')) {
-          // Skip past ComfyUI's auto control_after_generate widget only when a
-          // string is actually present at that slot. Efficient KSampler family
-          // nodes strip it on the JS side, so the saved widgets_values is one
-          // slot shorter than the declared widget order.
           const seedSlot = indexToUse ?? (widgetCursor - 1);
-          const nextValue = Array.isArray(node.widgets_values)
-            ? node.widgets_values[seedSlot + 1]
-            : undefined;
-          if (typeof nextValue === 'string' && nextValue.length > 0) {
+          if (skipImplicitSeedControlSlot(node, seedSlot + 1)) {
             if (indexToUse !== undefined) {
               widgetCursor = Math.max(widgetCursor, indexToUse + 2);
             } else {

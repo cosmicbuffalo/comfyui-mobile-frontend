@@ -710,6 +710,82 @@ describe('seed override application in buildWorkflowPromptInputs', () => {
     expect(inputs.preview_method).toBe('auto');
   });
 
+  it("skips a control_after_generate slot that is present but null (KSampler SDXL Eff. real-world workflow)", () => {
+    // Regression for the KSampler SDXL (Eff.) shape observed in user
+    // workflows: the control_after_generate slot is retained at index 1
+    // but its value is null. The walker must still treat it as the control
+    // slot (skip past it) so the following inputs read from the right
+    // positions and the seed override applies to noise_seed.
+    const node = makeNode(1, 'KSampler SDXL (Eff.)', {
+      widgets_values: [
+        -1,                  // noise_seed
+        null,                // control_after_generate (present but blank)
+        35,                  // steps
+        6.5,                 // cfg
+        'euler_ancestral',   // sampler_name
+        'karras',            // scheduler
+        0,                   // start_at_step
+        -1,                  // refine_at_step
+        'latent2rgb',        // preview_method
+        'true',              // vae_decode
+      ],
+    });
+    const wf: Workflow = {
+      last_node_id: 1,
+      last_link_id: 0,
+      nodes: [node],
+      links: [],
+      groups: [],
+      config: {},
+      version: 1,
+    };
+    const nodeTypes: NodeTypes = {
+      'KSampler SDXL (Eff.)': {
+        input: {
+          required: {
+            noise_seed: ['INT', { default: 0, min: 0, max: 0xffffffffffffffff }],
+            steps: ['INT', { default: 20, min: 1, max: 10000 }],
+            cfg: ['FLOAT', { default: 7.0, min: 0.0, max: 100.0 }],
+            sampler_name: [['euler', 'euler_ancestral', 'dpmpp_2m'], {}],
+            scheduler: [['karras', 'normal'], {}],
+            start_at_step: ['INT', { default: 0, min: 0, max: 10000 }],
+            refine_at_step: ['INT', { default: -1, min: -1, max: 10000 }],
+            preview_method: [['auto', 'latent2rgb', 'taesd', 'none'], {}],
+            vae_decode: [['true', 'true (tiled)', 'false'], {}],
+          },
+        },
+        input_order: {
+          required: [
+            'noise_seed', 'steps', 'cfg', 'sampler_name', 'scheduler',
+            'start_at_step', 'refine_at_step', 'preview_method', 'vae_decode',
+          ],
+          optional: [],
+        },
+        output: [],
+        output_name: [],
+        name: 'KSampler SDXL (Eff.)',
+        display_name: 'KSampler SDXL (Eff.)',
+        description: '',
+        python_module: '',
+        category: '',
+      },
+    };
+
+    const inputs = buildWorkflowPromptInputs(
+      wf, nodeTypes, node, 'KSampler SDXL (Eff.)', new Set([1]), null, { 1: 999 },
+    );
+
+    expect(inputs.noise_seed).toBe(999); // override applied
+    expect(inputs.steps).toBe(35);
+    expect(inputs.cfg).toBe(6.5);
+    expect(inputs.sampler_name).toBe('euler_ancestral');
+    expect(inputs.scheduler).toBe('karras');
+    expect(inputs.start_at_step).toBe(0);
+    expect(inputs.refine_at_step).toBe(-1);
+    expect(inputs.preview_method).toBe('latent2rgb');
+    expect(inputs.vae_decode).toBe('true');
+  });
+
   it("still skips the control_after_generate slot when it is present (stock KSampler)", () => {
     const node = makeNode(1, 'KSampler', {
       widgets_values: [
