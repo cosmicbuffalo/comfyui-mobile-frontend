@@ -24,3 +24,13 @@ dist-ssr
 *.sw?
 __pycache__
 *.zip
+
+# Stray directory created when a pytest MagicMock for a path leaks into
+# os.makedirs (e.g. mock get_user_directory()); never a real artifact.
+/MagicMock/
+
+# Private machine-local runtime caches (input aliases, hidden items, queue metadata, etc.)
+.cache/
+# Legacy root-level runtime cache copies (now migrated to .cache/ or user data) —
+# ignored so a runtime write at the extension root can't be re-committed.
+/*_cache.json

@@ -21,7 +21,7 @@ export function NodeConnectionsLegendIcon(props: IconProps) {
         strokeWidth="1.6"
         fill="none"
         clipPath="url(#legend-trace-left)"
-        className="text-gray-400"
+        className="text-slate-400"
       />
       <rect
         x="7"
@@ -33,10 +33,10 @@ export function NodeConnectionsLegendIcon(props: IconProps) {
         strokeWidth="1.6"
         fill="none"
         clipPath="url(#legend-trace-right)"
-        className="text-orange-500"
+        className="text-cyan-400"
       />
-      <line x1="7" y1="12" x2="-4.25" y2="12" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" className="text-gray-400" />
-      <line x1="17" y1="12" x2="28.25" y2="12" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" className="text-orange-500" />
+      <line x1="7" y1="12" x2="-4.25" y2="12" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" className="text-slate-400" />
+      <line x1="17" y1="12" x2="28.25" y2="12" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" className="text-cyan-400" />
     </svg>
   );
 }

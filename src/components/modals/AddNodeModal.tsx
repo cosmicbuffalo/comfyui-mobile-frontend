@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useWorkflowStore } from '@/hooks/useWorkflow';
+import { useConnectionSectionFoldsStore } from '@/hooks/useConnectionSectionFolds';
 import { prettyPackName } from '@/utils/search';
 import { resolveNodeTypeDisplayName, searchAndSortNodeTypes } from '@/utils/nodeTypeSearch';
 import { NodeTypeSearchResult } from './NodeTypeSearchResult';
@@ -18,6 +19,7 @@ export function AddNodeModal({ isOpen, onClose, addInGroupId = null, addInSubgra
   const nodeTypes = useWorkflowStore((s) => s.nodeTypes);
   const addNode = useWorkflowStore((s) => s.addNode);
   const scrollToNode = useWorkflowStore((s) => s.scrollToNode);
+  const expandConnectionsSection = useConnectionSectionFoldsStore((s) => s.expand);
   const [searchQuery, setSearchQuery] = useState('');
 
   const allTypes = useMemo(() => {
@@ -53,12 +55,17 @@ export function AddNodeModal({ isOpen, onClose, addInGroupId = null, addInSubgra
         : { ...(addInGroupId == null ? {} : { inGroupId: addInGroupId }), ...(addInSubgraphId == null ? {} : { inSubgraphId: addInSubgraphId }) };
     const newId = addNode(typeName, options);
     onClose();
+    // Clear the search so the menu opens fresh next time.
+    setSearchQuery('');
     if (newId !== null) {
       onNodeAdded?.(newId);
       const itemKey =
         useWorkflowStore.getState().workflow?.nodes.find((node) => node.id === newId)
           ?.itemKey ?? null;
       if (itemKey) {
+        // A freshly added node opens with its connections section expanded so the
+        // user can wire it up immediately.
+        expandConnectionsSection(itemKey);
         scrollToNode(itemKey);
       }
     }
@@ -73,7 +80,7 @@ export function AddNodeModal({ isOpen, onClose, addInGroupId = null, addInSubgra
       onSearchQueryChange={setSearchQuery}
       searchPlaceholder="Search node types..."
     >
-      <div className="flex-1 overflow-auto bg-white">
+      <div className="flex-1 overflow-auto bg-slate-950/88">
         {filteredTypes.length === 0 && (
           <SearchEmptyState query={searchQuery} message="No matching node types found" />
         )}

@@ -20,7 +20,7 @@ export function ModalFrame({
       aria-modal="true"
     >
       <div
-        className="w-full max-w-sm bg-white border border-gray-200 rounded-xl shadow-lg overflow-hidden"
+        className="w-full max-w-sm rounded-xl shadow-lg overflow-hidden bg-slate-900 border border-white/10 text-slate-100"
         onClick={(event) => event.stopPropagation()}
       >
         {children}

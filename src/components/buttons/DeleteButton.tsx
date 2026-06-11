@@ -1,4 +1,5 @@
 import { TrashIcon } from '@/components/icons';
+import { OverlayCircleButton } from './OverlayCircleButton';
 
 interface DeleteButtonProps {
   onClick: () => void;
@@ -6,13 +7,11 @@ interface DeleteButtonProps {
 
 export function DeleteButton({ onClick }: DeleteButtonProps) {
   return (
-    <button
-      type="button"
+    <OverlayCircleButton
       onClick={onClick}
-      aria-label="Delete output"
-      className="pointer-events-auto w-9 h-9 rounded-full bg-black/40 text-red-500 flex items-center justify-center hover:bg-black/60 transition-colors"
-    >
-      <TrashIcon className="w-5 h-5 translate-x-[1px] -translate-y-[1px]" />
-    </button>
+      ariaLabel="Delete output"
+      className="text-red-500"
+      icon={<TrashIcon className="w-5 h-5 translate-x-[1px] -translate-y-[1px]" />}
+    />
   );
 }

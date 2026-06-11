@@ -7,25 +7,6 @@
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="default" />
     <meta name="theme-color" content="#000000" />
-    <!-- Apply persisted theme before app bootstrap to avoid first-paint light/dark flicker. -->
-    <script>
-      (function () {
-        var root = document.documentElement;
-        var theme = "dark";
-        try {
-          var raw = localStorage.getItem("theme-storage");
-          if (raw) {
-            var parsed = JSON.parse(raw);
-            var persisted = parsed && parsed.state && parsed.state.theme;
-            if (persisted === "light" || persisted === "dark") {
-              theme = persisted;
-            }
-          }
-        } catch (_) {}
-        root.classList.toggle("dark", theme === "dark");
-        root.style.colorScheme = theme;
-      })();
-    </script>
     <title>ComfyUI Mobile</title>
   </head>
   <body>

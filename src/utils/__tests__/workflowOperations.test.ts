@@ -72,6 +72,22 @@ describe('resolveViewerItemWorkflowLoad', () => {
     expect(resolved?.source).toEqual({ type: 'history', promptId: 'p-123' });
   });
 
+  it('carries hidden file provenance into loaded workflows', () => {
+    const item: ViewerImage = {
+      src: 'x',
+      mediaType: 'image',
+      workflow: mockWorkflow,
+      file: { ...makeFile('output/private.png'), hidden: true },
+    };
+
+    expect(resolveViewerItemWorkflowLoad(item)?.source).toEqual({
+      type: 'file',
+      filePath: 'private.png',
+      assetSource: 'output',
+      hidden: true,
+    });
+  });
+
   it('falls back to history map when viewer item has no embedded workflow', () => {
     const historyWorkflow = { nodes: [{ id: 1 }], links: [] } as unknown as Workflow;
     const historyMap = new Map([
@@ -86,6 +102,26 @@ describe('resolveViewerItemWorkflowLoad', () => {
     expect(resolved?.workflow).toBe(historyWorkflow);
     expect(resolved?.filename).toBe('history-p-from-history.json');
     expect(resolved?.source).toEqual({ type: 'history', promptId: 'p-from-history' });
+  });
+
+  it('carries hidden history provenance into loaded workflows', () => {
+    const historyMap = new Map([
+      ['output/private.png', {
+        workflow: mockWorkflow,
+        promptId: 'hidden-prompt',
+        hidden: true,
+      }],
+    ]);
+    const resolved = resolveViewerItemWorkflowLoad({
+      src: 'x',
+      file: makeFile('output/private.png'),
+    }, historyMap);
+
+    expect(resolved?.source).toEqual({
+      type: 'history',
+      promptId: 'hidden-prompt',
+      hidden: true,
+    });
   });
 
   it('prefers item workflow over history map workflow', () => {

@@ -1,10 +1,14 @@
-import { getImageUrl, type FileItem } from '@/api/client';
+import { getImageUrl, getImagePreviewUrl, type FileItem } from '@/api/client';
 import type { Workflow } from '@/api/types';
 import { extractMetadata } from '@/utils/metadata';
 import { getMediaType, type MediaType } from '@/utils/media';
 
 export interface ViewerImage {
   src: string;
+  // Optional fast-loading WebP variant. JPEGs use `src` in the full-screen
+  // viewer so browser-applied EXIF orientation remains correct. Never set for
+  // videos.
+  displaySrc?: string;
   alt?: string;
   mediaType?: MediaType;
   metadata?: ReturnType<typeof extractMetadata>;
@@ -22,6 +26,13 @@ export interface HistoryImageSource {
   type: string;
 }
 
+export function getHistoryImageFileId(image: HistoryImageSource): string {
+  const filePath = image.subfolder
+    ? `${image.subfolder}/${image.filename}`
+    : image.filename;
+  return `${image.type}/${filePath}`;
+}
+
 export interface HistoryImageItem {
   prompt_id?: string;
   outputs?: { images?: HistoryImageSource[] };
@@ -29,6 +40,7 @@ export interface HistoryImageItem {
   workflow?: Workflow;
   durationSeconds?: number;
   success?: boolean;
+  hidden?: boolean;
 }
 
 interface BuildViewerImageOptions {
@@ -56,11 +68,13 @@ export function buildViewerImages(
       if (onlyOutput && img.type !== 'output') return;
       if (itemHasOutput && img.type !== 'output') return;
       const altText = typeof alt === 'function' ? alt(imageIndex, itemIndex) : alt;
-      const filePath = img.subfolder ? `${img.subfolder}/${img.filename}` : img.filename;
       const mediaType = getMediaType(img.filename);
       const fileType = mediaType === 'video' ? 'video' : 'image';
       images.push({
         src: getImageUrl(img.filename, img.subfolder, img.type),
+        displaySrc: fileType === 'image'
+          ? getImagePreviewUrl(img.filename, img.subfolder, img.type)
+          : undefined,
         alt: altText,
         mediaType,
         metadata,
@@ -70,10 +84,11 @@ export function buildViewerImages(
         success,
         filename: img.filename,
         file: {
-          id: `${img.type}/${filePath}`,
+          id: getHistoryImageFileId(img),
           name: img.filename,
           type: fileType,
-          fullUrl: getImageUrl(img.filename, img.subfolder, img.type)
+          fullUrl: getImageUrl(img.filename, img.subfolder, img.type),
+          hidden: item.hidden,
         }
       });
     });

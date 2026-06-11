@@ -1,11 +1,13 @@
 import { useCallback, useMemo } from "react";
 import { ProgressRing, QueueStackIcon } from "@/components/icons";
+import { appChromeIconButtonClassName, chromeBarButtonClassName } from "@/components/chromeStyles";
 
 interface FollowQueueButtonProps {
   viewerOpen: boolean;
   followQueue: boolean;
   queueSize: number;
   overallProgress: number | null;
+  showIdleProgress?: boolean;
   onToggleFollowQueue?: () => void;
   onOpenFollowQueue?: () => void;
 }
@@ -15,6 +17,7 @@ export function FollowQueueButton({
   followQueue,
   queueSize,
   overallProgress,
+  showIdleProgress = false,
   onToggleFollowQueue,
   onOpenFollowQueue,
 }: FollowQueueButtonProps) {
@@ -32,16 +35,16 @@ export function FollowQueueButton({
   }, [viewerOpen, followQueue]);
 
   const buttonClassName = useMemo(() => {
-    if (!viewerOpen) return "bg-gray-100 text-gray-700 hover:bg-gray-200";
+    if (!viewerOpen) return appChromeIconButtonClassName;
     return followQueue
-      ? "bg-green-500 text-white"
-      : "bg-gray-100 text-gray-700 hover:bg-gray-200";
+      ? "bg-emerald-500 border border-emerald-500 text-white"
+      : appChromeIconButtonClassName;
   }, [viewerOpen, followQueue]);
 
   return (
     <button
       onClick={handleClick}
-      className={`relative w-12 h-12 rounded-xl flex items-center justify-center text-2xl transition-colors ${buttonClassName}`}
+      className={`${chromeBarButtonClassName} ${buttonClassName}`}
       aria-label={ariaLabel}
     >
       <span className="absolute inset-0 flex items-center justify-center">
@@ -50,10 +53,9 @@ export function FollowQueueButton({
           showSlash={viewerOpen && !followQueue}
         />
       </span>
-      {queueSize > 0 && (
+      {(queueSize > 0 || (showIdleProgress && overallProgress !== null)) && (
         <div
-          className="queue-badge absolute top-0 right-0 translate-x-[18px] -translate-y-[18px] w-6 h-6 rounded-full bg-blue-500 text-white
-                     flex items-center justify-center font-bold text-xs border-2 border-white relative z-20"
+          className="queue-badge absolute top-0 right-0 translate-x-[18px] -translate-y-[18px] w-6 h-6 rounded-full bg-slate-900/95 border border-white/10 text-slate-100 shadow-sm flex items-center justify-center font-bold text-xs relative z-20"
         >
           {overallProgress !== null && (
             <ProgressRing

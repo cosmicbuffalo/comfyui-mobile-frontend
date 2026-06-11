@@ -41,33 +41,28 @@ export function resolveWorkflowColor(value: string | null | undefined): string {
 export const themeColors = {
   transparent: "transparent",
   transparentBlack: "rgba(0, 0, 0, 0)",
-  surface: {
-    white: "#ffffff",
-    darkPanel: "#151a23",
-    darkInput: "#0b1320",
-    gray100: "#f3f4f6",
-    gray200: "#e5e7eb",
-  },
   text: {
-    primary: "#111827",
     secondary: "#6b7280",
     muted: "#9ca3af",
     onDark: "#e5e7eb",
   },
   border: {
     gray200: "#e5e7eb",
-    gray300: "#d1d5db",
-    darkInput: "#1b2432",
     nodeHeaderTint: "rgba(0, 0, 0, 0.24)",
     errorDark: "#7f1d1d",
-    errorLight: "#b91c1c",
-    focusBlue: "#3b82f6",
+    focusCyan: "#22d3ee",
+  },
+  surface: {
+    // Dropdown menu + option backgrounds (mirror the .rs__menu / .rs__option--* CSS).
+    menu: "#0b1320",
+    optionFocused: "#111827",
+    optionSelected: "#1f2937",
   },
   status: {
-    success: "#22c55e",
-    successStrong: "rgba(34,197,94,0.9)",
-    warning: "#facc15",
-    danger: "#f97316",
+    success: "#10b981",
+    successStrong: "rgba(16,185,129,0.9)",
+    warning: "#f59e0b",
+    danger: "#ef4444",
   },
   brand: {
     blue400: "#60a5fa",

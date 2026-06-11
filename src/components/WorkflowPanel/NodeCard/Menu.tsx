@@ -1,6 +1,6 @@
 import { useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { BypassToggleIcon, BookmarkIconSvg, BookmarkOutlineIcon, ChevronRightIcon, EyeOffIcon, MoveUpDownIcon, NodeConnectionsIcon, EditIcon, ExternalLinkIcon, PinIconSvg, PinOutlineIcon, TrashIcon, ArrowRightIcon, WorkflowIcon } from '@/components/icons';
+import { BypassToggleIcon, BookmarkIconSvg, BookmarkOutlineIcon, ChevronRightIcon, CopyIcon, EyeOffIcon, MoveUpDownIcon, NodeConnectionsIcon, EditIcon, ExternalLinkIcon, PinIconSvg, PinOutlineIcon, TrashIcon, ArrowRightIcon, WorkflowIcon } from '@/components/icons';
 import { useAnchoredMenuPosition } from '@/hooks/useAnchoredMenuPosition';
 import { useDismissOnOutsideClick } from '@/hooks/useDismissOnOutsideClick';
 import { ContextMenuButton } from '@/components/buttons/ContextMenuButton';
@@ -49,6 +49,7 @@ interface NodeCardMenuProps {
   toggleBypass: (itemKey: string) => void;
   setItemHidden: (itemKey: string, hidden: boolean) => void;
   onDeleteNode: () => void;
+  onDuplicateNode: () => void;
   onMoveNode: () => void;
   connectionHighlightMode: 'off' | 'inputs' | 'outputs' | 'both';
   setConnectionHighlightMode: (itemKey: string, mode: 'off' | 'inputs' | 'outputs' | 'both') => void;
@@ -79,6 +80,7 @@ export function NodeCardMenu({
   toggleBypass,
   setItemHidden,
   onDeleteNode,
+  onDuplicateNode,
   onMoveNode,
   connectionHighlightMode,
   setConnectionHighlightMode,
@@ -270,16 +272,16 @@ export function NodeCardMenu({
         buttonSize={8}
         iconSize={5}
         icon={isNodeBookmarked
-          ? <BookmarkIconSvg className="w-5 h-5 text-yellow-500" />
-          : onEnterSubgraph
-            ? <WorkflowIcon className="w-5 h-5 -scale-x-100 text-blue-500" />
+            ? <BookmarkIconSvg className="w-5 h-5 text-amber-500" />
+            : onEnterSubgraph
+            ? <WorkflowIcon className="w-5 h-5 -scale-x-100 text-cyan-300" />
             : undefined
         }
       />
       {colorPopoverOpen && createPortal(
         <div
           ref={colorPopoverRef}
-          className="fixed z-[1100] bg-white border border-gray-200 rounded-lg shadow-lg p-2"
+          className="fixed z-[1100] bg-slate-900 border border-white/10 rounded-lg shadow-lg p-2"
           style={colorPopoverStyle}
           onClick={(event) => event.stopPropagation()}
         >
@@ -293,7 +295,7 @@ export function NodeCardMenu({
                   title={label}
                   aria-label={`Set color: ${label}`}
                   className={`w-9 aspect-square rounded-full transition-transform active:scale-95 ${
-                    isSelected ? 'ring-2 ring-offset-1 ring-gray-400' : ''
+                    isSelected ? 'ring-2 ring-offset-1 ring-cyan-300 ring-offset-slate-900' : ''
                   }`}
                   style={{ backgroundColor: color }}
                   onClick={(event) => {
@@ -376,7 +378,7 @@ export function NodeCardMenu({
                 label: isNodeBookmarked ? 'Remove bookmark' : 'Bookmark node',
                 icon: isNodeBookmarked
                   ? <BookmarkOutlineIcon className="w-4 h-4" />
-                  : <BookmarkIconSvg className="w-4 h-4 text-yellow-500" />,
+                  : <BookmarkIconSvg className="w-4 h-4 text-amber-500" />,
                 onClick: (event) => {
                   event.stopPropagation();
                   onToggleNodeBookmark();
@@ -402,6 +404,16 @@ export function NodeCardMenu({
                 label: 'Hide node',
                 icon: <EyeOffIcon className="w-4 h-4" />,
                 onClick: handleHideNodeClick
+              },
+              {
+                key: 'duplicate-node',
+                label: 'Duplicate node',
+                icon: <CopyIcon className="w-4 h-4" />,
+                onClick: (event) => {
+                  event.stopPropagation();
+                  onDuplicateNode();
+                  closeMenu();
+                }
               },
               {
                 key: 'move-node',
@@ -446,7 +458,7 @@ export function NodeCardMenu({
                 label: 'Pin widget',
                 icon: <PinOutlineIcon className="w-4 h-4" />,
                 rightSlot: (
-                  <ChevronRightIcon className={`w-4 h-4 text-gray-400 transition-transform ${pinSubmenuOpen ? 'rotate-90' : ''}`} />
+                  <ChevronRightIcon className={`w-4 h-4 text-slate-400 transition-transform ${pinSubmenuOpen ? 'rotate-90' : ''}`} />
                 ),
                 onClick: handlePinSubmenuToggle,
                 hidden: !(pinnableWidgets.length > 0 && !singlePinnableWidget)
@@ -456,11 +468,11 @@ export function NodeCardMenu({
                 key: 'pin-widget-items',
                 hidden: !(pinnableWidgets.length > 0 && !singlePinnableWidget && pinSubmenuOpen),
                 render: (
-                  <div className="border-t border-gray-100 bg-gray-50 max-h-48 overflow-auto">
+                  <div className="border-t border-white/10 bg-slate-950/70 max-h-48 overflow-auto">
                     {pinnableWidgets.map((widget) => (
                       <button
                         key={widget.widgetIndex}
-                        className="w-full text-left px-4 py-2 text-sm hover:bg-gray-100 text-gray-700"
+                        className="w-full text-left px-4 py-2 text-sm hover:bg-white/10 text-slate-200"
                         onClick={handlePinWidgetClick(widget)}
                       >
                         {widget.name}

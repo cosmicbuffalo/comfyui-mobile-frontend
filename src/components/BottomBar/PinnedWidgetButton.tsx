@@ -1,5 +1,6 @@
 import { PinIconSvg } from '@/components/icons';
 import { usePinnedWidgetStore } from '@/hooks/usePinnedWidget';
+import { appChromeIconButtonClassName, chromeBarButtonClassName } from '@/components/chromeStyles';
 
 export function PinnedWidgetButton() {
   const pinnedWidget = usePinnedWidgetStore((s) => s.pinnedWidget);
@@ -11,10 +12,10 @@ export function PinnedWidgetButton() {
   return (
     <button
       onClick={togglePinOverlay}
-      className={`relative w-12 h-12 rounded-xl flex items-center justify-center text-2xl transition-colors ${
+      className={`${chromeBarButtonClassName} ${
         pinOverlayOpen
-          ? 'bg-fuchsia-500 text-white'
-          : 'bg-gray-100 text-fuchsia-500 hover:bg-gray-200'
+          ? 'bg-fuchsia-500 border border-fuchsia-500 text-white'
+          : appChromeIconButtonClassName
       }`}
       aria-label={pinOverlayOpen ? 'Close pin editor' : 'Open pin editor'}
     >

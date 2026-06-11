@@ -1,4 +1,13 @@
 import { CaretDownIcon, ClipboardDownloadIcon, ClockIcon, FolderIcon, TemplateIcon, WorkflowIcon } from '@/components/icons';
+import {
+  menuArrowClassName,
+  menuChevronClassName,
+  menuIconClassName,
+  menuSectionHeaderClassName,
+  menuSurfaceButtonClassName,
+  menuTextClassName,
+} from './menuStyles';
+import { CollapsibleMenuSection } from './CollapsibleMenuSection';
 
 interface MenuLoadSectionProps {
   open: boolean;
@@ -38,64 +47,59 @@ export function MenuLoadSection({
       <button
         type="button"
         onClick={onToggle}
-        className="w-full flex items-center justify-between text-sm font-semibold text-gray-500 uppercase tracking-wide mb-3"
+        className={menuSectionHeaderClassName}
         aria-expanded={open}
       >
         <span>Load Workflow</span>
-        <CaretDownIcon className={`w-5 h-5 text-gray-400 transition-transform ${open ? 'rotate-0' : '-rotate-90'}`} />
+        <CaretDownIcon className={`${menuChevronClassName} ${open ? 'rotate-0' : '-rotate-90'}`} />
       </button>
-      {open && (
-        <div className="space-y-2">
+      <CollapsibleMenuSection open={open}>
+        <div className="space-y-2 pb-1">
           <button
             onClick={onOpenRecent}
-            className="w-full flex items-center gap-3 p-4 bg-white border border-gray-200
-                       rounded-xl text-left hover:bg-gray-50 min-h-[56px]"
+            className={menuSurfaceButtonClassName}
           >
-            <ClockIcon className="w-6 h-6 text-gray-600" />
-            <span className="font-medium text-gray-900">Recent</span>
-            <span className="ml-auto text-gray-400">&rarr;</span>
+            <ClockIcon className={menuIconClassName} />
+            <span className={menuTextClassName}>Recent</span>
+            <span className={menuArrowClassName}>&rarr;</span>
           </button>
 
           <button
             onClick={onOpenUserWorkflows}
-            className="w-full flex items-center gap-3 p-4 bg-white border border-gray-200
-                       rounded-xl text-left hover:bg-gray-50 min-h-[56px]"
+            className={menuSurfaceButtonClassName}
           >
-            <WorkflowIcon className="w-6 h-6 text-gray-600" />
-            <span className="font-medium text-gray-900">My Workflows</span>
-            <span className="ml-auto text-gray-400">&rarr;</span>
+            <WorkflowIcon className={menuIconClassName} />
+            <span className={menuTextClassName}>My Workflows</span>
+            <span className={menuArrowClassName}>&rarr;</span>
           </button>
 
           <button
             onClick={onOpenTemplates}
-            className="w-full flex items-center gap-3 p-4 bg-white border border-gray-200
-                       rounded-xl text-left hover:bg-gray-50 min-h-[56px]"
+            className={menuSurfaceButtonClassName}
           >
-            <TemplateIcon className="w-6 h-6 text-gray-600" />
-            <span className="font-medium text-gray-900">Templates</span>
-            <span className="ml-auto text-gray-400">&rarr;</span>
+            <TemplateIcon className={menuIconClassName} />
+            <span className={menuTextClassName}>Templates</span>
+            <span className={menuArrowClassName}>&rarr;</span>
           </button>
 
           <button
             onClick={onOpenPasteJson}
-            className="w-full flex items-center gap-3 p-4 bg-white border border-gray-200
-                       rounded-xl text-left hover:bg-gray-50 min-h-[56px]"
+            className={menuSurfaceButtonClassName}
           >
-            <ClipboardDownloadIcon className="w-6 h-6 text-gray-600" />
-            <span className="font-medium text-gray-900">Paste JSON</span>
-            <span className="ml-auto text-gray-400">&rarr;</span>
+            <ClipboardDownloadIcon className={menuIconClassName} />
+            <span className={menuTextClassName}>Paste JSON</span>
+            <span className={menuArrowClassName}>&rarr;</span>
           </button>
 
           <button
             onClick={onLoadFromFile}
-            className="w-full flex items-center gap-3 p-4 bg-white border border-gray-200
-                       rounded-xl text-left hover:bg-gray-50 min-h-[56px]"
+            className={menuSurfaceButtonClassName}
           >
-            <FolderIcon className="w-6 h-6 text-gray-600" />
-            <span className="font-medium text-gray-900">From Device</span>
+            <FolderIcon className={menuIconClassName} />
+            <span className={menuTextClassName}>From Device</span>
           </button>
         </div>
-      )}
+      </CollapsibleMenuSection>
     </section>
   );
 }

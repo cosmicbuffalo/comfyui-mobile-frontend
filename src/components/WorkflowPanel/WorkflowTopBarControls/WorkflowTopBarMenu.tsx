@@ -3,11 +3,13 @@ import { useCallback, useMemo, useState } from 'react';
 import { useWorkflowStore, getInputWidgetDefinitions, getWidgetDefinitions } from '@/hooks/useWorkflow';
 import { useBookmarksStore } from '@/hooks/useBookmarks';
 import { useHistoryStore } from '@/hooks/useHistory';
-import { loadTemplateWorkflow, loadUserWorkflow } from '@/api/client';
 import { CaretDownIcon, CaretRightIcon, EyeIcon, EyeOffIcon, ArrowRightIcon, ReloadIcon, SearchIcon, TrashIcon, PlusIcon, WorkflowIcon } from '@/components/icons';
 import { ContextMenuButton } from '@/components/buttons/ContextMenuButton';
 import { ContextMenuBuilder } from '@/components/menus/ContextMenuBuilder';
 import { requireHierarchicalKey } from '@/utils/itemKeys';
+import { appChromeIconButtonBareClassName } from '@/components/chromeStyles';
+import { useWorkflowHiddenStore } from '@/hooks/useWorkflowHidden';
+import { isHiddenWorkflowPath, isManuallyHiddenWorkflowPath } from '@/components/AppMenu/userWorkflowHelpers';
 
 interface WorkflowTopBarMenuProps {
   open: boolean;
@@ -20,6 +22,10 @@ interface WorkflowTopBarMenuProps {
   onAddNode: () => void;
   onAddGroup: () => void;
   onOpenWorkflowActions: () => void;
+  // Reloads the workflow from its source in the CURRENT tab, prompting to
+  // confirm if there are unsaved changes. Owned by the parent so it reuses the
+  // shared dirty-confirm flow.
+  onReloadWorkflow: () => void;
 }
 
 export function WorkflowTopBarMenu({
@@ -32,7 +38,8 @@ export function WorkflowTopBarMenu({
   onGoToOutputs,
   onAddNode,
   onAddGroup,
-  onOpenWorkflowActions
+  onOpenWorkflowActions,
+  onReloadWorkflow
 }: WorkflowTopBarMenuProps) {
   const workflow = useWorkflowStore((s) => s.workflow);
   const scopeStack = useWorkflowStore((s) => s.scopeStack);
@@ -45,7 +52,9 @@ export function WorkflowTopBarMenu({
   const clearBookmarks = useBookmarksStore((s) => s.clearBookmarks);
   const collapsedItems = useWorkflowStore((s) => s.collapsedItems);
   const workflowSource = useWorkflowStore((s) => s.workflowSource);
-  const loadWorkflow = useWorkflowStore((s) => s.loadWorkflow);
+  const currentFilename = useWorkflowStore((s) => s.currentFilename);
+  const hiddenWorkflowPaths = useWorkflowHiddenStore((s) => s.hidden);
+  const toggleWorkflowHidden = useWorkflowHiddenStore((s) => s.toggleHidden);
   const searchOpen = useWorkflowStore((s) => s.searchOpen);
   const setSearchOpen = useWorkflowStore((s) => s.setSearchOpen);
   const setSearchQuery = useWorkflowStore((s) => s.setSearchQuery);
@@ -54,6 +63,24 @@ export function WorkflowTopBarMenu({
     (s) => s.toggleConnectionButtonsVisible,
   );
   const history = useHistoryStore((s) => s.history);
+  const originalWorkflow = useWorkflowStore((s) => s.originalWorkflow);
+  // Mirror reloadFromSource: user/template/file sources always re-fetch, history
+  // reloads only if the run still has an embedded workflow, and everything else
+  // ('other' source or no source) falls back to the in-memory originalWorkflow.
+  // Hide the menu item entirely when a reload would be a no-op.
+  const canReload = (() => {
+    if (!workflowSource) return Boolean(originalWorkflow);
+    switch (workflowSource.type) {
+      case 'user':
+      case 'template':
+      case 'file':
+        return true;
+      case 'history':
+        return Boolean(history.find((h) => h.prompt_id === workflowSource.promptId)?.workflow);
+      default:
+        return Boolean(originalWorkflow);
+    }
+  })();
   const hasStableFlag = useCallback(
     (state: Record<string, boolean>, itemKey: string): boolean =>
       Boolean(state[itemKey]),
@@ -61,6 +88,17 @@ export function WorkflowTopBarMenu({
   );
 
   const hasWorkflow = Boolean(workflow);
+
+  // Whole-workflow hide toggle (declutters it from the workflow lists). Keyed on
+  // currentFilename (the workflows-dir-relative path) to match how isWorkflowHidden
+  // and the TopBar identify the open workflow — a saved workflow can be open with a
+  // non-'user' source. Hidden for unsaved workflows (no path) and dot-prefixed
+  // paths, which are always hidden structurally and can't be toggled off here.
+  const canToggleWorkflowHidden =
+    Boolean(currentFilename) && !isHiddenWorkflowPath(currentFilename ?? '');
+  const workflowIsHidden = currentFilename
+    ? isManuallyHiddenWorkflowPath(currentFilename, hiddenWorkflowPaths)
+    : false;
 
   // Nodes and groups for the currently-visible scope (root or a subgraph).
   // Fold-all / unfold-all should operate on visible items only.
@@ -249,39 +287,10 @@ export function WorkflowTopBarMenu({
     closeMenu();
   };
 
-  const handleReloadUserClick = async () => {
-    if (!workflowSource || workflowSource.type !== 'user') return;
-    try {
-      const data = await loadUserWorkflow(workflowSource.filename);
-      loadWorkflow(data, workflowSource.filename, { fresh: true, source: workflowSource });
-    } catch (err) {
-      console.error('Failed to reload workflow:', err);
-    }
+  const handleReloadWorkflowClick = () => {
     closeMenu();
-  };
-
-  const handleReloadTemplateClick = async () => {
-    if (!workflowSource || workflowSource.type !== 'template') return;
-    try {
-      const data = await loadTemplateWorkflow(workflowSource.moduleName, workflowSource.templateName);
-      loadWorkflow(data, `${workflowSource.moduleName}/${workflowSource.templateName}`, { fresh: true, source: workflowSource });
-    } catch (err) {
-      console.error('Failed to reload template:', err);
-    }
-    closeMenu();
-  };
-
-  const handleReloadHistoryClick = () => {
-    if (!workflowSource || workflowSource.type !== 'history') return;
-    const historyItem = history.find(h => h.prompt_id === workflowSource.promptId);
-    if (historyItem?.workflow) {
-      loadWorkflow(
-        historyItem.workflow,
-        `history-${workflowSource.promptId}.json`,
-        { source: workflowSource }
-      );
-    }
-    closeMenu();
+    // Parent reloads in the current tab and confirms if there are unsaved changes.
+    onReloadWorkflow();
   };
 
   return (
@@ -290,6 +299,7 @@ export function WorkflowTopBarMenu({
         buttonRef={buttonRef}
         onClick={onToggle}
         ariaLabel="Workflow options"
+        className={`transition-colors ${appChromeIconButtonBareClassName}`}
       />
       {!open ? null : (
         <div
@@ -363,17 +373,8 @@ export function WorkflowTopBarMenu({
                 key: 'reload-workflow',
                 label: 'Reload workflow',
                 icon: <ReloadIcon className="w-4 h-4" />,
-                onClick: workflowSource?.type === 'user'
-                  ? handleReloadUserClick
-                  : workflowSource?.type === 'template'
-                    ? handleReloadTemplateClick
-                    : workflowSource?.type === 'history' && history.find((h) => h.prompt_id === workflowSource.promptId)?.workflow
-                      ? handleReloadHistoryClick
-                      : undefined,
-                hidden: !workflowSource || (
-                  workflowSource.type === 'history' &&
-                  !history.find((h) => h.prompt_id === workflowSource.promptId)?.workflow
-                )
+                onClick: handleReloadWorkflowClick,
+                hidden: !canReload
               },
               {
                 key: 'workflow-actions',
@@ -396,10 +397,10 @@ export function WorkflowTopBarMenu({
           aria-modal="true"
         >
           <div
-            className="w-full max-w-sm bg-white border border-gray-200 rounded-xl shadow-lg overflow-hidden"
+            className="w-full max-w-sm bg-slate-900 border border-white/10 text-slate-100 rounded-xl shadow-lg overflow-hidden"
             onClick={(event) => event.stopPropagation()}
           >
-            <div className="px-4 py-3 text-sm font-semibold text-gray-700 border-b border-gray-100">
+            <div className="px-4 py-3 text-sm font-semibold text-slate-100 border-b border-white/10">
               Hide / Show
             </div>
             <div className="max-h-[50vh] overflow-y-auto">
@@ -466,13 +467,25 @@ export function WorkflowTopBarMenu({
                     icon: <EyeIcon className="w-4 h-4" />,
                     onClick: handleShowAllHiddenClick,
                     hidden: !showAllHiddenNodesButton
+                  },
+                  {
+                    key: 'toggle-workflow-hidden',
+                    label: workflowIsHidden ? 'Unhide this workflow' : 'Hide this workflow',
+                    icon: workflowIsHidden
+                      ? <EyeIcon className="w-4 h-4" />
+                      : <EyeOffIcon className="w-4 h-4" />,
+                    onClick: () => {
+                      if (currentFilename) toggleWorkflowHidden(currentFilename);
+                      setVisibilityModalOpen(false);
+                    },
+                    hidden: !canToggleWorkflowHidden
                   }
                 ]}
               />
             </div>
-            <div className="px-4 py-3 border-t border-gray-100 flex justify-end">
+            <div className="px-4 py-3 border-t border-white/10 flex justify-end">
               <button
-                className="px-3 py-2 text-sm font-medium text-gray-600 hover:bg-gray-100 rounded-lg"
+                className="px-3 py-2 text-sm font-medium text-slate-300 hover:bg-white/10 rounded-lg"
                 onClick={() => setVisibilityModalOpen(false)}
               >
                 Cancel

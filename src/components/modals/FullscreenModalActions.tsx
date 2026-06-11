@@ -12,8 +12,8 @@ interface FullscreenModalActionsProps {
 }
 
 const variantClasses: Record<NonNullable<FullscreenModalActionItem['variant']>, string> = {
-  secondary: 'bg-white border border-gray-300 text-gray-700',
-  primary: 'bg-blue-600 text-white',
+  secondary: 'bg-slate-900/95 border border-white/10 text-slate-200',
+  primary: 'bg-cyan-500 text-slate-950',
   danger: 'bg-red-600 text-white'
 };
 

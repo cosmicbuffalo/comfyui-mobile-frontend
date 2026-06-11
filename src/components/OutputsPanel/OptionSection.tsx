@@ -25,7 +25,7 @@ export function OptionSection<TValue extends string>({
 }: OptionSectionProps<TValue>) {
   return (
     <div id={`${idPrefix}-container`}>
-      <h4 id={`${idPrefix}-label`} className="text-sm font-medium text-gray-700 mb-2">
+      <h4 id={`${idPrefix}-label`} className="text-sm font-medium text-slate-300 mb-2">
         {title}
       </h4>
       <div id={`${idPrefix}-options`} className={gridClassName}>
@@ -36,8 +36,8 @@ export function OptionSection<TValue extends string>({
               key={item.value}
               className={`px-3 py-2 rounded-lg text-sm border ${buttonClassName} ${
                 isActive
-                  ? 'bg-blue-500 border-blue-500 text-white shadow-sm'
-                  : 'border-gray-200 text-gray-700 hover:bg-gray-50'
+                  ? 'bg-cyan-500 border-cyan-500 text-slate-950 shadow-sm'
+                  : 'border-white/10 bg-slate-950/70 text-slate-200 hover:bg-slate-800/95'
               }`}
               onClick={() => onSelect(item.value)}
             >

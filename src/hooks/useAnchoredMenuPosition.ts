@@ -42,20 +42,28 @@ export function useAnchoredMenuPosition({
       const menu = menuRef.current;
       if (!button || !menu) return;
 
+      // Keep the menu clear of the fixed top bar (which sits above it in the
+      // stacking order), otherwise an upward-opening menu gets its top clipped.
+      const topBarOffset =
+        parseFloat(
+          getComputedStyle(document.documentElement).getPropertyValue('--top-bar-offset')
+        ) || 0;
+      const minTop = topBarOffset + viewportPadding;
+
       const rect = button.getBoundingClientRect();
       const menuHeight = menu.getBoundingClientRect().height;
       const alignedBelowTop = rect.bottom;
       const alignedAboveTop = rect.top - menuHeight;
       const maxBottom = window.innerHeight - bottomBarReserve;
       const canOpenBelow = alignedBelowTop + menuHeight <= maxBottom;
-      const canOpenAbove = alignedAboveTop >= viewportPadding;
+      const canOpenAbove = alignedAboveTop >= minTop;
       const unclampedTop = canOpenBelow
         ? alignedBelowTop
         : canOpenAbove
           ? alignedAboveTop
           : alignedBelowTop;
       const top = Math.max(
-        viewportPadding,
+        minTop,
         Math.min(unclampedTop, maxBottom - menuHeight)
       );
       const left = Math.max(

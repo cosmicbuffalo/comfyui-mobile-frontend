@@ -1,4 +1,5 @@
 import { HeartIcon, HeartOutlineIcon } from '@/components/icons';
+import { OverlayCircleButton } from './OverlayCircleButton';
 
 interface FavoriteButtonProps {
   onClick: () => void;
@@ -7,18 +8,18 @@ interface FavoriteButtonProps {
 
 export function FavoriteButton({ onClick, isFavorited }: FavoriteButtonProps) {
   return (
-    <button
-      type="button"
+    <OverlayCircleButton
       onClick={onClick}
-      aria-label={isFavorited ? 'Unfavorite' : 'Favorite'}
-      aria-pressed={isFavorited}
-      className="pointer-events-auto w-9 h-9 rounded-full bg-black/40 text-white flex items-center justify-center hover:bg-black/60 transition-colors"
-    >
-      {isFavorited ? (
-        <HeartIcon className="w-5 h-5 text-red-500" />
-      ) : (
-        <HeartOutlineIcon className="w-5 h-5" />
-      )}
-    </button>
+      ariaLabel={isFavorited ? 'Unfavorite' : 'Favorite'}
+      ariaPressed={isFavorited}
+      className="text-white"
+      icon={
+        isFavorited ? (
+          <HeartIcon className="w-5 h-5 text-red-500" />
+        ) : (
+          <HeartOutlineIcon className="w-5 h-5" />
+        )
+      }
+    />
   );
 }

@@ -1,7 +1,7 @@
 import type { RefObject } from 'react';
 import type { CSSProperties } from 'react';
 import type { FileItem } from '@/api/client';
-import { CheckIcon, BookmarkIconSvg, BookmarkOutlineIcon, FolderIcon, WorkflowIcon, ThickArrowRightIcon, TrashIcon, EditIcon } from '@/components/icons';
+import { CheckIcon, HeartIcon, HeartOutlineIcon, DownloadDeviceIcon, EyeIcon, EyeOffIcon, FolderIcon, WorkflowIcon, ThickArrowRightIcon, TrashIcon, EditIcon } from '@/components/icons';
 import { ContextMenuBuilder } from '@/components/menus/ContextMenuBuilder';
 
 interface OutputsContextMenuProps {
@@ -11,11 +11,13 @@ interface OutputsContextMenuProps {
   menuRef: RefObject<HTMLDivElement | null>;
   menuStyle: CSSProperties;
   handleFavorite: () => void;
+  handleToggleHidden: () => void;
   handleSelectSingle: () => void;
   handleMoveSingle: () => void;
   handleRenameRequest: () => void;
   handleLoadWorkflow: () => void;
   handleLoadInWorkflow: () => void;
+  handleDownload: () => void;
   handleDeleteRequest: () => void;
 }
 
@@ -26,11 +28,13 @@ export function OutputsContextMenu({
   menuRef,
   menuStyle,
   handleFavorite,
+  handleToggleHidden,
   handleSelectSingle,
   handleMoveSingle,
   handleRenameRequest,
   handleLoadWorkflow,
   handleLoadInWorkflow,
+  handleDownload,
   handleDeleteRequest
 }: OutputsContextMenuProps) {
   if (!menuTarget) return null;
@@ -39,8 +43,8 @@ export function OutputsContextMenu({
       key: 'favorite',
       label: favorites.includes(menuTarget.file.id) ? 'Unfavorite' : 'Favorite',
       icon: favorites.includes(menuTarget.file.id)
-        ? <BookmarkIconSvg className="w-4 h-4" />
-        : <BookmarkOutlineIcon className="w-4 h-4" />,
+        ? <HeartIcon className="w-4 h-4 text-red-500" />
+        : <HeartOutlineIcon className="w-4 h-4" />,
       onClick: () => handleFavorite()
     },
     {
@@ -62,6 +66,17 @@ export function OutputsContextMenu({
       onClick: () => handleRenameRequest()
     },
     {
+      key: 'hide',
+      label: menuTarget.file.hiddenSelf ? 'Unhide' : 'Hide',
+      icon: menuTarget.file.hiddenSelf
+        ? <EyeIcon className="w-4 h-4" />
+        : <EyeOffIcon className="w-4 h-4" />,
+      onClick: () => handleToggleHidden(),
+      // Dot-prefixed items are hidden by convention; this action only governs
+      // manually-marked hidden state, so don't offer it for them.
+      hidden: menuTarget.file.name.startsWith('.')
+    },
+    {
       key: 'load-workflow',
       label: 'Load workflow',
       icon: <WorkflowIcon className="w-4 h-4" />,
@@ -74,6 +89,13 @@ export function OutputsContextMenu({
       icon: <ThickArrowRightIcon className="w-4 h-4" />,
       onClick: () => handleLoadInWorkflow(),
       hidden: menuTarget.file.type !== 'image'
+    },
+    {
+      key: 'download',
+      label: 'Download',
+      icon: <DownloadDeviceIcon className="w-4 h-4" />,
+      onClick: () => handleDownload(),
+      hidden: menuTarget.file.type === 'folder'
     },
     {
       key: 'delete',

@@ -430,6 +430,58 @@ export function buildDefaultLayout(
 /**
  * Remove a node from the layout (e.g., on delete).
  */
+// True when the layout item represents the given node id — a plain node, or a
+// subgraph placeholder instance (whose ref carries the placeholder's nodeId).
+function layoutItemMatchesNodeId(ref: ItemRef, nodeId: number): boolean {
+  if (ref.type === 'node') return ref.id === nodeId;
+  if (ref.type === 'subgraph') return ref.nodeId === nodeId;
+  return false;
+}
+
+/**
+ * Move the layout item for `movingNodeId` so it sits directly after the item for
+ * `anchorNodeId`, in the anchor's container. Used by node duplication so the copy
+ * appears immediately below the original in the list regardless of where a
+ * positional rebuild placed it. No-op (returns the input) if either item is
+ * missing.
+ */
+export function placeLayoutItemAfter(
+  layout: MobileLayout,
+  movingNodeId: number,
+  anchorNodeId: number,
+): MobileLayout {
+  let movingRef: ItemRef | null = null;
+  const strip = (refs: ItemRef[]): ItemRef[] => {
+    const idx = refs.findIndex((ref) => layoutItemMatchesNodeId(ref, movingNodeId));
+    if (idx < 0) return refs;
+    movingRef = refs[idx];
+    return [...refs.slice(0, idx), ...refs.slice(idx + 1)];
+  };
+  const strippedRoot = strip(layout.root);
+  const strippedGroups: Record<string, ItemRef[]> = {};
+  for (const [key, refs] of Object.entries(layout.groups)) strippedGroups[key] = strip(refs);
+  const strippedSubgraphs: Record<string, ItemRef[]> = {};
+  for (const [key, refs] of Object.entries(layout.subgraphs)) strippedSubgraphs[key] = strip(refs);
+  if (!movingRef) return layout;
+
+  let inserted = false;
+  const insertAfter = (refs: ItemRef[]): ItemRef[] => {
+    if (inserted) return refs;
+    const idx = refs.findIndex((ref) => layoutItemMatchesNodeId(ref, anchorNodeId));
+    if (idx < 0) return refs;
+    inserted = true;
+    return [...refs.slice(0, idx + 1), movingRef as ItemRef, ...refs.slice(idx + 1)];
+  };
+  const nextRoot = insertAfter(strippedRoot);
+  const nextGroups: Record<string, ItemRef[]> = {};
+  for (const [key, refs] of Object.entries(strippedGroups)) nextGroups[key] = insertAfter(refs);
+  const nextSubgraphs: Record<string, ItemRef[]> = {};
+  for (const [key, refs] of Object.entries(strippedSubgraphs)) nextSubgraphs[key] = insertAfter(refs);
+  if (!inserted) return layout;
+
+  return { ...layout, root: nextRoot, groups: nextGroups, subgraphs: nextSubgraphs };
+}
+
 export function removeNodeFromLayout(
   layout: MobileLayout,
   nodeId: number,
@@ -579,39 +631,6 @@ export function addNodeToLayout(
     ...layout,
     root: [...layout.root, ref]
   };
-}
-
-/**
- * Remove a group from the layout, promoting its children to the parent container.
- */
-export function removeGroupFromLayout(
-  layout: MobileLayout,
-  groupId: number,
-  subgraphId: string | null = null
-): MobileLayout {
-  const findGroupKey = (
-    refs: ItemRef[],
-    currentSubgraphId: string | null
-  ): string | null => {
-    for (const ref of refs) {
-      if (ref.type === 'group') {
-        if (ref.id === groupId && currentSubgraphId === subgraphId) {
-          return getGroupKey(ref.id, ref.subgraphId);
-        }
-        const nested = findGroupKey(layout.groups[getGroupKey(ref.id, ref.subgraphId)] ?? [], currentSubgraphId);
-        if (nested) return nested;
-        continue;
-      }
-      if (ref.type === 'subgraph') {
-        const nested = findGroupKey(layout.subgraphs[ref.id] ?? [], ref.id);
-        if (nested) return nested;
-      }
-    }
-    return null;
-  };
-  const groupKey = findGroupKey(layout.root, null);
-  if (!groupKey) return layout;
-  return removeGroupFromLayoutByKey(layout, groupKey);
 }
 
 export function removeGroupFromLayoutByKey(

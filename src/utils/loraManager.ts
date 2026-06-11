@@ -47,6 +47,13 @@ export function isLoraManagerNodeType(nodeType: string): boolean {
   );
 }
 
+/** The rgthree "Power Lora Loader" node has dynamic lora widgets needing special handling. */
+export const POWER_LORA_LOADER_NODE_TYPE = 'Power Lora Loader (rgthree)';
+
+export function isPowerLoraLoaderNodeType(nodeType: string | undefined | null): boolean {
+  return nodeType === POWER_LORA_LOADER_NODE_TYPE;
+}
+
 export function isLoraLoaderNodeType(nodeType: string): boolean {
   if (LORA_LOADER_NODE_TYPES.has(nodeType)) return true;
   const lowered = nodeType.toLowerCase();

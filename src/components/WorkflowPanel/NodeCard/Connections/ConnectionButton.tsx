@@ -1,7 +1,10 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import type { Workflow, WorkflowInput, WorkflowLink, WorkflowOutput } from '@/api/types';
+import type { Workflow, WorkflowInput, WorkflowOutput } from '@/api/types';
+import { getScopedWorkflowView } from '@/utils/canonicalWorkflowOps';
 import { useWorkflowStore } from '@/hooks/useWorkflow';
+import { useConnectionSectionFoldsStore } from '@/hooks/useConnectionSectionFolds';
+import { connectionButtonDomId } from '@/utils/connectionFlash';
 import { findConnectedNode, findConnectedOutputNodes } from '@/utils/nodeOrdering';
 import { ConnectionModal } from '@/components/modals/ConnectionModal';
 import { resolveRerouteConnectionLabel } from '@/utils/rerouteLabels';
@@ -56,24 +59,18 @@ export const ConnectionButton = memo(function ConnectionButton({
   const exitSubgraph = useWorkflowStore((s) => s.exitSubgraph);
   const scrollToNode = useWorkflowStore((s) => s.scrollToNode);
   const revealNodeWithParents = useWorkflowStore((s) => s.revealNodeWithParents);
+  const expandConnectionsSection = useConnectionSectionFoldsStore((s) => s.expand);
   const nodeTypes = useWorkflowStore((s) => s.nodeTypes);
   const hiddenItems = useWorkflowStore((s) => s.hiddenItems);
   const topScopeFrame = scopeStack[scopeStack.length - 1];
   const currentSubgraphId = topScopeFrame?.type === 'subgraph' ? topScopeFrame.id : null;
 
   // When inside a subgraph scope, use the subgraph's nodes and links for connection lookups.
-  // Subgraph links are objects; convert to tuple format for findConnectedNode compatibility.
-  const scopedWorkflow = useMemo((): Workflow | null => {
-    if (!workflow) return null;
-    const top = scopeStack[scopeStack.length - 1];
-    if (!top || top.type !== 'subgraph') return workflow;
-    const sg = workflow.definitions?.subgraphs?.find((s) => s.id === top.id);
-    if (!sg) return workflow;
-    const convertedLinks: WorkflowLink[] = (sg.links ?? []).map(
-      (l) => [l.id, l.origin_id, l.origin_slot, l.target_id, l.target_slot, l.type] as WorkflowLink
-    );
-    return { ...workflow, nodes: sg.nodes ?? [], links: convertedLinks };
-  }, [workflow, scopeStack]);
+  const scopedWorkflow = useMemo(
+    (): Workflow | null =>
+      workflow ? getScopedWorkflowView(workflow, currentSubgraphId) : null,
+    [workflow, currentSubgraphId],
+  );
 
   // True when the slot is connected to a subgraph boundary sentinel (-10 input / -20 output).
   // These connections cross the subgraph boundary; clicking should exit the subgraph.
@@ -256,6 +253,46 @@ export const ConnectionButton = memo(function ConnectionButton({
     return targetNode.itemKey ?? null;
   }, []);
 
+  // The slot on the destination node that links back to this one, so we can
+  // flash it after arriving. Returns null for indirect (bypassed) routes where
+  // the reciprocal button isn't directly rendered.
+  const resolveReciprocalConnection = useCallback((targetNodeId: number) => {
+    if (!scopedWorkflow) return null;
+    // Links are [id, origin_id, origin_slot, target_id, target_slot, type].
+    if (direction === 'input') {
+      const input = slot as WorkflowInput;
+      if (input.link == null) return null;
+      const link = scopedWorkflow.links.find((l) => l[0] === input.link);
+      if (!link || link[1] !== targetNodeId) return null;
+      return { nodeId: link[1], direction: 'output' as const, slotIndex: link[2] };
+    }
+    const output = slot as WorkflowOutput;
+    for (const linkId of output.links ?? []) {
+      const link = scopedWorkflow.links.find((l) => l[0] === linkId);
+      if (link && link[3] === targetNodeId) {
+        return { nodeId: link[3], direction: 'input' as const, slotIndex: link[4] };
+      }
+    }
+    return null;
+  }, [scopedWorkflow, slot, direction]);
+
+  // Shared navigation: unfold the destination's connections section, reveal +
+  // scroll to it, and flash the reciprocal connection button in sync with the
+  // node pulse (scrollToNode fires both together once the scroll settles).
+  const navigateToConnectedNode = useCallback(
+    (itemKey: string, targetNodeId: number | null) => {
+      expandConnectionsSection(itemKey);
+      revealNodeWithParents(itemKey);
+      const reciprocal =
+        targetNodeId != null ? resolveReciprocalConnection(targetNodeId) : null;
+      const flashId = reciprocal
+        ? connectionButtonDomId(reciprocal.nodeId, reciprocal.direction, reciprocal.slotIndex)
+        : null;
+      scrollToNode(itemKey, undefined, flashId);
+    },
+    [expandConnectionsSection, revealNodeWithParents, scrollToNode, resolveReciprocalConnection],
+  );
+
   // Navigate out of the subgraph to the placeholder node.
   const handleBoundaryClick = useCallback(() => {
     const top = scopeStack[scopeStack.length - 1];
@@ -270,13 +307,13 @@ export const ConnectionButton = memo(function ConnectionButton({
     exitSubgraph();
     if (placeholderNode?.itemKey) {
       const itemKey = placeholderNode.itemKey;
-      // Delay to allow scope state to settle before scrolling.
+      // Delay to allow scope state to settle before scrolling. No reciprocal
+      // flash for boundary crossings — the target is a placeholder, not a slot.
       setTimeout(() => {
-        revealNodeWithParents(itemKey);
-        scrollToNode(itemKey);
+        navigateToConnectedNode(itemKey, null);
       }, 50);
     }
-  }, [scopeStack, workflow, exitSubgraph, revealNodeWithParents, scrollToNode]);
+  }, [scopeStack, workflow, exitSubgraph, navigateToConnectedNode]);
 
   const handleClick = () => {
     if (longPressTriggeredRef.current) {
@@ -303,8 +340,7 @@ export const ConnectionButton = memo(function ConnectionButton({
       const connectedNode = effectiveNodes[0];
       const itemKey = connectedNode ? getNodeHierarchicalKey(connectedNode) : null;
       if (itemKey) {
-        revealNodeWithParents(itemKey);
-        scrollToNode(itemKey);
+        navigateToConnectedNode(itemKey, connectedNode.id);
       }
       return;
     }
@@ -343,8 +379,7 @@ export const ConnectionButton = memo(function ConnectionButton({
     const targetNode = effectiveNodes.find((node) => node.id === targetId);
     const itemKey = targetNode ? getNodeHierarchicalKey(targetNode) : null;
     if (itemKey) {
-      revealNodeWithParents(itemKey);
-      scrollToNode(itemKey);
+      navigateToConnectedNode(itemKey, targetId);
     }
     setMenuOpen(false);
   };
@@ -426,6 +461,7 @@ export const ConnectionButton = memo(function ConnectionButton({
         arrowClass={arrowClass}
         typeClass={getTypeClass(slot.type)}
         buttonRef={buttonRef}
+        buttonId={connectionButtonDomId(nodeId, direction, slotIndex)}
         connectionCount={connectionCount}
         onClick={handleClick}
         onPointerDown={handlePointerDown}
@@ -461,9 +497,9 @@ export const ConnectionButton = memo(function ConnectionButton({
                 render: (
                   <div className="px-3 py-1">
                     <div className="flex items-center gap-2">
-                      <div className="h-px flex-1 bg-gray-200" />
-                      <span className="text-[10px] text-gray-400">(via bypassed)</span>
-                      <div className="h-px flex-1 bg-gray-200" />
+                      <div className="h-px flex-1 bg-white/10" />
+                      <span className="text-[10px] text-slate-400">(via bypassed)</span>
+                      <div className="h-px flex-1 bg-white/10" />
                     </div>
                   </div>
                 )
@@ -493,6 +529,7 @@ export const ConnectionButton = memo(function ConnectionButton({
             inputType={slot.type}
             inputName={resolvedLabel}
             currentlyConnectedNodeId={currentlyConnectedNodeId}
+            originHadConnection={hasConnection}
           />
         ) : (
           <ConnectionModal
@@ -503,6 +540,7 @@ export const ConnectionButton = memo(function ConnectionButton({
             outputIndex={slotIndex}
             outputType={slot.type}
             outputName={resolvedLabel}
+            originHadConnection={hasConnection}
           />
         )
       )}

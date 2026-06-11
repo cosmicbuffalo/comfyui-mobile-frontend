@@ -9,8 +9,10 @@ import {
 import { computeNodeGroupsFor } from '@/utils/nodeGroups';
 import { themeColors } from '@/theme/colors';
 import { useWorkflowStore } from '../useWorkflow';
+import { useWorkflowHiddenStore } from '../useWorkflowHidden';
 import { useBookmarksStore } from '../useBookmarks';
 import { useWorkflowErrorsStore } from '../useWorkflowErrors';
+import { useSeedStore } from '../useSeed';
 import { queueAndGetEmbeddedWorkflow } from './helpers/queueAndGetEmbeddedWorkflow';
 
 function makeNode(id: number, overrides?: Partial<WorkflowNode>): WorkflowNode {
@@ -135,6 +137,13 @@ beforeEach(() => {
     nodeOutputs: {},
     nodeTextOutputs: {},
     promptOutputs: {},
+    sessions: [],
+    activeSessionId: null,
+    parkedSessions: {},
+    infiniteLoopSessionId: null,
+    promptToSession: {},
+    isLoadingBySession: {},
+    closeForNewWorkflowRequest: null,
   });
   useBookmarksStore.setState({ bookmarkedItems: [] });
   useWorkflowErrorsStore.setState({
@@ -143,6 +152,10 @@ beforeEach(() => {
     errorCycleIndex: 0,
     errorsDismissed: false
   });
+  useSeedStore.setState({
+    seedModes: {},
+    seedLastValues: {},
+  });
 });
 
 afterEach(() => {
@@ -150,7 +163,83 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+describe('setSavedWorkflow hidden carry-over', () => {
+  const emptyWorkflow = (): Workflow => ({
+    last_node_id: 0,
+    last_link_id: 0,
+    nodes: [],
+    links: [],
+    groups: [],
+    config: {},
+    extra: {},
+    version: 0.4,
+  });
+
+  it('marks the saved file hidden when the source workflow was hidden', () => {
+    useWorkflowHiddenStore.setState({ hidden: ['secret'], serverSynced: false, serverDirty: false });
+    useWorkflowStore.setState({
+      workflowSource: { type: 'user', filename: 'secret/flow.json' },
+      currentFilename: 'secret/flow.json',
+    });
+
+    useWorkflowStore.getState().setSavedWorkflow(emptyWorkflow(), 'public/copy.json');
+
+    expect(useWorkflowHiddenStore.getState().hidden).toContain('public/copy.json');
+  });
+
+  it('does not hide the saved file when the source workflow was not hidden', () => {
+    useWorkflowHiddenStore.setState({ hidden: [], serverSynced: false, serverDirty: false });
+    useWorkflowStore.setState({
+      workflowSource: { type: 'user', filename: 'public/flow.json' },
+      currentFilename: 'public/flow.json',
+    });
+
+    useWorkflowStore.getState().setSavedWorkflow(emptyWorkflow(), 'public/copy.json');
+
+    expect(useWorkflowHiddenStore.getState().hidden).not.toContain('public/copy.json');
+  });
+});
+
 describe('useWorkflow editing actions', () => {
+  it('keeps only the most recently activated connection highlight', () => {
+    useWorkflowStore.setState({
+      ...rootNodeStableRegistry([1, 2]),
+      connectionHighlightModes: {},
+    });
+
+    useWorkflowStore.getState().setConnectionHighlightMode(
+      rootNodeHierarchicalKey(1),
+      'outputs',
+    );
+    useWorkflowStore.getState().setConnectionHighlightMode(
+      rootNodeHierarchicalKey(2),
+      'inputs',
+    );
+
+    expect(useWorkflowStore.getState().connectionHighlightModes).toEqual({
+      [rootNodeHierarchicalKey(2)]: 'inputs',
+    });
+  });
+
+  it('keeps only the most recently cycled connection highlight and removes it when off', () => {
+    useWorkflowStore.setState({
+      ...rootNodeStableRegistry([1, 2]),
+      connectionHighlightModes: {
+        [rootNodeHierarchicalKey(1)]: 'both',
+      },
+    });
+
+    useWorkflowStore.getState().cycleConnectionHighlight(rootNodeHierarchicalKey(2));
+    expect(useWorkflowStore.getState().connectionHighlightModes).toEqual({
+      [rootNodeHierarchicalKey(2)]: 'inputs',
+    });
+
+    useWorkflowStore.getState().cycleConnectionHighlight(rootNodeHierarchicalKey(2));
+    useWorkflowStore.getState().cycleConnectionHighlight(rootNodeHierarchicalKey(2));
+    useWorkflowStore.getState().cycleConnectionHighlight(rootNodeHierarchicalKey(2));
+    expect(useWorkflowStore.getState().connectionHighlightModes).toEqual({});
+  });
+
   it('clears stale executing node details when a new prompt starts without node identity', () => {
     useWorkflowStore.setState({
       workflow: makeWorkflow([makeNode(1), makeNode(2)], []),
@@ -191,6 +280,137 @@ describe('useWorkflow editing actions', () => {
       executingNodePath: '1',
       progress: 42
     });
+  });
+
+  it('uses an actual seed control widget over stale persisted seed mode when queueing', async () => {
+    const easySeedNode = makeNode(1, {
+      type: 'easy seed',
+      widgets_values: [123, 'fixed'],
+      outputs: [{ name: 'seed', type: 'INT', links: [] }],
+    });
+    const workflow = makeWorkflow([easySeedNode], []);
+    const easySeedNodeTypes: NodeTypes = {
+      'easy seed': {
+        input: {
+          required: {
+            seed: ['INT', { default: 0, min: 0, max: 999999 }],
+          },
+          optional: {},
+        },
+        input_order: { required: ['seed'], optional: [] },
+        output: ['INT'],
+        output_name: ['seed'],
+        name: 'easy seed',
+        display_name: 'easy seed',
+        description: '',
+        python_module: '',
+        category: 'test',
+      },
+    };
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes('/api/queue')) {
+        return {
+          ok: true,
+          json: async () => ({ queue_running: [], queue_pending: [] }),
+        };
+      }
+      return {
+        ok: true,
+        json: async () => ({ prompt_id: 'p-test', number: 1 }),
+      };
+    });
+    vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch);
+    useSeedStore.setState({
+      seedModes: { 1: 'randomize' },
+      seedLastValues: {},
+    });
+    useWorkflowStore.setState({
+      workflow,
+      nodeTypes: easySeedNodeTypes,
+      ...rootNodeStableRegistry([1]),
+    });
+
+    await useWorkflowStore.getState().queueWorkflow(1);
+
+    const promptCall = fetchMock.mock.calls.find(([input]) =>
+      String(input).includes('/api/prompt'),
+    );
+    expect(promptCall).toBeDefined();
+    const requestInit = (promptCall as [RequestInfo | URL, RequestInit | undefined] | undefined)?.[1];
+    const body = JSON.parse(String(requestInit?.body ?? '{}')) as {
+      prompt?: Record<string, { inputs?: Record<string, unknown> }>;
+    };
+    expect(body.prompt?.['1']?.inputs?.seed).toBe(123);
+  });
+
+  it('resolves a special seed (-1) on a node inside a subgraph at queue time', async () => {
+    const sgId = 'aaaaaaaa-5555-6666-7777-888888888888';
+    const innerSeedNode = makeNode(7, {
+      type: 'easy seed',
+      itemKey: makeLocationPointer({ type: 'node', nodeId: 7, subgraphId: sgId }),
+      // -1 = "random seed each queue" convention; must never ship raw.
+      widgets_values: [-1],
+      outputs: [{ name: 'seed', type: 'INT', links: [] }],
+    });
+    const placeholder = makeNode(5, { type: sgId });
+    const workflow: Workflow = {
+      ...makeWorkflow([placeholder], []),
+      definitions: {
+        subgraphs: [{ id: sgId, nodes: [innerSeedNode], links: [], groups: [] }],
+      },
+    };
+    const easySeedNodeTypes: NodeTypes = {
+      'easy seed': {
+        input: {
+          required: {
+            seed: ['INT', { default: 0, min: 0, max: 999999 }],
+          },
+          optional: {},
+        },
+        input_order: { required: ['seed'], optional: [] },
+        output: ['INT'],
+        output_name: ['seed'],
+        name: 'easy seed',
+        display_name: 'easy seed',
+        description: '',
+        python_module: '',
+        category: 'test',
+      },
+    };
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes('/api/queue')) {
+        return {
+          ok: true,
+          json: async () => ({ queue_running: [], queue_pending: [] }),
+        };
+      }
+      return {
+        ok: true,
+        json: async () => ({ prompt_id: 'p-test', number: 1 }),
+      };
+    });
+    vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch);
+    useWorkflowStore.setState({
+      workflow,
+      nodeTypes: easySeedNodeTypes,
+      ...rootNodeStableRegistry([5]),
+    });
+
+    await useWorkflowStore.getState().queueWorkflow(1);
+
+    const promptCall = fetchMock.mock.calls.find(([input]) =>
+      String(input).includes('/api/prompt'),
+    );
+    expect(promptCall).toBeDefined();
+    const requestInit = (promptCall as [RequestInfo | URL, RequestInit | undefined] | undefined)?.[1];
+    const body = JSON.parse(String(requestInit?.body ?? '{}')) as {
+      prompt?: Record<string, { inputs?: Record<string, unknown> }>;
+    };
+    const seed = body.prompt?.['5:7']?.inputs?.seed;
+    expect(typeof seed).toBe('number');
+    expect(seed).toBeGreaterThanOrEqual(0);
   });
 
   it('deleteNode reconnects compatible links and cleans ui state', () => {
@@ -268,6 +488,112 @@ describe('useWorkflow editing actions', () => {
     expect(next?.nodes.find((n) => n.id === 1)?.outputs[0]?.links).toBeNull();
     expect(next?.nodes.find((n) => n.id === 2)?.outputs[0]?.links).toEqual([2]);
     expect(next?.nodes.find((n) => n.id === 3)?.inputs[0]?.link).toBe(2);
+  });
+
+  it('connectNodes inside a subgraph mints unique link ids from the subgraph link-id space', () => {
+    const sgNodeKey = (nodeId: number) =>
+      makeLocationPointer({ type: 'node', nodeId, subgraphId: 'sg-a' });
+    const inner = (id: number, overrides?: Partial<WorkflowNode>) =>
+      makeNode(id, { itemKey: sgNodeKey(id), ...overrides });
+    const srcModel = inner(1, {
+      outputs: [{ name: 'out', type: 'MODEL', links: null }]
+    });
+    const srcClip = inner(2, {
+      outputs: [{ name: 'out', type: 'CLIP', links: null }]
+    });
+    const target = inner(3, {
+      inputs: [
+        { name: 'model', type: 'MODEL', link: null },
+        { name: 'clip', type: 'CLIP', link: null }
+      ]
+    });
+    const vaeOut = inner(4, {
+      outputs: [{ name: 'out', type: 'VAE', links: [7] }]
+    });
+    const vaeIn = inner(5, {
+      inputs: [{ name: 'vae', type: 'VAE', link: 7 }]
+    });
+    const workflow: Workflow = {
+      ...makeWorkflow([], []),
+      definitions: {
+        subgraphs: [{
+          id: 'sg-a',
+          nodes: [srcModel, srcClip, target, vaeOut, vaeIn],
+          // Existing subgraph link id (7) is ahead of root last_link_id (0).
+          links: [{ id: 7, origin_id: 4, origin_slot: 0, target_id: 5, target_slot: 0, type: 'VAE' }],
+          groups: []
+        }]
+      }
+    };
+    useWorkflowStore.setState({
+      workflow,
+      scopeStack: [
+        { type: 'root' },
+        { type: 'subgraph', id: 'sg-a', placeholderNodeId: 99 }
+      ],
+    });
+
+    useWorkflowStore.getState().connectNodes(sgNodeKey(1), 0, sgNodeKey(3), 0, 'MODEL');
+    useWorkflowStore.getState().connectNodes(sgNodeKey(2), 0, sgNodeKey(3), 1, 'CLIP');
+
+    const sg = useWorkflowStore.getState().workflow?.definitions?.subgraphs?.find(
+      (entry) => entry.id === 'sg-a',
+    );
+    const ids = (sg?.links ?? []).map((l) => l.id);
+    expect(ids).toHaveLength(3);
+    expect(new Set(ids).size).toBe(3);
+    expect(ids).toEqual(expect.arrayContaining([7, 8, 9]));
+    expect(sg?.nodes.find((n) => n.id === 3)?.inputs.map((i) => i.link)).toEqual([8, 9]);
+  });
+
+  it('deleteNode reconnect inside a subgraph mints the bridge link id from the subgraph link-id space', () => {
+    const sgNodeKey = (nodeId: number) =>
+      makeLocationPointer({ type: 'node', nodeId, subgraphId: 'sg-a' });
+    const inner = (id: number, overrides?: Partial<WorkflowNode>) =>
+      makeNode(id, { itemKey: sgNodeKey(id), ...overrides });
+    const source = inner(1, {
+      outputs: [{ name: 'out', type: 'MODEL', links: [7] }]
+    });
+    const mid = inner(2, {
+      inputs: [{ name: 'in', type: 'MODEL', link: 7 }],
+      outputs: [{ name: 'out', type: 'MODEL', links: [8] }]
+    });
+    const target = inner(3, {
+      inputs: [{ name: 'model', type: 'MODEL', link: 8 }]
+    });
+    const workflow: Workflow = {
+      ...makeWorkflow([], []),
+      definitions: {
+        subgraphs: [{
+          id: 'sg-a',
+          nodes: [source, mid, target],
+          links: [
+            { id: 7, origin_id: 1, origin_slot: 0, target_id: 2, target_slot: 0, type: 'MODEL' },
+            { id: 8, origin_id: 2, origin_slot: 0, target_id: 3, target_slot: 0, type: 'MODEL' }
+          ],
+          groups: []
+        }]
+      }
+    };
+    useWorkflowStore.setState({
+      workflow,
+      scopeStack: [
+        { type: 'root' },
+        { type: 'subgraph', id: 'sg-a', placeholderNodeId: 99 }
+      ],
+    });
+
+    useWorkflowStore.getState().deleteNode(sgNodeKey(2), true);
+
+    const sg = useWorkflowStore.getState().workflow?.definitions?.subgraphs?.find(
+      (entry) => entry.id === 'sg-a',
+    );
+    expect(sg?.nodes.map((n) => n.id)).toEqual([1, 3]);
+    expect(sg?.links).toHaveLength(1);
+    // Bridge id mints above the subgraph's own max (8), not root last_link_id (0).
+    expect(sg?.links[0]?.id).toBe(9);
+    expect(sg?.nodes.find((n) => n.id === 3)?.inputs[0]?.link).toBe(9);
+    expect(sg?.nodes.find((n) => n.id === 1)?.outputs[0]?.links).toEqual([9]);
   });
 
   it('addNode supports group placement and mobile ordering state', () => {
@@ -1013,6 +1339,28 @@ describe('useWorkflow editing actions', () => {
     ]);
   });
 
+  it('ignores missing combo options on bypassed nodes when loading', () => {
+    const missingValue = 'models/missing/not-on-server.safetensors';
+    const wf = makeWorkflow([
+      makeNode(1, {
+        type: 'ComboNode',
+        mode: 4,
+        widgets_values: [missingValue]
+      })
+    ], []);
+    useWorkflowStore.setState({
+      nodeTypes: comboNodeTypes
+    });
+
+    useWorkflowStore.getState().loadWorkflow(wf, 'bypassed-combo.json');
+
+    expect(useWorkflowStore.getState().workflow?.nodes[0]?.widgets_values).toEqual([
+      missingValue
+    ]);
+    expect(useWorkflowErrorsStore.getState().error).toBeNull();
+    expect(useWorkflowErrorsStore.getState().nodeErrors).toEqual({});
+  });
+
   it('syncs embed workflow when toggling bypass', () => {
     const wf = makeWorkflow([makeNode(1, { mode: 0 })], []);
     useWorkflowStore.setState({
@@ -1024,6 +1372,33 @@ describe('useWorkflow editing actions', () => {
     const next = useWorkflowStore.getState();
     expect(next.workflow?.nodes.find((n) => n.id === 1)?.mode).toBe(4);
     expect(next.workflow?.nodes.find((n) => n.id === 1)?.mode).toBe(4);
+  });
+
+  it('clears a stale validation error when a node is bypassed', () => {
+    const wf = makeWorkflow([makeNode(1, { mode: 0 })], []);
+    useWorkflowStore.setState({
+      workflow: wf,
+      ...rootNodeStableRegistry([1]),
+    });
+    useWorkflowErrorsStore.setState({
+      error: 'Workflow load error: 1 input references missing options.',
+      nodeErrors: {
+        '1': [
+          {
+            type: 'workflow_load',
+            message: 'Missing value: ghost.png',
+            details: 'Not found on server.',
+            inputName: 'image',
+          },
+        ],
+      },
+    });
+
+    useWorkflowStore.getState().toggleBypass(rootNodeHierarchicalKey(1));
+
+    expect(useWorkflowStore.getState().workflow?.nodes[0]?.mode).toBe(4);
+    expect(useWorkflowErrorsStore.getState().nodeErrors['1']).toBeUndefined();
+    expect(useWorkflowErrorsStore.getState().error).toBeNull();
   });
 
   it('syncs embed workflow for structural graph edits', () => {

@@ -2,8 +2,10 @@ import { useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { saveUserWorkflow, loadTemplateWorkflow, loadUserWorkflow, getFileWorkflow } from '@/api/client';
-import { useWorkflowStore } from '@/hooks/useWorkflow';
+import { isWorkflowModified, useWorkflowStore } from '@/hooks/useWorkflow';
 import { getWorkflowForPersistence } from '@/utils/workflowPersistence';
+import { useGenerationSettingsStore } from '@/hooks/useGenerationSettings';
+import { obfuscateWorkflowInputPaths } from '@/utils/inputPathAliases';
 import { useNavigationStore } from '@/hooks/useNavigation';
 import { useDismissOnOutsideClick } from '@/hooks/useDismissOnOutsideClick';
 import { useHistoryStore } from '@/hooks/useHistory';
@@ -11,7 +13,7 @@ import { Dialog } from '@/components/modals/Dialog';
 import { WorkflowTopBarMenu } from './WorkflowTopBarControls/WorkflowTopBarMenu';
 import { SaveAsIcon, SaveDiskIcon, TrashIcon, LogoutIcon, ReloadIcon, XMarkIcon } from '@/components/icons';
 
-type DirtyAction = 'unload' | 'clearWorkflowCache' | 'clearAllCache' | 'discardChanges';
+type DirtyAction = 'unload' | 'clearWorkflowCache' | 'clearAllCache' | 'discardChanges' | 'reload';
 
 interface WorkflowActionButtonProps {
   icon: ReactNode;
@@ -34,15 +36,15 @@ function WorkflowActionButton({
   return (
     <button
       className={`w-full flex items-start gap-3 text-left px-4 py-3 disabled:opacity-50 ${
-        isDanger ? 'text-red-600 hover:bg-red-50' : 'hover:bg-gray-50'
+        isDanger ? 'text-red-400 hover:bg-red-500/10' : 'text-slate-200 hover:bg-white/10'
       }`}
       onClick={onClick}
       disabled={disabled}
     >
       <span className="shrink-0 self-start mt-[3px]">{icon}</span>
       <span className="flex flex-col min-w-0">
-        <span className={`text-sm ${isDanger ? 'text-red-600' : 'text-gray-900'}`}>{label}</span>
-        {description ? <span className="text-xs text-gray-500">{description}</span> : null}
+        <span className={`text-sm ${isDanger ? 'text-red-400' : 'text-slate-100'}`}>{label}</span>
+        {description ? <span className="text-xs text-slate-400">{description}</span> : null}
       </span>
     </button>
   );
@@ -75,7 +77,7 @@ export function WorkflowTopBarControls() {
   const menuOpen = menuOpenAt !== null && menuOpenAt === workflowLoadedAt;
 
   const isDirty = useMemo(
-    () => Boolean(workflow && originalWorkflow && JSON.stringify(workflow) !== JSON.stringify(originalWorkflow)),
+    () => isWorkflowModified(workflow, originalWorkflow),
     [workflow, originalWorkflow]
   );
 
@@ -103,11 +105,19 @@ export function WorkflowTopBarControls() {
   const performSave = async (filename: string) => {
     if (!workflow) return;
     const finalFilename = filename.endsWith('.json') ? filename : `${filename}.json`;
+    const store = useWorkflowStore.getState();
+    const savingId = store.activeSessionId;
     try {
       setLoading(true);
-      const workflowForPersistence = getWorkflowForPersistence(workflow);
+      store.setSavingSessionId(savingId);
+      let workflowForPersistence = getWorkflowForPersistence(workflow);
       if (!workflowForPersistence) {
         throw new Error('Unable to save: embedded workflow is unavailable.');
+      }
+      if (useGenerationSettingsStore.getState().obfuscateSharedInputPaths) {
+        const nodeTypes = useWorkflowStore.getState().nodeTypes;
+        if (!nodeTypes) throw new Error('Unable to hide input paths: node definitions are unavailable.');
+        workflowForPersistence = await obfuscateWorkflowInputPaths(workflowForPersistence, nodeTypes);
       }
       await saveUserWorkflow(finalFilename, workflowForPersistence);
       setSavedWorkflow(workflow, finalFilename);
@@ -118,14 +128,22 @@ export function WorkflowTopBarControls() {
       setError(err instanceof Error ? err.message : 'Failed to save workflow');
     } finally {
       setLoading(false);
+      // Only clear if this save still owns the spinner — a newer save started
+      // while this one was in flight must keep showing its own.
+      if (useWorkflowStore.getState().savingSessionId === savingId) {
+        useWorkflowStore.getState().setSavingSessionId(null);
+      }
     }
   };
 
   const reloadFromSource = async () => {
+    // Reload must replace the CURRENT tab's workflow, not open a new tab —
+    // loadWorkflow opens a new tab by default.
     if (!workflowSource) {
       if (originalWorkflow) {
         loadWorkflow(originalWorkflow, currentFilename ?? undefined, {
           fresh: true,
+          replaceActive: true,
           source: { type: 'other' }
         });
       }
@@ -134,7 +152,7 @@ export function WorkflowTopBarControls() {
 
     if (workflowSource.type === 'user') {
       const data = await loadUserWorkflow(workflowSource.filename);
-      loadWorkflow(data, workflowSource.filename, { fresh: true, source: workflowSource });
+      loadWorkflow(data, workflowSource.filename, { fresh: true, replaceActive: true, source: workflowSource });
       return;
     }
 
@@ -142,6 +160,7 @@ export function WorkflowTopBarControls() {
       const data = await loadTemplateWorkflow(workflowSource.moduleName, workflowSource.templateName);
       loadWorkflow(data, `${workflowSource.moduleName}/${workflowSource.templateName}`, {
         fresh: true,
+        replaceActive: true,
         source: workflowSource
       });
       return;
@@ -152,6 +171,7 @@ export function WorkflowTopBarControls() {
       if (historyItem?.workflow) {
         loadWorkflow(historyItem.workflow, `history-${workflowSource.promptId}.json`, {
           fresh: true,
+          replaceActive: true,
           source: workflowSource
         });
       }
@@ -160,13 +180,14 @@ export function WorkflowTopBarControls() {
 
     if (workflowSource.type === 'file') {
       const data = await getFileWorkflow(workflowSource.filePath, workflowSource.assetSource);
-      loadWorkflow(data, workflowSource.filePath, { fresh: true, source: workflowSource });
+      loadWorkflow(data, workflowSource.filePath, { fresh: true, replaceActive: true, source: workflowSource });
       return;
     }
 
     if (originalWorkflow) {
       loadWorkflow(originalWorkflow, currentFilename ?? undefined, {
         fresh: true,
+        replaceActive: true,
         source: workflowSource
       });
     }
@@ -263,6 +284,10 @@ export function WorkflowTopBarControls() {
         onAddNode={handleAddNode}
         onAddGroup={handleAddGroup}
         onOpenWorkflowActions={handleOpenWorkflowActions}
+        onReloadWorkflow={() => {
+          setMenuOpenAt(null);
+          handleDirtyAction('reload');
+        }}
       />
 
       {actionsOpen && (
@@ -273,20 +298,20 @@ export function WorkflowTopBarControls() {
           aria-modal="true"
         >
           <div
-            className="w-full max-w-sm bg-white border border-gray-200 rounded-xl shadow-lg overflow-hidden"
+            className="w-full max-w-sm bg-slate-900 border border-white/10 text-slate-100 rounded-xl shadow-lg overflow-hidden"
             onClick={(event) => event.stopPropagation()}
           >
-            <div className="px-4 py-3 text-sm font-semibold text-gray-700 border-b border-gray-100">
+            <div className="px-4 py-3 text-sm font-semibold text-slate-100 border-b border-white/10">
               Workflow actions
             </div>
             {error && (
-              <div className="px-4 py-2 text-sm text-red-700 bg-red-50 border-b border-red-100">
+              <div className="px-4 py-2 text-sm text-red-300 bg-red-500/10 border-b border-red-500/20">
                 {error}
               </div>
             )}
             <div className="max-h-[60vh] overflow-y-auto">
               <WorkflowActionButton
-                icon={<SaveDiskIcon className="w-4 h-4 text-gray-500" />}
+                icon={<SaveDiskIcon className="w-4 h-4 text-slate-400" />}
                 label="Save"
                 onClick={() => {
                   if (!workflow) return;
@@ -300,7 +325,7 @@ export function WorkflowTopBarControls() {
                 disabled={!workflow || !isDirty || loading}
               />
               <WorkflowActionButton
-                icon={<SaveAsIcon className="w-4 h-4 text-gray-500" />}
+                icon={<SaveAsIcon className="w-4 h-4 text-slate-400" />}
                 label="Save as"
                 onClick={() => {
                   setSaveAsFilename(currentFilename ?? '');
@@ -317,9 +342,9 @@ export function WorkflowTopBarControls() {
                   disabled={loading}
                 />
               )}
-              <div className="border-t border-gray-200" />
+              <div className="border-t border-white/10" />
               <WorkflowActionButton
-                icon={<TrashIcon className="w-5 h-5 text-gray-500" />}
+                icon={<TrashIcon className="w-5 h-5 text-slate-400" />}
                 label="Clear workflow cache"
                 description="(hidden nodes, folds, etc.)"
                 onClick={() => handleDirtyAction('clearWorkflowCache')}
@@ -342,9 +367,9 @@ export function WorkflowTopBarControls() {
                 disabled={loading}
               />
             </div>
-            <div className="border-t border-gray-100 p-3">
+            <div className="border-t border-white/10 p-3">
               <button
-                className="w-full px-4 py-2.5 text-sm font-medium text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200"
+                className="w-full px-4 py-2.5 text-sm font-medium text-slate-300 bg-slate-950/80 rounded-lg hover:bg-white/10"
                 onClick={() => setActionsOpen(false)}
               >
                 Close
@@ -362,24 +387,24 @@ export function WorkflowTopBarControls() {
           aria-modal="true"
         >
           <div
-            className="w-full max-w-sm bg-white border border-gray-200 rounded-xl shadow-lg p-4"
+            className="w-full max-w-sm bg-slate-900 border border-white/10 text-slate-100 rounded-xl shadow-lg p-4"
             onClick={(event) => event.stopPropagation()}
           >
-            <div className="text-base font-semibold text-gray-900 mb-3">Save as</div>
+            <div className="text-base font-semibold text-slate-100 mb-3">Save as</div>
             <div className="relative">
               <input
                 type="text"
                 value={saveAsFilename}
                 onChange={(event) => setSaveAsFilename(event.target.value)}
                 data-swipe-nav-ignore="true"
-                className="w-full border border-gray-300 rounded-lg px-3 pr-9 py-2 text-sm text-gray-900 focus:outline-none focus:border-2 focus:border-blue-500"
+                className="w-full border border-white/10 bg-slate-950/80 rounded-lg px-3 pr-9 py-2 text-sm text-slate-100 placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-cyan-400"
                 placeholder="workflow.json"
                 autoFocus
               />
               {saveAsFilename.length > 0 && (
                 <button
                   type="button"
-                  className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-700"
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-100"
                   onClick={() => setSaveAsFilename('')}
                   aria-label="Clear filename"
                 >
@@ -389,13 +414,13 @@ export function WorkflowTopBarControls() {
             </div>
             <div className="mt-4 flex justify-end gap-2">
               <button
-                className="px-3 py-2 rounded-lg text-sm font-medium text-gray-600 hover:bg-gray-100"
+                className="px-3 py-2 rounded-lg text-sm font-medium text-slate-300 hover:bg-white/10"
                 onClick={() => setSaveAsOpen(false)}
               >
                 Cancel
               </button>
               <button
-                className="px-3 py-2 rounded-lg text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-50"
+                className="px-3 py-2 rounded-lg text-sm font-semibold text-slate-950 bg-cyan-500 hover:bg-cyan-400 disabled:opacity-50"
                 onClick={() => {
                   const next = saveAsFilename.trim();
                   if (!next) {
@@ -422,12 +447,16 @@ export function WorkflowTopBarControls() {
             {
               label: 'Cancel',
               onClick: () => setDirtyConfirmAction(null),
-              className: 'px-3 py-2 rounded-lg text-sm font-medium text-gray-600 hover:bg-gray-100'
+              variant: 'secondary'
             },
             {
-              label: dirtyConfirmAction === 'discardChanges' ? 'Discard changes' : 'Continue',
+              label: dirtyConfirmAction === 'discardChanges'
+                ? 'Discard changes'
+                : dirtyConfirmAction === 'reload'
+                  ? 'Reload anyway'
+                  : 'Continue',
               onClick: () => { void handleDirtyConfirmContinue(dirtyConfirmAction); },
-              className: 'px-3 py-2 rounded-lg text-sm font-medium text-white bg-red-600 hover:bg-red-700'
+              variant: 'danger'
             }
           ]}
         />,

@@ -9,6 +9,7 @@ interface ContextMenuButtonProps {
   icon?: ReactNode;
   buttonSize?: number;
   iconSize?: number;
+  className?: string;
 }
 
 export function ContextMenuButton({
@@ -17,14 +18,15 @@ export function ContextMenuButton({
   buttonRef,
   icon,
   buttonSize = 10,
-  iconSize = 5
+  iconSize = 5,
+  className
 }: ContextMenuButtonProps) {
   return (
     <button
       type="button"
       onClick={onClick}
       aria-label={ariaLabel}
-      className={`w-${buttonSize} h-${buttonSize} flex items-center justify-center rounded-lg bg-transparent hover:bg-transparent text-inherit`}
+      className={`w-${buttonSize} h-${buttonSize} flex items-center justify-center rounded-lg ${className ?? 'bg-transparent hover:bg-transparent text-inherit'}`}
       ref={buttonRef}
     >
       {icon ?? <EllipsisIcon className={`w-${iconSize} h-${iconSize}`} />}

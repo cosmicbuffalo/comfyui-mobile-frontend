@@ -12,6 +12,7 @@ import {
   TrashIcon,
   WorkflowIcon,
 } from "@/components/icons";
+import { FoldIcon } from "@/components/FoldIcon";
 import { useAnchoredMenuPosition } from "@/hooks/useAnchoredMenuPosition";
 import { useDismissOnOutsideClick } from "@/hooks/useDismissOnOutsideClick";
 import { useWorkflowStore } from "@/hooks/useWorkflow";
@@ -121,7 +122,7 @@ export function GraphContainerHeader({
   const hasHiddenNodes = hiddenNodeCount > 0;
   const showBookmarkAction = isBookmarked || canShowBookmarkAction;
   const canChangeColor = typeof onChangeColor === "function";
-  const countClassName = containerType === "subgraph" ? "text-blue-600" : "text-gray-500";
+  const countClassName = containerType === "subgraph" ? "text-cyan-300" : "text-slate-500";
   const handleChangeColor = (nextColor: string) => {
     if (onChangeColor) {
       onChangeColor(nextColor);
@@ -265,13 +266,9 @@ export function GraphContainerHeader({
             event.stopPropagation();
             onToggleCollapse();
           }}
-          className="w-8 h-8 -ml-2 flex items-center justify-center text-gray-500 hover:text-gray-700 shrink-0"
+          className="w-8 h-8 -ml-2 flex items-center justify-center text-slate-400 hover:text-slate-100 shrink-0"
         >
-          {isCollapsed ? (
-            <CaretRightIcon className="w-6 h-6" />
-          ) : (
-            <CaretDownIcon className="w-6 h-6" />
-          )}
+          <FoldIcon open={!isCollapsed} className="w-6 h-6" />
         </button>
         {isEditingLabel ? (
           <input
@@ -289,10 +286,10 @@ export function GraphContainerHeader({
               }
             }}
             onClick={(event) => event.stopPropagation()}
-            className="font-semibold text-gray-900 flex-1 min-w-0 text-sm bg-white border border-gray-200 rounded px-2 py-1"
+            className="font-semibold text-slate-100 flex-1 min-w-0 text-sm bg-slate-950/80 border border-white/10 rounded px-2 py-1"
           />
         ) : (
-          <h3 className={`font-semibold text-gray-900 select-none flex-1 min-w-0 whitespace-nowrap overflow-hidden text-ellipsis${bypassState === 'all' ? ' opacity-60' : ''}`}>
+          <h3 className={`font-semibold text-slate-100 select-none flex-1 min-w-0 whitespace-nowrap overflow-hidden text-ellipsis${bypassState === 'all' ? ' opacity-60' : ''}`}>
             {displayTitle}
           </h3>
         )}
@@ -300,7 +297,7 @@ export function GraphContainerHeader({
           {bypassState === 'all' ? (
             <>
               <BypassToggleIcon isBypassed className="w-3.5 h-3.5 text-purple-500" />
-              <span className="text-purple-600">{nodeCount} node{nodeCount !== 1 ? "s" : ""}</span>
+              <span className="text-purple-300">{nodeCount} node{nodeCount !== 1 ? "s" : ""}</span>
             </>
           ) : isCollapsed && bypassState === 'partial' ? (
             <>
@@ -326,9 +323,9 @@ export function GraphContainerHeader({
         buttonSize={8}
         iconSize={5}
         icon={isBookmarked ? (
-          <BookmarkIconSvg className="w-5 h-5 text-yellow-500" />
+          <BookmarkIconSvg className="w-5 h-5 text-amber-500" />
         ) : containerType === "subgraph" ? (
-          <WorkflowIcon className="w-5 h-5 -scale-x-100 text-blue-500" />
+          <WorkflowIcon className="w-5 h-5 -scale-x-100 text-cyan-300" />
         ) : (
           undefined
         )}
@@ -337,7 +334,7 @@ export function GraphContainerHeader({
         createPortal(
           <div
             ref={colorPopoverRef}
-            className="fixed z-[1001] bg-white border border-gray-200 rounded-lg shadow-lg p-2"
+            className="fixed z-[1001] bg-slate-900 border border-white/10 rounded-lg shadow-lg p-2"
             style={colorPopoverStyle}
             onClick={(event) => event.stopPropagation()}
           >
@@ -351,7 +348,7 @@ export function GraphContainerHeader({
                     title={label}
                     aria-label={`Set color: ${label}`}
                     className={`w-9 aspect-square rounded-full transition-transform active:scale-95 ${
-                      isSelected ? "ring-2 ring-offset-1 ring-gray-400" : ""
+                      isSelected ? "ring-2 ring-offset-1 ring-cyan-300 ring-offset-slate-900" : ""
                     }`}
                     style={{ backgroundColor: color }}
                     onClick={(event) => {
@@ -424,7 +421,7 @@ export function GraphContainerHeader({
                 {
                   key: 'toggle-bookmark',
                   label: isBookmarked ? "Remove bookmark" : "Bookmark",
-                  icon: <BookmarkIconSvg className="w-4 h-4 text-yellow-500" />,
+                  icon: <BookmarkIconSvg className="w-4 h-4 text-amber-500" />,
                   onClick: (event) => {
                     event.stopPropagation();
                     onToggleBookmark();

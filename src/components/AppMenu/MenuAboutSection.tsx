@@ -3,6 +3,16 @@ import { BookIcon, CaretDownIcon, ExternalLinkIcon, GithubIcon, InfoCircleOutlin
 import type { SystemStats } from '@/api/client';
 import type { Workflow } from '@/api/types';
 import { FeedbackDialog } from './FeedbackDialog';
+import {
+  menuArrowClassName,
+  menuChevronClassName,
+  menuExternalIconClassName,
+  menuIconClassName,
+  menuSectionHeaderClassName,
+  menuSurfaceButtonClassName,
+  menuTextClassName,
+} from './menuStyles';
+import { CollapsibleMenuSection } from './CollapsibleMenuSection';
 
 interface MenuAboutSectionProps {
   open: boolean;
@@ -24,64 +34,60 @@ export function MenuAboutSection({
   const [feedbackDialogOpen, setFeedbackDialogOpen] = useState(false);
 
   return (
-    <section ref={sectionRef} className="mt-auto pt-6 border-t border-gray-200">
+    <section ref={sectionRef} className="mt-auto pt-6 border-t border-white/10">
       <button
         type="button"
         onClick={onToggle}
-        className="w-full flex items-center justify-between text-sm font-semibold text-gray-500 uppercase tracking-wide mb-3"
+        className={menuSectionHeaderClassName}
         aria-expanded={open}
       >
         <span>About</span>
-        <CaretDownIcon className={`w-5 h-5 text-gray-400 transition-transform ${open ? 'rotate-0' : '-rotate-90'}`} />
+        <CaretDownIcon className={`${menuChevronClassName} ${open ? 'rotate-0' : '-rotate-90'}`} />
       </button>
-      {open && (
+      <CollapsibleMenuSection open={open}>
         <div className="space-y-2 pb-4">
           <button
             type="button"
             onClick={() => setFeedbackDialogOpen(true)}
-            className="w-full flex items-center gap-3 p-4 bg-white border border-gray-200
-                       rounded-xl text-left hover:bg-gray-50 min-h-[56px]"
+            className={menuSurfaceButtonClassName}
           >
-            <MegaphoneIcon className="w-6 h-6 text-gray-600" />
-            <span className="font-medium text-gray-900">Send Feedback</span>
-            <span className="ml-auto text-gray-400">&rarr;</span>
+            <MegaphoneIcon className={menuIconClassName} />
+            <span className={menuTextClassName}>Send Feedback</span>
+            <span className={menuArrowClassName}>&rarr;</span>
           </button>
 
           <a
             href="https://github.com/cosmicbuffalo/comfyui-mobile-frontend"
             target="_blank"
             rel="noopener noreferrer"
-            className="w-full flex items-center gap-3 p-4 bg-white border border-gray-200
-                       rounded-xl text-left hover:bg-gray-50 min-h-[56px]"
+            className={menuSurfaceButtonClassName}
           >
-            <GithubIcon className="w-6 h-6 text-gray-600" />
-            <span className="font-medium text-gray-900">Open in GitHub</span>
-            <ExternalLinkIcon className="w-4 h-4 ml-auto text-gray-400" />
+            <GithubIcon className={menuIconClassName} />
+            <span className={menuTextClassName}>Open in GitHub</span>
+            <ExternalLinkIcon className={menuExternalIconClassName} />
           </a>
 
           <button
             onClick={onOpenLegend}
-            className="w-full flex items-center gap-3 p-4 bg-white border border-gray-200
-                       rounded-xl text-left hover:bg-gray-50 min-h-[56px]"
+            className={menuSurfaceButtonClassName}
           >
-            <InfoCircleOutlineIcon className="w-6 h-6 text-gray-600" />
-            <span className="font-medium text-gray-900">Icon Legend</span>
-            <span className="ml-auto text-gray-400">&rarr;</span>
+            <InfoCircleOutlineIcon className={menuIconClassName} />
+            <span className={menuTextClassName}>Icon Legend</span>
+            <span className={menuArrowClassName}>&rarr;</span>
           </button>
 
           <a
             href="https://github.com/cosmicbuffalo/comfyui-mobile-frontend/blob/main/USER_GUIDE.md"
             target="_blank"
             rel="noopener noreferrer"
-            className="w-full flex items-center gap-3 p-4 bg-white border border-gray-200
-                       rounded-xl text-left hover:bg-gray-50 min-h-[56px]"
+            className={menuSurfaceButtonClassName}
           >
-            <BookIcon className="w-6 h-6 text-gray-600" />
-            <span className="font-medium text-gray-900">User Manual</span>
-            <ExternalLinkIcon className="w-4 h-4 ml-auto text-gray-400" />
+            <BookIcon className={menuIconClassName} />
+            <span className={menuTextClassName}>User Manual</span>
+            <ExternalLinkIcon className={menuExternalIconClassName} />
           </a>
         </div>
-      )}
+      </CollapsibleMenuSection>
       {feedbackDialogOpen && (
         <FeedbackDialog
           systemStats={systemStats}

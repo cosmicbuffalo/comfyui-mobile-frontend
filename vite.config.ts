@@ -20,6 +20,14 @@ export default defineConfig({
         target: `http://${process.env.COMFY_HOST ?? 'localhost'}:8188`,
         changeOrigin: true
       },
+      '/customnode': {
+        target: `http://${process.env.COMFY_HOST ?? 'localhost'}:8188`,
+        changeOrigin: true
+      },
+      '/manager': {
+        target: `http://${process.env.COMFY_HOST ?? 'localhost'}:8188`,
+        changeOrigin: true
+      },
       '/ws': {
         target: `ws://${process.env.COMFY_HOST ?? 'localhost'}:8188`,
         ws: true

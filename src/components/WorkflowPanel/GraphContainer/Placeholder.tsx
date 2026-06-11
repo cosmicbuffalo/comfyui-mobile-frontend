@@ -28,15 +28,15 @@ export function GraphContainerPlaceholder({
       <button
         type="button"
         onClick={onClick}
-        className="w-full rounded-lg border-2 border-dashed flex flex-col items-center justify-center py-4 hover:bg-white/40 transition-colors"
+        className="w-full rounded-lg border-2 border-dashed bg-slate-950/40 flex flex-col items-center justify-center py-4 hover:bg-slate-900/70 transition-colors"
         style={{ borderColor: hexToRgba(color, 0.4) }}
       >
-        <span className="text-sm text-gray-400 select-none">
+        <span className="text-sm text-slate-400 select-none">
           {hiddenNodeCount > 0
             ? `${hiddenNodeCount} hidden node${hiddenNodeCount !== 1 ? 's' : ''} in ${label}`
             : `No nodes in ${label}`}
         </span>
-        <span className="text-xs text-gray-500 select-none mt-1 inline-flex items-center gap-1">
+        <span className="text-xs text-slate-500 select-none mt-1 inline-flex items-center gap-1">
           <PlusIcon className="w-3 h-3" />
           Click to add a node
         </span>

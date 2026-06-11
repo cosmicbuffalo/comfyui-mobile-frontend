@@ -7,6 +7,7 @@ interface OverallProgressInput {
   runKey: string | null;
   isRunning: boolean;
   workflowDurationStats: Record<string, { avgMs: number; count: number }>;
+  holdCompleteWhileIdle?: boolean;
 }
 
 export function useOverallProgress({
@@ -14,6 +15,7 @@ export function useOverallProgress({
   runKey,
   isRunning,
   workflowDurationStats,
+  holdCompleteWhileIdle = false,
 }: OverallProgressInput): number | null {
   const [percent, setPercent] = useState<number | null>(null);
   const startTimeRef = useRef<number | null>(null);
@@ -49,9 +51,11 @@ export function useOverallProgress({
 
       if (!runKey) {
         if (lastRunKeyRef.current) {
-          holdUntilRef.current = currentTime + holdMs;
+          holdUntilRef.current = holdCompleteWhileIdle ? null : currentTime + holdMs;
           lastRunKeyRef.current = null;
           lastPercentRef.current = 100;
+          nextValue = 100;
+        } else if (holdCompleteWhileIdle && lastPercentRef.current === 100) {
           nextValue = 100;
         } else if (holdUntilRef.current && currentTime < holdUntilRef.current) {
           nextValue = 100;
@@ -62,6 +66,13 @@ export function useOverallProgress({
           startTimeRef.current = null;
           lastPercentRef.current = 0;
           nextValue = null;
+          // The completion "hold at 100%" has expired and we're fully idle now.
+          // Stop the ticker we started to run the hold down (no dep change will
+          // re-run this effect to clean it up otherwise).
+          if (intervalId) {
+            clearInterval(intervalId);
+            intervalId = null;
+          }
         }
       } else if (holdUntilRef.current && currentTime < holdUntilRef.current) {
         pendingRunKeyRef.current = runKey;
@@ -122,7 +133,11 @@ export function useOverallProgress({
 
     if (workflow) {
       timeoutId = setTimeout(update, 0);
-      if (isRunning || holdUntilRef.current || runKey) {
+      // Also run the ticker when a run has JUST finished (runKey is now null but
+      // lastRunKeyRef is still set, i.e. the hold is about to begin). Without
+      // this, the final completion schedules no ticker, the 250ms hold never
+      // expires, and `percent` sticks at 100 forever (a phantom progress ring).
+      if (isRunning || holdUntilRef.current || runKey || lastRunKeyRef.current) {
         intervalId = setInterval(update, 200);
       }
     } else {
@@ -133,7 +148,7 @@ export function useOverallProgress({
       if (timeoutId) clearTimeout(timeoutId);
       if (intervalId) clearInterval(intervalId);
     };
-  }, [workflow, runKey, isRunning, workflowDurationStats]);
+  }, [workflow, runKey, isRunning, workflowDurationStats, holdCompleteWhileIdle]);
 
   return percent;
 }

@@ -13,9 +13,9 @@ export function SubgraphBreadcrumb() {
   if (scopeStack.length <= 1) return null;
 
   return (
-    <div className="flex items-center gap-1 px-3 py-1.5 bg-gray-100 border-b border-gray-200 text-sm overflow-x-auto">
+    <div className="flex items-center gap-1 px-3 py-1.5 bg-slate-900/95 border-b border-white/10 text-sm overflow-x-auto">
       <button
-        className="text-blue-600 hover:underline shrink-0"
+        className="text-cyan-300 hover:text-cyan-200 hover:underline shrink-0"
         onClick={exitToRoot}
       >
         Root
@@ -30,13 +30,13 @@ export function SubgraphBreadcrumb() {
         // the corresponding depth in the full stack is index + 2 (inclusive).
         const isLast = index === scopeStack.length - 2;
         return (
-          <span key={frame.id} className="flex items-center gap-1 shrink-0">
-            <span className="text-gray-400">/</span>
+          <span key={`${frame.id}::${index}`} className="flex items-center gap-1 shrink-0">
+            <span className="text-slate-500">/</span>
             {isLast ? (
-              <span className="text-gray-700 font-medium">{label}</span>
+              <span className="text-slate-200 font-medium">{label}</span>
             ) : (
               <button
-                className="text-blue-600 hover:underline"
+                className="text-cyan-300 hover:text-cyan-200 hover:underline"
                 onClick={() => exitToDepth(index + 2)}
               >
                 {label}

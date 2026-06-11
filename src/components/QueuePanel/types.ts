@@ -1,4 +1,5 @@
 import type { HistoryOutputImage, Workflow } from '@/api/types';
+import type { PromptQueueRequest } from '@/api/client';
 
 // Re-export ViewerImage from canonical location
 export type { ViewerImage } from '@/utils/viewerImages';
@@ -18,12 +19,16 @@ export interface HistoryEntryData {
   timestamp: number;
   durationSeconds?: number;
   success?: boolean;
+  interrupted?: boolean;
   errorMessage?: string | null;
   outputs: {
     images: HistoryOutputImage[];
   };
   prompt: Record<string, unknown>;
   workflow?: Workflow;
+  hidden?: boolean;
+  queueRequest?: PromptQueueRequest;
+  outputsToExecute?: string[];
 }
 
 export type UnifiedItemData = QueueItemData | HistoryEntryData;

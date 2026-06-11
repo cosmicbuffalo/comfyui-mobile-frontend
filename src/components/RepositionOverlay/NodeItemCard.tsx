@@ -31,7 +31,7 @@ export function NodeItemCard({
   bgClassName,
   tintColor,
 }: NodeItemCardProps) {
-  const bg = bgClassName ?? (isBypassed ? "bg-purple-200" : "bg-white");
+  const bg = bgClassName ?? (isBypassed ? "bg-purple-950/35" : "bg-slate-900/95");
   const combinedStyle: CSSProperties = {
     ...(borderStyle ?? {}),
     ...(tintColor ? { backgroundColor: tintColor } : {}),
@@ -46,12 +46,12 @@ export function NodeItemCard({
   };
   return (
     <div
-      className="rounded-xl mb-3 bg-white dark:bg-neutral-900"
+      className="rounded-xl mb-3 bg-slate-950/40"
       data-reposition-item={dataKey}
     >
       <div
         key={dataKey}
-        className={`flex min-h-10 items-center gap-1 rounded-xl border-2 px-3 py-1 shadow-md select-none ${borderClass} ${bg} ${isHighlighted && !isTarget ? "ring-2 ring-blue-500 transition-all" : ""}`}
+        className={`flex min-h-10 items-center gap-1 rounded-xl border px-3 py-1 shadow-md select-none ${borderClass} ${bg} ${isHighlighted && !isTarget ? "ring-2 ring-cyan-400 transition-all" : ""}`}
         style={Object.keys(combinedStyle).length > 0 ? combinedStyle : undefined}
       >
         <span
@@ -59,16 +59,16 @@ export function NodeItemCard({
           className="touch-none flex h-8 w-8 items-center justify-center -ml-2 shrink-0"
         >
           <MenuIcon
-            className={`w-5 h-5 ${isTarget ? "text-blue-500" : "text-gray-300"}`}
+            className={`w-5 h-5 ${isTarget ? "text-cyan-300" : "text-slate-500"}`}
           />
         </span>
-        <span className="font-semibold min-w-0 flex-1 truncate text-gray-900">
+        <span className="font-semibold min-w-0 flex-1 truncate text-slate-100">
           {displayName}
         </span>
         {rightIcon && (
           <span className="shrink-0 ml-1">{rightIcon}</span>
         )}
-        <span className="text-xs text-gray-400 shrink-0">#{nodeId}</span>
+        <span className="text-xs text-slate-500 shrink-0">#{nodeId}</span>
       </div>
     </div>
   );

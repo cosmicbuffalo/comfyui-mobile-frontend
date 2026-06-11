@@ -4,6 +4,8 @@ import * as api from "@/api/client";
 import { useWorkflowStore } from "@/hooks/useWorkflow";
 import { getWidgetIndexForInput } from "@/utils/seedUtils";
 import { getNodeWidgetIndexMap, resolveComboOption, resolveSource } from "@/utils/workflowInputs";
+import { collectScopedWorkflowNodes } from "@/utils/workflowNodes";
+import type { ScopedNode } from "@/utils/workflowNodes";
 import {
   getLinkId,
   getLinkTargetId,
@@ -31,28 +33,6 @@ import {
   findTriggerWordMessageIndex,
   isTriggerWordToggleNodeType,
 } from "@/utils/triggerWordToggle";
-
-interface ScopedNode {
-  node: WorkflowNode;
-  subgraphId: string | null;
-}
-
-/**
- * Collect all nodes from the workflow: root nodes + nodes inside subgraph definitions.
- * Each entry is tagged with its subgraphId (null for root).
- */
-function getAllScopedNodes(workflow: Workflow): ScopedNode[] {
-  const result: ScopedNode[] = workflow.nodes.map((node) => ({
-    node,
-    subgraphId: null,
-  }));
-  for (const sg of workflow.definitions?.subgraphs ?? []) {
-    for (const node of sg.nodes ?? []) {
-      result.push({ node, subgraphId: sg.id });
-    }
-  }
-  return result;
-}
 
 /**
  * Get the links for the scope a node lives in.
@@ -143,7 +123,7 @@ function isLoraManagerRelevantNodeType(nodeType: string): boolean {
 
 function hasLoraManagerSupport(workflow: Workflow | null, nodeTypes: NodeTypes | null): boolean {
   if (workflow) {
-    const allNodes = getAllScopedNodes(workflow);
+    const allNodes = collectScopedWorkflowNodes(workflow);
     if (allNodes.some(({ node }) => isLoraManagerRelevantNodeType(node.type))) {
       return true;
     }
@@ -188,7 +168,7 @@ export const useLoraManagerStore = create<LoraManagerState>((set, get) => {
     if (numericId === null) return [];
     const isBroadcast = numericId === -1;
 
-    const allNodes = getAllScopedNodes(workflow);
+    const allNodes = collectScopedWorkflowNodes(workflow);
 
     if (isBroadcast && options?.allowBroadcastToLoraNodes) {
       return allNodes.filter(({ node }) => isLoraManagerNodeType(node.type));
@@ -206,7 +186,7 @@ export const useLoraManagerStore = create<LoraManagerState>((set, get) => {
     const { workflow, nodeTypes } = useWorkflowStore.getState();
     if (!workflow) return;
 
-    const allScoped = getAllScopedNodes(workflow);
+    const allScoped = collectScopedWorkflowNodes(workflow);
     const sourceScoped = allScoped.find((s) =>
       matchesScopedNodeReference(s, nodeId, graphId),
     );
@@ -701,7 +681,7 @@ export const useLoraManagerStore = create<LoraManagerState>((set, get) => {
       ]),
     );
 
-    const allScoped = getAllScopedNodes(workflow);
+    const allScoped = collectScopedWorkflowNodes(workflow);
     allScoped.forEach(({ node, subgraphId }) => {
       const nodeId = node.id;
       const graphId = subgraphId ?? "root";

@@ -9,7 +9,6 @@ import { MenuAboutSection } from './MenuAboutSection';
 interface MenuSectionsOpen {
   load: boolean;
   save: boolean;
-  appearance: boolean;
   server: boolean;
   info: boolean;
 }
@@ -23,12 +22,10 @@ interface MainMenuPanelProps {
   restartingServer: boolean;
   systemStats: SystemStats | null;
   cpuPercent: number | null;
-  theme: 'dark' | 'light';
   menuSectionsOpen: MenuSectionsOpen;
   fileInputRef: React.RefObject<HTMLInputElement | null>;
   loadSectionRef: React.RefObject<HTMLElement | null>;
   saveSectionRef: React.RefObject<HTMLElement | null>;
-  appearanceSectionRef: React.RefObject<HTMLElement | null>;
   serverSectionRef: React.RefObject<HTMLElement | null>;
   infoSectionRef: React.RefObject<HTMLElement | null>;
   onDismissError: () => void;
@@ -41,10 +38,10 @@ interface MainMenuPanelProps {
   onOpenPasteJson: () => void;
   onSave: () => void;
   onOpenSaveAs: () => void;
-  onToggleTheme: () => void;
   onOpenLegend: () => void;
   onRestartServer: () => void;
   onOpenGenerationSettings: () => void;
+  onOpenCustomNodes: () => void;
 }
 
 export function MainMenuPanel({
@@ -75,6 +72,7 @@ export function MainMenuPanel({
   onOpenLegend,
   onRestartServer,
   onOpenGenerationSettings,
+  onOpenCustomNodes,
 }: MainMenuPanelProps) {
   return (
     <>
@@ -89,6 +87,7 @@ export function MainMenuPanel({
         onToggle={() => onToggleSection('server')}
         onRestartServer={onRestartServer}
         onOpenGenerationSettings={onOpenGenerationSettings}
+        onOpenCustomNodes={onOpenCustomNodes}
       />
 
       <MenuLoadSection
@@ -115,11 +114,6 @@ export function MainMenuPanel({
         onSave={onSave}
         onOpenSaveAs={onOpenSaveAs}
       />
-
-      {/*
-        TODO (temporary): appearance theme toggle is intentionally disabled while we stabilize dark-mode visual styling.
-        Re-enable this section once light mode gets a dedicated visual pass.
-      */}
 
       <MenuAboutSection
         open={menuSectionsOpen.info}

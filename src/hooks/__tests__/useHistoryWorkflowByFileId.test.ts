@@ -19,6 +19,7 @@ function makeEntry(params: {
   promptId: string;
   workflow?: Workflow;
   images: Array<{ filename: string; subfolder: string; type: string }>;
+  hidden?: boolean;
 }): HistoryEntry {
   return {
     prompt_id: params.promptId,
@@ -26,6 +27,7 @@ function makeEntry(params: {
     outputs: { images: params.images },
     prompt: {},
     workflow: params.workflow,
+    hidden: params.hidden,
   };
 }
 
@@ -52,7 +54,20 @@ describe('buildHistoryWorkflowByFileIdMap', () => {
     expect(entry?.workflow).toBe(newestWorkflow);
   });
 
-  it('skips history entries with no workflow', () => {
+  it('carries hidden workflow provenance with output file mappings', () => {
+    const map = buildHistoryWorkflowByFileIdMap([
+      makeEntry({
+        promptId: 'hidden-prompt',
+        workflow: makeWorkflow('hidden'),
+        hidden: true,
+        images: [{ filename: 'private.png', subfolder: '', type: 'output' }],
+      }),
+    ]);
+
+    expect(map.get('output/private.png')?.hidden).toBe(true);
+  });
+
+  it('maps entries with no workflow by promptId (workflow undefined)', () => {
     const history: HistoryEntry[] = [
       makeEntry({
         promptId: 'prompt-no-workflow',
@@ -61,7 +76,9 @@ describe('buildHistoryWorkflowByFileIdMap', () => {
     ];
 
     const map = buildHistoryWorkflowByFileIdMap(history);
-    expect(map.size).toBe(0);
+    const entry = map.get('output/img.png');
+    expect(entry?.promptId).toBe('prompt-no-workflow');
+    expect(entry?.workflow).toBeUndefined();
   });
 
   it('builds keys with source prefix and normalized subfolder path', () => {

@@ -2,7 +2,8 @@ import { describe, expect, it } from 'vitest';
 import type { Workflow, WorkflowNode } from '@/api/types';
 import type { MobileLayout } from '../mobileLayout';
 import { makeLocationPointer } from '../mobileLayout';
-import { buildNestedList, buildNestedListFromLayout, computeNodeGroups } from '../grouping';
+import { buildNestedListFromLayout } from '../grouping';
+import { computeNodeGroupsFor } from '../nodeGroups';
 
 function makeNode(id: number, x: number): WorkflowNode {
   return {
@@ -35,55 +36,17 @@ function makeWorkflow(nodes: WorkflowNode[]): Workflow {
   };
 }
 
-describe('grouping overrides', () => {
+describe('grouping', () => {
   it('assigns nodes to the innermost nested group', () => {
     const node = makeNode(1, 60);
-    const wf: Workflow = {
-      last_node_id: 1,
-      last_link_id: 0,
-      nodes: [node],
-      links: [],
-      groups: [
-        { id: 1, title: 'Outer', color: '#fff', bounding: [0, 0, 300, 300] },
-        { id: 2, title: 'Inner', color: '#fff', bounding: [40, -20, 120, 120] }
-      ],
-      config: {},
-      version: 1
-    };
-
-    const groups = computeNodeGroups(wf);
-    expect(groups.get(1)).toBe(2);
-  });
-
-  it('applies overrides in computeNodeGroups', () => {
-    const wf = makeWorkflow([makeNode(1, 20)]);
-    const base = computeNodeGroups(wf);
-    expect(base.get(1)).toBe(1);
-
-    const overridden = computeNodeGroups(wf, { 1: 2 });
-    expect(overridden.get(1)).toBe(2);
-  });
-
-  it('uses overrides when building nested groups', () => {
-    const node = makeNode(1, 20);
-    const wf = makeWorkflow([node]);
-    const nested = buildNestedList(
+    const groups = computeNodeGroupsFor(
       [node],
-      wf,
-      {
-        [makeLocationPointer({ type: 'group', groupId: 1, subgraphId: null })]: false,
-        [makeLocationPointer({ type: 'group', groupId: 2, subgraphId: null })]: false
-      },
-      {},
-      { 1: 2 }
+      [
+        { id: 1, bounding: [0, 0, 300, 300] },
+        { id: 2, bounding: [40, -20, 120, 120] }
+      ],
     );
-
-    const groupItems = nested.filter((item) => item.type === 'group');
-    expect(groupItems[0]?.type).toBe('group');
-    if (groupItems[0]?.type === 'group') {
-      expect(groupItems[0].group.id).toBe(2);
-      expect(groupItems[0].children[0]?.type).toBe('node');
-    }
+    expect(groups.get(1)).toBe(2);
   });
 
   it('buildNestedListFromLayout honors explicit container placement over geometry', () => {
@@ -117,5 +80,44 @@ describe('grouping overrides', () => {
         expect(groupItems[0].children[0].node.id).toBe(1);
       }
     }
+  });
+
+  it('renders each placeholder instance of a shared subgraph definition', () => {
+    const sgId = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
+    const wf: Workflow = {
+      last_node_id: 6,
+      last_link_id: 0,
+      nodes: [
+        { ...makeNode(5, 0), type: sgId },
+        { ...makeNode(6, 0), type: sgId }
+      ],
+      links: [],
+      groups: [],
+      config: {},
+      version: 1,
+      definitions: {
+        subgraphs: [
+          { id: sgId, name: 'Shared', nodes: [makeNode(10, 0)], links: [], groups: [] }
+        ]
+      }
+    };
+    const layout: MobileLayout = {
+      root: [
+        { type: 'subgraph', id: sgId, nodeId: 5 },
+        { type: 'subgraph', id: sgId, nodeId: 6 }
+      ],
+      groups: {},
+      subgraphs: { [sgId]: [{ type: 'node', id: 10 }] },
+      hiddenBlocks: {}
+    };
+
+    const nested = buildNestedListFromLayout(layout, wf, {}, {});
+    const subgraphItems = nested.filter((item) => item.type === 'subgraph');
+    expect(subgraphItems).toHaveLength(2);
+    expect(
+      subgraphItems.map((item) =>
+        item.type === 'subgraph' ? item.placeholderNodeId : null,
+      ),
+    ).toEqual([5, 6]);
   });
 });

@@ -1,33 +1,28 @@
 import type { ReactNode } from 'react';
 import { CloseButton } from '@/components/buttons/CloseButton';
-import { themeColors } from '@/theme/colors';
 
 interface FullscreenModalHeaderProps {
   title: string;
   onClose: () => void;
   headerActions?: ReactNode;
-  isDark: boolean;
+  closeDisabled?: boolean;
 }
 
 export function FullscreenModalHeader({
   title,
   onClose,
   headerActions,
-  isDark
+  closeDisabled = false
 }: FullscreenModalHeaderProps) {
   return (
     <div
-      className="bg-white p-4 border-b border-gray-200 dark:border-gray-800 shadow-sm relative z-50 min-h-0 overflow-y-auto shrink-0"
-      style={{
-        maxHeight: 'var(--top-bar-offset)',
-        ...(isDark ? { backgroundColor: themeColors.surface.darkPanel } : {})
-      }}
+      className="px-4 py-1.5 min-h-[52px] border-b shadow-sm relative z-50 shrink-0 bg-slate-900/95 border-white/10 flex items-center"
     >
-      <div className="flex justify-between items-start mb-2">
-        <span className="font-semibold text-gray-700 dark:text-gray-200 truncate pr-4 pt-1 flex-1">{title}</span>
+      <div className="flex w-full justify-between items-center">
+        <span className="font-semibold truncate pr-4 flex-1 text-slate-200">{title}</span>
         <div className="flex items-center gap-2">
           {headerActions}
-          <CloseButton onClick={onClose} />
+          <CloseButton onClick={onClose} disabled={closeDisabled} />
         </div>
       </div>
     </div>

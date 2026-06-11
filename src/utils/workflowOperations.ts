@@ -25,7 +25,7 @@ export function resolveFilePath(file: FileItem, source?: AssetSource): string {
 
 export function resolveViewerItemWorkflowLoad(
   item: ViewerImage,
-  historyWorkflowByFileId?: ReadonlyMap<string, { workflow: Workflow; promptId: string }>,
+  historyWorkflowByFileId?: ReadonlyMap<string, { workflow?: Workflow; promptId: string; hidden?: boolean }>,
 ): { workflow: Workflow; filename: string; source: WorkflowSource } | null {
   const historyMatch =
     item.file && historyWorkflowByFileId
@@ -37,12 +37,22 @@ export function resolveViewerItemWorkflowLoad(
   let source: WorkflowSource;
   let filename: string;
   if (promptId) {
-    source = { type: 'history', promptId };
+    const hidden = Boolean(item.file?.hidden || historyMatch?.hidden);
+    source = {
+      type: 'history',
+      promptId,
+      ...(hidden ? { hidden: true } : {}),
+    };
     filename = `history-${promptId}.json`;
   } else if (item.file) {
     const assetSource = resolveFileSource(item.file);
     const filePath = resolveFilePath(item.file, assetSource);
-    source = { type: 'file', filePath, assetSource };
+    source = {
+      type: 'file',
+      filePath,
+      assetSource,
+      ...(item.file.hidden ? { hidden: true } : {}),
+    };
     filename = filePath;
   } else {
     source = { type: 'other' };
@@ -63,7 +73,14 @@ export async function loadWorkflowFromFile(params: {
     const effectiveSource = source ?? resolveFileSource(file);
     const filePath = resolveFilePath(file, effectiveSource);
     const workflowData = await getFileWorkflow(filePath, effectiveSource);
-    loadWorkflow(workflowData, filePath, { source: { type: 'file', filePath, assetSource: effectiveSource } });
+    loadWorkflow(workflowData, filePath, {
+      source: {
+        type: 'file',
+        filePath,
+        assetSource: effectiveSource,
+        ...(file.hidden ? { hidden: true } : {}),
+      },
+    });
     onLoaded?.();
   } catch (err) {
     onError?.(err);

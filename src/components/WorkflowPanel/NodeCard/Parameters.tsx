@@ -1,6 +1,12 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
+import { Collapsible } from '@/components/Collapsible';
+import { FoldIcon } from '@/components/FoldIcon';
 import { WidgetControl } from '../../InputControls/WidgetControl';
 import { NumberControl } from '../../InputControls/NumberControl';
+import {
+  controlNestedSurfaceClassName,
+  controlSecondaryButtonClassName,
+} from '../../InputControls/controlStyles';
 import type { WorkflowNode } from '@/api/types';
 import {
   generateSeedFromNode,
@@ -95,6 +101,11 @@ export function NodeCardParameters({
   const isFastGroupsBypasser = /fast\s+groups/i.test(node.type) && /\(rgthree\)/i.test(node.type);
   const isRgthreeSeedNode = node.type === RGTHREE_SEED_NODE_TYPE;
   const isCrLoraStackNode = /cr\s*lora\s*stack/i.test(node.type);
+  // Per-lora fold state for CR-LoRA-Stack-style nodes, keyed by lora group index.
+  // Default (absent / false) is unfolded so all controls show until collapsed.
+  const [foldedLoras, setFoldedLoras] = useState<Record<number, boolean>>({});
+  const toggleLoraFold = (index: number) =>
+    setFoldedLoras((prev) => ({ ...prev, [index]: !prev[index] }));
   const isLoraManagerNode = isLoraManagerNodeType(node.type);
   const isTriggerWordToggleNode = isTriggerWordToggleNodeType(node.type);
   const seedWidgetIndex = !isKSampler && workflowExists && nodeTypesExists
@@ -577,7 +588,7 @@ export function NodeCardParameters({
       )}
       {showParameters && (
         <>
-          <div className="text-xs text-gray-500 mb-1.5 uppercase tracking-wide">
+          <div className="text-xs text-slate-400 mb-1.5 uppercase tracking-wide">
             Parameters
           </div>
           {isKSampler && workflowExists && nodeTypesExists && (() => {
@@ -684,7 +695,7 @@ export function NodeCardParameters({
                 <div className="grid gap-2 mt-2">
                   <button
                     type="button"
-                    className="w-full py-2 px-3 bg-gray-100 border border-gray-200 rounded-lg text-sm font-medium text-gray-700 enabled:hover:bg-gray-200 enabled:hover:text-blue-600 enabled:hover:border-blue-500 transition disabled:opacity-50 disabled:cursor-not-allowed"
+                    className={controlSecondaryButtonClassName}
                     onClick={() => setSeedMode(node.id, 'randomize')}
                     disabled={isBypassed}
                   >
@@ -692,7 +703,7 @@ export function NodeCardParameters({
                   </button>
                   <button
                     type="button"
-                    className="w-full py-2 px-3 bg-gray-100 border border-gray-200 rounded-lg text-sm font-medium text-gray-700 enabled:hover:bg-gray-200 enabled:hover:text-blue-600 enabled:hover:border-blue-500 transition disabled:opacity-50 disabled:cursor-not-allowed"
+                    className={controlSecondaryButtonClassName}
                     onClick={handleSeedNewFixedRandomClick(seedIndex)}
                     disabled={isBypassed}
                   >
@@ -700,7 +711,7 @@ export function NodeCardParameters({
                   </button>
                   <button
                     type="button"
-                    className="w-full py-2 px-3 bg-gray-100 border border-gray-200 rounded-lg text-sm font-medium text-gray-700 enabled:hover:bg-gray-200 enabled:hover:text-blue-600 enabled:hover:border-blue-500 transition disabled:opacity-50 disabled:cursor-not-allowed"
+                    className={controlSecondaryButtonClassName}
                     onClick={handleSeedUseLastClick(seedIndex)}
                     disabled={isBypassed || typeof lastSeedValue !== 'number'}
                   >
@@ -718,68 +729,90 @@ export function NodeCardParameters({
                 {crStackGroupedWidgets.groups.map(({ index, widgets }) => (
                   <div
                     key={`cr-lora-stack-group-${index}`}
-                    className={`p-3 border border-gray-200 dark:border-gray-800 rounded-lg bg-gray-50/50 dark:bg-gray-900/50 ${isBypassed ? 'opacity-80' : ''}`}
+                    className={`p-3 ${controlNestedSurfaceClassName} ${isBypassed ? 'opacity-80' : ''}`}
                   >
-                    <div className="text-xs text-blue-900 dark:text-blue-100 font-semibold uppercase tracking-wider mb-2">
-                      LoRA {index}
-                    </div>
-                    <div className="space-y-2">
-                      {(() => {
-                        const switchWidget = widgets.find((widget) => {
-                          const groupMeta = getCrLoraStackGroupMeta(widget.name);
-                          return groupMeta?.base === 'switch';
-                        });
-                        const groupEnabled = switchWidget ? getCrSwitchValue(switchWidget.value) : true;
-                        const widgetsToShow = groupEnabled || !switchWidget
-                          ? widgets
-                          : [switchWidget];
-
-                        return widgetsToShow.map((widget) => {
-                          const groupMeta = getCrLoraStackGroupMeta(widget.name);
-                          const isSwitch = groupMeta?.base === 'switch';
-                          if (isSwitch) {
-                            const enabled = getCrSwitchValue(widget.value);
+                    {(() => {
+                      const switchWidget = widgets.find((widget) => {
+                        const groupMeta = getCrLoraStackGroupMeta(widget.name);
+                        return groupMeta?.base === 'switch';
+                      });
+                      const bodyWidgets = widgets.filter((widget) => widget !== switchWidget);
+                      // Default the fold from the switch state so a group that loads
+                      // disabled starts collapsed (matching the toggle-driven behavior),
+                      // until the user explicitly folds/unfolds it.
+                      const switchEnabled = switchWidget ? getCrSwitchValue(switchWidget.value) : true;
+                      const folded = foldedLoras[index] ?? !switchEnabled;
+                      return (
+                        <>
+                          <button
+                            type="button"
+                            aria-expanded={!folded}
+                            onClick={() => toggleLoraFold(index)}
+                            className="flex w-full items-center gap-1 mb-2 text-left text-cyan-300"
+                          >
+                            <FoldIcon open={!folded} className="w-5 h-5 shrink-0" />
+                            <span className="text-xs font-semibold uppercase tracking-wider">
+                              LoRA {index}
+                            </span>
+                          </button>
+                          {switchWidget && (() => {
+                            const enabled = switchEnabled;
                             return (
                               <button
                                 type="button"
                                 aria-pressed={enabled}
-                                onClick={() => handleCrWidgetChange(widget)(buildCrSwitchValue(widget.value, !enabled))}
-                                key={getWidgetKey(widget, 'cr-lora-widget')}
-                                className={`w-full py-2 rounded-lg text-sm font-semibold transition-colors ${enabled ? 'bg-blue-600 text-white' : 'bg-gray-500 text-white'} ${isBypassed ? 'opacity-60 cursor-not-allowed' : ''}`}
+                                onClick={() => {
+                                  const nextEnabled = !enabled;
+                                  handleCrWidgetChange(switchWidget)(buildCrSwitchValue(switchWidget.value, nextEnabled));
+                                  // Keep the fold in sync: collapse when disabling, expand when enabling.
+                                  setFoldedLoras((prev) => ({ ...prev, [index]: !nextEnabled }));
+                                }}
+                                className={`w-full py-2 rounded-lg text-sm font-semibold transition-colors ${enabled ? 'bg-cyan-500 text-slate-950' : 'bg-slate-700 text-slate-200'} ${isBypassed ? 'opacity-60 cursor-not-allowed' : ''}`}
                                 disabled={isBypassed}
                               >
                                 {enabled ? 'Enabled' : 'Disabled'}
                               </button>
                             );
-                          }
-                          const pinAllowed = canPinWidget(widget.type, widget.name);
-                          const widgetOptions = applyCrLoraComboDisplayOptions(widget);
-                          const displayName = (() => {
-                            const base = groupMeta?.base ?? '';
-                            if (base.includes('lora_name')) return 'Selected LoRA';
-                            if (base.includes('model_weight')) return 'Model Strength';
-                            if (base.includes('clip_weight')) return 'Clip Strength';
-                            return widget.name;
-                          })();
-                          return (
-                            <div key={getWidgetKey(widget, 'cr-lora-widget')}>
-                              <WidgetControl
-                                name={displayName}
-                                type={widget.type}
-                                value={widget.value}
-                                options={widgetOptions}
-                                onChange={handleCrWidgetChange(widget)}
-                                disabled={isBypassed}
-                                isPinned={pinAllowed ? isWidgetPinned(widget.widgetIndex) : false}
-                                onTogglePin={pinAllowed ? () => toggleWidgetPin(widget.widgetIndex, widget.name, widget.type, widgetOptions) : undefined}
-                                hasError={errorInputNames.has(widget.name)}
-                                isPromoted={isPromotedWidget(widget.name)}
-                              />
-                            </div>
-                          );
-                        });
-                      })()}
-                    </div>
+                          })()}
+                          <Collapsible open={!folded} className="space-y-2 pt-2">
+                            {bodyWidgets.map((widget) => {
+                              const groupMeta = getCrLoraStackGroupMeta(widget.name);
+                              const pinAllowed = canPinWidget(widget.type, widget.name);
+                              const widgetOptions = applyCrLoraComboDisplayOptions(widget);
+                              const displayName = (() => {
+                                const base = groupMeta?.base ?? '';
+                                if (base.includes('lora_name')) return 'Selected LoRA';
+                                if (base.includes('model_weight')) return 'Model Strength';
+                                if (base.includes('clip_weight')) return 'Clip Strength';
+                                return widget.name;
+                              })();
+                              // Widget is renamed for display ("Selected LoRA"), so
+                              // tell WidgetControl it's a lora picker explicitly.
+                              const crModelKind = (groupMeta?.base ?? '').includes('lora_name')
+                                ? 'loras'
+                                : undefined;
+                              return (
+                                <div key={getWidgetKey(widget, 'cr-lora-widget')}>
+                                  <WidgetControl
+                                    name={displayName}
+                                    type={widget.type}
+                                    value={widget.value}
+                                    options={widgetOptions}
+                                    modelKind={crModelKind}
+                                    onChange={handleCrWidgetChange(widget)}
+                                    disabled={isBypassed}
+                                    isPinned={pinAllowed ? isWidgetPinned(widget.widgetIndex) : false}
+                                    onTogglePin={pinAllowed ? () => toggleWidgetPin(widget.widgetIndex, widget.name, widget.type, widgetOptions) : undefined}
+                                    hasError={errorInputNames.has(widget.name)}
+                                    isPromoted={isPromotedWidget(widget.name)}
+                                  />
+                                </div>
+                              );
+                            })}
+                          </Collapsible>
+                        </>
+                      );
+                    })()}
                   </div>
                 ))}
               </div>

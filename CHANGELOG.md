@@ -1,5 +1,61 @@
 # Changelog
 
+## 3.0.0 - 2026-06-11
+
+### Added
+
+- **Multiple workflows open at once:** keep up to 10 workflows loaded and switch between them from a tab strip under the top bar. Exactly one workflow is active while the others are held in the background. Tabs show a per-workflow queue count (with progress ring) or an animated infinite-generation indicator, a `*` when there are unsaved changes, and a one-click close button when saved. Open workflows, the active tab, and which workflow is looping all survive a refresh
+- **Per-workflow infinite generation:** at most one workflow loops at a time; switching tabs leaves the loop running on its workflow, and enabling it elsewhere moves it. A safety check stops the loop with an explanation if it would re-submit an identical prompt forever (e.g. a fixed seed)
+- **Use an output in a specific open workflow:** the "use in workflow" picker now lets you choose which open workflow to load the image into when more than one is open
+- **Rich model picker** with Lora Manager metadata, plus a standalone fallback when Lora Manager isn't installed
+- **Image Comparer node support** with handle to drag for side by side comparison (rgthree)
+- **Custom nodes manager modal** for browsing/managing custom nodes from the app
+- **Workflow folders:** organize saved workflows into folders — create, rename, and delete folders from the Workflows panel, navigate in and out, and have folders sort by their most recently modified workflow
+- **Bookmarks for workflows and templates:** a bookmark toggle on each item plus a "show bookmarks only" filter in both the Workflows and Templates panels. Bookmarks are stored per-device, follow workflows and folders through rename/move, and are cleared automatically when an item is deleted
+- **Hidden workflows & folders:** mark saved workflows or folders as hidden (Workflows panel → Hide/Unhide), with a "show hidden" toggle. A declutter convenience only (not access control); the hidden list is saved to your ComfyUI user data and persists across sessions, and any output created from a hidden workflow is also hidden automatically in the outputs panel
+- **Backend connection overlay:** a clear "connection lost / reconnecting" overlay when the ComfyUI backend goes away, and a notice on reconnect if a running/queued job was interrupted (with optional auto-restore)
+- **Duplicate nodes and subgraphs:** a "Duplicate" action in the node menu copies a node — or an entire subgraph, internals and all — keeping its input connections and leaving outputs unconnected
+- **Aliased paths:** an opt-in preference replaces local input paths and output filename prefixes with opaque aliases in the workflow embedded in shared images/JSON, so sharing a workflow doesn't leak your folder structure; the real values are restored automatically when loaded into the workflow panel
+- **Animated tab favicon:** the browser-tab icon pulses green while a generation is running and is solid cyan when idle, so you can watch progress from another tab
+- **Live outputs refresh:** while you're on the Outputs panel, images from a finished run appear in the folder you're viewing automatically
+- **Paged queue history:** the Queue page loads runs as you scroll instead of stopping at a fixed count, and the header shows the true total run count in your server's history
+- **Resolution everywhere:** the image viewer shows the source resolution under the filename, and queue/output thumbnails carry resolution and file-size badges (previews included)
+- **Restart ComfyUI from the app:** a "Restart ComfyUI" button under Menu → Server restarts the backend (with a confirmation), then waits for it to come back and reloads automatically
+- **Outputs panel improvements:** multiple tabs, download-to-device, hidden folders/outputs, prompt search, range selection
+- **Beginnings of desktop support:** somewhat more responsive interface, keyboard controls!
+  - arrows to move through the media viewer
+  - delete - open the delete dialog + enter to submit
+  - `f` to toggle favorite
+  - `d` to download
+  - `w` to load the image's embedded workflow
+  - `u` to use the image in a workflow (images only)
+  - `i` to toggle the metadata overlay
+  - `q` to toggle follow-queue mode (or open the viewer in follow-queue mode from the workflow/queue panels)
+  - `p` to toggle the pinned widget editor
+  - escape to close the viewer (or the topmost open modal)
+
+### Changed
+
+- **Dark theme:** the entire UI was restyled to a slate/cyan dark palette, routed through shared style modules. This is now the only theme — light mode is dead
+- **Faster image reuse:** reusing an output in a workflow now does a single server-side copy into the input folder instead of downloading and re-uploading the file, and no longer blocks on a node-types refresh
+- Inline output and combo thumbnails load small webp previews instead of full-resolution images
+- **Smoother queue & outputs panels:** the queue list and the outputs grid render incrementally and only re-render what changed, staying responsive with large histories and folders; queue scroll position stays put while images load and new runs arrive
+- **More responsive server:** image-metadata, thumbnail/video-frame, and model-list work now runs off the web-server event loop, and model listings are cached, so browsing stays snappy under load
+- **Pinned-widget editor leaves the bottom bar reachable** — you can queue/iterate while it's open (other full-screen modals still cover the bar)
+- **Redesigned queue cards:** each run shows one media slot with a tab bar to switch between its previews and outputs (videos are pinned by default). The slot only swaps once the next image has decoded, so cards no longer flash or jump as results stream in
+- **Move destinations** show the real source name (Inputs / Outputs / Temp) instead of "Root"
+
+### Fixed
+
+- Seed-related widgets had a few bugs that have since been fixed
+- Batch downloads keep each file's real filename instead of naming them all `image.png`
+- **Fixed input connection editor:** choosing an input connection now uses the same tap-to-select / Apply flow as outputs instead of immediately closing and scrolling the view
+- **Stale image after delete:** regenerating an output that reuses the filename of one you just deleted now shows the new image instead of the cached deleted one
+
+### Security
+
+- Hardened directory checks on the file-serving endpoints so a crafted path can't escape the output/input folders, and restricted the model-preview endpoint to image/video files only
+
 ## 2.6.3 - 2026-05-24
 
 ### Fixed

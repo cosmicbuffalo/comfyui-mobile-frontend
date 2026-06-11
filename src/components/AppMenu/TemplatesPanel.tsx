@@ -1,10 +1,18 @@
-import { useState } from 'react';
-import { TemplateIcon } from '@/components/icons';
+import { useMemo, useState } from 'react';
+import { TemplateIcon, BookmarkIconSvg, BookmarkOutlineIcon } from '@/components/icons';
 import { SearchBar } from '@/components/SearchBar';
 import { LoadingSpinner } from '../LoadingSpinner';
 import { MenuSubPageHeader } from './MenuSubPageHeader';
 import { MenuErrorNotice } from './MenuErrorNotice';
 import type { WorkflowTemplates } from '@/api/client';
+import { useTemplateFavoritesStore, templateFavoriteKey } from '@/hooks/useTemplateFavorites';
+import {
+  menuInputClassName,
+  menuMutedTextClassName,
+  menuSmallIconClassName,
+  menuSurfaceClassName,
+  menuTextClassName,
+} from './menuStyles';
 
 interface TemplatesPanelProps {
   error: string | null;
@@ -24,13 +32,21 @@ export function TemplatesPanel({
   onLoadTemplate,
 }: TemplatesPanelProps) {
   const [search, setSearch] = useState('');
+  const [favoritesOnly, setFavoritesOnly] = useState(false);
+  const favorites = useTemplateFavoritesStore((s) => s.favorites);
+  const toggleFavorite = useTemplateFavoritesStore((s) => s.toggleFavorite);
+  const favoriteSet = useMemo(() => new Set(favorites), [favorites]);
   const templateEntries = Object.entries(templates);
 
   const query = search.toLowerCase();
   const filteredEntries = templateEntries
     .map(([moduleName, templateList]) => [
       moduleName,
-      templateList.filter((name) => name.toLowerCase().includes(query)),
+      templateList.filter(
+        (name) =>
+          name.toLowerCase().includes(query) &&
+          (!favoritesOnly || favoriteSet.has(templateFavoriteKey(moduleName, name))),
+      ),
     ] as [string, string[]])
     .filter(([, list]) => list.length > 0);
 
@@ -42,13 +58,32 @@ export function TemplatesPanel({
       <MenuErrorNotice error={error} onDismiss={onDismissError} />
 
       {!loading && hasTemplates && (
-        <div className="py-2">
-          <SearchBar
-            value={search}
-            onChange={setSearch}
-            placeholder="Search"
-            inputClassName="bg-white"
-          />
+        <div className="flex items-stretch gap-2 py-2">
+          <div className="flex-1">
+            <SearchBar
+              value={search}
+              onChange={setSearch}
+              placeholder="Search"
+              inputClassName={menuInputClassName}
+            />
+          </div>
+          <button
+            type="button"
+            onClick={() => setFavoritesOnly((v) => !v)}
+            aria-pressed={favoritesOnly}
+            aria-label={favoritesOnly ? 'Show all' : 'Show bookmarks only'}
+            className={`w-9 self-stretch flex items-center justify-center rounded-lg transition-colors ${
+              favoritesOnly
+                ? 'bg-amber-500/20 text-amber-500'
+                : 'bg-white/5 hover:bg-white/10 text-slate-300'
+            }`}
+          >
+            {favoritesOnly ? (
+              <BookmarkIconSvg className="w-5 h-5" />
+            ) : (
+              <BookmarkOutlineIcon className="w-5 h-5" />
+            )}
+          </button>
         </div>
       )}
 
@@ -57,30 +92,54 @@ export function TemplatesPanel({
           <LoadingSpinner />
         </div>
       ) : !hasTemplates ? (
-        <p className="text-gray-500 text-center py-8">No templates available</p>
+        <p className={`${menuMutedTextClassName} text-center py-8`}>No templates available</p>
       ) : filteredEntries.length === 0 ? (
-        <p className="text-gray-500 text-center py-8">No matching templates</p>
+        <p className={`${menuMutedTextClassName} text-center py-8`}>
+          {favoritesOnly && !search.trim() ? 'No bookmarked templates' : 'No matching templates'}
+        </p>
       ) : (
         <div className="space-y-4 overflow-y-auto flex-1">
           {filteredEntries.map(([moduleName, templateList]) => (
             <div key={moduleName}>
-              <h4 className="text-sm font-semibold text-gray-600 mb-2">
+              <h4 className="text-sm font-semibold text-slate-400 mb-2">
                 {moduleName}
               </h4>
               <div className="space-y-2">
-                {templateList.map((templateName) => (
-                  <button
-                    key={templateName}
-                    onClick={() => onLoadTemplate(moduleName, templateName)}
-                    className="w-full flex items-center gap-3 px-4 py-3 bg-white border border-gray-200
-                               rounded-xl text-left hover:bg-gray-50 min-h-[56px]"
-                  >
-                    <TemplateIcon className="w-5 h-5 text-gray-600" />
-                    <span className="font-medium text-gray-900 truncate">
-                      {templateName.replace(/\.json$/, '')}
-                    </span>
-                  </button>
-                ))}
+                {templateList.map((templateName) => {
+                  const favKey = templateFavoriteKey(moduleName, templateName);
+                  const isBookmarked = favoriteSet.has(favKey);
+                  return (
+                    <div
+                      key={favKey}
+                      className={`${menuSurfaceClassName} flex items-center overflow-hidden`}
+                    >
+                      <button
+                        onClick={() => onLoadTemplate(moduleName, templateName)}
+                        className="flex items-center gap-3 px-4 py-2 text-left flex-1 min-w-0 min-h-[56px] hover:bg-slate-800/95"
+                      >
+                        <TemplateIcon className={`${menuSmallIconClassName} shrink-0`} />
+                        <span className={`${menuTextClassName} truncate`}>
+                          {templateName.replace(/\.json$/, '')}
+                        </span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => toggleFavorite(favKey)}
+                        aria-pressed={isBookmarked}
+                        aria-label={isBookmarked ? 'Remove bookmark' : 'Bookmark'}
+                        className={`w-9 h-9 mr-2 flex items-center justify-center rounded-lg shrink-0 transition-colors hover:bg-white/10 ${
+                          isBookmarked ? 'text-amber-500' : 'text-slate-400'
+                        }`}
+                      >
+                        {isBookmarked ? (
+                          <BookmarkIconSvg className="w-5 h-5" />
+                        ) : (
+                          <BookmarkOutlineIcon className="w-5 h-5" />
+                        )}
+                      </button>
+                    </div>
+                  );
+                })}
               </div>
             </div>
           ))}

@@ -3,6 +3,7 @@ import { NodeCardConnections } from './Connections';
 
 interface NodeCardConnectionsSectionProps {
   nodeId: number;
+  nodeHierarchicalKey: string;
   nodeType: string;
   inputs: WorkflowInput[];
   outputs: Workflow['nodes'][number]['outputs'];
@@ -12,6 +13,7 @@ interface NodeCardConnectionsSectionProps {
 
 export function NodeCardConnectionsSection({
   nodeId,
+  nodeHierarchicalKey,
   nodeType,
   inputs,
   outputs,
@@ -21,6 +23,7 @@ export function NodeCardConnectionsSection({
   return (
     <NodeCardConnections
       nodeId={nodeId}
+      nodeHierarchicalKey={nodeHierarchicalKey}
       nodeType={nodeType}
       inputs={inputs}
       outputs={outputs}

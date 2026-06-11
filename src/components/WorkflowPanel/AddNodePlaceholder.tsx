@@ -9,7 +9,7 @@ export function AddNodePlaceholder({ onClick }: AddNodePlaceholderProps) {
     <button
       type="button"
       onClick={onClick}
-      className="w-full mb-3 py-4 rounded-xl border-2 border-dashed border-gray-300 flex items-center justify-center gap-2 text-sm font-medium text-gray-400 hover:border-gray-400 hover:text-gray-500 active:bg-gray-50 transition-colors"
+      className="w-full mb-3 py-4 rounded-xl border-2 border-dashed border-white/15 flex items-center justify-center gap-2 text-sm font-medium text-slate-400 hover:border-white/25 hover:text-slate-200 active:bg-white/5 transition-colors"
     >
       <PlusIcon className="w-4 h-4" />
       Add node

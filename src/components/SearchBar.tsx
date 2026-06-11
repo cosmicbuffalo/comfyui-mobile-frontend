@@ -5,6 +5,7 @@ interface SearchBarProps {
   value: string;
   onChange: (value: string) => void;
   onClear?: () => void;
+  onSubmit?: (value: string) => void;
   placeholder?: string;
   autoFocus?: boolean;
   className?: string;
@@ -19,6 +20,7 @@ export function SearchBar({
   value,
   onChange,
   onClear,
+  onSubmit,
   placeholder = 'Search...',
   autoFocus = false,
   className = '',
@@ -32,14 +34,20 @@ export function SearchBar({
 
   return (
     <div className={`relative ${className}`.trim()}>
-      <SearchIcon className="w-4 h-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+      <SearchIcon className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
       <input
         ref={inputRef}
         value={value}
         onChange={(event) => onChange(event.target.value)}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter' && onSubmit) {
+            event.preventDefault();
+            onSubmit(value);
+          }
+        }}
         placeholder={placeholder}
         data-swipe-nav-ignore="true"
-        className={`w-full rounded-lg border border-gray-200 pl-9 pr-9 py-2 text-sm text-gray-900 placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent ${inputClassName}`.trim()}
+        className={`w-full rounded-lg border border-white/10 bg-slate-950/80 pl-9 pr-9 py-2 text-sm text-slate-100 placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-cyan-400 focus:border-transparent ${inputClassName}`.trim()}
         autoFocus={autoFocus}
         disabled={disabled}
         readOnly={readOnly}
@@ -54,7 +62,7 @@ export function SearchBar({
             }
             onChange('');
           }}
-          className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-gray-400 hover:text-gray-600"
+          className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-slate-400 hover:text-slate-100"
           aria-label="Clear search"
         >
           <XMarkIcon className="w-4 h-4" />

@@ -19,7 +19,7 @@ function getLegendItems(): LegendItemProps[] {
   return [
     {
       icon: (
-        <div className="w-8 h-8 flex items-center justify-center bg-blue-500 text-white rounded-lg font-bold text-xs shadow-sm">
+        <div className="w-8 h-8 flex items-center justify-center bg-cyan-500 text-slate-950 rounded-lg font-bold text-xs shadow-sm">
           Run
         </div>
       ),
@@ -28,7 +28,7 @@ function getLegendItems(): LegendItemProps[] {
     },
     {
       icon: (
-        <div className="w-10 h-10 flex items-center justify-center bg-white border border-gray-200 rounded-lg text-gray-700 shadow-sm overflow-hidden">
+        <div className="w-10 h-10 flex items-center justify-center bg-slate-900/95 border border-white/10 rounded-lg text-slate-200 shadow-sm overflow-hidden">
           <QueueStackIcon className="w-5 h-5" />
         </div>
       ),
@@ -37,7 +37,7 @@ function getLegendItems(): LegendItemProps[] {
     },
     {
       icon: (
-        <div className="w-10 h-10 flex items-center justify-center bg-yellow-500 text-white rounded-lg shadow-sm">
+        <div className="w-10 h-10 flex items-center justify-center bg-amber-500 text-white rounded-lg shadow-sm">
           <PinIconSvg className="w-5 h-5" />
         </div>
       ),
@@ -46,7 +46,7 @@ function getLegendItems(): LegendItemProps[] {
     },
     {
       icon: (
-        <div className="w-8 h-8 flex items-center justify-center bg-gray-100 rounded-full border border-gray-200 text-gray-700 font-bold">
+        <div className="w-8 h-8 flex items-center justify-center bg-slate-900/95 rounded-full border border-white/10 text-slate-200 font-bold">
           ←
         </div>
       ),
@@ -55,7 +55,7 @@ function getLegendItems(): LegendItemProps[] {
     },
     {
       icon: (
-        <div className="w-8 h-8 flex items-center justify-center bg-gray-100 rounded-full border border-gray-200 text-gray-700 font-bold">
+        <div className="w-8 h-8 flex items-center justify-center bg-slate-900/95 rounded-full border border-white/10 text-slate-200 font-bold">
           →
         </div>
       ),
@@ -64,7 +64,7 @@ function getLegendItems(): LegendItemProps[] {
     },
     {
       icon: (
-        <div className="w-8 h-8 flex items-center justify-center text-gray-700">
+        <div className="w-8 h-8 flex items-center justify-center text-slate-200">
           <NodeConnectionsLegendIcon className="w-6 h-6 overflow-visible" />
         </div>
       ),
@@ -73,7 +73,7 @@ function getLegendItems(): LegendItemProps[] {
     },
     {
       icon: (
-        <div className="w-8 h-8 flex items-center justify-center text-gray-500">
+        <div className="w-8 h-8 flex items-center justify-center text-slate-400">
           <CaretDownIcon className="w-6 h-6" />
         </div>
       ),
@@ -82,7 +82,7 @@ function getLegendItems(): LegendItemProps[] {
     },
     {
       icon: (
-        <div className="w-8 h-8 flex items-center justify-center text-gray-700">
+        <div className="w-8 h-8 flex items-center justify-center text-slate-200">
           <CloseIcon className="w-5 h-5" />
         </div>
       ),
@@ -91,7 +91,7 @@ function getLegendItems(): LegendItemProps[] {
     },
     {
       icon: (
-        <div className="w-8 h-8 flex items-center justify-center text-gray-700">
+        <div className="w-8 h-8 flex items-center justify-center text-slate-200">
           <EyeOffIcon className="w-5 h-5" />
         </div>
       ),
@@ -100,7 +100,7 @@ function getLegendItems(): LegendItemProps[] {
     },
     {
       icon: (
-        <div className="w-8 h-8 flex items-center justify-center text-gray-700">
+        <div className="w-8 h-8 flex items-center justify-center text-slate-200">
           <EyeIcon className="w-5 h-5" />
         </div>
       ),
@@ -109,7 +109,7 @@ function getLegendItems(): LegendItemProps[] {
     },
     {
       icon: (
-        <div className="w-8 h-8 flex items-center justify-center text-gray-700">
+        <div className="w-8 h-8 flex items-center justify-center text-slate-200">
           <PinOutlineIcon className="w-5 h-5" />
         </div>
       ),

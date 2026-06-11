@@ -1,5 +1,6 @@
 import type { Workflow, WorkflowNode, NodeTypes } from '@/api/types';
-import { extractLoraList, findLoraListIndex } from '@/utils/loraManager';
+import { collectAllWorkflowNodes } from '@/utils/workflowNodes';
+import { extractLoraList, findLoraListIndex, isPowerLoraLoaderNodeType } from '@/utils/loraManager';
 import {
   extractTriggerWordList,
   extractTriggerWordListLoose,
@@ -40,13 +41,6 @@ function formatDateToken(text: string, date: Date): string {
     }
     return token;
   });
-}
-
-function collectAllWorkflowNodes(workflow: Workflow): WorkflowNode[] {
-  const subgraphNodes = (workflow.definitions?.subgraphs ?? []).flatMap(
-    (subgraph) => subgraph.nodes ?? []
-  );
-  return [...workflow.nodes, ...subgraphNodes];
 }
 
 function resolveReplacementWidgetValue(
@@ -276,18 +270,19 @@ export function normalizeWidgetValue(
 
 export function normalizeComboValue(
   value: unknown,
-  options: unknown[],
-  defaultValue: unknown
+  options: unknown[]
 ): unknown {
   if (options.length === 0) return value;
   const resolved = resolveComboOption(value, options);
   if (resolved !== undefined) {
     return resolved;
   }
-  if (defaultValue !== undefined && options.some((opt) => String(opt) === String(defaultValue))) {
-    return defaultValue;
-  }
-  return options[0];
+  // No exact/basename/extensionless match: keep the original value rather than
+  // substituting a different valid option (e.g. options[0] or a default). An
+  // invalid selection then surfaces as a clear server-side error instead of
+  // silently running with the wrong file — the option list is also inherently
+  // incomplete for file pickers (uploads/new inputs aren't in object_info).
+  return value;
 }
 
 const SAFETENSORS_SUFFIX = '.safetensors';
@@ -542,7 +537,7 @@ export function buildWorkflowPromptInputs(
               inputs[name] = finalizeInputValue(
                 workflow,
                 name,
-                normalizeComboValue(rawValue, typeOrOptions, defaultValue)
+                normalizeComboValue(rawValue, typeOrOptions)
               );
             } else {
               inputs[name] = finalizeInputValue(
@@ -598,7 +593,7 @@ export function buildWorkflowPromptInputs(
 
   // Special handling for Power Lora Loader (rgthree) which has dynamic widgets not in object_info.
   // We ensure all widgets that look like Lora objects are included in the prompt inputs.
-  if (classType === 'Power Lora Loader (rgthree)' || node.type === 'Power Lora Loader (rgthree)') {
+  if (isPowerLoraLoaderNodeType(classType) || isPowerLoraLoaderNodeType(node.type)) {
     if (widgetValuesArray) {
       widgetValuesArray.forEach((val, idx) => {
         if (typeof val === 'object' && val !== null && 'lora' in val) {

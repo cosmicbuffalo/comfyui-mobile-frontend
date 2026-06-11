@@ -1,5 +1,7 @@
 import { useMemo, useState } from 'react';
 import { useWorkflowStore } from '@/hooks/useWorkflow';
+import { getScopedWorkflowView } from '@/utils/canonicalWorkflowOps';
+import { useConnectionSectionFoldsStore } from '@/hooks/useConnectionSectionFolds';
 import {
   findCompatibleSourceNodes,
   findCompatibleNodeTypesForInput,
@@ -31,6 +33,11 @@ interface ConnectionModalBaseProps {
   isOpen: boolean;
   onClose: () => void;
   nodeId: number;
+  // True when the originating connection button already had a connection (i.e.
+  // the user is editing an existing link). When false, the button was empty and
+  // this modal is creating a brand-new connection — in that case we skip the
+  // scroll-to-node on submit so creating a connection doesn't jump the view.
+  originHadConnection: boolean;
 }
 
 interface InputConnectionModalProps extends ConnectionModalBaseProps {
@@ -93,30 +100,22 @@ export function ConnectionModal(props: ConnectionModalProps) {
   const addNode = useWorkflowStore((s) => s.addNode);
   const addNodeAndConnect = useWorkflowStore((s) => s.addNodeAndConnect);
   const scrollToNode = useWorkflowStore((s) => s.scrollToNode);
+  const expandConnectionsSection = useConnectionSectionFoldsStore((s) => s.expand);
   const topScopeFrame = scopeStack[scopeStack.length - 1];
   const currentSubgraphId = topScopeFrame?.type === 'subgraph' ? topScopeFrame.id : null;
-  const scopedWorkflow = useMemo(() => {
-    if (!workflow) return null;
-    if (currentSubgraphId == null) return workflow;
-    const subgraph = workflow.definitions?.subgraphs?.find(
-      (entry) => entry.id === currentSubgraphId,
-    );
-    if (!subgraph) return workflow;
-    return {
-      ...workflow,
-      nodes: subgraph.nodes ?? [],
-      links: (subgraph.links ?? []).map(
-        (link) => [link.id, link.origin_id, link.origin_slot, link.target_id, link.target_slot, link.type] as [number, number, number, number, number, string]
-      ),
-    };
-  }, [currentSubgraphId, workflow]);
+  const scopedWorkflow = useMemo(
+    () => (workflow ? getScopedWorkflowView(workflow, currentSubgraphId) : null),
+    [currentSubgraphId, workflow],
+  );
 
   const [searchQuery, setSearchQuery] = useState('');
   const [currentAction, setCurrentAction] = useState<'pick' | 'addNew'>('pick');
   const [selectedOutputTargetKeys, setSelectedOutputTargetKeys] = useState<Set<string>>(() => {
-    if (mode !== 'output' || !workflow) return new Set<string>();
+    if (mode !== 'output' || !scopedWorkflow) return new Set<string>();
     const selected = new Set<string>();
-    for (const link of workflow.links) {
+    // Scoped links: inside a subgraph the root link list would yield wrong
+    // (or false-positive same-id) pre-selected targets.
+    for (const link of scopedWorkflow.links) {
       const [, srcNodeId, srcSlot, tgtNodeId, tgtSlot] = link;
       if (srcNodeId === nodeId && srcSlot === props.outputIndex) {
         selected.add(makeOutputSelectionKey(tgtNodeId, tgtSlot));
@@ -127,6 +126,25 @@ export function ConnectionModal(props: ConnectionModalProps) {
   const [showOverwriteConfirm, setShowOverwriteConfirm] = useState(false);
   const [multiInputPickerNodeId, setMultiInputPickerNodeId] = useState<number | null>(null);
   const [multiInputPickerSelection, setMultiInputPickerSelection] = useState<Set<string>>(new Set());
+
+  // The source this input is actually wired to right now (origin node + slot),
+  // resolved from the scoped link list. Used both to pre-select the form and to
+  // tell when the staged selection has changed.
+  const initialInputSource = useMemo<{ nodeId: number; outputIndex: number } | null>(() => {
+    if (mode !== 'input' || !scopedWorkflow) return null;
+    const inputIndex = (props as InputConnectionModalProps).inputIndex;
+    const node = scopedWorkflow.nodes.find((n) => n.id === nodeId);
+    const linkId = node?.inputs?.[inputIndex]?.link;
+    if (linkId == null) return null;
+    const link = scopedWorkflow.links.find((l) => l[0] === linkId);
+    if (!link) return null;
+    return { nodeId: link[1], outputIndex: link[2] };
+  }, [mode, scopedWorkflow, nodeId, props]);
+  // Staged single-selection for the input picker: tapping a candidate selects
+  // it (tapping the connected one clears it), and Apply commits — mirroring the
+  // output picker so editing a wired input updates the form in place instead of
+  // connecting + closing + scrolling on every tap.
+  const [selectedInputSource, setSelectedInputSource] = useState(initialInputSource);
 
   const currentNodeHierarchicalKey = useMemo(() => {
     const node = findWorkflowNodeInScope(workflow, nodeId, currentSubgraphId);
@@ -342,6 +360,15 @@ export function ConnectionModal(props: ConnectionModalProps) {
     return !areKeySetsEqual(selectedOutputTargetKeys, initialOutputSelection);
   }, [mode, selectedOutputTargetKeys, initialOutputSelection]);
 
+  const inputSelectionHasChanges = useMemo(() => {
+    if (mode !== 'input') return false;
+    const a = selectedInputSource;
+    const b = initialInputSource;
+    if (!a && !b) return false;
+    if (!a || !b) return true;
+    return a.nodeId !== b.nodeId || a.outputIndex !== b.outputIndex;
+  }, [mode, selectedInputSource, initialInputSource]);
+
   const outputOverwriteCandidates = useMemo(() => {
     if (mode !== 'output') return [];
     const candidates: OutputCandidate[] = [];
@@ -353,19 +380,38 @@ export function ConnectionModal(props: ConnectionModalProps) {
     return candidates;
   }, [mode, selectedOutputTargetKeys, initialOutputSelection, outputCandidatesByKey]);
 
-  const handleSelectNode = (srcNodeId: number, srcOutputIndex: number) => {
+  const toggleInputSelection = (srcNodeId: number, srcOutputIndex: number) => {
     if (mode !== 'input') return;
-    const srcHierarchicalKey = getHierarchicalKeyForNodeId(srcNodeId);
-    if (!srcHierarchicalKey || !currentNodeHierarchicalKey) return;
-    connectNodes(srcHierarchicalKey, srcOutputIndex, currentNodeHierarchicalKey, props.inputIndex, props.inputType);
-    onClose();
-    scrollToNode(srcHierarchicalKey);
+    setSelectedInputSource((prev) =>
+      prev && prev.nodeId === srcNodeId && prev.outputIndex === srcOutputIndex
+        ? null
+        : { nodeId: srcNodeId, outputIndex: srcOutputIndex },
+    );
   };
 
+  // Clears the staged selection; the actual disconnect happens on Apply.
   const handleDisconnect = () => {
     if (mode !== 'input') return;
+    setSelectedInputSource(null);
+  };
+
+  const applyInputSelection = () => {
+    if (mode !== 'input') return;
     if (!currentNodeHierarchicalKey) return;
-    disconnectInput(currentNodeHierarchicalKey, props.inputIndex);
+    if (!selectedInputSource) {
+      if (initialInputSource) disconnectInput(currentNodeHierarchicalKey, props.inputIndex);
+      onClose();
+      return;
+    }
+    const srcHierarchicalKey = getHierarchicalKeyForNodeId(selectedInputSource.nodeId);
+    if (!srcHierarchicalKey) return;
+    connectNodes(
+      srcHierarchicalKey,
+      selectedInputSource.outputIndex,
+      currentNodeHierarchicalKey,
+      props.inputIndex,
+      props.inputType,
+    );
     onClose();
   };
 
@@ -374,10 +420,13 @@ export function ConnectionModal(props: ConnectionModalProps) {
     if (!currentNodeHierarchicalKey) return;
     const newNodeId = addNodeAndConnect(typeName, currentNodeHierarchicalKey, props.inputIndex);
     onClose();
+    setSearchQuery('');
     if (newNodeId !== null) {
       const newHierarchicalKey = getHierarchicalKeyForNodeId(newNodeId);
       if (newHierarchicalKey) {
-        scrollToNode(newHierarchicalKey);
+        // New node opens with its connections section expanded.
+        expandConnectionsSection(newHierarchicalKey);
+        if (props.originHadConnection) scrollToNode(newHierarchicalKey);
       }
     }
   };
@@ -392,6 +441,7 @@ export function ConnectionModal(props: ConnectionModalProps) {
 
     const newNodeId = addNode(typeName, {
       nearNodeHierarchicalKey: currentNodeHierarchicalKey,
+      inSubgraphId: currentSubgraphId ?? undefined,
     });
     if (newNodeId === null) return;
 
@@ -399,7 +449,9 @@ export function ConnectionModal(props: ConnectionModalProps) {
     if (!newHierarchicalKey) return;
 
     const latestWorkflow = useWorkflowStore.getState().workflow;
-    const newNode = latestWorkflow?.nodes.find((node) => node.id === newNodeId);
+    const newNode = latestWorkflow
+      ? findWorkflowNodeInScope(latestWorkflow, newNodeId, currentSubgraphId)
+      : null;
     if (!newNode || !currentNodeHierarchicalKey) return;
 
     const compatibleInputIndex = newNode.inputs.findIndex((input) => input.type.toUpperCase() === suggestedInputType.toUpperCase());
@@ -409,7 +461,10 @@ export function ConnectionModal(props: ConnectionModalProps) {
 
     connectNodes(currentNodeHierarchicalKey, props.outputIndex, newHierarchicalKey, inputIndex, inputType);
     onClose();
-    scrollToNode(newHierarchicalKey);
+    setSearchQuery('');
+    // New node opens with its connections section expanded.
+    expandConnectionsSection(newHierarchicalKey);
+    if (props.originHadConnection) scrollToNode(newHierarchicalKey);
   };
 
   const toggleOutputTargetSelection = (nodeIdToToggle: number, inputIndexToToggle: number) => {
@@ -546,7 +601,16 @@ export function ConnectionModal(props: ConnectionModalProps) {
       const outputSlot = node.outputs?.[outputIndex];
       const outputName = outputSlot?.localized_name || outputSlot?.name || `Output ${outputIndex + 1}`;
       const outputType = String(outputSlot?.type ?? inputProps.inputType);
-      const isConnected = node.id === inputProps.currentlyConnectedNodeId;
+      const selected = Boolean(
+        selectedInputSource &&
+        selectedInputSource.nodeId === node.id &&
+        selectedInputSource.outputIndex === outputIndex,
+      );
+      const currentlyConnected = Boolean(
+        initialInputSource &&
+        initialInputSource.nodeId === node.id &&
+        initialInputSource.outputIndex === outputIndex,
+      );
       return (
         <ConnectionSearchResult
           key={node.id}
@@ -556,8 +620,9 @@ export function ConnectionModal(props: ConnectionModalProps) {
           outputName={outputName}
           outputType={outputType}
           inputName={inputProps.inputName}
-          isConnected={isConnected}
-          onSelect={() => handleSelectNode(node.id, outputIndex)}
+          selected={selected}
+          currentlyConnected={currentlyConnected}
+          onSelect={() => toggleInputSelection(node.id, outputIndex)}
         />
       );
     };
@@ -569,9 +634,9 @@ export function ConnectionModal(props: ConnectionModalProps) {
         {wildcardNodes.length > 0 && (
           <>
             <div className="flex items-center gap-2 pt-1 pb-0.5">
-              <div className="flex-1 border-t border-gray-200" />
-              <span className="text-xs font-medium text-gray-400 whitespace-nowrap">Wildcard *</span>
-              <div className="flex-1 border-t border-gray-200" />
+              <div className="flex-1 border-t border-white/10" />
+              <span className="text-xs font-medium text-slate-400 whitespace-nowrap">Wildcard *</span>
+              <div className="flex-1 border-t border-white/10" />
             </div>
             {wildcardNodes.map(renderNodeEntry)}
           </>
@@ -583,19 +648,19 @@ export function ConnectionModal(props: ConnectionModalProps) {
 
         <button
           type="button"
-          className="w-full text-left rounded-xl border-2 border-gray-700 bg-white px-4 py-3 flex items-center gap-3 hover:bg-gray-100 active:scale-[0.998] transition shadow-sm"
+          className="w-full text-left rounded-xl border border-cyan-400/30 bg-cyan-500/10 px-4 py-3 flex items-center gap-3 hover:bg-cyan-500/15 active:scale-[0.998] transition shadow-sm"
           onClick={() => { setCurrentAction('addNew'); setSearchQuery(''); }}
         >
-          <div className="w-8 h-8 rounded-full bg-gray-800 flex items-center justify-center flex-shrink-0">
-            <PlusIcon className="w-4 h-4 text-white" />
+          <div className="w-8 h-8 rounded-full bg-cyan-500 flex items-center justify-center flex-shrink-0">
+            <PlusIcon className="w-4 h-4 text-slate-950" />
           </div>
-          <span className="text-sm font-semibold text-gray-900">Add new node...</span>
+          <span className="text-sm font-semibold text-slate-100">Add new node...</span>
         </button>
 
         {inputProps.currentlyConnectedNodeId !== null && (
           <button
             type="button"
-            className="w-full text-left rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-600 hover:bg-red-100 active:scale-[0.998] transition"
+            className="w-full text-left rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm font-semibold text-red-300 hover:bg-red-500/20 active:scale-[0.998] transition"
             onClick={handleDisconnect}
           >
             Disconnect
@@ -633,7 +698,7 @@ export function ConnectionModal(props: ConnectionModalProps) {
           outputType={outputType}
           outputName={String(outputName)}
           inputName={inputProps.inputName}
-          titleClassName="text-sm font-medium text-gray-900 truncate"
+          titleClassName="text-sm font-medium text-slate-100 truncate"
           onSelect={() => handleAddNewNode(typeName)}
         />
       );
@@ -648,9 +713,9 @@ export function ConnectionModal(props: ConnectionModalProps) {
         {wildcardTypes.length > 0 && (
           <>
             <div className="flex items-center gap-2 pt-1 pb-0.5">
-              <div className="flex-1 border-t border-gray-200" />
-              <span className="text-xs font-medium text-gray-400 whitespace-nowrap">Wildcard *</span>
-              <div className="flex-1 border-t border-gray-200" />
+              <div className="flex-1 border-t border-white/10" />
+              <span className="text-xs font-medium text-slate-400 whitespace-nowrap">Wildcard *</span>
+              <div className="flex-1 border-t border-white/10" />
             </div>
             {wildcardTypes.map(renderTypeEntry)}
           </>
@@ -692,34 +757,34 @@ export function ConnectionModal(props: ConnectionModalProps) {
           type="button"
           className={`w-full text-left rounded-xl border px-4 py-3 shadow-sm transition ${
             isSelected
-              ? 'border-blue-300 bg-blue-50'
-              : 'border-gray-200 bg-white hover:border-gray-300 active:scale-[0.998]'
+              ? 'border-cyan-400/50 bg-cyan-500/10'
+              : 'border-white/10 bg-slate-900/95 hover:bg-slate-800/95 active:scale-[0.998]'
           }`}
           onClick={() => handleOutputNodeClick(nodeCandidate)}
         >
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0 flex-1">
-              <div className="text-sm font-semibold text-gray-900 flex items-center gap-2 min-w-0">
+              <div className="text-sm font-semibold text-slate-100 flex items-center gap-2 min-w-0">
                 <span className="truncate">
-                  {nodeCandidate.displayName} <span className="text-gray-400">#{nodeCandidate.nodeId}</span>
+                  {nodeCandidate.displayName} <span className="text-slate-500">#{nodeCandidate.nodeId}</span>
                 </span>
                 {hasConnectedFromThisOutput && (
-                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 text-[10px] font-medium shrink-0">
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-cyan-500/15 text-cyan-300 text-[10px] font-medium shrink-0">
                     <CheckIcon className="w-3 h-3" />
                     Connected
                   </span>
                 )}
                 {hasExistingLink && (
-                  <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 text-[10px] font-medium shrink-0">
+                  <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-300 text-[10px] font-medium shrink-0">
                     Already linked
                   </span>
                 )}
               </div>
-              <div className="text-xs text-gray-500 truncate mt-0.5">{nodeCandidate.pack || 'Core'}</div>
-              <div className="text-xs text-gray-700 mt-1 truncate">{subtitle}</div>
+              <div className="text-xs text-slate-400 truncate mt-0.5">{nodeCandidate.pack || 'Core'}</div>
+              <div className="text-xs text-slate-300 mt-1 truncate">{subtitle}</div>
             </div>
-            <div className={`w-5 h-5 rounded border flex items-center justify-center ${isSelected ? 'bg-blue-600 border-blue-600' : 'bg-white border-gray-300'}`}>
-              {isSelected && <CheckIcon className="w-3 h-3 text-white" />}
+            <div className={`w-5 h-5 rounded border flex items-center justify-center ${isSelected ? 'bg-cyan-500 border-cyan-500 text-slate-950' : 'bg-slate-950 border-white/20'}`}>
+              {isSelected && <CheckIcon className="w-3 h-3" />}
             </div>
           </div>
         </button>
@@ -733,9 +798,9 @@ export function ConnectionModal(props: ConnectionModalProps) {
         {wildcardOutputNodes.length > 0 && (
           <>
             <div className="flex items-center gap-2 pt-1 pb-0.5">
-              <div className="flex-1 border-t border-gray-200" />
-              <span className="text-xs font-medium text-gray-400 whitespace-nowrap">Wildcard *</span>
-              <div className="flex-1 border-t border-gray-200" />
+              <div className="flex-1 border-t border-white/10" />
+              <span className="text-xs font-medium text-slate-400 whitespace-nowrap">Wildcard *</span>
+              <div className="flex-1 border-t border-white/10" />
             </div>
             {wildcardOutputNodes.map(renderOutputNodeEntry)}
           </>
@@ -747,13 +812,13 @@ export function ConnectionModal(props: ConnectionModalProps) {
 
         <button
           type="button"
-          className="w-full text-left rounded-xl border-2 border-gray-700 bg-white px-4 py-3 flex items-center gap-3 hover:bg-gray-100 active:scale-[0.998] transition shadow-sm"
+          className="w-full text-left rounded-xl border border-cyan-400/30 bg-cyan-500/10 px-4 py-3 flex items-center gap-3 hover:bg-cyan-500/15 active:scale-[0.998] transition shadow-sm"
           onClick={() => { setCurrentAction('addNew'); setSearchQuery(''); }}
         >
-          <div className="w-8 h-8 rounded-full bg-gray-800 flex items-center justify-center flex-shrink-0">
-            <PlusIcon className="w-4 h-4 text-white" />
+          <div className="w-8 h-8 rounded-full bg-cyan-500 flex items-center justify-center flex-shrink-0">
+            <PlusIcon className="w-4 h-4 text-slate-950" />
           </div>
-          <span className="text-sm font-semibold text-gray-900">Add new node...</span>
+          <span className="text-sm font-semibold text-slate-100">Add new node...</span>
         </button>
       </div>
     );
@@ -784,7 +849,7 @@ export function ConnectionModal(props: ConnectionModalProps) {
           outputType={outputProps.outputType}
           outputName={outputProps.outputName}
           inputName={String(inputName)}
-          titleClassName="text-sm font-medium text-gray-900 truncate"
+          titleClassName="text-sm font-medium text-slate-100 truncate"
           onSelect={() => handleAddNewNodeFromOutput(typeName, inputIndex, inputType)}
         />
       );
@@ -799,9 +864,9 @@ export function ConnectionModal(props: ConnectionModalProps) {
         {wildcardOutputTypes.length > 0 && (
           <>
             <div className="flex items-center gap-2 pt-1 pb-0.5">
-              <div className="flex-1 border-t border-gray-200" />
-              <span className="text-xs font-medium text-gray-400 whitespace-nowrap">Wildcard *</span>
-              <div className="flex-1 border-t border-gray-200" />
+              <div className="flex-1 border-t border-white/10" />
+              <span className="text-xs font-medium text-slate-400 whitespace-nowrap">Wildcard *</span>
+              <div className="flex-1 border-t border-white/10" />
             </div>
             {wildcardOutputTypes.map(renderOutputTypeEntry)}
           </>
@@ -838,12 +903,22 @@ export function ConnectionModal(props: ConnectionModalProps) {
                   variant: 'primary' as const,
                   disabled: !outputSelectionHasChanges
                 }]
+              : []),
+            ...(mode === 'input'
+              && currentAction === 'pick'
+              ? [{
+                  key: 'apply',
+                  label: 'Apply',
+                  onClick: applyInputSelection,
+                  variant: 'primary' as const,
+                  disabled: !inputSelectionHasChanges
+                }]
               : [])
           ]}
         />
       )}
     >
-      <div className="flex-1 overflow-auto bg-white">
+      <div className="flex-1 overflow-auto bg-slate-950/88">
         {mode === 'input' ? (
           currentAction === 'pick' ? (
             renderInputPickContent()
@@ -865,10 +940,10 @@ export function ConnectionModal(props: ConnectionModalProps) {
           aria-modal="true"
         >
           <div
-            className="w-full max-w-sm bg-white border border-gray-200 rounded-xl shadow-lg overflow-hidden"
+            className="w-full max-w-sm bg-slate-900 border border-white/10 text-slate-100 rounded-xl shadow-lg overflow-hidden"
             onClick={(event) => event.stopPropagation()}
           >
-            <div className="px-4 py-3 text-sm font-semibold text-gray-700 border-b border-gray-100">
+            <div className="px-4 py-3 text-sm font-semibold text-slate-100 border-b border-white/10">
               Select compatible inputs
             </div>
             <div className="max-h-[45vh] overflow-y-auto">
@@ -882,34 +957,34 @@ export function ConnectionModal(props: ConnectionModalProps) {
                       key={`input-picker-${key}`}
                       type="button"
                       className={`w-full flex items-center justify-between gap-3 text-left px-4 py-3 text-sm ${
-                        selected ? 'bg-blue-50' : 'hover:bg-gray-50'
+                        selected ? 'bg-cyan-500/10' : 'hover:bg-white/10'
                       }`}
                       onClick={() => toggleMultiInputPickerSelection(key)}
                     >
                       <span className="min-w-0">
-                        <span className="block text-gray-900 truncate">{candidate.inputName}</span>
-                        <span className="block text-xs text-gray-500 truncate">{candidate.inputType}</span>
+                        <span className="block text-slate-100 truncate">{candidate.inputName}</span>
+                        <span className="block text-xs text-slate-400 truncate">{candidate.inputType}</span>
                       </span>
                       <span className={`w-5 h-5 rounded border flex items-center justify-center shrink-0 ${
-                        selected ? 'bg-blue-600 border-blue-600' : 'bg-white border-gray-300'
+                        selected ? 'bg-cyan-500 border-cyan-500 text-slate-950' : 'bg-slate-950 border-white/20'
                       }`}>
-                        {selected ? <CheckIcon className="w-3 h-3 text-white" /> : null}
+                        {selected ? <CheckIcon className="w-3 h-3" /> : null}
                       </span>
                     </button>
                   );
                 })}
             </div>
-            <div className="px-3 py-3 border-t border-gray-100 flex justify-end gap-2">
+            <div className="px-3 py-3 border-t border-white/10 flex justify-end gap-2">
               <button
                 type="button"
-                className="px-3 py-2 rounded-lg text-sm font-medium text-gray-600 hover:bg-gray-100"
+                className="px-3 py-2 rounded-lg text-sm font-medium text-slate-300 hover:bg-white/10"
                 onClick={closeMultiInputPicker}
               >
                 Cancel
               </button>
               <button
                 type="button"
-                className="px-3 py-2 rounded-lg text-sm font-medium text-white bg-blue-600 hover:bg-blue-700"
+                className="px-3 py-2 rounded-lg text-sm font-semibold text-slate-950 bg-cyan-500 hover:bg-cyan-400"
                 onClick={applyMultiInputPickerSelection}
               >
                 Apply
@@ -928,7 +1003,7 @@ export function ConnectionModal(props: ConnectionModalProps) {
             {
               label: 'Cancel',
               onClick: () => setShowOverwriteConfirm(false),
-              className: 'px-3 py-1.5 rounded-lg text-sm text-gray-700 border border-gray-300 hover:bg-gray-50'
+              variant: 'secondary'
             },
             {
               label: 'Overwrite',
@@ -936,7 +1011,7 @@ export function ConnectionModal(props: ConnectionModalProps) {
                 setShowOverwriteConfirm(false);
                 applyOutputSelection();
               },
-              className: 'px-3 py-1.5 rounded-lg text-sm text-white bg-red-600 hover:bg-red-700'
+              variant: 'danger'
             }
           ]}
         />

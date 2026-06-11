@@ -35,7 +35,7 @@ export function NodeCardNote({
   return (
     <div className="mb-3 group" data-textarea-root="true">
       <div className="flex items-center justify-between mb-1.5" data-textarea-header="true">
-        <div className="text-xs text-gray-500 uppercase tracking-wide">
+        <div className="text-xs text-slate-500 uppercase tracking-wide">
           Note
         </div>
         {isEditingNote && (

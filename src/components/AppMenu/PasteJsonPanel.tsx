@@ -1,6 +1,12 @@
 import { TextareaActions } from '../InputControls/TextareaActions';
 import { MenuSubPageHeader } from './MenuSubPageHeader';
 import { MenuErrorNotice } from './MenuErrorNotice';
+import {
+  menuInputClassName,
+  menuMutedTextClassName,
+  menuPrimaryButtonClassName,
+  menuSecondaryButtonClassName,
+} from './menuStyles';
 
 interface PasteJsonPanelProps {
   error: string | null;
@@ -27,12 +33,12 @@ export function PasteJsonPanel({
       <MenuErrorNotice error={error} onDismiss={onDismissError} />
 
       <div className="flex-1 flex flex-col space-y-4">
-        <p className="text-sm text-gray-600">
+        <p className={`text-sm ${menuMutedTextClassName}`}>
           Paste your workflow JSON below.
         </p>
         <div className="group" data-textarea-root="true">
           <div className="flex items-center justify-between mb-1" data-textarea-header="true">
-            <div className="text-xs text-gray-500 uppercase tracking-wide">
+            <div className={`text-xs ${menuMutedTextClassName} uppercase tracking-wide`}>
               Workflow JSON
             </div>
             <TextareaActions
@@ -48,21 +54,20 @@ export function PasteJsonPanel({
             onChange={(e) => onChangeJson(e.target.value)}
             placeholder='{"last_node_id": ...}'
             data-swipe-nav-ignore="true"
-            className="w-full flex-1 p-3 border border-gray-300 rounded-lg font-mono text-xs resize-none outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+            className={`w-full flex-1 p-3 rounded-lg font-mono text-xs resize-none outline-none ${menuInputClassName}`}
           />
         </div>
         <div className="flex gap-3 pt-2">
           <button
             onClick={onBack}
-            className="flex-1 py-3 bg-gray-100 text-gray-700 rounded-lg font-medium hover:bg-gray-200 min-h-[48px]"
+            className={`flex-1 ${menuSecondaryButtonClassName}`}
           >
             Cancel
           </button>
           <button
             onClick={onLoad}
             disabled={!pastedJson.trim()}
-            className="flex-1 py-3 bg-blue-500 text-white rounded-lg font-medium hover:bg-blue-600
-                       disabled:opacity-50 disabled:cursor-not-allowed min-h-[48px]"
+            className={`flex-1 ${menuPrimaryButtonClassName}`}
           >
             Load
           </button>

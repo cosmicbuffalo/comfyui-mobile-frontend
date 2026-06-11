@@ -1,11 +1,21 @@
 import { StringControl } from "./StringControl";
 import { NumberControl } from "./NumberControl";
 import { ComboControl } from "./ComboControl";
+import { ModelComboControl } from "./ModelComboControl";
 import { FullscreenWidgetModal } from "../modals/FullscreenWidgetModal";
 import { useState } from "react";
 import { PlusIcon, WarningTriangleIcon } from "../icons";
 import { createDefaultLoraEntry, normalizeLoraEntry } from "@/utils/loraManager";
 import { normalizeTriggerWordEntry } from "@/utils/triggerWordToggle";
+import { modelWidgetKind } from "@/utils/modelWidgetKind";
+import type { LoraManagerPrefix } from "@/api/loraManagerClient";
+import {
+  controlDangerButtonClassName,
+  controlDashedButtonClassName,
+  controlGhostButtonClassName,
+  controlNestedSurfaceClassName,
+  controlToggleButtonClassName,
+} from "./controlStyles";
 
 interface WidgetControlProps {
   name: string;
@@ -31,6 +41,12 @@ interface WidgetControlProps {
   onTogglePin?: () => void;
   containerClass?: string;
   isPromoted?: boolean;
+  /**
+   * Explicit Lora Manager catalog for this widget. Use when the widget name has
+   * been renamed for display (e.g. CR LoRA Stack shows "Selected LoRA") so that
+   * name-based detection can't infer it. Omit to auto-detect from the name.
+   */
+  modelKind?: LoraManagerPrefix | null;
 }
 
 export function WidgetControl({
@@ -52,6 +68,7 @@ export function WidgetControl({
   onTogglePin,
   containerClass,
   isPromoted = false,
+  modelKind,
 }: WidgetControlProps) {
   const [modalOpen, setModalOpen] = useState(false);
 
@@ -68,6 +85,24 @@ export function WidgetControl({
   const isCombo = type === "COMBO" || Array.isArray(options?.options);
   const isNumber = ["INT", "FLOAT"].includes(type.toUpperCase());
   const isString = type.toUpperCase() === "STRING";
+
+  // Resolve which Lora Manager catalog (if any) backs this widget: explicit prop
+  // wins (renamed widgets like CR LoRA Stack's "Selected LoRA"), else LM_LORA is
+  // loras, else auto-detect from the widget name. ModelComboControl handles the
+  // actual metadata loading/lookup.
+  // Promoted/proxy subgraph widgets render under a display label, so name-based
+  // detection misses them; the widget def stashes the kind detected from the
+  // real inner input name in options.__modelKind for those cases.
+  const stashedModelKind = (options as Record<string, unknown> | undefined)
+    ?.__modelKind as LoraManagerPrefix | undefined;
+  const resolvedModelKind: LoraManagerPrefix | null =
+    modelKind !== undefined
+      ? modelKind
+      : type === "LM_LORA"
+        ? "loras"
+        : isCombo
+          ? (stashedModelKind ?? modelWidgetKind(name))
+          : null;
 
   const label = name.replace(/_/g, " ");
 
@@ -94,7 +129,8 @@ export function WidgetControl({
   };
 
   const renderControl = () => {
-    if (isCombo) return <ComboControl {...controlProps} />;
+    if (isCombo)
+      return <ModelComboControl {...controlProps} modelKind={resolvedModelKind} />;
     if (isNumber)
       return (
         <NumberControl
@@ -106,7 +142,7 @@ export function WidgetControl({
       );
     if (isString) return <StringControl {...controlProps} />;
     return (
-      <div className="unsupported-widget-type text-xs text-gray-400 italic">
+      <div className="unsupported-widget-type text-xs text-slate-400 italic">
         Unsupported: {type}
       </div>
     );
@@ -118,7 +154,7 @@ export function WidgetControl({
     const allActive = Boolean(value);
     return (
       <div
-        className={`${layoutContainerClass} lm-lora-header flex items-center justify-between p-3 bg-blue-50/50 dark:bg-blue-900/20 rounded-lg`}
+        className={`${layoutContainerClass} lm-lora-header flex items-center justify-between p-3 bg-cyan-500/10 border border-cyan-400/20 rounded-lg`}
       >
         <div className="lm-lora-header-content flex items-center gap-3">
           <button
@@ -127,7 +163,7 @@ export function WidgetControl({
             aria-checked={allActive}
             onClick={() => onChange(!allActive)}
             className={`relative inline-flex h-6 w-11 items-center rounded-full transition ${
-              allActive ? "bg-blue-600" : "bg-gray-300"
+              allActive ? "bg-cyan-500" : "bg-slate-700"
             } ${disabled ? "opacity-60 cursor-not-allowed" : "cursor-pointer"}`}
             disabled={disabled}
           >
@@ -137,7 +173,7 @@ export function WidgetControl({
               }`}
             />
           </button>
-          <span className="lm-lora-header-label text-sm font-semibold text-blue-900 dark:text-blue-100 uppercase tracking-wider">
+          <span className="lm-lora-header-label text-sm font-semibold text-cyan-300 uppercase tracking-wider">
             Toggle All Loras
           </span>
         </div>
@@ -172,6 +208,7 @@ export function WidgetControl({
         Number(loraValue.clipStrength ?? loraValue.strength) -
           Number(loraValue.strength),
       ) > Number.EPSILON;
+    const loraActive = Boolean(loraValue.active);
 
     const handleEntryChange = (patch: Record<string, unknown>) => {
       const next = {
@@ -198,23 +235,23 @@ export function WidgetControl({
 
     return (
       <div
-        className={`${layoutContainerClass} lm-lora-row flex flex-col gap-3 p-3 border border-gray-200 dark:border-gray-800 rounded-lg bg-gray-50/50 dark:bg-gray-900/50 ${!loraValue.active ? "opacity-60" : ""}`}
+        className={`${layoutContainerClass} lm-lora-row flex flex-col gap-3 p-3 ${controlNestedSurfaceClassName} ${!loraActive ? "opacity-60" : ""}`}
       >
         <div className="lm-lora-row-actions flex items-center gap-2">
           <button
             type="button"
             onClick={() =>
-              handleEntryChange({ active: !loraValue.active })
+              handleEntryChange({ active: !loraActive })
             }
-            className={`lm-lora-enabled-button flex-1 py-2 rounded-lg text-sm font-semibold transition-colors ${loraValue.active ? "bg-blue-600 text-white" : "bg-gray-700 text-white"} ${disabled ? "opacity-60 cursor-not-allowed" : ""}`}
+            className={`lm-lora-enabled-button flex-1 py-2 text-sm ${controlToggleButtonClassName({ active: loraActive, disabled })}`}
             disabled={disabled}
           >
-            {loraValue.active ? "Enabled" : "Disabled"}
+            {loraActive ? "Enabled" : "Disabled"}
           </button>
           <button
             type="button"
             onClick={() => onChange(null)}
-            className={`lm-lora-remove-button flex-1 py-2 rounded-lg text-sm font-semibold bg-red-600 text-white hover:bg-red-700 transition-colors ${disabled ? "opacity-60 cursor-not-allowed" : ""}`}
+            className={`lm-lora-remove-button flex-1 ${controlDangerButtonClassName}`}
             disabled={disabled}
           >
             Remove
@@ -224,10 +261,11 @@ export function WidgetControl({
         <div className="lm-lora-row-header flex items-center gap-3">
           <div className="lm-lora-select flex-grow min-w-0">
             {choices.length > 0 ? (
-              <ComboControl
+              <ModelComboControl
                 containerClass="space-y-0 w-full"
                 name=""
                 hideLabel
+                modelKind={resolvedModelKind}
                 value={loraValue.name}
                 options={{
                   options: choices,
@@ -278,7 +316,7 @@ export function WidgetControl({
           <button
             type="button"
             onClick={handleToggleExpanded}
-            className={`lm-lora-clip-toggle py-2 px-3 border border-gray-200 rounded-lg text-sm font-medium text-gray-600 hover:text-blue-600 hover:border-blue-500 transition ${disabled ? "opacity-60 cursor-not-allowed" : ""}`}
+            className={`lm-lora-clip-toggle ${controlGhostButtonClassName}`}
             disabled={disabled}
           >
             {showClip ? "Hide clip strength" : "Separate clip strength"}
@@ -298,7 +336,7 @@ export function WidgetControl({
       <div className={`${layoutContainerClass} lm-lora-add`}>
         <button
           onClick={handleLoraAddClick}
-          className="w-full py-2 px-4 border-2 border-dashed border-gray-300 dark:border-gray-700 rounded-lg text-sm font-medium text-gray-500 hover:text-blue-500 hover:border-blue-500 transition-all flex items-center justify-center gap-2"
+          className={controlDashedButtonClassName}
           disabled={disabled}
         >
           <PlusIcon className="w-5 h-5" />
@@ -338,11 +376,11 @@ export function WidgetControl({
 
     return (
       <div
-        className={`${layoutContainerClass} tw-word-row flex flex-col gap-2 p-3 border border-gray-200 dark:border-gray-800 rounded-lg bg-gray-50/60 dark:bg-gray-900/50 ${!triggerValue.active ? "opacity-60" : ""}`}
+        className={`${layoutContainerClass} tw-word-row flex flex-col gap-2 p-3 ${controlNestedSurfaceClassName} ${!triggerValue.active ? "opacity-60" : ""}`}
       >
         <div className="tw-word-header flex items-center justify-between gap-3">
           <div className="min-w-0">
-            <div className="text-sm font-semibold text-gray-900 dark:text-gray-100 break-words">
+            <div className="text-sm font-semibold text-slate-100 break-words">
               {triggerValue.text || "Trigger Word"}
             </div>
           </div>
@@ -351,7 +389,7 @@ export function WidgetControl({
             onClick={() =>
               handleEntryChange({ active: !triggerValue.active })
             }
-            className={`tw-word-toggle px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${triggerValue.active ? "bg-blue-600 text-white" : "bg-gray-700 text-white"} ${disabled ? "opacity-60 cursor-not-allowed" : ""}`}
+            className={`tw-word-toggle px-3 py-1.5 text-xs ${controlToggleButtonClassName({ active: triggerValue.active, disabled })}`}
             disabled={disabled}
           >
             {triggerValue.active ? "Enabled" : "Disabled"}
@@ -375,8 +413,10 @@ export function WidgetControl({
 
   if (type === "POWER_LORA_HEADER") {
     return (
-      <div
-        className={`${layoutContainerClass} power-lora-header flex items-center justify-between p-3 bg-blue-50/50 dark:bg-blue-900/20 rounded-lg`}
+      <label
+        className={`${layoutContainerClass} power-lora-header flex items-center justify-between p-3 bg-cyan-500/10 border border-cyan-400/20 rounded-lg ${
+          disabled ? "cursor-not-allowed opacity-60" : "cursor-pointer"
+        }`}
       >
         <div className="power-lora-header-content flex items-center gap-3">
           <input
@@ -385,11 +425,11 @@ export function WidgetControl({
             className="w-5 h-5 rounded cursor-pointer"
             disabled={disabled}
           />
-          <span className="power-lora-header-label text-sm font-semibold text-blue-900 dark:text-blue-100 uppercase tracking-wider">
+          <span className="power-lora-header-label text-sm font-semibold text-cyan-300 uppercase tracking-wider">
             Toggle All Loras
           </span>
         </div>
-      </div>
+      </label>
     );
   }
 
@@ -418,13 +458,13 @@ export function WidgetControl({
 
     return (
       <div
-        className={`${layoutContainerClass} power-lora-row flex flex-col gap-2 p-3 border border-gray-200 dark:border-gray-800 rounded-lg bg-gray-50/50 dark:bg-gray-900/50 ${!loraValue.on ? "opacity-60" : ""}`}
+        className={`${layoutContainerClass} power-lora-row flex flex-col gap-2 p-3 ${controlNestedSurfaceClassName} ${!loraValue.on ? "opacity-60" : ""}`}
       >
         <div className="power-lora-row-actions flex items-center gap-2">
           <button
             type="button"
             onClick={() => handleSubChange("on", !loraValue.on)}
-            className={`power-lora-enabled-button flex-1 py-2 rounded-lg text-sm font-semibold transition-colors ${loraValue.on ? "bg-blue-600 text-white" : "bg-gray-700 text-white"} ${disabled ? "opacity-60 cursor-not-allowed" : ""}`}
+            className={`power-lora-enabled-button flex-1 py-2 text-sm ${controlToggleButtonClassName({ active: loraValue.on, disabled, radius: "lg" })}`}
             disabled={disabled}
           >
             {loraValue.on ? "Enabled" : "Disabled"}
@@ -432,7 +472,7 @@ export function WidgetControl({
           <button
             type="button"
             onClick={() => onChange(null)}
-            className={`power-lora-remove-button flex-1 py-2 rounded-lg text-sm font-semibold bg-red-600 text-white hover:bg-red-700 transition-colors ${disabled ? "opacity-60 cursor-not-allowed" : ""}`}
+            className={`power-lora-remove-button flex-1 ${controlDangerButtonClassName}`}
             disabled={disabled}
           >
             Remove
@@ -446,6 +486,7 @@ export function WidgetControl({
               hideLabel
               compact
               type="COMBO"
+              modelKind="loras"
               value={loraValue.lora}
               options={choices}
               onChange={(val) => handleSubChange("lora", val)}
@@ -455,7 +496,7 @@ export function WidgetControl({
         </div>
 
         <div className="power-lora-strengths flex flex-col">
-          <label className="block text-sm font-medium text-gray-700 ml-1">
+          <label className="block text-sm font-medium text-slate-300 ml-1">
             {showSeparate ? "Model strength" : "Strength"}
           </label>
           <div className="power-lora-strength-row flex items-center gap-3">
@@ -474,7 +515,7 @@ export function WidgetControl({
           </div>
 
           {showSeparate && (
-            <label className="block text-sm font-medium text-gray-700 ml-1">
+            <label className="block text-sm font-medium text-slate-300 ml-1">
               Clip strength
             </label>
           )}
@@ -514,7 +555,7 @@ export function WidgetControl({
       <div className={`${layoutContainerClass} power-lora-add`}>
         <button
           onClick={handlePowerLoraAddClick}
-          className="w-full py-2 px-4 border-2 border-dashed border-gray-300 dark:border-gray-700 rounded-lg text-sm font-medium text-gray-500 hover:text-blue-500 hover:border-blue-500 transition-all flex items-center justify-center gap-2"
+          className={controlDashedButtonClassName}
           disabled={disabled}
         >
           <PlusIcon className="w-5 h-5" />
@@ -529,7 +570,7 @@ export function WidgetControl({
   }
 
   if (isCombo) {
-    return <ComboControl {...controlProps} />;
+    return <ModelComboControl {...controlProps} modelKind={resolvedModelKind} />;
   }
 
   if (isNumber) {
@@ -568,7 +609,7 @@ export function WidgetControl({
         >
           <label
             id={`widget-label-${name}`}
-            className="text-[10px] font-bold text-gray-500 uppercase tracking-wider truncate mr-2"
+            className="text-[10px] font-bold text-slate-400 uppercase tracking-wider truncate mr-2"
           >
             {label}
           </label>
@@ -589,16 +630,16 @@ export function WidgetControl({
         className={`
           control-trigger
           relative flex items-center justify-between
-          bg-gray-50 border border-gray-200 rounded-xl px-3 py-2.5
-          active:bg-gray-100 active:border-gray-300 transition-all
+          bg-slate-950/80 border border-white/10 rounded-xl px-3 py-2.5
+          active:bg-slate-800/95 active:border-cyan-400/40 transition-all
           ${disabled ? "opacity-50 grayscale pointer-events-none" : "cursor-pointer"}
-          ${hasError ? "border-red-300 bg-red-50/30" : ""}
+          ${hasError ? "border-red-500/50 bg-red-500/10" : ""}
         `}
         onClick={handleOpenModal}
       >
         <div
           id={`widget-value-display-${name}`}
-          className="value-display flex-1 truncate text-sm font-medium text-gray-900"
+          className="value-display flex-1 truncate text-sm font-medium text-slate-100"
         >
           {isCombo
             ? value || "Select..."
@@ -612,6 +653,7 @@ export function WidgetControl({
         isOpen={effectiveModalOpen}
         title={label}
         onClose={handleCloseModal}
+        viewerSidebar={forceModalOpen}
       >
         <div id={`modal-control-wrapper-${name}`} className="p-2">
           {renderControl()}

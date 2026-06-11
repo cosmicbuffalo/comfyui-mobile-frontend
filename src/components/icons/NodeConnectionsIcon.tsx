@@ -18,8 +18,8 @@ export function NodeConnectionsIcon({
   leftLineCount,
   rightLineCount,
   inactiveColor = themeColors.text.secondary,
-  inputHighlightColor = themeColors.status.danger,
-  outputHighlightColor = themeColors.status.danger,
+  inputHighlightColor = themeColors.border.focusCyan,
+  outputHighlightColor = themeColors.border.focusCyan,
   offLineColor = inactiveColor,
   ...props
 }: NodeConnectionsIconProps) {

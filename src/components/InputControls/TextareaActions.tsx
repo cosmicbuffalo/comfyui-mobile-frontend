@@ -100,22 +100,22 @@ export function TextareaActions({
   };
 
   return (
-    <div className={`flex items-center text-[11px] text-gray-500 ${className}`}>
+    <div className={`flex items-center text-[11px] text-slate-400 ${className}`}>
       <button
         type="button"
-        className="inline-flex items-center gap-1 px-1 py-0.5 text-gray-600"
+        className="inline-flex items-center gap-1 px-1 py-0.5 text-slate-400 hover:text-slate-100"
         onMouseDown={keepFocus}
         onClick={handleCopyClick}
         aria-label="Copy to clipboard"
       >
         {copyDone ? (
-          <CheckIcon className="w-3.5 h-3.5 text-green-500" />
+          <CheckIcon className="w-3.5 h-3.5 text-emerald-500" />
         ) : (
           <ClipboardIcon className="w-3.5 h-3.5" />
         )}
         <span>Copy</span>
       </button>
-      <span className="text-gray-500/50">|</span>
+      <span className="text-slate-500/60">|</span>
       <button
         type="button"
         className="inline-flex items-center gap-1 px-1 py-0.5 text-red-600"

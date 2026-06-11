@@ -78,25 +78,3 @@ export function debugLog(message: string, data?: unknown) {
   // Schedule write to server
   scheduleFlush();
 }
-
-// Force flush immediately (call before critical operations)
-export async function flushDebugLogs() {
-  if (writeTimeout) {
-    clearTimeout(writeTimeout);
-    writeTimeout = null;
-  }
-  await flushLogsToServer();
-}
-
-// Clear the server log file
-export async function clearServerLogs() {
-  try {
-    await fetch(`/api/userdata/${encodeUserDataPath('mobile-debug.log')}?overwrite=true`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'text/plain' },
-      body: ''
-    });
-  } catch (err) {
-    console.error('[debugLog] Failed to clear server logs:', err);
-  }
-}
