@@ -1,4 +1,5 @@
 import { ThickArrowRightIcon } from '@/components/icons';
+import { OverlayCircleButton } from './OverlayCircleButton';
 
 interface UseInWorkflowButtonProps {
   onClick: () => void;
@@ -6,13 +7,11 @@ interface UseInWorkflowButtonProps {
 
 export function UseInWorkflowButton({ onClick }: UseInWorkflowButtonProps) {
   return (
-    <button
-      type="button"
+    <OverlayCircleButton
       onClick={onClick}
-      aria-label="Use in workflow"
-      className="pointer-events-auto w-9 h-9 rounded-full bg-black/40 text-white flex items-center justify-center hover:bg-black/60 transition-colors"
-    >
-      <ThickArrowRightIcon className="w-5 h-5" />
-    </button>
+      ariaLabel="Use in workflow"
+      className="text-white"
+      icon={<ThickArrowRightIcon className="w-5 h-5" />}
+    />
   );
 }

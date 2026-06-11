@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import { useWorkflowStore } from '@/hooks/useWorkflow';
 import { useQueueStore } from '@/hooks/useQueue';
+import { appChromePrimaryButtonClassName, appChromePrimaryButtonDisabledClassName } from '@/components/chromeStyles';
 
 export function RunButton() {
   const workflow = useWorkflowStore((s) => s.workflow);
@@ -17,8 +18,8 @@ export function RunButton() {
   const pending = useQueueStore((s) => s.pending);
   const canRun = workflow !== null;
 
-  // Bridge the brief gap between iterations (when isExecuting flips false
-  // before useInfiniteLoop re-queues) so the Stop button doesn't flash back to Run.
+  // Bridge the brief gap between iterations (when isExecuting flips false before
+  // the websocket re-queues the loop) so the Stop button doesn't flash to Run.
   const hasActiveRun =
     isExecuting || isLoading || running.length > 0 || pending.length > 0;
   const showStop = (infiniteLoop && hasActiveRun) || isStopping;
@@ -29,7 +30,7 @@ export function RunButton() {
         setIsStopping(false);
       });
     }
-  }, [hasActiveRun, isStopping]);
+  }, [hasActiveRun, isStopping, setIsStopping]);
 
   const handleRun = () => {
     if (canRun) {
@@ -66,15 +67,21 @@ export function RunButton() {
   return (
     <button
       onClick={handleRun}
-      disabled={!canRun}
+      disabled={!canRun || isLoading}
+      aria-busy={isLoading}
       className={
         `flex-1 py-3 px-6 rounded-xl font-semibold text-lg min-h-[48px] transition-all `
-        + (canRun
-          ? 'bg-blue-500 text-white active:bg-blue-600'
-          : 'bg-gray-300 text-gray-500 cursor-not-allowed')
+        + (canRun && !isLoading
+          ? appChromePrimaryButtonClassName
+          : appChromePrimaryButtonDisabledClassName)
       }
     >
-      Run
+      <span className="flex items-center justify-center gap-2">
+        {isLoading && (
+          <span className="h-4 w-4 animate-spin rounded-full border-2 border-current border-r-transparent" />
+        )}
+        {isLoading ? 'Queueing...' : 'Run'}
+      </span>
     </button>
   );
 }

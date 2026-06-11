@@ -32,7 +32,6 @@ export function useSwipeNavigation({
   deferResetOnSwipe = false,
   deferResetDurationMs = 350
 }: UseSwipeNavigationOptions) {
-  const [swipeOffset, setSwipeOffset] = useState(0);
   const [isSwiping, setIsSwiping] = useState(false);
   const [swipeEnabled, setLocalSwipeEnabled] = useState(enabled);
   const swipeRef = useRef<SwipeState | null>(null);
@@ -46,7 +45,6 @@ export function useSwipeNavigation({
   const resetSwipeState = useCallback(() => {
     swipeRef.current = null;
     setIsSwiping(false);
-    setSwipeOffset(0);
   }, []);
 
   const setSwipeEnabled = useCallback((value: boolean) => {
@@ -64,15 +62,65 @@ export function useSwipeNavigation({
       return tag === 'input' || tag === 'textarea' || tag === 'select';
     };
 
+    // Some controls (e.g. the image comparer slider) want a buffer *around*
+    // themselves where swipes are also ignored, so a touch that lands just
+    // outside their bounds doesn't trigger navigation. They opt in by setting
+    // data-swipe-nav-ignore-margin="<px>"; the rect is inflated by that margin.
+    const isInIgnoreDeadZone = (x: number, y: number) => {
+      const zones = document.querySelectorAll<HTMLElement>(
+        '[data-swipe-nav-ignore-margin]'
+      );
+      for (const zone of Array.from(zones)) {
+        const margin = parseFloat(zone.dataset.swipeNavIgnoreMargin ?? '');
+        if (!Number.isFinite(margin) || margin <= 0) continue;
+        const r = zone.getBoundingClientRect();
+        // A zone with zero width OR height has no real area to guard, and its
+        // left/right/top/bottom can still satisfy the comparisons below — skip it.
+        if (r.width <= 0 || r.height <= 0) continue;
+        if (
+          x >= r.left - margin &&
+          x <= r.right + margin &&
+          y >= r.top - margin &&
+          y <= r.bottom + margin
+        ) {
+          return true;
+        }
+      }
+      return false;
+    };
+
+    // The non-passive touchmove listener (needed so a horizontal swipe can
+    // preventDefault) is attached only while a candidate gesture is being
+    // tracked. A permanently registered non-passive document listener would
+    // force every scroll frame app-wide through this handler; detaching as
+    // soon as the gesture locks vertical restores compositor scrolling for
+    // the rest of that scroll.
+    let moveListenerAttached = false;
+    const attachMoveListener = () => {
+      if (moveListenerAttached) return;
+      moveListenerAttached = true;
+      document.addEventListener('touchmove', handleTouchMove, { passive: false });
+    };
+    const detachMoveListener = () => {
+      if (!moveListenerAttached) return;
+      moveListenerAttached = false;
+      document.removeEventListener('touchmove', handleTouchMove);
+    };
+
     const handleTouchStart = (e: TouchEvent) => {
-      if (isEditableTarget(e.target) || isEditableTarget(document.activeElement)) {
+      const touch = e.touches[0];
+      if (
+        isEditableTarget(e.target) ||
+        isEditableTarget(document.activeElement) ||
+        (touch && isInIgnoreDeadZone(touch.clientX, touch.clientY))
+      ) {
         return;
       }
+      if (!touch) return;
       if (resetTimerRef.current !== null) {
         window.clearTimeout(resetTimerRef.current);
         resetTimerRef.current = null;
       }
-      const touch = e.touches[0];
       swipeRef.current = {
         startX: touch.clientX,
         startY: touch.clientY,
@@ -81,6 +129,7 @@ export function useSwipeNavigation({
         isHorizontal: null,
         isTracking: true
       };
+      attachMoveListener();
     };
 
     const handleTouchMove = (e: TouchEvent) => {
@@ -95,7 +144,7 @@ export function useSwipeNavigation({
         if (Math.abs(dx) > 20 || Math.abs(dy) > 20) {
           const isHorizontal = Math.abs(dx) > Math.abs(dy);
           swipe.isHorizontal = isHorizontal;
-          
+
           if (isHorizontal) {
             // Only start swiping if we have a handler for that direction
             const hasHandler = dx > 0 ? !!onSwipeRight : !!onSwipeLeft;
@@ -103,12 +152,15 @@ export function useSwipeNavigation({
               setIsSwiping(true);
             } else {
               swipe.isTracking = false;
+              detachMoveListener();
             }
           } else {
-            // Vertical movement
+            // Vertical movement: hand the rest of the scroll back to the
+            // compositor unless a vertical handler needs the end position.
             const hasHandler = dy > 0 ? !!onSwipeDown : !!onSwipeUp;
             if (!hasHandler) {
               swipe.isTracking = false;
+              detachMoveListener();
             }
           }
         }
@@ -119,8 +171,9 @@ export function useSwipeNavigation({
         if (preventScroll && e.cancelable) {
           e.preventDefault();
         }
+        // Offset is tracked in the ref only — nothing renders it, and state
+        // here would re-render the app per touchmove.
         swipe.currentX = touch.clientX;
-        setSwipeOffset(touch.clientX - swipe.startX);
       } else {
         // We don't currently track vertical offset but we could
         swipe.currentY = touch.clientY;
@@ -128,6 +181,7 @@ export function useSwipeNavigation({
     };
 
     const handleTouchEnd = () => {
+      detachMoveListener();
       const swipe = swipeRef.current;
       if (!swipe?.isTracking) {
         resetSwipeState();
@@ -182,13 +236,12 @@ export function useSwipeNavigation({
     };
 
     document.addEventListener('touchstart', handleTouchStart, { passive: true });
-    document.addEventListener('touchmove', handleTouchMove, { passive: false });
     document.addEventListener('touchend', handleTouchEnd, { passive: true });
     document.addEventListener('touchcancel', handleTouchEnd, { passive: true });
 
     return () => {
       document.removeEventListener('touchstart', handleTouchStart);
-      document.removeEventListener('touchmove', handleTouchMove);
+      detachMoveListener();
       document.removeEventListener('touchend', handleTouchEnd);
       document.removeEventListener('touchcancel', handleTouchEnd);
       if (resetTimerRef.current !== null) {
@@ -200,7 +253,6 @@ export function useSwipeNavigation({
   }, [swipeEnabled, onSwipeLeft, onSwipeRight, onSwipeUp, onSwipeDown, threshold, preventScroll, deferResetOnSwipe, deferResetDurationMs, resetSwipeState]);
 
   return {
-    swipeOffset,
     isSwiping,
     setSwipeEnabled,
     resetSwipeState

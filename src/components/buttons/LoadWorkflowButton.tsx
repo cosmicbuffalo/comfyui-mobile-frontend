@@ -1,18 +1,32 @@
-import { WorkflowIcon } from '@/components/icons';
+import { ProgressRingWithTrack, WorkflowIcon } from '@/components/icons';
+import { OverlayCircleButton } from './OverlayCircleButton';
 
 interface LoadWorkflowButtonProps {
   onClick: () => void;
+  progress?: number | null;
 }
 
-export function LoadWorkflowButton({ onClick }: LoadWorkflowButtonProps) {
+export function LoadWorkflowButton({ onClick, progress }: LoadWorkflowButtonProps) {
+  const isLoading = progress != null;
   return (
-    <button
-      type="button"
+    <OverlayCircleButton
       onClick={onClick}
-      aria-label="Load workflow"
-      className="pointer-events-auto w-9 h-9 rounded-full bg-black/40 text-white flex items-center justify-center hover:bg-black/60 transition-colors"
-    >
-      <WorkflowIcon className="w-5 h-5" />
-    </button>
+      ariaLabel="Load workflow"
+      disabled={isLoading}
+      className="relative text-white"
+      icon={(
+        <>
+          <WorkflowIcon className="w-5 h-5" />
+          {isLoading && (
+            <ProgressRingWithTrack
+              progress={progress}
+              className="absolute inset-0 w-full h-full -rotate-90"
+              trackColor="rgb(255 255 255 / 0.22)"
+              progressColor="rgb(103 232 249)"
+            />
+          )}
+        </>
+      )}
+    />
   );
 }

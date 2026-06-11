@@ -41,20 +41,20 @@ interface ContextMenuBuilderProps {
 
 const colorClasses: Record<ContextMenuColor, { row: string; icon: string }> = {
   default: {
-    row: 'text-gray-900 hover:bg-gray-50',
-    icon: 'text-gray-500'
+    row: 'text-slate-100 hover:bg-white/10',
+    icon: 'text-slate-400'
   },
   muted: {
-    row: 'text-gray-600 hover:bg-gray-50',
-    icon: 'text-gray-500'
+    row: 'text-slate-300 hover:bg-white/10',
+    icon: 'text-slate-400'
   },
   danger: {
-    row: 'text-red-600 hover:bg-red-50',
-    icon: 'text-red-500'
+    row: 'text-red-400 hover:bg-red-500/10',
+    icon: 'text-red-400'
   },
   primary: {
-    row: 'text-blue-600 hover:bg-blue-50',
-    icon: 'text-blue-500'
+    row: 'text-cyan-300 hover:bg-cyan-400/10',
+    icon: 'text-cyan-300'
   }
 };
 
@@ -65,14 +65,14 @@ export function ContextMenuBuilder({
 }: ContextMenuBuilderProps) {
   return (
     <div
-      className={`bg-white border border-gray-200 rounded-lg shadow-lg overflow-hidden ${className ?? ''}`.trim()}
+      className={`bg-slate-900 border border-white/10 text-slate-100 rounded-lg shadow-lg overflow-hidden ${className ?? ''}`.trim()}
     >
       {items.map((item) => {
         if (item.type === 'divider') {
           return (
             <div
               key={item.key}
-              className={`border-t border-gray-200 my-1 ${item.className ?? ''}`.trim()}
+              className={`border-t border-white/10 my-1 ${item.className ?? ''}`.trim()}
             />
           );
         }
@@ -104,9 +104,13 @@ export function ContextMenuBuilder({
             onClick={item.onClick}
             disabled={item.disabled}
           >
-            <span className="flex items-center gap-2 min-w-0">
-              {item.icon ? <span className={tone.icon}>{item.icon}</span> : null}
-              <span className="truncate">{item.label}</span>
+            <span className="flex items-center gap-2 min-w-0 flex-1">
+              {item.icon ? (
+                <span className={`flex h-5 w-5 shrink-0 items-center justify-center ${tone.icon}`}>
+                  {item.icon}
+                </span>
+              ) : null}
+              <span className="flex-1 truncate text-left">{item.label}</span>
             </span>
             {item.rightSlot ? <span className="shrink-0">{item.rightSlot}</span> : null}
           </button>

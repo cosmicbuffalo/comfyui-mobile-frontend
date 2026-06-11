@@ -1,4 +1,5 @@
 import { InfoIcon } from '@/components/icons/InfoIcon';
+import { OverlayCircleButton } from './OverlayCircleButton';
 
 interface MetadataButtonProps {
   onClick: () => void;
@@ -10,16 +11,12 @@ export function MetadataButton({
   disabled
 }: MetadataButtonProps) {
   return (
-    <button
-      type="button"
+    <OverlayCircleButton
       onClick={onClick}
-      aria-label="Toggle metadata"
-      className={`pointer-events-auto w-9 h-9 rounded-full bg-black/40 text-white flex items-center justify-center hover:bg-black/60 transition-colors ${
-        disabled ? 'opacity-40' : ''
-      }`}
+      ariaLabel="Toggle metadata"
       disabled={disabled}
-    >
-      <InfoIcon className="w-5 h-5" />
-    </button>
+      className={`text-white ${disabled ? 'opacity-40' : ''}`}
+      icon={<InfoIcon className="w-5 h-5" />}
+    />
   );
 }

@@ -33,6 +33,7 @@ export function BottomStatusOverlay() {
 
   const isQueuePanel = currentPanel === 'queue';
   const isOutputsPanel = currentPanel === 'outputs';
+  const isWorkflowPanel = currentPanel === 'workflow';
 
   const nodeErrorCount = Object.values(nodeErrors).reduce(
     (total, errors) => total + errors.length,
@@ -41,8 +42,12 @@ export function BottomStatusOverlay() {
   const hasNodeErrors = nodeErrorCount > 0;
   const isWorkflowLoadError =
     Boolean(error?.startsWith("Workflow load error")) || hasNodeErrors;
+  const isBackendConnectionError =
+    Boolean(error?.startsWith("Backend connection"));
   const errorTitle = isWorkflowLoadError
     ? "Workflow load error"
+    : isBackendConnectionError
+      ? "Backend connection"
     : "Prompt error";
   const errorMessage = isWorkflowLoadError && error
     ? error.replace(/^Workflow load error:\s*/i, '')
@@ -65,7 +70,10 @@ export function BottomStatusOverlay() {
     workflowDurationStats,
   });
   const displayNodeProgress = overallProgress === 100 ? 100 : progress;
-  const hasErrorToast = (Boolean(error) || hasNodeErrors) && !errorsDismissed;
+  // Workflow load errors (and node errors) are only relevant on the workflow
+  // panel — don't surface them while browsing the queue or outputs.
+  const hasErrorToast = (Boolean(error) || hasNodeErrors) && !errorsDismissed
+    && (!isWorkflowLoadError || isWorkflowPanel);
   const progressDismissed = dismissedRunKey !== null && dismissedRunKey === runKey;
   const showProgress =
     overallProgress !== null &&
@@ -115,6 +123,11 @@ export function BottomStatusOverlay() {
   const handleProgressDismiss = () => {
     if (!runKey) return;
     setDismissedRunKey(runKey);
+    // Dismissing the progress card is an explicit "I'm done watching this" — also
+    // disengage the execution auto-follow so it stops scrolling the workflow list.
+    window.dispatchEvent(
+      new CustomEvent("workflow-stop-following-executing-node"),
+    );
   };
 
   const handleProgressDismissPointerDown = (
@@ -155,7 +168,7 @@ export function BottomStatusOverlay() {
         >
           <div
             id="error-notification-toast"
-            className="bg-red-100 text-red-900 rounded-xl shadow-lg px-4 py-3 w-[70vw] max-w-sm"
+            className="bg-red-950/90 border border-red-500/40 text-slate-100 rounded-xl shadow-lg px-4 py-3 w-[70vw] max-w-sm"
             role="button"
             tabIndex={0}
             onClick={handleErrorClick}
@@ -163,10 +176,10 @@ export function BottomStatusOverlay() {
           >
             <div className="error-toast-content flex items-start justify-between gap-3">
               <div className="error-text-container pr-16">
-                <div className="error-title text-sm font-semibold text-red-800">
+                <div className="error-title text-sm font-semibold text-red-200">
                   {errorTitle}
                 </div>
-                <div className="error-message mt-1 text-xs text-red-800 break-words">
+                <div className="error-message mt-1 text-xs text-slate-200 break-words">
                   {errorMessage}
                 </div>
               </div>
@@ -176,7 +189,7 @@ export function BottomStatusOverlay() {
             id="error-dismiss-button"
             type="button"
             aria-label="Dismiss error"
-            className="absolute top-3 right-3 shrink-0 px-3 py-1 text-xs font-semibold bg-red-700 text-white rounded-full z-10"
+            className="absolute top-3 right-3 shrink-0 px-3 py-1 text-xs font-semibold bg-red-600 text-white rounded-full z-10"
             onPointerDown={handleErrorDismissPointerDown}
             onClick={handleErrorDismissClick}
           >
@@ -187,7 +200,7 @@ export function BottomStatusOverlay() {
       {showProgress && (
         <div
           id="execution-progress-card"
-          className="relative bg-white border border-gray-200 rounded-xl shadow-lg px-4 py-2 w-[70vw] max-w-sm pointer-events-auto"
+          className="relative bg-slate-950/55 border border-white/10 text-slate-100 rounded-lg shadow-sm backdrop-blur-md px-3 py-2 w-[70vw] max-w-sm pointer-events-auto"
           role="button"
           tabIndex={0}
           onClick={handleProgressCardClick}
@@ -196,22 +209,21 @@ export function BottomStatusOverlay() {
           <button
             type="button"
             aria-label="Dismiss progress"
-            className="absolute top-2 right-2 w-7 h-7 rounded-full flex items-center justify-center text-gray-400 hover:text-gray-600"
+            className="absolute -top-3.5 -right-3.5 w-7 h-7 rounded-full flex items-center justify-center bg-slate-800 border border-white/15 text-slate-300 shadow-md hover:text-white hover:bg-slate-700"
             onPointerDown={handleProgressDismissPointerDown}
             onClick={handleProgressDismissClick}
           >
             <XMarkIcon className="w-4 h-4" />
           </button>
-          <div className="executing-node-name text-sm font-semibold text-gray-900">
-            {executingNodeLabel || "Running"}
+          <div className="node-progress-info flex min-w-0 items-center justify-between gap-2 text-xs leading-snug">
+            <span className="executing-node-name min-w-0 truncate font-semibold text-slate-100">
+              {executingNodeLabel || "Running"}
+            </span>
+            <span className="shrink-0 font-semibold text-emerald-200">{displayNodeProgress}%</span>
           </div>
-          <div className="node-progress-info mt-2 flex items-center justify-between text-xs text-gray-500">
-            <span>Progress</span>
-            <span>{displayNodeProgress}%</span>
-          </div>
-          <div className="node-progress-track mt-1 h-2 rounded-full bg-gray-200 overflow-hidden">
+          <div className="node-progress-track mt-1 h-1 rounded-full bg-slate-800/75 overflow-hidden">
             <div
-              className="node-progress-bar h-full bg-green-500 transition-none"
+              className="node-progress-bar h-full bg-emerald-400 transition-none"
               style={{
                 width: `${Math.min(100, Math.max(0, displayNodeProgress))}%`,
               }}
@@ -219,13 +231,13 @@ export function BottomStatusOverlay() {
           </div>
           {overallProgress !== null && (
             <div className="overall-progress-container">
-              <div className="overall-progress-info mt-3 flex items-center justify-between text-xs text-gray-500">
+              <div className="overall-progress-info mt-1.5 flex items-center justify-between gap-2 text-[10px] leading-none text-slate-400">
                 <span>Overall</span>
-                <span>{overallProgress}%</span>
+                <span className="font-semibold text-cyan-200">{overallProgress}%</span>
               </div>
-              <div className="overall-progress-track mt-1 h-2 rounded-full bg-gray-200 overflow-hidden">
+              <div className="overall-progress-track mt-1 h-1 rounded-full bg-slate-800/75 overflow-hidden">
                 <div
-                  className="overall-progress-bar h-full bg-blue-500 transition-none"
+                  className="overall-progress-bar h-full bg-cyan-400 transition-none"
                   style={{
                     width: `${Math.min(100, Math.max(0, overallProgress))}%`,
                   }}

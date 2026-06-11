@@ -1,12 +1,18 @@
 # ComfyUI Mobile User Guide
 
-This guide walks through every feature in the mobile frontend as of `v2.0.0`
+This guide walks through every feature in the mobile frontend as of `v3.0.0`
 
 ## Table of Contents
 
 - [How-To](#how-to)
   - [How do I load a workflow?](#how-do-i-load-a-workflow)
   - [How do I save my workflow?](#how-do-i-save-my-workflow)
+  - [How do I work on more than one workflow at once?](#how-do-i-work-on-more-than-one-workflow-at-once)
+  - [How do I organize my saved workflows into folders?](#how-do-i-organize-my-saved-workflows-into-folders)
+  - [How do I bookmark a workflow or template I use often?](#how-do-i-bookmark-a-workflow-or-template-i-use-often)
+  - [How do I hide workflows I don't want to see?](#how-do-i-hide-workflows-i-dont-want-to-see)
+  - [How do I install or manage custom nodes?](#how-do-i-install-or-manage-custom-nodes)
+  - [How do I see previews and details for models and LoRAs?](#how-do-i-see-previews-and-details-for-models-and-loras)
   - [How do I use an output image in my current workflow?](#how-do-i-use-an-output-image-in-my-current-workflow)
   - [How do I load the workflow of one of my output images?](#how-do-i-load-the-workflow-of-one-of-my-output-images)
   - [How do I run my workflow multiple times?](#how-do-i-run-my-workflow-multiple-times)
@@ -21,6 +27,9 @@ This guide walks through every feature in the mobile frontend as of `v2.0.0`
   - [How do I re-run a previous generation?](#how-do-i-re-run-a-previous-generation)
   - [How do I trace which nodes are connected to each other?](#how-do-i-trace-which-nodes-are-connected-to-each-other)
   - [How do I delete old outputs in bulk?](#how-do-i-delete-old-outputs-in-bulk)
+  - [How do I select a range of outputs at once?](#how-do-i-select-a-range-of-outputs-at-once)
+  - [How do I search my outputs by prompt?](#how-do-i-search-my-outputs-by-prompt)
+  - [How do I download an output to my device?](#how-do-i-download-an-output-to-my-device)
   - [How do I organize my output files into folders?](#how-do-i-organize-my-output-files-into-folders)
   - [How do I switch between my outputs and input images?](#how-do-i-switch-between-my-outputs-and-input-images)
   - [How do I navigate between pages?](#how-do-i-navigate-between-pages)
@@ -29,12 +38,19 @@ This guide walks through every feature in the mobile frontend as of `v2.0.0`
 - [Main Workspace](#main-workspace)
   - [Main Menu](#main-menu)
     - [Load Workflow](#load-workflow)
+    - [My Workflows (Folders, Bookmarks, Hidden)](#my-workflows-folders-bookmarks-hidden)
     - [Save Workflow](#save-workflow)
-    - [Appearance](#appearance)
+    - [Server](#server)
+      - [Custom Nodes Manager](#custom-nodes-manager)
+      - [Preferences](#preferences)
+      - [Restart the ComfyUI backend server](#restart-the-comfyui-backend-server)
+      - [What happens when the connection to ComfyUI drops?](#what-happens-when-the-connection-to-comfyui-drops)
     - [About and Help](#about-and-help)
   - [Top Bar](#top-bar)
+  - [Workflow Tabs](#workflow-tabs)
   - [Bottom Bar](#bottom-bar)
   - [Swipe Navigation](#swipe-navigation)
+  - [Connection & Recovery](#connection-and-recovery)
 - [Workflow Page](#workflow-page)
   - [Workflow Options Menu](#workflow-options-menu)
   - [Containers (Groups and Subgraphs)](#containers-groups-and-subgraphs)
@@ -42,6 +58,8 @@ This guide walks through every feature in the mobile frontend as of `v2.0.0`
   - [Node Cards](#node-cards)
   - [Node Connections](#node-connections)
   - [Parameters and Widgets](#parameters-and-widgets)
+  - [Rich Model Picker](#rich-model-picker)
+  - [Image Comparer Nodes](#image-comparer-nodes)
   - [LoRA Manager Nodes](#lora-manager-nodes)
   - [Bookmarks](#bookmarks)
   - [Reposition Mode](#reposition-mode)
@@ -67,6 +85,7 @@ This guide walks through every feature in the mobile frontend as of `v2.0.0`
   - [Outputs Viewer](#outputs-viewer)
 - [Image Viewer](#image-viewer)
   - [Open and Navigate](#open-and-navigate)
+  - [Keyboard Shortcuts](#keyboard-shortcuts)
   - [Zoom and Pan](#zoom-and-pan)
   - [Metadata Overlays](#metadata-overlays)
   - [Follow Queue Mode](#follow-queue-mode)
@@ -85,10 +104,44 @@ Open the [Main Menu](#main-menu) from the hamburger icon in the top-left corner.
 
 Open the [Main Menu](#main-menu) and look under **Save Workflow**. Use **Save** to overwrite the current file, **Save As** to save under a new name on the server, or **Download to Device** to save a local copy as JSON. An unsaved-changes indicator (blue asterisk) appears in the [Top Bar](#top-bar) on the workflow page when you have edits that haven't been saved yet.
 
+<a id="how-do-i-work-on-more-than-one-workflow-at-once"></a>
+### How do I work on more than one workflow at once?
+
+You can keep up to 10 workflows open at the same time, each in its own tab. Whenever you load a workflow while one is already open (from the server, a template, pasted JSON, a file, or an image's embedded workflow), it opens in a new tab instead of replacing the current one. A **tab strip** appears just under the [Top Bar](#top-bar) once you have more than one open — tap a tab to switch to it. See [Workflow Tabs](#workflow-tabs) for what each tab shows and how to close them.
+
+Only the active tab runs live; the others are held in the background with all their state intact, and your open tabs (plus which one is active) survive a page refresh. If you try to open an 11th workflow, the app asks you to close one first.
+
+<a id="how-do-i-organize-my-saved-workflows-into-folders"></a>
+### How do I organize my saved workflows into folders?
+
+Open the [Main Menu](#main-menu) → **Load Workflow** → **My Workflows**. Use the `...` menu at the top of the panel and choose **New folder** to create one. To move a workflow (or a folder) into a folder, open that item's `...` menu and choose **Move**, then pick a destination. Tap a folder to open it and use the breadcrumb (or swipe) to navigate back out. Folders sort by their most recently modified workflow, so the ones you're actively using float to the top. See [My Workflows](#my-workflows-folders-bookmarks-hidden) for the full set of folder actions (rename, delete).
+
+<a id="how-do-i-bookmark-a-workflow-or-template-i-use-often"></a>
+### How do I bookmark a workflow or template I use often?
+
+In both the **My Workflows** and **Templates** panels ([Main Menu](#main-menu) → Load Workflow), each item has a bookmark toggle — tap it to bookmark or un-bookmark (a workflow's bookmark action also lives in its `...` menu as **Bookmark** / **Remove bookmark**). To see only your bookmarks, tap the **Show bookmarks only** filter at the top of the panel. Bookmarks are stored per-device, follow a workflow through renames and moves, and are removed automatically if you delete the item. This is separate from the in-workflow [Bookmarks](#bookmarks) that jump you to nodes.
+
+<a id="how-do-i-hide-workflows-i-dont-want-to-see"></a>
+### How do I hide workflows I don't want to see?
+
+In **My Workflows**, open a workflow's or folder's `...` menu and choose **Hide**. Hidden items disappear from the list until you turn on **Show hidden** from the panel's top `...` menu; while that's on, hidden items show faded with an **Unhide** action in their menu. This is a declutter convenience only — it is **not** access control, and it doesn't restrict the server in any way. The hidden list is saved to your ComfyUI user data, so it persists across sessions and devices.
+
+<a id="how-do-i-install-or-manage-custom-nodes"></a>
+### How do I install or manage custom nodes?
+
+Open the [Main Menu](#main-menu), expand the **Server** section, and tap **Custom nodes**. This opens the [Custom Nodes Manager](#custom-nodes-manager), where you can search, filter (e.g. by ones with updates available or ones missing from your current workflow), and install, update, enable/disable, switch versions, or uninstall custom nodes. After a change, restart ComfyUI to apply it (the manager shows a restart prompt when one is needed).
+
+<a id="how-do-i-see-previews-and-details-for-models-and-loras"></a>
+### How do I see previews and details for models and LoRAs?
+
+Model and LoRA dropdowns show a **rich picker** with a thumbnail preview, the model name, its version, and a small badge for the model type and base model (e.g. _LoRA · XL_) — so you can recognize the right file at a glance instead of reading filenames. This works whether or not Lora Manager is installed; without it, the app uses its own metadata fetched from Civitai. To pull down previews and details for your models, open the [Main Menu](#main-menu) → **Server** → **Refresh model metadata**. See [Rich Model Picker](#rich-model-picker) for details (including how to reveal blurred previews).
+
 <a id="how-do-i-use-an-output-image-in-my-current-workflow"></a>
 ### How do I use an output image in my current workflow?
 
 There are two ways. From the [Outputs Page](#outputs-page), tap the `...` on any image and select "Use in workflow" — or open any image in the [Image Viewer](#image-viewer) and tap the [Use in Workflow](#use-in-workflow) action button (the arrow pointing right). Either way, a modal will list all LoadImage nodes in your current workflow. Tap the node you want to load the image into, and the app will switch to the [Workflow Page](#workflow-page) and scroll to that node with the image already set.
+
+If you have more than one workflow open in [tabs](#workflow-tabs), the picker first asks which open workflow to load the image into, then shows that workflow's LoadImage nodes.
 
 <a id="how-do-i-load-the-workflow-of-one-of-my-output-images"></a>
 ### How do I load the workflow of one of my output images?
@@ -109,6 +162,8 @@ Use the run count buttons (minus/plus) in the [Bottom Bar](#bottom-bar) to set h
 ### How do I enable infinite generation mode?
 
 First turn the feature on under [Main Menu](#main-menu) → **Server** → **Preferences** → toggle **Enable infinite mode**. With the preference on, an ∞ button appears beside the Run button in the [Bottom Bar](#bottom-bar). Tap it to enable infinite generation. Now when you tap **Run**, each finished run automatically queues the next one. While running, the Run button is replaced by a red **Stop** button (which cancels the current run and disables infinite mode) and an amber **Skip** button (which cancels the current run but keeps looping into the next iteration).
+
+If you use multiple [workflow tabs](#workflow-tabs), only one workflow loops at a time. Switching to another tab leaves the loop running on its own workflow in the background; enabling infinite mode on a different tab moves the loop there. As a safety check, the loop stops itself (with an explanation) if the next run would re-submit an identical prompt forever — for example a fixed seed with no other changes. Set a seed widget to randomize, or change an input, to keep generating new outputs.
 
 <a id="how-do-i-watch-outputs-as-they-are-generated"></a>
 ### How do I watch outputs as they are generated?
@@ -164,6 +219,23 @@ Each node card has a connection trace button that cycles through highlighting it
 
 Go to the [Outputs Page](#outputs-page) and enter [Select Mode](#select-mode) from the `...` menu or a file's context menu. Tap files to select them, then tap the selection actions button in the [Bottom Bar](#bottom-bar) and choose **Delete**. To clear queue history instead, use the [Queue Options Menu](#queue-options-menu) — "Clear empty items" removes runs with no saved outputs, and "Clear history" removes everything.
 
+<a id="how-do-i-select-a-range-of-outputs-at-once"></a>
+### How do I select a range of outputs at once?
+
+In the [Outputs Page](#outputs-page), enter [Selection Mode](#select-mode) and select one file to set an anchor. Then long-press another file's selection badge (or shift-click on desktop) to select everything between the two at once — handy for grabbing a whole run before a bulk download, move, or delete. See [Selection Mode](#select-mode).
+
+<a id="how-do-i-search-my-outputs-by-prompt"></a>
+### How do I search my outputs by prompt?
+
+On the [Outputs Page](#outputs-page), open the `...` menu and tap **Search**. A search bar appears at the top — type a query and tap **Apply**. As well as matching filenames, the search looks inside each image's embedded generation prompt, so you can find outputs by something you remember typing (a subject, a LoRA, a phrase). A banner shows how many total matches were found and how many are in the current folder. Clear the search to return to normal browsing. See [Filtering and Sorting](#filtering-and-sorting).
+
+<a id="how-do-i-download-an-output-to-my-device"></a>
+### How do I download an output to my device?
+
+For a single file, open the file's `...` context menu on the [Outputs Page](#outputs-page) (or open the file in the [Image Viewer](#image-viewer) and tap the download button next to the favorite/load-workflow buttons). For multiple files at once, enter [Selection Mode](#select-mode), tap the files you want, then tap the selection actions button in the [Bottom Bar](#bottom-bar) and choose **Download**.
+
+On iOS, this triggers the share sheet so you can save to Photos / Camera Roll, save to Files in any location, or send to another app. On Android and desktop, files are saved directly through the browser's download flow. If the share sheet isn't available the app falls back to the same download flow.
+
 <a id="how-do-i-organize-my-output-files-into-folders"></a>
 ### How do I organize my output files into folders?
 
@@ -210,10 +282,35 @@ Open the main menu from the top-left hamburger icon to access workflow load/save
 <a id="load-workflow"></a>
 #### Load Workflow
 
-- My Workflows: load saved workflows from the ComfyUI server.
-- Templates: load bundled templates grouped by module name from installed custom nodes.
+- My Workflows: load saved workflows from the ComfyUI server (see [My Workflows](#my-workflows-folders-bookmarks-hidden) below for folders, bookmarks, and hiding).
+- Templates: load bundled templates grouped by module name from installed custom nodes. Templates can be bookmarked and filtered the same way as saved workflows.
 - Paste JSON: paste workflow JSON to load it directly.
 - From Device: upload a local JSON workflow file.
+
+Loading a workflow while one is already open adds it as a new [tab](#workflow-tabs) rather than replacing the current one.
+
+<a id="my-workflows-folders-bookmarks-hidden"></a>
+#### My Workflows (Folders, Bookmarks, Hidden)
+
+The **My Workflows** panel is a browser for the workflows saved on your server, with three organizing tools:
+
+- **Folders**
+  - Create a folder from the panel's top `...` menu → **New folder**.
+  - Move a workflow or folder into a folder from its `...` menu → **Move**, then choose a destination.
+  - Rename or delete a folder from its `...` menu (**Rename** / **Delete**). Deleting a folder removes the workflows inside it.
+  - Tap a folder to open it; use the breadcrumb or swipe to go back up.
+  - Folders sort by their most recently modified workflow, so active folders rise to the top.
+- **Bookmarks**
+  - Toggle a bookmark on any workflow or folder (also in the `...` menu as **Bookmark** / **Remove bookmark**).
+  - **Show bookmarks only** at the top of the panel filters the list to your bookmarks.
+  - Bookmarks are stored per-device, follow items through rename/move, and clear automatically on delete.
+  - Templates can be bookmarked and filtered the same way in the Templates panel.
+- **Hidden**
+  - Hide a workflow or folder from its `...` menu → **Hide**; reveal hidden items with **Show hidden** in the panel's top `...` menu, then **Unhide** to restore one.
+  - Hiding is a declutter convenience, **not** access control. The hidden list is saved to your ComfyUI user data and persists across sessions and devices.
+
+> [!NOTE]
+> These workflow/template bookmarks are different from the in-workflow [Bookmarks](#bookmarks) that scroll you to nodes within an open workflow.
 
 <a id="save-workflow"></a>
 #### Save Workflow
@@ -222,10 +319,55 @@ Open the main menu from the top-left hamburger icon to access workflow load/save
 - Save As: saves to a new filename on the server.
 - Download to Device: saves the current workflow JSON locally.
 
-<a id="appearance"></a>
-#### Appearance
+<a id="server"></a>
+#### Server
 
-- Toggle between dark and light themes.
+Expand the **Server** section in the main menu for backend tools and app preferences:
+
+- **Custom nodes** — opens the [Custom Nodes Manager](#custom-nodes-manager).
+- **Refresh model metadata** — fetches preview images, names, versions, and badges for your models so the [Rich Model Picker](#rich-model-picker) can show them. Works with or without Lora Manager installed (the two share the same metadata sidecars). The button shows progress while it runs.
+- **Preferences** — opens the app [Preferences](#preferences) page.
+- **Restart ComfyUI** — restarts the backend (after a confirmation). See [Restart the ComfyUI backend server](#restart-the-comfyui-backend-server).
+- The section also surfaces server stats (VRAM, system RAM, PyTorch/Python versions) when available.
+
+<a id="restart-the-comfyui-backend-server"></a>
+##### Restart the ComfyUI backend server
+
+The **Restart ComfyUI** button restarts the ComfyUI backend without leaving the app — handy after installing or updating [custom nodes](#custom-nodes-manager), which only take effect once the server restarts. You're asked to confirm first, since a restart interrupts any running jobs and briefly disconnects the mobile UI.
+
+While the server comes back up, the app shows a restart overlay, waits for ComfyUI to return, and then reloads itself automatically — you don't need to reload it by hand. If you had jobs queued when the restart happened, see [What happens when the connection to ComfyUI drops?](#what-happens-when-the-connection-to-comfyui-drops) for how they're recovered.
+
+<a id="what-happens-when-the-connection-to-comfyui-drops"></a>
+##### What happens when the connection to ComfyUI drops?
+
+If the app loses contact with the ComfyUI backend (server stopped, network blip, or a [restart](#restart-the-comfyui-backend-server)), a full-screen **"Reconnecting…"** overlay appears and the app recovers on its own once the server is back. If a ComfyUI restart drops jobs you had queued, the [Queue Page](#queue-page) shows a **"Lost queued jobs found"** banner with a **Restore lost jobs** button so you can re-enqueue them. You can also have this happen automatically by turning on **Restore lost queue after restart** in [Preferences](#preferences). See [Connection & Recovery](#connection-and-recovery).
+
+<a id="custom-nodes-manager"></a>
+##### Custom Nodes Manager
+
+A full-screen manager for the custom nodes installed on your ComfyUI server, opened from **Server → Custom nodes**:
+
+- **Search** custom nodes by name.
+- **Filter** the list — e.g. show only nodes with an **Update** available, ones **Missing** from your current workflow, or your **Favorites**.
+- Each entry shows its status (enabled, disabled, update available, not installed), version, node count, and a short description, with a link to its repository.
+- From an entry's menu you can **Install**, **Update**, **Switch version**, **Enable**/**Disable**, or **Uninstall**.
+- Changes take effect after a ComfyUI restart — the manager shows a restart prompt when one is pending.
+
+> [!NOTE]
+> The Custom Nodes Manager acts on the ComfyUI server itself. Treat it like any other tool that installs code on your machine.
+
+<a id="preferences"></a>
+##### Preferences
+
+App-wide toggles, reached from **Server → Preferences**:
+
+- **Fast image previews** — load lightweight WebP previews instead of full-size originals (faster browsing; turn off if an image looks wrong). Downloads always use the original.
+- **Show latent previews** — show a live preview on sampler nodes during generation, with a choice of **Fast (latent2rgb)** or **Accurate (TAESD)**. See [How do I turn on latent previews?](#how-do-i-turn-on-latent-previews).
+- **Restore lost queue after restart** — automatically re-enqueue pending jobs this device saw if ComfyUI restarts and loses them. See [Connection & Recovery](#connection-and-recovery).
+- **Alias filepaths in embedded metadata** — hide input paths and output filename prefixes in shared workflow metadata.
+- **Enable infinite mode** — show the ∞ button next to Run. See [How do I enable infinite generation mode?](#how-do-i-enable-infinite-generation-mode).
+- **Hide bottom bar when viewer is idle** — fade the bottom bar along with the image-viewer controls after a few seconds without interaction.
+- **Follow into subgraphs** — when following execution, navigate into subgraph scopes so you can watch nodes running inside them.
 
 <a id="about-and-help"></a>
 #### About and Help
@@ -237,13 +379,29 @@ Open the main menu from the top-left hamburger icon to access workflow load/save
 <a id="top-bar"></a>
 ### Top Bar
 
-- Main menu: hamburger icon opens the left-side menu for loading/saving of workflows, appearance, and app info.
+- Main menu: hamburger icon opens the left-side menu for loading/saving of workflows, server tools, and app info.
 - Title and status: shows the workflow name on the workflow page, queue summary on the queue page, or "Outputs"/"Inputs" on the outputs page.
 - Unsaved indicator: a blue asterisk appears when the loaded workflow has unsaved changes.
 - Node count: on the workflow page, shows total nodes and how many are hidden.
 - Queue summary: on the queue page, shows run count and pending count.
 - Outputs title: on the outputs page, shows "Outputs" or "Inputs" depending on which source is selected.
 - Double-tap title: quickly scrolls to the top of the current page
+
+<a id="workflow-tabs"></a>
+### Workflow Tabs
+
+You can keep several workflows open at once (up to 10), each in its own tab. A scrollable tab strip appears just under the top bar whenever more than one workflow is open.
+
+- **Opening tabs:** loading any workflow while one is already open adds a new tab instead of replacing the current one. If you're already at 10, the app asks you to close one to make room.
+- **Switching:** tap a tab to make it active. Only the active workflow runs and updates live; the others are parked in the background with their full state preserved.
+- **Each tab shows:**
+  - the workflow's name (italic when it has unsaved changes);
+  - an asterisk `*` for unsaved changes (or a spinning ring while saving);
+  - a live activity indicator — the run count with a progress ring while it's generating, or a spinning ∞ when that workflow is in infinite mode;
+  - a close (✕) button.
+- **Closing:** tap the ✕ on a tab. If that workflow has unsaved changes you'll be asked to confirm before discarding them. Closing the active tab activates a neighbor; closing the last tab returns the app to the empty state.
+- **Background runs:** a parked tab can still have queued or running jobs. Their outputs and previews route back to the correct tab, so switching to it later shows everything it produced.
+- **Persistence:** your open tabs, the active tab, and which workflow is looping all survive a page refresh.
 
 <a id="bottom-bar"></a>
 ### Bottom Bar
@@ -264,6 +422,15 @@ Open the main menu from the top-left hamburger icon to access workflow load/save
 - Swipe left from the Outputs page to return to the Workflow page.
 - When inside a subfolder on the Outputs page, swiping right navigates up one folder level instead of switching panels.
 - Swipe navigation is disabled when menus, the viewer, input fields, or selection mode are active.
+
+<a id="connection-and-recovery"></a>
+### Connection & Recovery
+
+The app stays in sync with ComfyUI over a websocket and handles interruptions gracefully:
+
+- **Connection lost:** if contact with the backend drops (server stopped, network blip), a full-screen **"Reconnecting…"** overlay appears after a few seconds and blocks interaction until the connection is restored. The app reconnects and recovers automatically once the server is back — you don't need to reload.
+- **Lost jobs after a restart:** if ComfyUI restarts and forgets jobs you had queued, the [Queue Page](#queue-page) shows a **"Lost queued jobs found"** banner with a **Restore lost jobs** button to re-enqueue them.
+- **Automatic restore:** turn on **Restore lost queue after restart** in [Preferences](#preferences) to have this device re-enqueue its lost jobs automatically instead of prompting.
 
 <a id="workflow-page"></a>
 ## Workflow Page
@@ -348,12 +515,39 @@ Each node is displayed as a card with controls and status:
 
 - Controls adapt to widget type (number, text, combo, toggle, etc.).
 - Textarea/textbox widgets have buttons to easily copy to clipboard or clear the contents of the box.
+- Combo widgets that take a file (e.g. **LoadImage**, VHS **LoadVideo**) add two ways to set their value without leaving your phone:
+  - **Browse files** opens a picker with **Outputs** and **Inputs** tabs, so you can pick any image (or video) already on the server. Choosing an output copies it into ComfyUI's input folder server-side — there's no download/re-upload round trip, so it's instant.
+  - **Load from camera roll** (or **Upload video from device** on video nodes) uploads a file straight from your device into the input folder.
 - A widget can be pinned to the bottom bar for quick editing from any page.
   - Pin a widget via the node card's `...` menu.
   - Tap the pinned widget shortcut in the bottom bar to open an overlay editor.
+  - The editor leaves the bottom bar reachable, so you can queue runs while it's open — handy for quickly iterating on a prompt or seed.
 - KSampler nodes expose seed and seed-control widgets for fixed or randomized runs.
   - Seed controls support fixed, increment, decrement, and randomize control modes.
   - Primitive numeric nodes expose a control mode selection too.
+
+<a id="rich-model-picker"></a>
+### Rich Model Picker
+
+Dropdowns that pick a model — checkpoints, LoRAs, VAEs, and similar — show a rich picker instead of a plain list of filenames:
+
+- Each option has a **thumbnail preview**, the model **name**, its **version**, and a compact **badge** showing the model type and base model (for example _LoRA · XL_ or _CKPT · SD1_).
+- The currently-selected model shows the same preview and details in the closed control, so you can tell at a glance what's set.
+- This works **with or without Lora Manager**. When Lora Manager is installed the app reads its metadata; otherwise it uses its own metadata fetched from Civitai (the two share the same sidecar files).
+- To populate or update previews and details, run **Refresh model metadata** from the [Server](#server) menu section.
+- Previews flagged as sensitive are blurred with a **Reveal** button — tap it to show the image.
+
+> [!NOTE]
+> If a model has no metadata yet, it still appears by filename and works normally — you just won't see a preview until metadata is fetched.
+
+<a id="image-comparer-nodes"></a>
+### Image Comparer Nodes
+
+Nodes that output two images for side-by-side comparison (rgthree's **Image Comparer**) render an interactive before/after slider on their card:
+
+- The two images are stacked, with the **A** image revealed from the left up to a draggable divider over the **B** image (corner labels mark which is which).
+- **Drag the handle left and right** to wipe between the two images and inspect the differences.
+- If only one side has an image, the card shows that single image; if neither does, nothing is shown until the node runs.
 
 <a id="lora-manager-nodes"></a>
 ### LoRA Manager Nodes
@@ -512,9 +706,10 @@ The outputs page is a file browser for your generated outputs and input assets. 
 - Tap the filter/sort button in the bottom bar to open the filter modal.
 - Filter by file type: all, images only, or videos only.
 - Filter by favorites only.
-- Search by filename.
 - Sort by: date modified, name, or file size (ascending or descending).
 - Toggle show/hide hidden files (files starting with `.`) from the `...` menu.
+
+**Search** is a separate tool opened from the outputs `...` menu. It opens a search bar at the top of the page where you type a query and tap **Apply**. The search matches filenames **and** the generation prompt embedded in each image, so you can find outputs by something you remember typing. A banner reports the total number of matches and how many are in the current folder; clear the search to return to browsing.
 
 <a id="favorites"></a>
 ### Favorites
@@ -530,6 +725,7 @@ The outputs page is a file browser for your generated outputs and input assets. 
 
 - Enter selection mode from the `...` menu or by using the context menu on a file.
 - Tap files to select or deselect them.
+- **Range select:** with one file already selected, long-press another file's selection badge (or shift-click on desktop) to select everything in between — useful for grabbing a whole run at once.
 - The bottom bar shows the number of selected items and a selection actions button.
 - Selection actions include:
   - Favorite or unfavorite selected files.
@@ -577,6 +773,29 @@ The full-screen viewer supports images and videos while keeping access to the bo
 - Open by tapping any image or video.
 - Swipe left/right to move between files.
 - The counter in the top-left shows your position in the current list.
+
+<a id="keyboard-shortcuts"></a>
+### Keyboard Shortcuts
+
+The image viewer accepts these keys when no text input is focused:
+
+| Key | Action |
+| --- | --- |
+| `←` | Previous (newer) image |
+| `→` | Next (older) image |
+| `Escape` | Close the topmost open modal if any; otherwise close the viewer |
+| `Delete` / `Backspace` | Open the delete confirmation dialog (same as the trash button) |
+| `f` | Toggle favorite (same as the heart button) |
+| `w` | Load this image's embedded workflow (same as the workflow button) |
+| `u` | Use this image in a workflow LoadImage node (images only) |
+| `i` | Toggle the metadata overlay |
+| `d` | Download the current image to device (iOS opens the share sheet) |
+| `q` | In the viewer: toggle Follow Queue mode. From the Workflow or Queue page (with the viewer closed): open the viewer in Follow Queue mode |
+| `p` | Toggle the pinned widget editor (same as the pin button). If the pinned widget is a text widget, focus drops into the textarea with the caret at the end so you can start typing immediately |
+
+Inside any confirmation dialog the destructive/primary action is pre-focused, so `Enter` confirms it immediately. `Tab` / `Shift+Tab` cycle between buttons in the dialog. The visible focus ring only appears when the dialog was triggered via the keyboard — opening a dialog with a mouse or tap leaves the pre-focused button without a ring until you start tabbing.
+
+Closing the viewer while a modal is open closes the modal too.
 
 <a id="zoom-and-pan"></a>
 ### Zoom and Pan

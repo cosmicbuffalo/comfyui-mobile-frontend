@@ -11,8 +11,8 @@ const sizeClasses = {
 };
 
 const colorClasses = {
-  blue: 'border-blue-500 border-t-transparent',
-  gray: 'border-gray-200 border-t-gray-500',
+  blue: 'border-cyan-400 border-t-transparent',
+  gray: 'border-slate-700 border-t-slate-300',
 };
 
 export function LoadingSpinner({

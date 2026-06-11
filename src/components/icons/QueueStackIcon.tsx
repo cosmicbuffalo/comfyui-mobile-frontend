@@ -7,15 +7,20 @@ export interface QueueStackIconProps extends IconProps {
 export function QueueStackIcon({ showSlash = false, ...props }: QueueStackIconProps) {
   return (
     <svg viewBox="0 0 32 32" aria-hidden="true" overflow="visible" {...props}>
-      <path d="M28 28H4a2.002 2.002 0 0 1-2-2V21h2v5h24v-5h2v5a2.002 2.002 0 0 1-2 2Z" fill="currentColor" />
-      <rect x="7" y="21" width="18" height="2" fill="currentColor" />
-      <rect x="7" y="16" width="18" height="2" fill="currentColor" />
-      <rect x="7" y="11" width="18" height="2" fill="currentColor" />
-      <rect x="7" y="6" width="18" height="2" fill="currentColor" />
-      <path d="M16 -3l5 4H11l5-4Z" fill="currentColor" />
-      {showSlash && (
-        <line x1="2" y1="30" x2="28" y2="4" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" />
-      )}
+      {/* Nudged down 2 units; kept at x=0 so the (already symmetric) icon
+          stays horizontally centered in the square. */}
+      <g transform="translate(0 2)">
+        <path d="M3.1 21.25V26.35" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
+        <path d="M28.9 21.25V26.35" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
+        <rect x="1.5" y="25.5" width="29" height="3" rx="1.5" fill="currentColor" />
+        <rect x="7" y="5.4" width="18" height="2.5" rx="1.25" fill="currentColor" />
+        <rect x="7" y="12.3" width="18" height="2.5" rx="1.25" fill="currentColor" />
+        <rect x="7" y="19.1" width="18" height="2.5" rx="1.25" fill="currentColor" />
+        <path d="M16 -4l6.5 5H9.5l6.5-5Z" fill="currentColor" />
+        {showSlash && (
+          <line x1="2" y1="30" x2="28" y2="4" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" />
+        )}
+      </g>
     </svg>
   );
 }

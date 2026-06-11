@@ -1,3 +1,5 @@
+import { EyeOffIcon } from '@/components/icons';
+
 interface TopBarTitleProps {
   title: string;
   mode?: 'workflow' | 'queue' | 'outputs';
@@ -7,6 +9,7 @@ interface TopBarTitleProps {
   historyLength: number;
   pendingLength: number;
   onTap: () => void;
+  isHidden?: boolean;
 }
 
 export function TopBarTitle({
@@ -17,25 +20,33 @@ export function TopBarTitle({
   nodeCountLabel,
   historyLength,
   pendingLength,
-  onTap
+  onTap,
+  isHidden = false,
 }: TopBarTitleProps) {
   return (
-    <div id="top-bar-title-container" className="flex-1 text-center min-w-0 px-2 cursor-pointer" onClick={onTap}>
-      <h1 id="top-bar-title" className="font-semibold text-gray-900 text-lg truncate flex items-center justify-center">
-        <span className="truncate">{title}</span>
-        {mode === 'workflow' && isDirty && <span id="dirty-indicator" className="text-blue-500 ml-1 font-bold">*</span>}
+    <div id="top-bar-title-container" className="grid h-11 w-full min-w-0 grid-rows-[1.75rem_1rem] px-2 text-center cursor-pointer" onClick={onTap}>
+      <h1 id="top-bar-title" className="flex h-7 w-full min-w-0 items-center justify-center overflow-hidden text-base font-semibold leading-7 text-slate-100">
+        {mode === 'workflow' && isHidden && (
+          <EyeOffIcon className="mr-1 h-3.5 w-3.5 shrink-0 text-slate-400" />
+        )}
+        <span
+          data-workflow-hidden={mode === 'workflow' && isHidden}
+          className={`min-w-0 truncate text-center ${mode === 'workflow' && isHidden ? 'italic text-slate-400' : ''}`}
+        >
+          {title}
+        </span>
+        {mode === 'workflow' && isDirty && <span id="dirty-indicator" className="text-cyan-300 ml-1 font-bold">*</span>}
       </h1>
-      {mode === 'workflow' && hasWorkflow && (
-        <p className="node-count-display text-xs text-gray-500">
-          {nodeCountLabel}
-        </p>
-      )}
-      {mode === 'queue' && (
-        <p className="run-count-display text-xs text-gray-500">
-          {historyLength} {historyLength === 1 ? 'run' : 'runs'}
-          {pendingLength > 0 && ` (${pendingLength} pending)`}
-        </p>
-      )}
+      {/* Always render the subtitle line (with a non-breaking-space fallback)
+          so the top bar keeps a constant height across all three panels and
+          the buttons don't shift vertically when swiping between them. */}
+      <p className="top-bar-subtitle h-4 w-full truncate text-center text-xs text-slate-400 leading-4">
+        {mode === 'workflow'
+          ? (hasWorkflow ? nodeCountLabel : ' ')
+          : mode === 'queue'
+            ? `${historyLength} ${historyLength === 1 ? 'run' : 'runs'}${pendingLength > 0 ? ` (${pendingLength} pending)` : ''}`
+            : ' '}
+      </p>
     </div>
   );
 }
