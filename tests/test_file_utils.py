@@ -1,7 +1,45 @@
 import os
 import tempfile
 import pytest
-from file_utils import list_files
+from file_utils import entry_matches_name_or_path, is_within_dir, list_files, safe_join
+
+
+class TestIsWithinDir:
+    def test_path_inside_is_allowed(self, tmp_path):
+        base = str(tmp_path)
+        assert is_within_dir(base, os.path.join(base, "a", "b.png"))
+
+    def test_base_itself_is_allowed(self, tmp_path):
+        base = str(tmp_path)
+        assert is_within_dir(base, base)
+
+    def test_sibling_prefix_is_rejected(self, tmp_path):
+        # "<base>_secret" shares a name prefix but is NOT inside base.
+        base = str(tmp_path / "output")
+        (tmp_path / "output").mkdir()
+        sibling = str(tmp_path / "output_secret" / "x.png")
+        assert not is_within_dir(base, sibling)
+
+    def test_parent_traversal_is_rejected(self, tmp_path):
+        base = str(tmp_path / "output")
+        (tmp_path / "output").mkdir()
+        assert not is_within_dir(base, os.path.join(base, "..", "etc", "passwd"))
+
+
+class TestSafeJoin:
+    def test_returns_abspath_when_inside(self, tmp_path):
+        base = str(tmp_path)
+        result = safe_join(base, "sub", "file.png")
+        assert result == os.path.abspath(os.path.join(base, "sub", "file.png"))
+
+    def test_returns_none_on_traversal(self, tmp_path):
+        base = str(tmp_path / "output")
+        (tmp_path / "output").mkdir()
+        assert safe_join(base, "../secret.png") is None
+
+    def test_empty_rel_resolves_to_base(self, tmp_path):
+        base = str(tmp_path)
+        assert safe_join(base, "") == os.path.abspath(base)
 
 
 @pytest.fixture
@@ -161,6 +199,17 @@ class TestRecursiveListing:
         assert root_file["folder"] == ""
 
 
+class TestEntrySearch:
+    def test_matches_folder_path_segment(self):
+        entry = {"name": "image.png", "path": "sample scene/session/image.png"}
+        assert entry_matches_name_or_path(entry, "sample scene")
+
+    def test_scopes_folder_path_to_current_search_root(self):
+        entry = {"name": "image.png", "path": "sample scene/session/image.png"}
+        assert not entry_matches_name_or_path(entry, "sample scene", scope_path="sample scene")
+        assert entry_matches_name_or_path(entry, "session", scope_path="sample scene")
+
+
 class TestDateFiltering:
     def test_start_date_filter(self, tree):
         # Set photo.png to a known time
@@ -181,3 +230,21 @@ class TestDateFiltering:
         results = list_files(str(tree), str(tree), end_date="1000000")
         names = [r["name"] for r in results if r["type"] != "dir"]
         assert "clip.mp4" not in names
+
+
+def test_dirs_only_is_sorted_and_uses_forward_slashes(tree):
+    results = list_files(str(tree), str(tree), dirs_only=True, show_hidden=True)
+    assert results, "expected directory entries"
+    assert all(r["type"] == "dir" for r in results)
+    paths = [r["path"] for r in results]
+    # Contract: the listing is sorted (the dirs_only early-return honors it too).
+    assert paths == sorted(paths, key=str.lower)
+    # Paths are forward-slash, even for nested dirs (e.g. ".hidden_dir/deep").
+    assert all("\\" not in p for p in paths)
+    assert any("/" in p for p in paths)
+
+
+def test_dirs_only_applies_search_filter(tree):
+    results = list_files(str(tree), str(tree), dirs_only=True, show_hidden=True, search="deep")
+    names = [r["name"] for r in results]
+    assert names == ["deep"]
