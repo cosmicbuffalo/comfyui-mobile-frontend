@@ -2,9 +2,10 @@ import type { RefObject } from 'react';
 import { useMemo } from 'react';
 import { useQueueStore } from '@/hooks/useQueue';
 import { useHistoryStore } from '@/hooks/useHistory';
-import { CancelCircleIcon, CaretDownIcon, CaretRightIcon, EyeIcon, EyeOffIcon, InfoIcon, ArrowRightIcon, TrashIcon } from '@/components/icons';
+import { CancelCircleIcon, CaretDownIcon, CaretRightIcon, ClockIcon, DocumentLinesIcon, EyeIcon, EyeOffIcon, InfoIcon, ArrowRightIcon, TrashIcon } from '@/components/icons';
 import { ContextMenuButton } from '@/components/buttons/ContextMenuButton';
 import { ContextMenuBuilder } from '@/components/menus/ContextMenuBuilder';
+import { appChromeIconButtonBareClassName } from '@/components/chromeStyles';
 
 interface QueueTopBarMenuProps {
   open: boolean;
@@ -14,6 +15,7 @@ interface QueueTopBarMenuProps {
   onClose: () => void;
   onGoToWorkflow: () => void;
   onOpenClearHistoryConfirm: () => void;
+  onOpenCancelPendingConfirm: () => void;
 }
 
 export function QueueTopBarMenu({
@@ -23,19 +25,23 @@ export function QueueTopBarMenu({
   onToggle,
   onClose,
   onGoToWorkflow,
-  onOpenClearHistoryConfirm
+  onOpenClearHistoryConfirm,
+  onOpenCancelPendingConfirm
 }: QueueTopBarMenuProps) {
   const setQueueItemExpanded = useQueueStore((s) => s.setQueueItemExpanded);
   const queueItemExpanded = useQueueStore((s) => s.queueItemExpanded);
   const showQueueMetadata = useQueueStore((s) => s.showQueueMetadata);
   const toggleShowQueueMetadata = useQueueStore((s) => s.toggleShowQueueMetadata);
+  const showQueueTimestamps = useQueueStore((s) => s.showQueueTimestamps);
+  const toggleShowQueueTimestamps = useQueueStore((s) => s.toggleShowQueueTimestamps);
+  const showPromptPreview = useQueueStore((s) => s.showPromptPreview);
+  const toggleShowPromptPreview = useQueueStore((s) => s.toggleShowPromptPreview);
   const previewVisibility = useQueueStore((s) => s.previewVisibility);
   const setPreviewVisibility = useQueueStore((s) => s.setPreviewVisibility);
   const previewVisibilityDefault = useQueueStore((s) => s.previewVisibilityDefault);
   const setPreviewVisibilityDefault = useQueueStore((s) => s.setPreviewVisibilityDefault);
   const pending = useQueueStore((s) => s.pending);
   const running = useQueueStore((s) => s.running);
-  const clearQueue = useQueueStore((s) => s.clearQueue);
   const history = useHistoryStore((s) => s.history);
   const clearEmptyItems = useHistoryStore((s) => s.clearEmptyItems);
 
@@ -84,9 +90,11 @@ export function QueueTopBarMenu({
     onClose();
   };
 
-  const handleCancelPendingClick = async () => {
-    await clearQueue();
+  // Cancelling a queue of pending generations is at least as destructive as
+  // clearing history — both confirm.
+  const handleCancelPendingClick = () => {
     onClose();
+    onOpenCancelPendingConfirm();
   };
 
   const handleFoldAllClick = () => {
@@ -101,6 +109,16 @@ export function QueueTopBarMenu({
 
   const handleToggleMetadataClick = () => {
     toggleShowQueueMetadata();
+    onClose();
+  };
+
+  const handleToggleTimestampsClick = () => {
+    toggleShowQueueTimestamps();
+    onClose();
+  };
+
+  const handleTogglePromptPreviewClick = () => {
+    toggleShowPromptPreview();
     onClose();
   };
 
@@ -127,52 +145,65 @@ export function QueueTopBarMenu({
         buttonRef={buttonRef}
         onClick={onToggle}
         ariaLabel="Queue options"
+        className={`transition-colors ${appChromeIconButtonBareClassName}`}
       />
       {!open ? null : (
         <div
           id="queue-options-dropdown"
           ref={menuRef}
-          className="absolute right-0 top-11 z-50 w-48"
+          className="absolute right-0 top-11 z-50 w-56"
         >
           <ContextMenuBuilder
             items={[
               {
                 key: 'go-to-workflow',
-                label: 'Go to workflow',
-                icon: <ArrowRightIcon className="w-3 h-3 rotate-180" />,
+                label: 'Workflow Panel',
+                icon: <ArrowRightIcon className="w-4 h-4 rotate-180" />,
                 onClick: handleGoToWorkflowClick
               },
               {
                 key: 'cancel-pending',
-                label: 'Cancel all pending',
+                label: 'Cancel All Pending',
                 icon: <CancelCircleIcon className="w-4 h-4" />,
                 onClick: handleCancelPendingClick,
                 hidden: !hasPending
               },
               {
                 key: 'fold-all',
-                label: 'Fold all',
-                icon: <CaretRightIcon className="w-7 h-7 -ml-1" />,
+                label: 'Fold All',
+                icon: <CaretRightIcon className="w-5 h-5" />,
                 onClick: handleFoldAllClick,
                 hidden: !hasUnfoldedQueueItem
               },
               {
                 key: 'unfold-all',
-                label: 'Unfold all',
-                icon: <CaretDownIcon className="w-7 h-7 -ml-1" />,
+                label: 'Unfold All',
+                icon: <CaretDownIcon className="w-5 h-5" />,
                 onClick: handleUnfoldAllClick,
                 hidden: !hasFoldedQueueItem
               },
               {
+                key: 'toggle-prompt-preview',
+                label: showPromptPreview ? 'Hide Prompt Preview' : 'Show Prompt Preview',
+                icon: <DocumentLinesIcon className="w-5 h-5" />,
+                onClick: handleTogglePromptPreviewClick
+              },
+              {
                 key: 'toggle-metadata',
-                label: showQueueMetadata ? 'Hide metadata' : 'Show metadata',
+                label: showQueueMetadata ? 'Hide Metadata' : 'Show Metadata',
                 icon: <InfoIcon className="w-4 h-4" />,
                 onClick: handleToggleMetadataClick,
                 hidden: !hasHistory
               },
               {
+                key: 'toggle-timestamps',
+                label: showQueueTimestamps ? 'Hide Timestamps' : 'Show Timestamps',
+                icon: <ClockIcon className="w-4 h-4" />,
+                onClick: handleToggleTimestampsClick
+              },
+              {
                 key: 'toggle-previews',
-                label: previewsVisible ? 'Hide previews' : 'Show previews',
+                label: previewsVisible ? 'Hide Previews' : 'Show Previews',
                 icon: previewsVisible
                   ? <EyeOffIcon className="w-4 h-4" />
                   : <EyeIcon className="w-4 h-4" />,
@@ -181,7 +212,7 @@ export function QueueTopBarMenu({
               },
               {
                 key: 'clear-empty',
-                label: 'Clear empty items',
+                label: 'Clear Empty Items',
                 icon: <TrashIcon className="w-4 h-4" />,
                 onClick: handleClearEmptyClick,
                 color: 'muted',
@@ -189,7 +220,7 @@ export function QueueTopBarMenu({
               },
               {
                 key: 'clear-history',
-                label: 'Clear history',
+                label: 'Clear History',
                 icon: <TrashIcon className="w-4 h-4" />,
                 onClick: handleClearHistoryClick,
                 color: 'danger',
