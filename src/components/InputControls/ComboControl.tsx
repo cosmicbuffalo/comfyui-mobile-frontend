@@ -4,18 +4,47 @@ import Select, { components, createFilter } from "react-select";
 import type { OptionProps } from "react-select";
 import { FullscreenWidgetModal } from "../modals/FullscreenWidgetModal";
 import { PinButton } from "./PinButton";
-import { ChevronDownIcon, PlusIcon, FolderIcon, PromotedWidgetIcon } from "@/components/icons";
-import { getImageUrl, getNodeTypes, uploadImageFile } from "@/api/client";
+import { ChevronDownIcon, PlusIcon, FolderIcon, PromotedWidgetIcon, FunnelIcon, CheckIcon } from "@/components/icons";
+import { getImagePreviewUrl, setFileHidden, uploadImageFile } from "@/api/client";
 import { useWorkflowStore } from "@/hooks/useWorkflow";
 import { useWorkflowErrorsStore } from "@/hooks/useWorkflowErrors";
-import { useThemeStore } from "@/hooks/useTheme";
-import { OutputFilePicker } from "./OutputFilePicker";
+import { InputFilePicker } from "./InputFilePicker";
 import { resolveUploadFolder } from "./outputPickerUtils";
+import type { AssetSource } from "@/api/client";
 import { useCoarsePointer } from "@/hooks/useCoarsePointer";
 import { themeColors } from "@/theme/colors";
 import { resolveComboOption } from "@/utils/workflowInputs";
+import type { ModelLookup } from "@/api/loraManagerClient";
+import {
+  ModelOption,
+  ModelSingleValue,
+  ModelRowContent,
+  type ComboSelectOption,
+} from "./ModelComboOption";
+import {
+  controlLabelClassName,
+  controlSecondaryButtonDisabledClassName,
+  controlSecondaryButtonEnabledClassName,
+  controlStateClassName,
+} from "./controlStyles";
+import { useWorkflowHiddenStore } from "@/hooks/useWorkflowHidden";
+import { isWorkflowHidden } from "@/utils/workflowHidden";
+import {
+  appChromeIconButtonActiveClassName,
+  appChromeIconButtonClassName,
+} from "@/components/chromeStyles";
 
 const VIDEO_EXTENSIONS = new Set(["mp4", "webm", "mkv", "gif", "mov", "avi", "wmv"]);
+const comboInputBackground = "rgb(2 6 23 / 0.8)";
+const comboInputBorder = "rgb(255 255 255 / 0.1)";
+// Sentinel base-model filter value for models that have no base_model metadata.
+const BASE_MODEL_FILTER_UNKNOWN = "__unknown__";
+// Sentinel select value representing a null combo choice.
+const NULL_OPTION_VALUE = "__null__";
+// Options that participate in the base-model filter (real selectable models).
+const isFilterableOption = (opt: ComboSelectOption) =>
+  opt.value !== NULL_OPTION_VALUE && !opt.isMissing;
+
 
 interface ComboControlProps {
   containerClass: string;
@@ -50,17 +79,23 @@ export function ComboControl({
   forceModalOpen = false,
   onModalClose,
 }: ComboControlProps) {
-  type SelectOption = { value: string; label: string; isMissing?: boolean };
+  type SelectOption = ComboSelectOption;
 
-  const setNodeTypes = useWorkflowStore((s) => s.setNodeTypes);
+  const addInputComboOption = useWorkflowStore((s) => s.addInputComboOption);
+  const workflowSource = useWorkflowStore((s) => s.workflowSource);
+  const currentFilename = useWorkflowStore((s) => s.currentFilename);
+  const hiddenWorkflowPaths = useWorkflowHiddenStore((s) => s.hidden);
+  const hiddenWorkflow = isWorkflowHidden(workflowSource, currentFilename, hiddenWorkflowPaths);
   const setError = useWorkflowErrorsStore((s) => s.setError);
-  const theme = useThemeStore((s) => s.theme);
-  const isDark = theme === "dark";
   const [internalModalOpen, setInternalModalOpen] = useState(false);
   const selectWrapperRef = useRef<HTMLDivElement>(null);
   const uploadInputRef = useRef<HTMLInputElement>(null);
   const [uploadedChoices, setUploadedChoices] = useState<string[]>([]);
   const [isUploading, setIsUploading] = useState(false);
+  // Model-picker base-model filter. null = "All" (default). Otherwise a base_model
+  // display string, or BASE_MODEL_FILTER_UNKNOWN for models without metadata.
+  const [baseModelFilter, setBaseModelFilter] = useState<string | null>(null);
+  const [filterMenuOpen, setFilterMenuOpen] = useState(false);
 
   const showModal = forceModalOpen || internalModalOpen;
   const isCoarsePointer = useCoarsePointer();
@@ -92,14 +127,19 @@ export function ComboControl({
   const uploadFolder = resolveUploadFolder(supportsVideoUpload, imageFolder);
   const uploadAccept = supportsVideoUpload ? "video/*" : "image/*";
   const uploadLabel = supportsVideoUpload ? "Upload video from device" : "Load from camera roll";
-  const [outputPickerOpen, setOutputPickerOpen] = useState(false);
+  const [inputPickerOpen, setInputPickerOpen] = useState(false);
   const stripSafetensorsSuffix = Boolean(getOption("stripSafetensorsSuffix"));
-  const NULL_OPTION_VALUE = "__null__";
+  const modelLookup = getOption("modelLookup") as ModelLookup | undefined;
+  const isModelMode = typeof modelLookup === "function";
   const hasNullChoice = rawChoices.some((opt) => opt === null);
-  const choices = rawChoices
-    .filter((opt) => opt !== null)
-    .map((opt) => String(opt));
-  const mergedChoices = Array.from(new Set([...choices, ...uploadedChoices]));
+  const choices = useMemo(
+    () => rawChoices.filter((opt) => opt !== null).map((opt) => String(opt)),
+    [rawChoices],
+  );
+  const mergedChoices = useMemo(
+    () => Array.from(new Set([...choices, ...uploadedChoices])),
+    [choices, uploadedChoices],
+  );
   const rawValueString =
     value === null ? NULL_OPTION_VALUE : String(value ?? "");
   const rawBase = rawValueString.split(/[\\/]/).pop() ?? rawValueString;
@@ -119,34 +159,80 @@ export function ComboControl({
     ? resolvedValueString ??
       (mergedChoices.includes(rawValueString) ? rawValueString : rawBase)
     : rawValueString;
-  const getDisplayLabel = (optionValue: string) => {
-    if (!stripSafetensorsSuffix) return optionValue;
-    return optionValue.replace(/\.safetensors$/i, "");
-  };
-  const selectOptions: SelectOption[] = [];
-  if (value === null || hasNullChoice) {
-    selectOptions.push({ value: NULL_OPTION_VALUE, label: "None" });
-  }
-  if (isMissingValue) {
-    selectOptions.push({
-      value: rawValueString,
-      label: getDisplayLabel(rawValueString),
-      isMissing: true,
-    });
-  }
-  selectOptions.push(
-    ...mergedChoices.map((opt) => ({
-      value: opt,
-      label: getDisplayLabel(opt),
-    })),
-  );
+  // Built once per real input change rather than on every render. Without this,
+  // a parent re-render, a local state change (e.g. opening the picker), or a
+  // search keystroke rebuilt the whole option list and ran modelLookup for every
+  // choice — janky on combos with hundreds of models.
+  const selectOptions = useMemo<SelectOption[]>(() => {
+    const getDisplayLabel = (optionValue: string) =>
+      stripSafetensorsSuffix
+        ? optionValue.replace(/\.safetensors$/i, "")
+        : optionValue;
+    // In model mode, prefer Lora Manager's display name; otherwise plain filename.
+    const buildOption = (optionValue: string): SelectOption => {
+      const model = isModelMode ? modelLookup!(optionValue) : null;
+      const label = model?.model_name?.trim() || getDisplayLabel(optionValue);
+      return { value: optionValue, label, model };
+    };
+    const opts: SelectOption[] = [];
+    if (value === null || hasNullChoice) {
+      opts.push({ value: NULL_OPTION_VALUE, label: "None" });
+    }
+    if (isMissingValue) {
+      opts.push({
+        value: rawValueString,
+        label: getDisplayLabel(rawValueString),
+        isMissing: true,
+      });
+    }
+    opts.push(...mergedChoices.map(buildOption));
+    return opts;
+  }, [mergedChoices, isModelMode, modelLookup, stripSafetensorsSuffix, value, hasNullChoice, isMissingValue, rawValueString]);
   const selectedOption =
     selectOptions.find((opt) => opt.value === valueString) ?? null;
+
+  // Model-picker base-model filter. Collect the distinct base_model values present
+  // in the resolved options (plus whether any lack metadata → "Unknown").
+  const { baseModelChoices, hasUnknownBaseModel } = useMemo(() => {
+    if (!isModelMode) return { baseModelChoices: [] as string[], hasUnknownBaseModel: false };
+    const set = new Set<string>();
+    let hasUnknown = false;
+    for (const opt of selectOptions) {
+      if (!isFilterableOption(opt)) continue;
+      const bm = opt.model?.base_model?.trim();
+      if (bm) set.add(bm);
+      else hasUnknown = true;
+    }
+    return {
+      baseModelChoices: Array.from(set).sort((a, b) => a.localeCompare(b)),
+      hasUnknownBaseModel: hasUnknown,
+    };
+  }, [isModelMode, selectOptions]);
+  const showBaseModelFilter =
+    isModelMode && (baseModelChoices.length > 0 || hasUnknownBaseModel);
+  const baseModelFilterActive = showBaseModelFilter && baseModelFilter !== null;
+  const modalSelectOptions =
+    !baseModelFilterActive
+      ? selectOptions
+      : selectOptions.filter((opt) => {
+          if (!isFilterableOption(opt)) return true;
+          const bm = opt.model?.base_model?.trim();
+          return baseModelFilter === BASE_MODEL_FILTER_UNKNOWN ? !bm : bm === baseModelFilter;
+        });
+  const baseModelFilterOptions: Array<{ key: string; value: string | null; label: string }> = [
+    { key: "all", value: null, label: "All" },
+    ...baseModelChoices.map((bm) => ({ key: bm, value: bm, label: bm })),
+    ...(hasUnknownBaseModel
+      ? [{ key: "unknown", value: BASE_MODEL_FILTER_UNKNOWN, label: "Unknown" }]
+      : []),
+  ];
+
   const simpleChoiceCount = rawChoices.filter((opt) => opt !== null).length;
   const useModalFlow = forceModalOpen
     ? true
     : isCoarsePointer && !(simpleChoiceCount > 0 && simpleChoiceCount < 5);
   const showImageThumbnails = supportsImageUpload && imageFolder === "input";
+  const useInputBrowser = showImageThumbnails;
 
   const getThumbnailUrl = (optionValue: string) => {
     const normalized = optionValue.replace(/\\/g, "/");
@@ -154,10 +240,18 @@ export function ComboControl({
     const filename =
       lastSlash >= 0 ? normalized.slice(lastSlash + 1) : normalized;
     const subfolder = lastSlash >= 0 ? normalized.slice(0, lastSlash) : "";
-    return getImageUrl(filename, subfolder, "input");
+    return getImagePreviewUrl(filename, subfolder, "input");
   };
 
   const selectComponents = useMemo(() => {
+    if (isModelMode) {
+      return {
+        DropdownIndicator: null,
+        IndicatorSeparator: null,
+        Option: ModelOption,
+        SingleValue: ModelSingleValue,
+      };
+    }
     if (!showImageThumbnails) {
       return {
         DropdownIndicator: null,
@@ -176,7 +270,7 @@ export function ComboControl({
               <img
                 src={thumbUrl}
                 alt=""
-                className="w-[72px] h-[72px] rounded-sm object-cover bg-gray-100 shrink-0"
+                className="w-[72px] h-[72px] rounded-sm object-cover bg-slate-800 shrink-0"
                 loading="lazy"
                 decoding="async"
               />
@@ -191,11 +285,25 @@ export function ComboControl({
       IndicatorSeparator: null,
       Option: ThumbnailOption,
     };
-  }, [showImageThumbnails]);
+  }, [showImageThumbnails, isModelMode]);
 
   const selectClassName = [
     "rs-container",
     hasPin ? "rs-has-pin" : "rs-no-pin",
+    hasError ? "rs-error" : "",
+    isPromoted ? "rs-promoted" : "",
+    isMissingValue ? "rs-missing" : "",
+    disabled ? "rs-disabled" : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+
+  // The modal select renders no chevron/pin inside the control (those live on
+  // the separate trigger button), so it must NOT reserve the pin/chevron right
+  // padding — otherwise the selected value's badge sits inset from the right
+  // edge and no longer lines up with the option-row badges below it.
+  const modalSelectClassName = [
+    "rs-container",
     hasError ? "rs-error" : "",
     isPromoted ? "rs-promoted" : "",
     isMissingValue ? "rs-missing" : "",
@@ -209,6 +317,8 @@ export function ComboControl({
 
   const handleClose = () => {
     setInternalModalOpen(false);
+    setFilterMenuOpen(false);
+    setBaseModelFilter(null);
     onModalClose?.();
   };
 
@@ -236,16 +346,20 @@ export function ComboControl({
       const nextValue = result.subfolder
         ? `${result.subfolder}/${result.name}`
         : result.name;
+      // Auto-hiding the new input is best-effort declutter — never let it abort
+      // the upload assignment, so fire-and-forget instead of awaiting.
+      if (hiddenWorkflow && result.type === "input") {
+        void setFileHidden(nextValue, true, "input").catch((err) => {
+          console.warn("Failed to hide input from hidden workflow:", err);
+        });
+      }
       setUploadedChoices((prev) =>
         prev.includes(nextValue) ? prev : [...prev, nextValue],
       );
-      try {
-        const freshTypes = await getNodeTypes();
-        setNodeTypes(freshTypes);
-      } catch {
-        // Non-critical: combo options may be stale but the value is still set
-      }
       onChange(nextValue);
+      // Register the upload as a real combo choice in-memory instead of blocking
+      // the assignment on a multi-MB /object_info refetch. Image pickers only.
+      if (supportsImageUpload) addInputComboOption(nextValue);
     } catch (err) {
       console.error("Failed to upload file:", err);
       setError(`Failed to upload "${file.name}"`);
@@ -255,61 +369,151 @@ export function ComboControl({
     }
   };
 
-  const handleOpenOutputPicker = () => {
-    setOutputPickerOpen(true);
-  };
-
-  const handlePickOutputFile = async (nextValue: string) => {
+  // Unified pick handler for the file browser. `pickedSource` is "output" when
+  // the file was copied in from the outputs folder (see InputFilePicker), in
+  // which case a fresh input file now exists and node types need a refresh so it
+  // appears as a combo choice.
+  const handlePickFile = async (nextValue: string, pickedSource: AssetSource) => {
     setIsUploading(true);
     try {
+      if (hiddenWorkflow) {
+        void setFileHidden(nextValue, true, "input").catch((err) => {
+          console.warn("Failed to hide input added to hidden workflow:", err);
+        });
+      }
+      // Optimistically register the picked file as a choice so the value resolves
+      // and displays immediately, without waiting on a node-types refresh.
       setUploadedChoices((prev) =>
         prev.includes(nextValue) ? prev : [...prev, nextValue],
       );
-      try {
-        const freshTypes = await getNodeTypes();
-        setNodeTypes(freshTypes);
-      } catch {
-        // Non-critical
-      }
       onChange(nextValue);
+      // An output pick copies a fresh file into the input dir; splice it into the
+      // image-upload combos' option lists in-memory so it's a real choice (and
+      // survives a remount / save-reload) without refetching the multi-MB
+      // /object_info. Image pickers only — video combos share no option flag.
+      if (pickedSource === "output" && supportsImageUpload) {
+        addInputComboOption(nextValue);
+      }
     } catch (err) {
-      console.error("Failed to sync output file choice:", err);
-      setError("Failed to sync output file selection");
+      console.error("Failed to sync picked file:", err);
+      setError("Failed to sync file selection");
     } finally {
       setIsUploading(false);
-      setOutputPickerOpen(false);
+      setInputPickerOpen(false);
+      // Only collapse the surrounding combo modal when one is actually open, so
+      // an inline combo doesn't fire its parent's onModalClose spuriously.
+      if (showModal) handleClose();
     }
   };
 
-  const uploadButtons = supportsUpload ? (
-    <div className="flex flex-col gap-2">
-      <button
-        type="button"
-        className={`w-full py-2 px-3 rounded-lg border text-sm font-medium transition-colors ${disabled || isUploading ? "opacity-60 cursor-not-allowed border-gray-200 text-gray-400 bg-white dark:border-gray-600 dark:text-gray-500 dark:bg-gray-800" : "border-gray-200 text-gray-700 bg-white hover:border-gray-300 hover:text-gray-900 dark:border-gray-600 dark:text-gray-300 dark:bg-gray-800 dark:hover:border-gray-500"}`}
-        onClick={handleUploadClick}
-        disabled={disabled || isUploading}
-      >
-        <span className="inline-flex items-center justify-center gap-2">
-          <PlusIcon className="w-4 h-4" />
-          {isUploading ? "Uploading..." : uploadLabel}
-        </span>
-      </button>
-      <button
-        type="button"
-        className={`w-full py-2 px-3 rounded-lg border text-sm font-medium transition-colors ${disabled || isUploading ? "opacity-60 cursor-not-allowed border-gray-200 text-gray-400 bg-white dark:border-gray-600 dark:text-gray-500 dark:bg-gray-800" : "border-gray-200 text-gray-700 bg-white hover:border-gray-300 hover:text-gray-900 dark:border-gray-600 dark:text-gray-300 dark:bg-gray-800 dark:hover:border-gray-500"}`}
-        onClick={handleOpenOutputPicker}
-        disabled={disabled || isUploading}
-      >
-        <span className="inline-flex items-center justify-center gap-2">
-          <FolderIcon className="w-4 h-4" />
-          Use from outputs
-        </span>
-      </button>
-    </div>
+  // The browser supports both inputs and outputs (output picks get copied into
+  // the input folder), so a single "Browse files" button replaces the old
+  // separate "Use from outputs" button.
+  const deviceUploadButton = supportsUpload ? (
+    <button
+      type="button"
+      className={`w-full py-2 px-3 rounded-lg border text-sm font-medium transition-colors ${disabled || isUploading ? controlSecondaryButtonDisabledClassName : controlSecondaryButtonEnabledClassName}`}
+      onClick={handleUploadClick}
+      disabled={disabled || isUploading}
+    >
+      <span className="inline-flex items-center justify-center gap-2">
+        <PlusIcon className="w-4 h-4" />
+        {isUploading ? "Uploading..." : uploadLabel}
+      </span>
+    </button>
   ) : null;
 
-  const lightText = themeColors.text.primary;
-  const lightSubtleText = themeColors.text.secondary;
+  const browseFilesButton = supportsUpload ? (
+    <button
+      type="button"
+      className={`w-full py-2 px-3 rounded-lg border text-sm font-medium transition-colors ${disabled || isUploading ? controlSecondaryButtonDisabledClassName : controlSecondaryButtonEnabledClassName}`}
+      onClick={() => !disabled && !isUploading && setInputPickerOpen(true)}
+      disabled={disabled || isUploading}
+    >
+      <span className="inline-flex items-center justify-center gap-2">
+        <FolderIcon className="w-4 h-4" />
+        Browse files
+      </span>
+    </button>
+  ) : null;
+
+  // Picker used by the modal/inline flows (paths B/C), opened via "Browse files".
+  // Path A renders its own instance wired to the main trigger.
+  const browseFilePicker = supportsUpload ? (
+    <InputFilePicker
+      open={inputPickerOpen}
+      onClose={() => setInputPickerOpen(false)}
+      onPick={handlePickFile}
+      defaultSource={imageFolder as AssetSource}
+      uploadFolder={uploadFolder}
+      supportsVideoUpload={supportsVideoUpload}
+    />
+  ) : null;
+
+  const selectText = themeColors.text.onDark;
+
+  if (useInputBrowser) {
+    const browserOpen = forceModalOpen || inputPickerOpen;
+    return (
+      <div className={`${containerClass} combo-control-root combo-control-input-browser`}>
+        {!hideLabel && (
+          <label className={`${controlLabelClassName} mb-1`}>
+            <span className="inline-flex items-center gap-1">
+              <span>{name}</span>
+              {isPromoted && <PromotedWidgetIcon className="w-5 h-5 text-pink-500" />}
+            </span>
+          </label>
+        )}
+        <div
+          role="button"
+          tabIndex={disabled ? -1 : 0}
+          aria-disabled={disabled}
+          className={`combo-control-trigger relative w-full p-3 comfy-input text-base flex items-center justify-between min-h-[46px] text-left ${controlStateClassName({ disabled, hasError, isPromoted })}`}
+          onClick={() => !disabled && setInputPickerOpen(true)}
+          onKeyDown={(event) => {
+            if (!disabled && (event.key === "Enter" || event.key === " ")) {
+              event.preventDefault();
+              setInputPickerOpen(true);
+            }
+          }}
+        >
+          <span className={`truncate min-w-0 flex-1 text-slate-100 ${hasPin ? "pr-16" : "pr-6"}`}>
+            {selectedOption?.label ?? (valueString || "Select...")}
+          </span>
+          <span className="absolute right-0 top-0 bottom-0 flex items-center pointer-events-none">
+            <span className="px-2 text-slate-400"><ChevronDownIcon className="w-5 h-5" /></span>
+            {hasPin && (
+              <span className="pointer-events-auto px-2">
+                <PinButton isPinned={isPinned} onToggle={onTogglePin} />
+              </span>
+            )}
+          </span>
+        </div>
+        {isMissingValue && <div className="mt-1 pl-1 text-xs text-red-400">Missing on ComfyUI server</div>}
+        <div className="combo-control-upload mt-2">
+          <div className="flex flex-col gap-2">{deviceUploadButton}</div>
+          <input
+            ref={uploadInputRef}
+            type="file"
+            accept={uploadAccept}
+            className="hidden"
+            onChange={handleUploadChange}
+          />
+        </div>
+        <InputFilePicker
+          open={browserOpen}
+          onClose={() => {
+            setInputPickerOpen(false);
+            handleClose();
+          }}
+          onPick={handlePickFile}
+          defaultSource={imageFolder as AssetSource}
+          uploadFolder={uploadFolder}
+          supportsVideoUpload={supportsVideoUpload}
+        />
+      </div>
+    );
+  }
 
   if (useModalFlow) {
     return (
@@ -317,7 +521,7 @@ export function ComboControl({
         className={`${containerClass} combo-control-root combo-control-modal`}
       >
         {!hideLabel && (
-          <label className="block text-sm font-medium text-gray-700 mb-1">
+          <label className={`${controlLabelClassName} mb-1`}>
             <span className="inline-flex items-center gap-1">
               <span>{name}</span>
               {isPromoted && (
@@ -328,22 +532,28 @@ export function ComboControl({
         )}
 
         <div
-          className={`combo-control-trigger relative w-full p-3 comfy-input text-base flex items-center justify-between min-h-[46px] ${disabled ? "opacity-60 cursor-not-allowed" : ""} ${hasError ? "border-red-700 ring-1 ring-red-700" : ""} ${!hasError && isPromoted ? "border-pink-500 ring-1 ring-pink-500" : ""}`}
+          className={`combo-control-trigger relative w-full p-3 comfy-input text-base flex items-center justify-between min-h-[46px] ${controlStateClassName({ disabled, hasError, isPromoted })}`}
           onClick={() => !disabled && setInternalModalOpen(true)}
         >
-          <span
-            className={`combo-control-trigger-label truncate min-w-0 flex-1 ${!selectedOption ? "text-gray-400 dark:text-gray-500" : "text-gray-900"} ${hasPin ? "pr-16" : "pr-6"}`}
-            style={
-              selectedOption && isDark
-                ? { color: themeColors.text.onDark }
-                : undefined
-            }
-          >
-            {selectedOption ? selectedOption.label : "Select..."}
-          </span>
+          {isModelMode && selectedOption?.model ? (
+            <div
+              className={`min-w-0 flex-1 text-slate-100 ${hasPin ? "pr-16" : "pr-10"}`}
+            >
+              <ModelRowContent option={selectedOption} />
+            </div>
+          ) : (
+            <span
+              className={`combo-control-trigger-label truncate min-w-0 flex-1 ${!selectedOption ? "text-slate-500" : "text-slate-100"} ${hasPin ? "pr-16" : "pr-6"}`}
+              style={
+                selectedOption ? { color: themeColors.text.onDark } : undefined
+              }
+            >
+              {selectedOption ? selectedOption.label : "Select..."}
+            </span>
+          )}
 
           <div className="combo-control-trigger-icons flex items-center absolute right-0 top-0 bottom-0 pointer-events-none">
-            <div className="combo-control-chevron px-2 text-gray-400">
+            <div className="combo-control-chevron px-2 text-slate-400">
               <ChevronDownIcon className="w-5 h-5" />
             </div>
             {hasPin && (
@@ -358,13 +568,16 @@ export function ComboControl({
         </div>
 
         {isMissingValue && (
-          <div className="mt-1 text-xs text-red-700">
+          <div className="mt-1 pl-1 text-xs text-red-400">
             Missing on ComfyUI server
           </div>
         )}
         {supportsUpload && (
           <div className="combo-control-upload mt-2">
-            {uploadButtons}
+            <div className="flex flex-col gap-2">
+              {deviceUploadButton}
+              {browseFilesButton}
+            </div>
             <input
               ref={uploadInputRef}
               type="file"
@@ -374,24 +587,23 @@ export function ComboControl({
             />
           </div>
         )}
-        <OutputFilePicker
-          open={outputPickerOpen}
-          onClose={() => setOutputPickerOpen(false)}
-          onPick={handlePickOutputFile}
-          uploadFolder={uploadFolder}
-          supportsVideoUpload={supportsVideoUpload}
-        />
+        {browseFilePicker}
 
         <FullscreenWidgetModal
           title={name}
           isOpen={showModal}
           onClose={handleClose}
+          viewerSidebar={forceModalOpen}
         >
           <div data-swipe-nav-ignore="true">
+            {/* The search bar + results span the full width; the funnel floats over
+                the control's top-right corner (the control reserves right padding
+                for it), so results aren't squished into a narrower column. */}
+            <div className="relative">
             <Select<SelectOption, false>
-              className={selectClassName}
+              className={modalSelectClassName}
               classNamePrefix="rs"
-              options={selectOptions}
+              options={modalSelectOptions}
               value={selectedOption}
               onChange={handleModalSelectChange}
               isSearchable
@@ -413,9 +625,7 @@ export function ComboControl({
                   border: "none",
                   marginTop: "0.5rem",
                   borderRadius: 0,
-                  backgroundColor: isDark
-                    ? themeColors.transparent
-                    : themeColors.surface.white,
+                  backgroundColor: themeColors.transparent,
                 }),
                 menuList: (base) => ({
                   ...base,
@@ -428,47 +638,98 @@ export function ComboControl({
                   overscrollBehaviorX: "contain",
                   touchAction: "pan-y",
                 }),
-                option: (base, state) =>
-                  isDark
-                    ? base
-                    : {
-                        ...base,
-                        color: lightText,
-                        backgroundColor: state.isSelected
-                          ? themeColors.surface.gray200
-                          : state.isFocused
-                            ? themeColors.surface.gray100
-                            : themeColors.transparent,
-                      },
-                singleValue: (base) => ({
+                // Pin option colors so the highlighted row uses the dark theme
+                // rather than react-select's default (light) focus background.
+                option: (base, state) => ({
                   ...base,
-                  color: isDark ? base.color : lightText,
+                  color: selectText,
+                  backgroundColor: state.isSelected
+                    ? themeColors.surface.optionSelected
+                    : state.isFocused
+                      ? themeColors.surface.optionFocused
+                      : themeColors.transparent,
                 }),
-                input: (base) => ({
-                  ...base,
-                  color: isDark ? base.color : lightText,
-                }),
-                placeholder: (base) => ({
-                  ...base,
-                  color: isDark ? base.color : lightSubtleText,
-                }),
-                control: (base) => ({
-                  ...base,
-                  borderColor: isPromoted
-                    ? themeColors.brand.promotedPink
-                    : themeColors.border.focusBlue,
-                  boxShadow: `0 0 0 1px ${
-                    isPromoted ? themeColors.brand.promotedPink : themeColors.border.focusBlue
-                  }`,
-                  backgroundColor: isDark
-                    ? base.backgroundColor
-                    : themeColors.surface.white,
-                  color: isDark ? base.color : lightText,
-                }),
+                // Pin the selected-value and search-input text to the light theme
+                // color; react-select's defaults are too dark on the dark control.
+                singleValue: (base) => ({ ...base, color: selectText }),
+                input: (base) => ({ ...base, color: selectText }),
+                control: (base, state) => {
+                  const focusBorder = themeColors.border.focusCyan;
+                  const errorBorder = themeColors.border.errorDark;
+                  const promotedBorder = themeColors.brand.promotedPink;
+                  const borderColor = hasError
+                    ? errorBorder
+                    : isPromoted
+                      ? promotedBorder
+                      : state.isFocused
+                        ? focusBorder
+                        : comboInputBorder;
+                  return {
+                    ...base,
+                    minHeight: 48,
+                    // Reserve room so the floating funnel button never overlaps
+                    // the search text / selected value.
+                    paddingRight: showBaseModelFilter ? "2.75rem" : undefined,
+                    borderColor,
+                    boxShadow: state.isFocused || hasError || isPromoted
+                      ? `0 0 0 1px ${borderColor}`
+                      : "none",
+                    backgroundColor: comboInputBackground,
+                    color: selectText,
+                  };
+                },
               }}
               components={selectComponents}
               noOptionsMessage={() => "No matches"}
             />
+              {showBaseModelFilter && (
+                <div className="combo-control-filter absolute right-1.5 top-[5px]">
+                  <button
+                    type="button"
+                    aria-label="Filter by base model"
+                    aria-expanded={filterMenuOpen}
+                    onClick={() => setFilterMenuOpen((open) => !open)}
+                    className={`flex h-9 w-9 items-center justify-center rounded-md transition-colors ${
+                      baseModelFilterActive
+                        ? appChromeIconButtonActiveClassName
+                        : appChromeIconButtonClassName
+                    }`}
+                  >
+                    <FunnelIcon className="w-[18px] h-[18px]" />
+                  </button>
+                  {filterMenuOpen && (
+                    <>
+                      <div
+                        className="fixed inset-0 z-[40]"
+                        onClick={() => setFilterMenuOpen(false)}
+                      />
+                      <div
+                        className="absolute right-0 top-full z-[50] mt-1 w-48 max-h-[50vh] overflow-y-auto rounded-lg border border-white/10 shadow-lg"
+                        style={{ backgroundColor: themeColors.surface.menu }}
+                      >
+                        {baseModelFilterOptions.map((choice) => {
+                          const active = choice.value === baseModelFilter;
+                          return (
+                            <button
+                              key={choice.key}
+                              type="button"
+                              onClick={() => {
+                                setBaseModelFilter(choice.value);
+                                setFilterMenuOpen(false);
+                              }}
+                              className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-sm text-slate-100 hover:bg-white/5"
+                            >
+                              <span className="truncate">{choice.label}</span>
+                              {active && <CheckIcon className="w-4 h-4 shrink-0 text-cyan-300" />}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </>
+                  )}
+                </div>
+              )}
+            </div>
           </div>
         </FullscreenWidgetModal>
       </div>
@@ -480,7 +741,7 @@ export function ComboControl({
       className={`${containerClass} combo-control-root combo-control-inline`}
     >
       {!hideLabel && (
-        <label className="block text-sm font-medium text-gray-700 mb-1">
+        <label className={`${controlLabelClassName} mb-1`}>
           <span className="inline-flex items-center gap-1">
             <span>{name}</span>
             {isPromoted && (
@@ -514,6 +775,13 @@ export function ComboControl({
           menuShouldScrollIntoView={false}
           styles={{
             menuPortal: (base) => ({ ...base, zIndex: 200 }),
+            // react-select injects its own (light) defaults at runtime that win
+            // over the static .rs__* CSS, so the menu/option/value colors must be
+            // pinned here to stay on the dark theme.
+            menu: (base) => ({
+              ...base,
+              backgroundColor: themeColors.surface.menu,
+            }),
             menuList: (base) => ({
               ...base,
               overflowY: "auto",
@@ -522,34 +790,25 @@ export function ComboControl({
               overscrollBehaviorX: "contain",
               touchAction: "pan-y",
             }),
-            option: (base, state) =>
-              isDark
-                ? base
-                : {
-                    ...base,
-                    color: lightText,
-                    backgroundColor: state.isSelected
-                      ? themeColors.surface.gray200
-                      : state.isFocused
-                        ? themeColors.surface.gray100
-                        : themeColors.transparent,
-                  },
-            singleValue: (base) => ({
+            option: (base, state) => ({
               ...base,
-              color: isDark ? base.color : lightText,
+              color: selectText,
+              backgroundColor: state.isSelected
+                ? themeColors.surface.optionSelected
+                : state.isFocused
+                  ? themeColors.surface.optionFocused
+                  : themeColors.transparent,
             }),
-            input: (base) => ({
-              ...base,
-              color: isDark ? base.color : lightText,
-            }),
+            singleValue: (base) => ({ ...base, color: selectText }),
+            input: (base) => ({ ...base, color: selectText }),
             placeholder: (base) => ({
               ...base,
-              color: isDark ? base.color : lightSubtleText,
+              color: themeColors.text.muted,
             }),
             control: (base, state) => {
-              const defaultBorder = isDark ? themeColors.border.darkInput : themeColors.border.gray300;
-              const focusBorder = themeColors.status.danger;
-              const errorBorder = isDark ? themeColors.border.errorDark : themeColors.border.errorLight;
+              const defaultBorder = comboInputBorder;
+              const focusBorder = themeColors.border.focusCyan;
+              const errorBorder = themeColors.border.errorDark;
               const promotedBorder = themeColors.brand.promotedPink;
               const borderColor = hasError
                 ? errorBorder
@@ -567,7 +826,7 @@ export function ComboControl({
                 boxShadow: state.isFocused || hasError || isPromoted
                   ? `0 0 0 1px ${borderColor}`
                   : "none",
-                backgroundColor: isDark ? themeColors.surface.darkInput : themeColors.surface.white,
+                backgroundColor: comboInputBackground,
               };
             },
           }}
@@ -575,7 +834,7 @@ export function ComboControl({
           noOptionsMessage={() => "No matches"}
         />
         <div className="combo-control-icons absolute right-0 top-0 bottom-0 flex items-center pointer-events-none">
-          <div className="combo-control-chevron px-2 text-gray-400">
+          <div className="combo-control-chevron px-2 text-slate-400">
             <ChevronDownIcon className="w-5 h-5" />
           </div>
           {hasPin && (
@@ -590,13 +849,16 @@ export function ComboControl({
         </div>
       </div>
       {isMissingValue && (
-        <div className="mt-1 text-xs text-red-700">
+        <div className="mt-1 pl-1 text-xs text-red-400">
           Missing on ComfyUI server
         </div>
       )}
       {supportsUpload && (
         <div className="mt-2">
-          {uploadButtons}
+          <div className="flex flex-col gap-2">
+            {deviceUploadButton}
+            {browseFilesButton}
+          </div>
           <input
             ref={uploadInputRef}
             type="file"
@@ -606,13 +868,7 @@ export function ComboControl({
           />
         </div>
       )}
-      <OutputFilePicker
-        open={outputPickerOpen}
-        onClose={() => setOutputPickerOpen(false)}
-        onPick={handlePickOutputFile}
-        uploadFolder={uploadFolder}
-        supportsVideoUpload={supportsVideoUpload}
-      />
+      {browseFilePicker}
     </div>
   );
 }

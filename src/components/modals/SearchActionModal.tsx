@@ -34,23 +34,23 @@ export function SearchActionModal({
 
   return createPortal(
     <div
-      className="fixed inset-0 bg-gray-400/40 backdrop-blur-sm"
+      className="fixed inset-0 bg-black/50 backdrop-blur-sm"
       style={{ zIndex }}
       onClick={onClose}
     >
       <div className="w-full h-full flex flex-col" onClick={(event) => event.stopPropagation()}>
-        <div className="bg-white border-b border-gray-200 px-4 py-3 flex items-center justify-between safe-area-inset-top">
+        <div className="bg-slate-950/88 border-b border-white/10 px-4 py-3 flex items-center justify-between safe-area-top">
           <div className="flex items-center gap-2">
             {onBack && (
               <button
                 type="button"
-                className="text-sm text-blue-600 font-medium"
+                className="text-sm text-cyan-300 hover:text-cyan-200 font-medium"
                 onClick={onBack}
               >
                 {backLabel}
               </button>
             )}
-            <h2 className="text-base font-semibold text-gray-900">{title}</h2>
+            <h2 className="text-base font-semibold text-slate-100">{title}</h2>
           </div>
           <CloseButton
             onClick={onClose}
@@ -60,22 +60,23 @@ export function SearchActionModal({
           />
         </div>
 
-        <div className="bg-white px-4 py-2 border-b border-gray-100">
+        <div className="bg-slate-950/88 px-4 py-2 border-b border-white/10">
           <SearchBar
             value={searchQuery}
             onChange={onSearchQueryChange}
             placeholder={searchPlaceholder}
             autoFocus
+            inputClassName="border-white/10 bg-slate-950/80 text-slate-100 placeholder:text-slate-500 focus:ring-cyan-400"
           />
         </div>
 
         {children}
 
         {footer ?? (
-          <div className="flex-shrink-0 h-12 bg-white border-t border-gray-200 flex items-center justify-center">
+          <div className="flex-shrink-0 h-12 bg-slate-950/88 border-t border-white/10 flex items-center justify-center">
             <button
               type="button"
-              className="text-sm text-gray-500 font-medium"
+              className="text-sm text-slate-400 hover:text-slate-100 font-medium"
               onClick={onClose}
             >
               Cancel

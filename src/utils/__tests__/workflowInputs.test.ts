@@ -12,6 +12,10 @@ import {
 } from '../workflowInputs';
 import type { NodeTypes, Workflow, WorkflowNode } from '@/api/types';
 
+// ComfyUI seed inputs declare max = 2^64; computed (not a literal) because a
+// 0xffffffffffffffff literal silently rounds to 2^64 in a float anyway.
+const SEED_MAX = 2 ** 64;
+
 afterEach(() => {
   vi.useRealTimers();
 });
@@ -178,23 +182,22 @@ describe('normalizeWidgetValue', () => {
 
 describe('normalizeComboValue', () => {
   it('returns direct match from options', () => {
-    expect(normalizeComboValue('euler', ['euler', 'ddim'], undefined)).toBe('euler');
+    expect(normalizeComboValue('euler', ['euler', 'ddim'])).toBe('euler');
   });
 
   it('matches by basename (strips path)', () => {
-    expect(normalizeComboValue('models/v1-5.safetensors', ['v1-5.safetensors', 'xl.safetensors'], undefined)).toBe('v1-5.safetensors');
+    expect(normalizeComboValue('models/v1-5.safetensors', ['v1-5.safetensors', 'xl.safetensors'])).toBe('v1-5.safetensors');
   });
 
-  it('falls back to default value if present in options', () => {
-    expect(normalizeComboValue('nonexistent', ['euler', 'ddim'], 'ddim')).toBe('ddim');
-  });
-
-  it('falls back to first option when nothing matches', () => {
-    expect(normalizeComboValue('nonexistent', ['euler', 'ddim'], 'also_nonexistent')).toBe('euler');
+  it('keeps the original value when nothing matches (no substitution)', () => {
+    // A picked input that isn't in the (stale/incomplete) option list must be
+    // sent as-is so the server errors clearly, not swapped for another file.
+    expect(normalizeComboValue('my_new_input.png', ['other_a.png', 'other_b.png'])).toBe('my_new_input.png');
+    expect(normalizeComboValue('nonexistent', ['euler', 'ddim'])).toBe('nonexistent');
   });
 
   it('returns value as-is for empty options', () => {
-    expect(normalizeComboValue('anything', [], undefined)).toBe('anything');
+    expect(normalizeComboValue('anything', [])).toBe('anything');
   });
 });
 
@@ -582,7 +585,7 @@ describe('seed override application in buildWorkflowPromptInputs', () => {
       KSampler: {
         input: {
           required: {
-            seed: ['INT', { default: 0, min: 0, max: 0xffffffffffffffff }],
+            seed: ['INT', { default: 0, min: 0, max: SEED_MAX }],
           },
         },
         input_order: { required: ['seed'], optional: [] },
@@ -625,7 +628,7 @@ describe('seed override application in buildWorkflowPromptInputs', () => {
         input: {
           required: {
             add_noise: [['enable', 'disable'], {}],
-            noise_seed: ['INT', { default: 0, min: 0, max: 0xffffffffffffffff }],
+            noise_seed: ['INT', { default: 0, min: 0, max: SEED_MAX }],
           },
         },
         input_order: { required: ['add_noise', 'noise_seed'], optional: [] },
@@ -678,7 +681,7 @@ describe('seed override application in buildWorkflowPromptInputs', () => {
         input: {
           required: {
             add_noise: [['enable', 'disable'], {}],
-            noise_seed: ['INT', { default: 0, min: 0, max: 0xffffffffffffffff }],
+            noise_seed: ['INT', { default: 0, min: 0, max: SEED_MAX }],
             steps: ['INT', { default: 20, min: 1, max: 10000 }],
             sampler_name: [['euler', 'dpmpp_2m'], {}],
             scheduler: [['karras', 'normal'], {}],
@@ -743,7 +746,7 @@ describe('seed override application in buildWorkflowPromptInputs', () => {
       'KSampler SDXL (Eff.)': {
         input: {
           required: {
-            noise_seed: ['INT', { default: 0, min: 0, max: 0xffffffffffffffff }],
+            noise_seed: ['INT', { default: 0, min: 0, max: SEED_MAX }],
             steps: ['INT', { default: 20, min: 1, max: 10000 }],
             cfg: ['FLOAT', { default: 7.0, min: 0.0, max: 100.0 }],
             sampler_name: [['euler', 'euler_ancestral', 'dpmpp_2m'], {}],
@@ -808,7 +811,7 @@ describe('seed override application in buildWorkflowPromptInputs', () => {
       KSampler: {
         input: {
           required: {
-            seed: ['INT', { default: 0, min: 0, max: 0xffffffffffffffff }],
+            seed: ['INT', { default: 0, min: 0, max: SEED_MAX }],
             steps: ['INT', { default: 20, min: 1, max: 10000 }],
             sampler_name: [['euler', 'dpmpp_2m'], {}],
           },
@@ -851,7 +854,7 @@ describe('seed override application in buildWorkflowPromptInputs', () => {
         input: {
           required: {
             add_noise: [['enable', 'disable'], {}],
-            noise_seed: ['INT', { default: 0, min: 0, max: 0xffffffffffffffff }],
+            noise_seed: ['INT', { default: 0, min: 0, max: SEED_MAX }],
           },
         },
         input_order: { required: ['add_noise', 'noise_seed'], optional: [] },

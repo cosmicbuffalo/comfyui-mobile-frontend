@@ -2,6 +2,15 @@ import { DownloadDeviceIcon } from '@/components/icons';
 import type { Workflow } from '@/api/types';
 import { MenuSubPageHeader } from './MenuSubPageHeader';
 import { MenuErrorNotice } from './MenuErrorNotice';
+import {
+  menuIconClassName,
+  menuInputClassName,
+  menuMutedTextClassName,
+  menuPrimaryButtonClassName,
+  menuSurfaceButtonDisabledClassName,
+  menuSurfaceClassName,
+  menuTextClassName,
+} from './menuStyles';
 
 interface SaveWorkflowPanelProps {
   error: string | null;
@@ -32,21 +41,20 @@ export function SaveWorkflowPanel({
       <MenuErrorNotice error={error} onDismiss={onDismissError} />
 
       <div className="space-y-4">
-        <div className="p-4 bg-white border border-gray-200 rounded-xl">
-          <p className="text-sm text-gray-600 mb-3">Save to ComfyUI server:</p>
+        <div className={`${menuSurfaceClassName} p-4`}>
+          <p className={`text-sm ${menuMutedTextClassName} mb-3`}>Save to ComfyUI server:</p>
           <input
             type="text"
             value={saveFilenameInput}
             onChange={(e) => onSaveFilenameChange(e.target.value)}
             placeholder="Enter filename (e.g., my_workflow.json)"
             data-swipe-nav-ignore="true"
-            className="w-full p-3 border border-gray-300 rounded-lg mb-3"
+            className={`w-full p-3 rounded-lg mb-3 ${menuInputClassName}`}
           />
           <button
             onClick={onSaveAs}
             disabled={!workflow || !saveFilenameInput.trim() || loading}
-            className="w-full py-3 bg-blue-500 text-white rounded-lg font-medium
-                       disabled:opacity-50 disabled:cursor-not-allowed min-h-[48px]"
+            className={`w-full ${menuPrimaryButtonClassName}`}
           >
             {loading ? 'Saving...' : 'Save As'}
           </button>
@@ -55,12 +63,10 @@ export function SaveWorkflowPanel({
         <button
           onClick={onDownload}
           disabled={!workflow}
-          className="w-full flex items-center gap-3 px-4 py-3 bg-white border border-gray-200
-                     rounded-xl text-left hover:bg-gray-50 min-h-[56px]
-                     disabled:opacity-50 disabled:cursor-not-allowed"
+          className={menuSurfaceButtonDisabledClassName}
         >
-          <DownloadDeviceIcon className="w-6 h-6 text-gray-600" />
-          <span className="font-medium text-gray-900">Download to Device</span>
+          <DownloadDeviceIcon className={menuIconClassName} />
+          <span className={menuTextClassName}>Download to Device</span>
         </button>
 
       </div>

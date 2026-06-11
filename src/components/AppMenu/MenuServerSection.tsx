@@ -1,6 +1,17 @@
 import { Component, type ReactNode } from 'react';
-import { CaretDownIcon, GearIcon, ReloadIcon, ServerIcon, WarningTriangleIcon } from '@/components/icons';
+import { CaretDownIcon, DownloadDeviceIcon, GearIcon, ReloadIcon, ServerIcon, WarningTriangleIcon } from '@/components/icons';
 import type { SystemStats } from '@/api/client';
+import { MenuRefreshMetadataButton } from './MenuRefreshMetadataButton';
+import {
+  menuChevronClassName,
+  menuIconClassName,
+  menuSectionHeaderClassName,
+  menuSurfaceButtonClassName,
+  menuSurfaceButtonDisabledClassName,
+  menuSurfaceClassName,
+  menuTextClassName,
+} from './menuStyles';
+import { CollapsibleMenuSection } from './CollapsibleMenuSection';
 
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -10,15 +21,15 @@ function formatBytes(bytes: number): string {
   return `${mb.toFixed(0)} MB`;
 }
 
-function UsageBar({ used, total, label, color = 'bg-blue-500' }: { used: number; total: number; label: string; color?: string }) {
+function UsageBar({ used, total, label, color = 'bg-cyan-500' }: { used: number; total: number; label: string; color?: string }) {
   const pct = total > 0 ? Math.min(100, (used / total) * 100) : 0;
   return (
     <div>
-      <div className="flex items-center justify-between text-xs text-gray-500 mb-1">
+      <div className="flex items-center justify-between text-xs text-slate-400 mb-1">
         <span>{label}</span>
         <span>{formatBytes(used)} / {formatBytes(total)}</span>
       </div>
-      <div className="h-2 rounded-full bg-gray-200 overflow-hidden">
+      <div className="h-2 rounded-full bg-white/10 overflow-hidden">
         <div
           className={`h-full rounded-full transition-all ${color}`}
           style={{ width: `${pct}%` }}
@@ -38,8 +49,8 @@ class StatsErrorBoundary extends Component<{ children: ReactNode }, { hasError: 
   render() {
     if (this.state.hasError) {
       return (
-        <div className="rounded-xl border border-gray-200 bg-white p-4 text-sm text-gray-400 text-center flex items-center justify-center gap-2">
-          <WarningTriangleIcon className="w-4 h-4 text-gray-300" />
+        <div className={`${menuSurfaceClassName} p-4 text-sm text-slate-400 text-center flex items-center justify-center gap-2`}>
+          <WarningTriangleIcon className="w-4 h-4 text-slate-500" />
           Unable to display server stats
         </div>
       );
@@ -58,11 +69,11 @@ function ServerStatsCard({ systemStats, cpuPercent }: { systemStats: SystemStats
   const pythonVersion = systemStats.system?.python_version;
 
   return (
-    <div className="rounded-xl border border-gray-200 bg-white p-4 space-y-3">
+    <div className={`${menuSurfaceClassName} p-4 space-y-3`}>
       {version && (
         <div className="flex items-center gap-2 mb-1">
-          <ServerIcon className="w-5 h-5 text-gray-500" />
-          <span className="text-sm font-medium text-gray-700">
+          <ServerIcon className="w-5 h-5 text-slate-300" />
+          <span className="text-sm font-medium text-slate-100">
             ComfyUI {version}
           </span>
         </div>
@@ -77,14 +88,14 @@ function ServerStatsCard({ systemStats, cpuPercent }: { systemStats: SystemStats
           .trim();
         return (
           <div key={device.index} className="space-y-2">
-            <div className="text-xs font-medium text-gray-600 truncate" title={device.name}>
+            <div className="text-xs font-medium text-slate-300 truncate" title={device.name}>
               {gpuName || device.name || `GPU ${device.index}`}
             </div>
             <UsageBar
               used={vramUsed}
               total={device.vram_total}
               label="VRAM"
-              color={device.vram_total > 0 && vramUsed / device.vram_total > 0.9 ? 'bg-red-500' : device.vram_total > 0 && vramUsed / device.vram_total > 0.7 ? 'bg-amber-500' : 'bg-blue-500'}
+              color={device.vram_total > 0 && vramUsed / device.vram_total > 0.9 ? 'bg-red-500' : device.vram_total > 0 && vramUsed / device.vram_total > 0.7 ? 'bg-amber-500' : 'bg-cyan-500'}
             />
           </div>
         );
@@ -101,11 +112,11 @@ function ServerStatsCard({ systemStats, cpuPercent }: { systemStats: SystemStats
 
       {cpuPercent != null && (
         <div>
-          <div className="flex items-center justify-between text-xs text-gray-500 mb-1">
+          <div className="flex items-center justify-between text-xs text-slate-400 mb-1">
             <span>CPU</span>
             <span>{cpuPercent.toFixed(0)}%</span>
           </div>
-          <div className="h-2 rounded-full bg-gray-200 overflow-hidden">
+          <div className="h-2 rounded-full bg-white/10 overflow-hidden">
             <div
               className={`h-full rounded-full transition-all ${cpuPercent > 90 ? 'bg-red-500' : cpuPercent > 70 ? 'bg-amber-500' : 'bg-violet-500'}`}
               style={{ width: `${Math.min(100, cpuPercent)}%` }}
@@ -115,15 +126,15 @@ function ServerStatsCard({ systemStats, cpuPercent }: { systemStats: SystemStats
       )}
 
       {(pytorchVersion || pythonVersion) && (
-        <div className="pt-2 border-t border-gray-100 space-y-1">
+        <div className="pt-2 border-t border-white/10 space-y-1">
           {pytorchVersion && (
-            <div className="flex justify-between text-xs text-gray-400">
+            <div className="flex justify-between text-xs text-slate-500">
               <span>PyTorch</span>
               <span>{pytorchVersion}</span>
             </div>
           )}
           {pythonVersion && (
-            <div className="flex justify-between text-xs text-gray-400">
+            <div className="flex justify-between text-xs text-slate-500">
               <span>Python</span>
               <span>{pythonVersion.split(' ')[0]}</span>
             </div>
@@ -143,6 +154,7 @@ interface MenuServerSectionProps {
   onToggle: () => void;
   onRestartServer: () => void;
   onOpenGenerationSettings: () => void;
+  onOpenCustomNodes: () => void;
 }
 
 export function MenuServerSection({
@@ -154,53 +166,61 @@ export function MenuServerSection({
   onToggle,
   onRestartServer,
   onOpenGenerationSettings,
+  onOpenCustomNodes,
 }: MenuServerSectionProps) {
   return (
     <section ref={sectionRef} className="mb-6">
       <button
         type="button"
         onClick={onToggle}
-        className="w-full flex items-center justify-between text-sm font-semibold text-gray-500 uppercase tracking-wide mb-3"
+        className={menuSectionHeaderClassName}
         aria-expanded={open}
       >
         <span>Server</span>
-        <CaretDownIcon className={`w-5 h-5 text-gray-400 transition-transform ${open ? 'rotate-0' : '-rotate-90'}`} />
+        <CaretDownIcon className={`${menuChevronClassName} ${open ? 'rotate-0' : '-rotate-90'}`} />
       </button>
-      {open && (
-        <div className="space-y-2">
+      <CollapsibleMenuSection open={open}>
+        <div className="space-y-2 pb-1">
           <StatsErrorBoundary>
             {systemStats ? (
               <ServerStatsCard systemStats={systemStats} cpuPercent={cpuPercent} />
             ) : (
-              <div className="rounded-xl border border-gray-200 bg-white p-4 text-sm text-gray-400 text-center">
+              <div className={`${menuSurfaceClassName} p-4 text-sm text-slate-400 text-center`}>
                 Loading server info...
               </div>
             )}
           </StatsErrorBoundary>
 
           <button
-            onClick={onOpenGenerationSettings}
-            className="w-full flex items-center gap-3 p-4 bg-white border border-gray-200
-                       rounded-xl text-left hover:bg-gray-50 min-h-[56px]"
+            onClick={onOpenCustomNodes}
+            className={menuSurfaceButtonClassName}
           >
-            <GearIcon className="w-6 h-6 text-gray-600" />
-            <span className="font-medium text-gray-900">Preferences</span>
+            <DownloadDeviceIcon className={menuIconClassName} />
+            <span className={menuTextClassName}>Custom nodes</span>
+          </button>
+
+          <MenuRefreshMetadataButton />
+
+          <button
+            onClick={onOpenGenerationSettings}
+            className={menuSurfaceButtonClassName}
+          >
+            <GearIcon className={menuIconClassName} />
+            <span className={menuTextClassName}>Preferences</span>
           </button>
 
           <button
             onClick={onRestartServer}
             disabled={restartingServer}
-            className="w-full flex items-center gap-3 p-4 bg-white border border-gray-200
-                       rounded-xl text-left hover:bg-gray-50 min-h-[56px]
-                       disabled:opacity-50 disabled:cursor-not-allowed"
+            className={menuSurfaceButtonDisabledClassName}
           >
-            <ReloadIcon className="w-6 h-6 text-gray-600" />
-            <span className="font-medium text-gray-900">
+            <ReloadIcon className={menuIconClassName} />
+            <span className={menuTextClassName}>
               {restartingServer ? 'Restarting ComfyUI...' : 'Restart ComfyUI'}
             </span>
           </button>
         </div>
-      )}
+      </CollapsibleMenuSection>
     </section>
   );
 }

@@ -3,6 +3,7 @@ import type {
   WorkflowLink,
   WorkflowNode,
   WorkflowSubgraphLink,
+  WorkflowSubgraphDefinition,
   WorkflowGroup,
 } from '@/api/types';
 import { parseLocationPointer } from '@/utils/mobileLayout';
@@ -36,7 +37,47 @@ export interface ScopeContext {
   nodes: WorkflowNode[];
   links: WorkflowLink[] | WorkflowSubgraphLink[];
   groups: WorkflowGroup[];
+  /**
+   * Highest link ID in use in this scope; mint new link IDs as base+1, base+2…
+   * Root scope uses `last_link_id`; subgraph links have their own ID space with
+   * no stored counter, so the base is derived from the existing link IDs.
+   */
+  linkIdBase: number;
   applyPatch: (canonical: Workflow, patch: ScopePatch) => Workflow;
+}
+
+/**
+ * Highest node ID in use anywhere in the workflow (root and every subgraph
+ * definition). Node IDs must be allocated above this: root and subgraph
+ * scopes are separate node lists, but IDs are treated as workflow-global by
+ * hierarchical-key resolution, so cross-scope collisions corrupt lookups.
+ */
+export function maxNodeIdAcrossScopes(workflow: Workflow): number {
+  let max = workflow.last_node_id ?? 0;
+  for (const node of workflow.nodes ?? []) {
+    if (node.id > max) max = node.id;
+  }
+  for (const sg of workflow.definitions?.subgraphs ?? []) {
+    for (const node of sg.nodes ?? []) {
+      if (node.id > max) max = node.id;
+    }
+  }
+  return max;
+}
+
+function maxSubgraphLinkId(subgraph: WorkflowSubgraphDefinition): number {
+  let max = 0;
+  for (const link of subgraph.links ?? []) {
+    if (link.id > max) max = link.id;
+  }
+  // Boundary linkIds reference links that should be in subgraph.links, but a
+  // repaired/imported definition can list IDs there that links no longer carry.
+  for (const io of [...(subgraph.inputs ?? []), ...(subgraph.outputs ?? [])]) {
+    for (const id of io.linkIds ?? []) {
+      if (id > max) max = id;
+    }
+  }
+  return max;
 }
 
 /**
@@ -56,6 +97,7 @@ export function resolveCurrentScope(
       nodes: canonical.nodes,
       links: canonical.links,
       groups: canonical.groups ?? [],
+      linkIdBase: canonical.last_link_id,
       applyPatch: (c, patch) => ({
         ...c,
         ...(patch.nodes != null ? { nodes: patch.nodes } : {}),
@@ -80,6 +122,7 @@ export function resolveCurrentScope(
     nodes: subgraph.nodes ?? [],
     links: subgraph.links ?? [],
     groups: subgraph.groups ?? [],
+    linkIdBase: maxSubgraphLinkId(subgraph),
     applyPatch: (c, patch) => ({
       ...c,
       definitions: {
@@ -148,6 +191,65 @@ export function makeScopeLink(
     return { id, origin_id: originId, origin_slot: originSlot, target_id: targetId, target_slot: targetSlot, type };
   }
   return [id, originId, originSlot, targetId, targetSlot, type];
+}
+
+/**
+ * Resolve the editing scope encoded in a hierarchical key. The key's
+ * subgraph segment — not the navigation stack — decides where the node
+ * lives, so actions carrying a key from another scope (e.g. the pinned
+ * widget overlay used inside a subgraph) patch the right node instead of
+ * an unrelated same-ID node in the current scope.
+ */
+export function resolveScopeForHierarchicalKey(
+  canonical: Workflow,
+  itemKey: string,
+): ScopeContext {
+  const parsed = parseLocationPointer(itemKey);
+  const subgraphId =
+    parsed && parsed.type !== 'subgraph' ? parsed.subgraphId : null;
+  const frames: ScopeFrame[] =
+    subgraphId == null
+      ? [{ type: 'root' }]
+      : [
+          { type: 'root' },
+          // placeholderNodeId is navigation metadata; unused for scope resolution.
+          { type: 'subgraph', id: subgraphId, placeholderNodeId: -1 },
+        ];
+  return resolveCurrentScope(frames, canonical);
+}
+
+/** Convert a subgraph object-format link to the root tuple format. */
+export function subgraphLinkToTuple(link: WorkflowSubgraphLink): WorkflowLink {
+  return [
+    link.id,
+    link.origin_id,
+    link.origin_slot,
+    link.target_id,
+    link.target_slot,
+    link.type,
+  ];
+}
+
+/**
+ * A root-shaped view of the given scope: the scope's nodes with its links
+ * converted to root tuple format, so root-link utilities work unchanged.
+ * Returns the workflow itself for root scope or when the subgraph is missing.
+ * View only — do not persist or patch the result back into the store.
+ */
+export function getScopedWorkflowView(
+  workflow: Workflow,
+  subgraphId: string | null,
+): Workflow {
+  if (subgraphId == null) return workflow;
+  const subgraph = (workflow.definitions?.subgraphs ?? []).find(
+    (sg) => sg.id === subgraphId,
+  );
+  if (!subgraph) return workflow;
+  return {
+    ...workflow,
+    nodes: subgraph.nodes ?? [],
+    links: (subgraph.links ?? []).map(subgraphLinkToTuple),
+  };
 }
 
 /** Find a node in the given nodes array by its hierarchical pointer. */

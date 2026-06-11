@@ -2,7 +2,7 @@ import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { NodeCardOutputPreview } from '@/components/WorkflowPanel/NodeCard/OutputPreview';
-import { getImageUrl } from '@/api/client';
+import { getImagePreviewUrl } from '@/api/client';
 
 describe('NodeCardOutputPreview', () => {
   let container: HTMLDivElement;
@@ -43,8 +43,9 @@ describe('NodeCardOutputPreview', () => {
     });
 
     const image = document.querySelector('img');
+    // The inline preview displays the fast WebP variant, not the full PNG.
     expect(image?.getAttribute('src')).toBe(
-      getImageUrl(previewImage.filename, previewImage.subfolder, previewImage.type)
+      getImagePreviewUrl(previewImage.filename, previewImage.subfolder, previewImage.type)
     );
   });
 });

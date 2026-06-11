@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef } from 'react';
-import { useWorkflowStore } from '@/hooks/useWorkflow';
+import { isWorkflowModified, useWorkflowStore } from '@/hooks/useWorkflow';
 import { useAppMenuStore } from '@/hooks/useAppMenu';
 import { useQueueStore } from '@/hooks/useQueue';
 import { useHistoryStore } from '@/hooks/useHistory';
@@ -10,11 +10,17 @@ import { OutputsTopBarControls } from './OutputsPanel/OutputsTopBarControls';
 import { WorkflowTopBarControls } from './WorkflowPanel/WorkflowTopBarControls';
 import { getDisplayName } from './AppMenu/userWorkflowHelpers';
 import { SubgraphBreadcrumb } from './WorkflowPanel/SubgraphBreadcrumb';
+import { WorkflowTabline } from './WorkflowPanel/WorkflowTabline';
 import { MenuButton } from '@/components/buttons/MenuButton';
 import { TopBarTitle } from './TopBar/Title';
+import { OutputsSourceToggle } from './TopBar/OutputsSourceToggle';
+import { TopBarPanelNavigation } from './TopBar/PanelNavigation';
+import type { PanelMode } from '@/hooks/useNavigation';
+import { useWorkflowHiddenStore } from '@/hooks/useWorkflowHidden';
+import { isWorkflowHidden } from '@/utils/workflowHidden';
 
 interface TopBarProps {
-  mode?: 'workflow' | 'queue' | 'outputs';
+  mode?: PanelMode;
 }
 
 function getScrollSelectors(mode: TopBarProps['mode']): string[] {
@@ -84,14 +90,17 @@ export function TopBar({ mode = 'workflow' }: TopBarProps) {
   const workflow = useWorkflowStore((s) => s.workflow);
   const originalWorkflow = useWorkflowStore((s) => s.originalWorkflow);
   const currentFilename = useWorkflowStore((s) => s.currentFilename);
+  const workflowSource = useWorkflowStore((s) => s.workflowSource);
+  const hiddenWorkflowPaths = useWorkflowHiddenStore((s) => s.hidden);
   const hiddenItems = useWorkflowStore((s) => s.hiddenItems);
+  const closeForNewWorkflowRequest = useWorkflowStore((s) => s.closeForNewWorkflowRequest);
   const pending = useQueueStore((s) => s.pending);
   const history = useHistoryStore((s) => s.history);
+  const historyTotal = useHistoryStore((s) => s.historyTotal);
   const outputsSource = useOutputsStore((s) => s.source);
 
-  // Check if dirty
-  // We exclude non-persistent fields if any, but currently workflow object is pure JSON data
-  const isDirty = workflow && originalWorkflow && JSON.stringify(workflow) !== JSON.stringify(originalWorkflow);
+  const isDirty = isWorkflowModified(workflow, originalWorkflow);
+  const isHiddenWorkflow = isWorkflowHidden(workflowSource, currentFilename, hiddenWorkflowPaths);
 
   const nodeCountLabel = useMemo(() => {
     if (!workflow) return '';
@@ -155,30 +164,44 @@ export function TopBar({ mode = 'workflow' }: TopBarProps) {
     }
   }, [mode]);
 
+  const middleContent = mode === 'outputs' ? (
+    <OutputsSourceToggle />
+  ) : (
+    <TopBarTitle
+      title={title}
+      mode={mode}
+      isDirty={Boolean(isDirty)}
+      hasWorkflow={Boolean(workflow)}
+      nodeCountLabel={nodeCountLabel}
+      historyLength={historyTotal ?? history.length}
+      pendingLength={pending.length}
+      onTap={handleTitleTap}
+      isHidden={isHiddenWorkflow}
+    />
+  );
+
   return (
     <div
       id="top-bar-root"
       ref={barRef}
-      className="fixed top-0 left-0 right-0 bg-white border-b border-gray-200 z-[2000] safe-area-top"
+      className="fixed top-0 left-0 right-0 bg-slate-950/88 border-b border-white/10 text-slate-100 z-[2000] safe-area-top"
       data-top-bar="true"
     >
       <div id="top-bar-content" className="flex items-center justify-between px-4 py-3">
         <MenuButton onClick={() => setAppMenuOpen(true)} />
-        <TopBarTitle
-          title={title}
-          mode={mode}
-          isDirty={Boolean(isDirty)}
-          hasWorkflow={Boolean(workflow)}
-          nodeCountLabel={nodeCountLabel}
-          historyLength={history.length}
-          pendingLength={pending.length}
-          onTap={handleTitleTap}
-        />
+        <div className="grid min-w-0 flex-1 grid-cols-[0_minmax(0,1fr)_0] items-center lg:grid-cols-[1fr_minmax(12rem,24rem)_1fr]">
+          <TopBarPanelNavigation mode={mode} side="left" />
+          <div id="top-bar-center-slot" className="col-start-2 min-w-0 w-full">{middleContent}</div>
+          <TopBarPanelNavigation mode={mode} side="right" />
+        </div>
         <div id="top-bar-right-slot" className="w-10 h-10 flex items-center justify-center">
           {rightControls}
         </div>
       </div>
       <AppMenu open={appMenuOpen} onClose={() => setAppMenuOpen(false)} />
+      {(mode === 'workflow' || closeForNewWorkflowRequest) && (
+        <WorkflowTabline showTabs={mode === 'workflow'} />
+      )}
       {mode === 'workflow' && <SubgraphBreadcrumb />}
     </div>
   );

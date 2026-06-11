@@ -6,7 +6,8 @@ import type { ItemRef, MobileLayout } from '@/utils/mobileLayout';
 export type RepositionTarget =
   | { type: 'node'; id: number }
   | { type: 'group'; id: number; subgraphId: string | null }
-  | { type: 'subgraph'; id: string };
+  /** id = subgraph definition UUID; nodeId = the placeholder node instance. */
+  | { type: 'subgraph'; id: string; nodeId?: number };
 
 export interface RepositionViewportAnchor {
   viewportTop: number;
@@ -70,7 +71,11 @@ export function useRepositionMode(): UseRepositionModeReturn {
       if (!groupKey) return;
       selector = `[data-reposition-item="group-${groupKey}"]`;
     } else {
-      selector = `[data-reposition-item="subgraph-${target.id}"]`;
+      // The main panel renders subgraph placeholders as node items.
+      selector =
+        target.nodeId != null
+          ? `[data-reposition-item="node-${target.nodeId}"]`
+          : `[data-reposition-item="subgraph-${target.id}"]`;
     }
     const targetEl = document.querySelector<HTMLElement>(selector);
     setInitialViewportAnchor(
@@ -104,7 +109,11 @@ export function useRepositionMode(): UseRepositionModeReturn {
           if (!groupKey) return;
           selector = `[data-reposition-item="group-${groupKey}"]`;
         } else {
-          selector = `[data-reposition-item="subgraph-${scrollTarget.id}"]`;
+          // The main panel renders subgraph placeholders as node items.
+          selector =
+            scrollTarget.nodeId != null
+              ? `[data-reposition-item="node-${scrollTarget.nodeId}"]`
+              : `[data-reposition-item="subgraph-${scrollTarget.id}"]`;
         }
         if (selector) {
           const el = document.querySelector<HTMLElement>(selector);

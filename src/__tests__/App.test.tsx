@@ -13,6 +13,7 @@ const workflowState = {
 
 const queueState = {
   fetchQueue: vi.fn(),
+  running: [] as unknown[],
 };
 
 const outputsState = {
@@ -42,11 +43,6 @@ vi.mock('@/hooks/useOutputs', () => ({
 vi.mock('@/hooks/useNavigation', () => ({
   useNavigationStore: (selector: (state: { currentPanel: string; setCurrentPanel: () => void }) => unknown) =>
     selector({ currentPanel: 'workflow', setCurrentPanel: vi.fn() }),
-}));
-
-vi.mock('@/hooks/useTheme', () => ({
-  useThemeStore: (selector: (state: { theme: 'light' | 'dark' }) => unknown) =>
-    selector({ theme: 'light' }),
 }));
 
 vi.mock('@/hooks/useAppMenu', () => ({

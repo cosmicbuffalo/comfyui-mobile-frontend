@@ -13,12 +13,19 @@ interface WorkflowErrorsState {
   nodeErrors: Record<string, NodeError[]>;
   errorCycleIndex: number;
   errorsDismissed: boolean;
+  // Run errors for background (parked) workflow tabs, keyed by session id. The
+  // active tab uses the global `error` above; a parked tab's error is stashed
+  // here instead so it doesn't hijack the foreground — it surfaces a warning
+  // marker on that tab and is promoted to `error` when the user enters the tab.
+  sessionErrors: Record<string, string>;
   setError: (message: string | null) => void;
   setNodeErrors: (errors: Record<string, NodeError[]>) => void;
   clearNodeErrors: () => void;
   clearNodeError: (nodeId: number) => void;
   setErrorCycleIndex: (index: number) => void;
   setErrorsDismissed: (dismissed: boolean) => void;
+  setSessionError: (sessionId: string, message: string) => void;
+  clearSessionError: (sessionId: string) => void;
 }
 
 export const useWorkflowErrorsStore = create<WorkflowErrorsState>()(
@@ -28,6 +35,7 @@ export const useWorkflowErrorsStore = create<WorkflowErrorsState>()(
       nodeErrors: {},
       errorCycleIndex: 0,
       errorsDismissed: false,
+      sessionErrors: {},
       setError: (message) => {
         set({ error: message, errorsDismissed: false });
       },
@@ -49,6 +57,19 @@ export const useWorkflowErrorsStore = create<WorkflowErrorsState>()(
       },
       setErrorsDismissed: (dismissed) => {
         set({ errorsDismissed: dismissed });
+      },
+      setSessionError: (sessionId, message) => {
+        set((state) => ({
+          sessionErrors: { ...state.sessionErrors, [sessionId]: message },
+        }));
+      },
+      clearSessionError: (sessionId) => {
+        set((state) => {
+          if (!(sessionId in state.sessionErrors)) return state;
+          const next = { ...state.sessionErrors };
+          delete next[sessionId];
+          return { sessionErrors: next };
+        });
       },
     }),
     {

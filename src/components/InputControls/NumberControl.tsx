@@ -1,6 +1,13 @@
 import { useState, useEffect } from "react";
 import { MinusIcon, PlusIcon } from "../icons";
 import { PromotedWidgetIcon } from "../icons";
+import {
+  controlInputBaseClassName,
+  controlInputDarkClassName,
+  controlInputFocusClassNameForState,
+  controlLabelClassName,
+  controlStateClassName,
+} from "./controlStyles";
 
 interface NumberControlProps {
   containerClass?: string;
@@ -15,6 +22,7 @@ interface NumberControlProps {
   max?: number;
   step?: number;
   isInt?: boolean;
+  hideLabel?: boolean;
   hasError?: boolean;
   isPromoted?: boolean;
   // Reserved for future seed mode UI
@@ -36,6 +44,7 @@ export function NumberControl({
   max: maxProp,
   step: stepProp,
   isInt: isIntProp,
+  hideLabel = false,
   hasError = false,
   isPromoted = false,
 }: NumberControlProps) {
@@ -72,16 +81,16 @@ export function NumberControl({
 
   const inputClassName = [
     `number-input-field-${name}`,
-    "w-full p-3 comfy-input text-base text-gray-900",
-    disabled ? "opacity-60 cursor-not-allowed" : "",
-    hasError ? "border-red-700 ring-1 ring-red-700" : "",
-    !hasError && isPromoted ? "border-pink-500 ring-1 ring-pink-500" : "",
+    controlInputBaseClassName,
+    controlInputDarkClassName,
+    controlInputFocusClassNameForState(isPromoted),
+    controlStateClassName({ disabled, hasError, isPromoted }),
   ]
     .filter(Boolean)
     .join(" ");
 
   const buttonClassName = [
-    "w-10 h-10 flex items-center justify-center rounded-full bg-gray-100 text-gray-700 flex-shrink-0",
+    "w-10 h-10 flex items-center justify-center rounded-full bg-slate-950/80 border border-white/10 text-slate-200 flex-shrink-0",
     disabled
       ? "opacity-60 cursor-not-allowed"
       : "active:scale-95 transition-all",
@@ -91,14 +100,17 @@ export function NumberControl({
 
   return (
     <div className={`${containerClass ?? ""} number-control-${name}`}>
-      <label className="block text-sm font-medium text-gray-700 mb-1">
-        <span className="inline-flex items-center gap-1">
-          <span>{name}</span>
-          {isPromoted && (
-            <PromotedWidgetIcon className="w-3.5 h-3.5 text-pink-500" />
-          )}
-        </span>
-      </label>
+      {!hideLabel && (
+        <label className={`${controlLabelClassName} mb-1`}>
+          <span className="inline-flex items-center gap-1">
+            <span>{name}</span>
+            {isPromoted && (
+              <PromotedWidgetIcon className="w-3.5 h-3.5 text-pink-500" />
+            )}
+          </span>
+        </label>
+      )}
+
       <div
         className={`number-stepper-container-${name} flex items-center gap-2`}
       >

@@ -26,12 +26,12 @@ export function RepositionOverlayTopBar({
 }: RepositionOverlayTopBarProps) {
   return (
     <div
-      className="bg-white border-b border-gray-200"
+      className="bg-slate-900/95 border-b border-white/10"
       style={{ height: "var(--top-bar-offset, 69px)" }}
     >
       <div className="h-full px-4 flex items-center justify-between">
         <div className="w-10 h-10" />
-        <h2 className="text-lg font-semibold text-gray-900 text-center">
+        <h2 className="text-lg font-semibold text-slate-100 text-center">
           Reposition Nodes
         </h2>
         <div className="w-10 h-10 flex items-center justify-center">
@@ -49,8 +49,8 @@ export function RepositionOverlayTopBar({
                 connectionHighlightMode={connectionMode}
                 leftLineCount={leftLineCount}
                 rightLineCount={rightLineCount}
-                inactiveColor={themeColors.text.secondary}
-                offLineColor={themeColors.text.secondary}
+                inactiveColor={themeColors.text.muted}
+                offLineColor={themeColors.text.muted}
                 inputHighlightColor={inputHighlightColor}
                 outputHighlightColor={outputHighlightColor}
               />

@@ -14,6 +14,8 @@ interface ConnectionRowProps {
   arrowClass: string;
   typeClass: string;
   buttonRef: RefObject<HTMLButtonElement | null>;
+  /** Stable DOM id so navigation can flash this specific connection button. */
+  buttonId?: string;
   connectionCount: number;
   onClick: () => void;
   onPointerDown?: (event: ReactPointerEvent) => void;
@@ -33,6 +35,7 @@ export function ConnectionRow({
   arrowClass,
   typeClass,
   buttonRef,
+  buttonId,
   connectionCount,
   onClick,
   onPointerDown,
@@ -48,7 +51,7 @@ export function ConnectionRow({
     <>
       {isInput ? null : !hideLabel && (
         <span
-          className={`text-sm text-gray-700 flex-1 min-w-0 ${
+          className={`text-sm text-slate-300 flex-1 min-w-0 ${
             shouldWrapResolvedLabel ? 'whitespace-pre-line break-words leading-tight text-right' : 'truncate'
           }`}
         >
@@ -57,12 +60,13 @@ export function ConnectionRow({
       )}
 
       {!isInput && connectionCount > 1 && (
-        <span className="bg-gray-200 text-gray-700 rounded-full px-2 py-0.5 text-xs font-medium flex-shrink-0">
+        <span className="bg-white/10 text-slate-300 rounded-full px-2 py-0.5 text-xs font-medium flex-shrink-0">
           {connectionCount}
         </span>
       )}
 
       <button
+        id={buttonId}
         onClick={onClick}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
@@ -76,8 +80,8 @@ export function ConnectionRow({
           ${sizeClass} flex-shrink-0
           transition-opacity
           ${typeClass}
-          ${isInput && isEmptyRequiredInput ? 'opacity-100 cursor-pointer border-red-500' : (isBoundaryConnection ? 'border-blue-400' : 'border-transparent')}
-          ${!isInput && isInactiveOutput ? 'border-dashed border-gray-400/70' : ''}
+          ${isInput && isEmptyRequiredInput ? 'opacity-100 cursor-pointer border-red-500' : (isBoundaryConnection ? 'border-cyan-400' : 'border-transparent')}
+          ${!isInput && isInactiveOutput ? 'border-dashed border-slate-500/70' : ''}
           ${isVisuallyDisabled ? 'opacity-40 cursor-not-allowed' : ''}
           ${!isVisuallyDisabled && isInactiveOutput ? 'opacity-50 cursor-pointer active:scale-95' : ''}
           ${!isVisuallyDisabled && !isInactiveOutput ? 'opacity-100 cursor-pointer active:scale-95' : ''}
@@ -97,7 +101,7 @@ export function ConnectionRow({
         <span
           className={`text-sm flex-1 min-w-0 ${
             shouldWrapResolvedLabel ? 'whitespace-pre-line break-words leading-tight' : 'truncate'
-          } ${isEmptyRequiredInput ? 'text-red-600 font-medium' : 'text-gray-700'}`}
+          } ${isEmptyRequiredInput ? 'text-red-400 font-medium' : 'text-slate-300'}`}
         >
           {resolvedLabel}
         </span>

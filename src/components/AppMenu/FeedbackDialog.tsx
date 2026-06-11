@@ -1,13 +1,16 @@
 import { useState } from 'react';
+import { createPortal } from 'react-dom';
 import type { SystemStats } from '@/api/client';
 import type { Workflow } from '@/api/types';
 import { Dialog } from '@/components/modals/Dialog';
+import { FullscreenModalHeader } from '@/components/modals/FullscreenModalHeader';
 import { buildDiagnosticsBlock, buildFeedbackIssueUrl } from '@/utils/feedbackUrl';
 import {
   FEEDBACK_ENDPOINT,
   isFeedbackEndpointConfigured,
   submitFeedback,
 } from '@/utils/feedbackApi';
+import { menuMutedTextClassName } from './menuStyles';
 
 interface FeedbackDialogProps {
   systemStats: SystemStats | null;
@@ -21,9 +24,11 @@ type SubmitState =
   | { kind: 'success'; url: string }
   | { kind: 'error'; message: string };
 
-const FIELD_LABEL_CLASS = 'block text-xs font-medium text-gray-700 mb-1';
+const FIELD_LABEL_CLASS = 'block text-xs font-medium text-slate-300 mb-1';
+const FEEDBACK_FIELD_SURFACE_CLASS =
+  'rounded-lg border border-slate-600/80 bg-slate-950 text-slate-300';
 const INPUT_CLASS =
-  'w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-inset focus:ring-blue-500';
+  `w-full px-3 py-2 text-sm placeholder:text-slate-500 focus:border-cyan-300 focus:outline-none focus:ring-2 focus:ring-cyan-400/30 ${FEEDBACK_FIELD_SURFACE_CLASS}`;
 
 export function FeedbackDialog({ systemStats, workflow, onClose }: FeedbackDialogProps) {
   const endpointConfigured = isFeedbackEndpointConfigured();
@@ -81,7 +86,7 @@ export function FeedbackDialog({ systemStats, workflow, onClose }: FeedbackDialo
               href={submit.url}
               target="_blank"
               rel="noopener noreferrer"
-              className="block text-blue-600 hover:underline break-all"
+              className="block text-cyan-300 hover:text-cyan-200 hover:underline break-all"
             >
               {submit.url}
             </a>
@@ -98,7 +103,7 @@ export function FeedbackDialog({ systemStats, workflow, onClose }: FeedbackDialo
       target="_blank"
       rel="noopener noreferrer"
       onClick={onClose}
-      className="text-blue-600 hover:underline"
+      className="text-cyan-300 hover:text-cyan-200 hover:underline"
     >
       open a GitHub issue directly
     </a>
@@ -123,15 +128,16 @@ export function FeedbackDialog({ systemStats, workflow, onClose }: FeedbackDialo
     );
   }
 
-  return (
-    <Dialog
-      onClose={onClose}
-      title="Send Feedback"
-      size="2xl"
-      align="top"
-      disableClose={isSubmitting}
-      description={
-        <div className="space-y-3">
+  return createPortal(
+    <div className="fixed inset-x-0 top-0 z-[2600] h-[100dvh] bg-slate-950 text-slate-100 flex flex-col safe-area-top">
+      <FullscreenModalHeader
+        title="Send Feedback"
+        onClose={onClose}
+        closeDisabled={isSubmitting}
+      />
+
+      <div className="flex-1 overflow-y-auto overscroll-contain px-4 py-4">
+        <div className="mx-auto w-full max-w-2xl space-y-3 pb-28">
           <p className="text-sm">
             Report a bug or request a feature. Your feedback becomes a public GitHub issue.
           </p>
@@ -162,7 +168,7 @@ export function FeedbackDialog({ systemStats, workflow, onClose }: FeedbackDialo
 
           <label className="block">
             <span className={FIELD_LABEL_CLASS}>
-              Contact <span className="text-gray-400 font-normal">(optional)</span>
+              Contact <span className="text-slate-500 font-normal">(optional)</span>
             </span>
             <input
               type="text"
@@ -172,7 +178,7 @@ export function FeedbackDialog({ systemStats, workflow, onClose }: FeedbackDialo
               placeholder="GitHub @username or email if you'd like a reply"
               className={INPUT_CLASS}
             />
-            <span className="block mt-1 text-xs text-gray-500">
+            <span className={`block mt-1 text-xs ${menuMutedTextClassName}`}>
               GitHub handles get @-mentioned in the public issue. Anything else
               (emails, phone numbers, etc.) is forwarded privately to the maintainer
               and never appears in the issue body.
@@ -196,42 +202,53 @@ export function FeedbackDialog({ systemStats, workflow, onClose }: FeedbackDialo
           <label className="flex items-start gap-2 cursor-pointer select-none">
             <input
               type="checkbox"
-              className="mt-1 w-4 h-4"
+              className="mt-1 h-4 w-4 rounded border-white/20 bg-slate-950 text-cyan-400 focus:ring-cyan-400 focus:ring-offset-slate-900"
               checked={includeDiagnostics}
               onChange={(e) => setIncludeDiagnostics(e.target.checked)}
             />
-            <span className="text-sm text-gray-700">
+            <span className="text-sm text-slate-300">
               Include system info to help with debugging (see preview when checked)
             </span>
           </label>
           {includeDiagnostics && (
-            <pre className="text-xs bg-gray-50 border border-gray-200 rounded-lg p-2 whitespace-pre-wrap break-words text-gray-700">
+            <pre className={`p-2 text-xs whitespace-pre-wrap break-words ${FEEDBACK_FIELD_SURFACE_CLASS}`}>
               {diagnosticsPreview}
             </pre>
           )}
 
           {submit.kind === 'error' && (
-            <div role="alert" className="text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg p-2">
+            <div role="alert" className="text-sm text-red-200 bg-red-950/80 border border-red-400/20 rounded-lg p-2">
               {submit.message} {fallbackLink}.
             </div>
           )}
         </div>
-      }
-      actions={[
-        {
-          label: 'Cancel',
-          onClick: onClose,
-          variant: 'secondary',
-          disabled: isSubmitting,
-        },
-        {
-          label: isSubmitting ? 'Sending...' : 'Send',
-          onClick: handleSubmit,
-          variant: 'primary',
-          disabled: !canSubmit,
-        },
-      ]}
-    />
+      </div>
+
+      <div
+        className="shrink-0 border-t border-white/10 bg-slate-900 px-4 pt-3"
+        style={{ paddingBottom: 'calc(env(safe-area-inset-bottom, 0px) + 0.75rem)' }}
+      >
+        <div className="mx-auto flex w-full max-w-2xl justify-end gap-2">
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={isSubmitting}
+            className="px-3 py-2 rounded-lg text-sm font-medium text-slate-200 hover:bg-white/10 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={handleSubmit}
+            disabled={!canSubmit}
+            className="px-3 py-2 rounded-lg text-sm font-semibold text-slate-950 bg-cyan-500 hover:bg-cyan-400 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-cyan-500"
+          >
+            {isSubmitting ? 'Sending...' : 'Send'}
+          </button>
+        </div>
+      </div>
+    </div>,
+    document.body
   );
 }
 

@@ -80,23 +80,23 @@ export function NodeCardErrorPopover({
     <div
       ref={popoverRef}
       id={`error-popover-${nodeId}`}
-      className="error-popover-root fixed z-[2000] bg-red-50 rounded-lg shadow-lg w-72 max-h-64 overflow-hidden"
+      className="error-popover-root fixed z-[2000] bg-slate-900 border border-red-500/30 rounded-lg shadow-lg w-72 max-h-64 overflow-hidden"
       style={{ top: position.top, left: position.left }}
     >
-      <div id={`error-popover-header-${nodeId}`} className="popover-header flex items-center justify-between px-3 py-2 border-b border-red-200 bg-red-700">
+      <div id={`error-popover-header-${nodeId}`} className="popover-header flex items-center justify-between px-3 py-2 border-b border-red-500/40 bg-red-600">
         <span id={`error-popover-title-${nodeId}`} className="popover-title text-sm font-semibold text-white">
           {errors.length} {errors.length === 1 ? 'Error' : 'Errors'}
         </span>
         <button
           type="button"
           onClick={handleCloseClick}
-          className="w-6 h-6 flex items-center justify-center text-red-200 hover:text-white rounded"
+          className="w-6 h-6 flex items-center justify-center text-red-100 hover:text-white rounded"
           aria-label="Close"
         >
           <CloseIcon className="w-4 h-4" />
         </button>
       </div>
-      <div id={`error-popover-body-${nodeId}`} className="popover-body p-3 space-y-2 bg-red-100">
+      <div id={`error-popover-body-${nodeId}`} className="popover-body p-3 space-y-2 bg-slate-900">
         {errors.map((err, idx) => {
           const detailsLower = err.details?.toLowerCase().replace(/[_\s]/g, '') || '';
           const inputNameLower = err.inputName?.toLowerCase().replace(/[_\s]/g, '') || '';
@@ -107,18 +107,18 @@ export function NodeCardErrorPopover({
           return (
             <div key={idx} className="error-item flex items-start gap-2 text-sm">
               <span
-                className="error-dot mt-1.5 h-1.5 w-1.5 rounded-full bg-red-700 shrink-0"
+                className="error-dot mt-1.5 h-1.5 w-1.5 rounded-full bg-red-400 shrink-0"
                 aria-hidden="true"
               />
               <div className="error-content-wrapper min-w-0">
                 {err.inputName && (
-                  <div className="error-input-name font-medium text-red-800 mb-0.5">
+                  <div className="error-input-name font-medium text-red-300 mb-0.5">
                     {err.inputName}
                   </div>
                 )}
-                <div className="error-message-text text-red-800">{err.message}</div>
+                <div className="error-message-text text-slate-100">{err.message}</div>
                 {!isDetailsRedundant && (
-                  <div className="error-details-text text-xs text-red-600 mt-0.5 break-words">{err.details}</div>
+                  <div className="error-details-text text-xs text-slate-400 mt-0.5 break-words">{err.details}</div>
                 )}
               </div>
             </div>

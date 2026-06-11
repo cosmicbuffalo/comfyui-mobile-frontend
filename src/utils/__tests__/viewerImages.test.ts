@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   buildOutputPreferredViewerImages,
   buildViewerImages,
+  getHistoryImageFileId,
   type HistoryImageItem,
 } from '../viewerImages';
 
@@ -90,5 +91,23 @@ describe('buildViewerImages', () => {
       'newest-preview.png',
       'older-saved.png',
     ]);
+  });
+});
+
+describe('getHistoryImageFileId', () => {
+  it('matches output favorite IDs for root files', () => {
+    expect(getHistoryImageFileId({
+      filename: 'image.png',
+      subfolder: '',
+      type: 'output',
+    })).toBe('output/image.png');
+  });
+
+  it('matches output favorite IDs for nested files', () => {
+    expect(getHistoryImageFileId({
+      filename: 'image.png',
+      subfolder: 'nested/folder',
+      type: 'output',
+    })).toBe('output/nested/folder/image.png');
   });
 });

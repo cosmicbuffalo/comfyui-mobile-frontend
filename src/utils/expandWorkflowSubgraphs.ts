@@ -1,13 +1,91 @@
 import type {
+  NodeTypes,
   Workflow,
   WorkflowNode,
   WorkflowLink,
   WorkflowSubgraphDefinition,
   WorkflowSubgraphLink
 } from '@/api/types';
+import { getNodePropertyWidgetIndexMap } from '@/utils/workflowInputs';
+import { getWidgetDefinitions, getInputWidgetDefinitions } from '@/utils/widgetDefinitions';
 
 type RawLink = Omit<WorkflowSubgraphLink, 'id'>;
 const MOBILE_SUBGRAPH_GROUP_MAP_KEY = '__mobile_subgraph_group_map';
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+/**
+ * Read a promoted input's value from the placeholder's own widgets_values.
+ * Array form stores values in promoted-input order; record form by widget name.
+ */
+export function resolvePromotedInlineValue(
+  placeholder: WorkflowNode,
+  input: WorkflowNode['inputs'][number],
+  promotedIndex: number,
+): unknown {
+  const values = placeholder.widgets_values;
+  if (Array.isArray(values)) {
+    return promotedIndex >= 0 && promotedIndex < values.length
+      ? values[promotedIndex]
+      : undefined;
+  }
+  if (isRecord(values)) {
+    const widgetName = input.widget?.name;
+    if (widgetName && values[widgetName] !== undefined) return values[widgetName];
+    if (values[input.name] !== undefined) return values[input.name];
+    if (input.localized_name && values[input.localized_name] !== undefined) {
+      return values[input.localized_name];
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Write a promoted value into a cloned inner node's widgets_values.
+ * When the target is itself a nested subgraph placeholder, the value lands in
+ * its promoted-input slot and the next expansion pass pushes it further down.
+ */
+export function applyPromotedValueToTarget(
+  innerNode: WorkflowNode | undefined,
+  targetSlot: number,
+  fallbackWidgetName: string | undefined,
+  value: unknown,
+  subgraphMap: Map<string, WorkflowSubgraphDefinition>,
+  nodeTypes: NodeTypes | null,
+): void {
+  if (!innerNode) return;
+  const targetInput = innerNode.inputs?.[targetSlot];
+  const widgetName = targetInput?.widget?.name ?? fallbackWidgetName;
+  if (!widgetName) return;
+
+  const values = innerNode.widgets_values;
+  if (isRecord(values)) {
+    innerNode.widgets_values = { ...values, [widgetName]: value };
+    return;
+  }
+  if (!Array.isArray(values)) return;
+
+  let index: number | undefined;
+  if (subgraphMap.has(innerNode.type)) {
+    if (!targetInput) return;
+    const promoted = (innerNode.inputs ?? []).filter((inp) => inp.widget != null);
+    const promotedIndex = promoted.indexOf(targetInput);
+    index = promotedIndex === -1 ? undefined : promotedIndex;
+  } else {
+    index =
+      getNodePropertyWidgetIndexMap(innerNode)?.[widgetName] ??
+      (
+        getWidgetDefinitions(nodeTypes, innerNode).find((def) => def.name === widgetName) ??
+        getInputWidgetDefinitions(nodeTypes, innerNode).find((def) => def.name === widgetName)
+      )?.widgetIndex;
+  }
+  if (index === undefined || index < 0 || index >= values.length) return;
+  const next = [...values];
+  next[index] = value;
+  innerNode.widgets_values = next;
+}
 
 function cloneNode(node: WorkflowNode, id: number): WorkflowNode {
   return {
@@ -48,7 +126,7 @@ function getGroupIdForNode(
   return null;
 }
 
-function buildSlotMap(
+export function buildSlotMap(
   parentEntries: Array<{ name?: string }>,
   subgraphEntries: Array<{ name?: string }>
 ): Map<number, number> {
@@ -107,7 +185,8 @@ function rebuildNodeLinks(nodes: WorkflowNode[], links: WorkflowLink[]): Workflo
 function expandWorkflowSubgraphsOnce(
   workflow: Workflow,
   subgraphMap: Map<string, WorkflowSubgraphDefinition>,
-  previousPromptKeyMap: Map<number, string>
+  previousPromptKeyMap: Map<number, string>,
+  nodeTypes: NodeTypes | null
 ): { workflow: Workflow; changed: boolean; promptKeyMap: Map<number, string> } {
   const placeholderNodes = workflow.nodes.filter((node) => subgraphMap.has(node.type));
   if (placeholderNodes.length === 0) {
@@ -170,10 +249,16 @@ function expandWorkflowSubgraphsOnce(
     // The placeholder's prompt key prefix for its children
     const placeholderPromptKey = previousPromptKeyMap.get(node.id) ?? String(node.id);
 
+    const clonedById = new Map<number, WorkflowNode>();
     for (const subNode of subgraph.nodes ?? []) {
       const mappedId = nextNodeId++;
       nodeIdMap.set(subNode.id, mappedId);
-      newNodes.push(cloneNode(subNode, mappedId));
+      const expandedNode = cloneNode(subNode, mappedId);
+      if (node.mode === 4) {
+        expandedNode.mode = 4;
+      }
+      newNodes.push(expandedNode);
+      clonedById.set(mappedId, expandedNode);
       // Hierarchical key: placeholderKey:innerNodeId
       promptKeyMap.set(mappedId, `${placeholderPromptKey}:${subNode.id}`);
     }
@@ -226,6 +311,31 @@ function expandWorkflowSubgraphsOnce(
         });
       }
     }
+
+    // Promoted widget values: the placeholder's own widgets_values are the
+    // authoritative values for its promoted inputs (matching desktop execution
+    // semantics, and per-instance when several placeholders share a definition).
+    // Push them into this instance's cloned inner nodes so prompt building
+    // reads what the user sees on the placeholder card.
+    const promotedInputs = (node.inputs ?? []).filter((inp) => inp.widget != null);
+    promotedInputs.forEach((inp, promotedIndex) => {
+      if (inp.link != null) return; // connected: the link supplies the value
+      const value = resolvePromotedInlineValue(node, inp, promotedIndex);
+      if (value === undefined) return;
+      const parentSlot = (node.inputs ?? []).indexOf(inp);
+      const mappedSlot = inputSlotMap.get(parentSlot);
+      if (mappedSlot === undefined) return;
+      for (const target of inputTargets.get(mappedSlot) ?? []) {
+        applyPromotedValueToTarget(
+          clonedById.get(target.target_id),
+          target.target_slot,
+          inp.widget?.name,
+          value,
+          subgraphMap,
+          nodeTypes,
+        );
+      }
+    });
 
     placeholderData.set(node.id, {
       inputSlotMap,
@@ -349,7 +459,10 @@ export interface ExpandedWorkflowResult {
   promptKeyMap: Map<number, string>;
 }
 
-export function expandWorkflowSubgraphs(workflow: Workflow): ExpandedWorkflowResult {
+export function expandWorkflowSubgraphs(
+  workflow: Workflow,
+  nodeTypes: NodeTypes | null = null
+): ExpandedWorkflowResult {
   const subgraphs = workflow.definitions?.subgraphs ?? [];
   if (subgraphs.length === 0) return { workflow, promptKeyMap: new Map() };
 
@@ -363,7 +476,7 @@ export function expandWorkflowSubgraphs(workflow: Workflow): ExpandedWorkflowRes
   let current = workflow;
   let currentPromptKeyMap = new Map<number, string>();
   for (let i = 0; i < subgraphs.length + 4; i += 1) {
-    const { workflow: next, changed, promptKeyMap } = expandWorkflowSubgraphsOnce(current, subgraphMap, currentPromptKeyMap);
+    const { workflow: next, changed, promptKeyMap } = expandWorkflowSubgraphsOnce(current, subgraphMap, currentPromptKeyMap, nodeTypes);
     if (!changed) break;
     current = next;
     currentPromptKeyMap = promptKeyMap;

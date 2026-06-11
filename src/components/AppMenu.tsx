@@ -1,4 +1,6 @@
-import { useRef, useState, useEffect } from 'react';
+import { useRef, useState, useEffect, useCallback } from 'react';
+import { BackendStatusOverlay } from './BackendStatusOverlay';
+import { useConnectionStatusStore } from '@/hooks/useConnectionStatus';
 import { SlidePanel } from './AppMenu/SlidePanel';
 import { MenuLegend } from './AppMenu/MenuLegend';
 import { MainMenuPanel } from './AppMenu/MainMenuPanel';
@@ -8,10 +10,12 @@ import { TemplatesPanel } from './AppMenu/TemplatesPanel';
 import { UserWorkflowsPanel } from './AppMenu/UserWorkflowsPanel';
 import { RecentWorkflowsPanel } from './AppMenu/RecentWorkflowsPanel';
 import { GenerationSettingsPanel } from './AppMenu/GenerationSettingsPanel';
+import { CustomNodesManagerModal } from './CustomNodesManagerModal';
 import { getDisplayName } from './AppMenu/userWorkflowHelpers';
-import { useWorkflowStore } from '@/hooks/useWorkflow';
+import { isWorkflowModified, useWorkflowStore } from '@/hooks/useWorkflow';
 import { getWorkflowForPersistence } from '@/utils/workflowPersistence';
-import { useThemeStore } from '@/hooks/useTheme';
+import { useGenerationSettingsStore } from '@/hooks/useGenerationSettings';
+import { obfuscateWorkflowInputPaths } from '@/utils/inputPathAliases';
 import type { Workflow } from '@/api/types';
 import {
   listUserWorkflows,
@@ -36,23 +40,46 @@ interface AppMenuProps {
 
 type TabType = 'menu' | 'userWorkflows' | 'recent' | 'templates' | 'save' | 'pasteJson' | 'aboutLegend' | 'generationSettings';
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
 async function waitForServerToReturn(timeoutMs = 45000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
+  let consecutiveOk = 0;
 
   while (Date.now() < deadline) {
     try {
-      const response = await fetch('/api/object_info', { cache: 'no-store' });
+      // Liveness probe only — use the tiny /system_stats payload, not the
+      // multi-MB /api/object_info. Polling object_info here downloaded megabytes
+      // every second just to read its status code. The app reloads on reconnect
+      // and re-fetches node types (cache-first) anyway.
+      const response = await fetch('/system_stats', { cache: 'no-store' });
       if (response.ok) {
-        return;
+        consecutiveOk += 1;
+        if (consecutiveOk >= 2) return;
+      } else {
+        consecutiveOk = 0;
       }
     } catch {
+      consecutiveOk = 0;
       // Expected while the server is restarting.
     }
 
-    await new Promise((resolve) => window.setTimeout(resolve, 1000));
+    await sleep(1000);
   }
 
   throw new Error('ComfyUI did not come back online in time.');
+}
+
+function ServerRestartOverlay() {
+  return (
+    <BackendStatusOverlay
+      eyebrow="Server Restart"
+      title="Restarting ComfyUI"
+      message="Waiting for the backend to come back online. The app will refresh automatically as soon as it reconnects."
+    />
+  );
 }
 
 export function AppMenu({
@@ -64,14 +91,9 @@ export function AppMenu({
   const currentFilename = useWorkflowStore((s) => s.currentFilename);
   const originalWorkflow = useWorkflowStore((s) => s.originalWorkflow);
   const setSavedWorkflow = useWorkflowStore((s) => s.setSavedWorkflow);
-  const theme = useThemeStore((s) => s.theme);
-  const toggleTheme = useThemeStore((s) => s.toggleTheme);
   const pasteTextareaRef = useRef<HTMLTextAreaElement>(null);
 
-  // Check if dirty
-  const isDirty = Boolean(
-    workflow && originalWorkflow && JSON.stringify(workflow) !== JSON.stringify(originalWorkflow),
-  );
+  const isDirty = isWorkflowModified(workflow, originalWorkflow);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [error, setError] = useState<string | null>(null);
@@ -84,10 +106,10 @@ export function AppMenu({
   const [cpuPercent, setCpuPercent] = useState<number | null>(null);
   const [saveFilenameInput, setSaveFilenameInput] = useState(currentFilename || ''); // Use currentFilename as initial value
   const [pastedJson, setPastedJson] = useState('');
+  const [customNodesOpen, setCustomNodesOpen] = useState(false);
   const [menuSectionsOpen, setMenuSectionsOpen] = useState({
     load: true,
     save: true,
-    appearance: true,
     server: false,
     info: true,
   });
@@ -95,7 +117,6 @@ export function AppMenu({
   // Refs for scrolling to sections
   const loadSectionRef = useRef<HTMLElement>(null);
   const saveSectionRef = useRef<HTMLElement>(null);
-  const appearanceSectionRef = useRef<HTMLElement>(null);
   const serverSectionRef = useRef<HTMLElement>(null);
   const infoSectionRef = useRef<HTMLElement>(null);
   const prevMenuSectionsOpen = useRef(menuSectionsOpen);
@@ -109,8 +130,6 @@ export function AppMenu({
       setTimeout(() => loadSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' }), 100);
     } else if (!prev.save && current.save) {
       setTimeout(() => saveSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' }), 100);
-    } else if (!prev.appearance && current.appearance) {
-      setTimeout(() => appearanceSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' }), 100);
     } else if (!prev.server && current.server) {
       setTimeout(() => serverSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' }), 100);
     } else if (!prev.info && current.info) {
@@ -127,26 +146,34 @@ export function AppMenu({
       setError(null);
       setSaveFilenameInput(currentFilename || ''); // Reset save filename input
       setPastedJson('');
+      setCustomNodesOpen(false);
       setMenuSectionsOpen({
         load: true,
         save: true,
-        appearance: true,
         server: false,
         info: true,
       });
     }
   }, [open, currentFilename]);
 
+  // Fetch user workflows. `silent` re-lists without flipping the loading
+  // spinner — used to refresh after a folder/workflow mutation.
+  const refreshUserWorkflows = useCallback((silent = false) => {
+    if (!silent) setLoading(true);
+    listUserWorkflows()
+      .then(setUserWorkflows)
+      .catch((err) => setError(err.message))
+      .finally(() => {
+        if (!silent) setLoading(false);
+      });
+  }, []);
+
   // Fetch user workflows when tab opens
   useEffect(() => {
     if (activeTab === 'userWorkflows') {
-      setLoading(true);
-      listUserWorkflows()
-        .then(setUserWorkflows)
-        .catch((err) => setError(err.message))
-        .finally(() => setLoading(false));
+      refreshUserWorkflows();
     }
-  }, [activeTab]);
+  }, [activeTab, refreshUserWorkflows]);
 
   // Fetch templates when tab opens
   useEffect(() => {
@@ -159,9 +186,11 @@ export function AppMenu({
     }
   }, [activeTab]);
 
-  // Fetch system stats when menu opens, refresh periodically while open
+  // Fetch system stats when the menu's main panel is showing, refreshing
+  // periodically. Pause while the custom-nodes modal covers the menu — the stats
+  // aren't visible there, so polling system_stats/cpu-stats every 5s is wasted.
   useEffect(() => {
-    if (!open) return;
+    if (!open || customNodesOpen) return;
     let cancelled = false;
     const load = () => {
       fetchSystemStats()
@@ -174,7 +203,7 @@ export function AppMenu({
     load();
     const interval = setInterval(load, 5000);
     return () => { cancelled = true; clearInterval(interval); };
-  }, [open]);
+  }, [open, customNodesOpen]);
 
   // Helper for haptic feedback
   const vibrate = (pattern: number | number[]) => {
@@ -245,11 +274,22 @@ export function AppMenu({
     }
   };
 
-  const handleLoadFileWorkflow = async (filePath: string, assetSource: AssetSource) => {
+  const handleLoadFileWorkflow = async (
+    filePath: string,
+    assetSource: AssetSource,
+    hidden?: boolean,
+  ) => {
     try {
       setLoading(true);
       const data = await getFileWorkflow(filePath, assetSource);
-      loadWorkflow(data, filePath, { source: { type: 'file', filePath, assetSource } });
+      loadWorkflow(data, filePath, {
+        source: {
+          type: 'file',
+          filePath,
+          assetSource,
+          ...(hidden ? { hidden: true } : {}),
+        },
+      });
       setError(null);
       onClose();
       vibrate(10);
@@ -267,11 +307,19 @@ export function AppMenu({
       ? filename
       : `${filename}.json`;
 
+    const store = useWorkflowStore.getState();
+    const savingId = store.activeSessionId;
     try {
       setLoading(true);
-      const workflowForPersistence = getWorkflowForPersistence(workflow);
+      store.setSavingSessionId(savingId);
+      let workflowForPersistence = getWorkflowForPersistence(workflow);
       if (!workflowForPersistence) {
         throw new Error('Unable to save: embedded workflow is unavailable.');
+      }
+      if (useGenerationSettingsStore.getState().obfuscateSharedInputPaths) {
+        const nodeTypes = useWorkflowStore.getState().nodeTypes;
+        if (!nodeTypes) throw new Error('Unable to hide input paths: node definitions are unavailable.');
+        workflowForPersistence = await obfuscateWorkflowInputPaths(workflowForPersistence, nodeTypes);
       }
       await saveUserWorkflow(finalFilename, workflowForPersistence);
       setSavedWorkflow(workflow, finalFilename); // Update saved state
@@ -282,6 +330,11 @@ export function AppMenu({
       setError(err instanceof Error ? err.message : 'Failed to save workflow');
     } finally {
       setLoading(false);
+      // Only clear if this save still owns the spinner — a newer save started
+      // while this one was in flight must keep showing its own.
+      if (useWorkflowStore.getState().savingSessionId === savingId) {
+        useWorkflowStore.getState().setSavingSessionId(null);
+      }
     }
   };
 
@@ -306,13 +359,26 @@ export function AppMenu({
     }
   };
 
-  const handleDownload = () => {
+  const handleDownload = async () => {
     if (!workflow) return;
 
-    const workflowForPersistence = getWorkflowForPersistence(workflow);
+    let workflowForPersistence = getWorkflowForPersistence(workflow);
     if (!workflowForPersistence) {
       setError('Unable to download: embedded workflow is unavailable.');
       return;
+    }
+    if (useGenerationSettingsStore.getState().obfuscateSharedInputPaths) {
+      const nodeTypes = useWorkflowStore.getState().nodeTypes;
+      if (!nodeTypes) {
+        setError('Unable to hide input paths: node definitions are unavailable.');
+        return;
+      }
+      try {
+        workflowForPersistence = await obfuscateWorkflowInputPaths(workflowForPersistence, nodeTypes);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Unable to hide input paths.');
+        return;
+      }
     }
     const json = JSON.stringify(workflowForPersistence, null, 2);
     const blob = new Blob([json], { type: 'application/json' });
@@ -359,18 +425,24 @@ export function AppMenu({
 
     try {
       setRestartingServer(true);
+      // Suppress the generic connection-lost overlay: the restart deliberately
+      // drops the socket, and we show our own restart overlay for it instead.
+      useConnectionStatusStore.getState().setServerRestarting(true);
       await restartServer();
       setError(null);
       vibrate([10, 40, 10]);
+      await sleep(1500);
       await waitForServerToReturn();
       window.location.reload();
     } catch (err) {
       setRestartingServer(false);
+      useConnectionStatusStore.getState().setServerRestarting(false);
       setError(err instanceof Error ? err.message : 'Failed to restart server');
     }
   };
 
   return (
+    <>
     <SlidePanel open={open} onClose={onClose} side="left" title="ComfyUI Mobile">
       {activeTab === 'menu' && (
         <MainMenuPanel
@@ -382,12 +454,10 @@ export function AppMenu({
           restartingServer={restartingServer}
           systemStats={systemStats}
           cpuPercent={cpuPercent}
-          theme={theme}
           menuSectionsOpen={menuSectionsOpen}
           fileInputRef={fileInputRef}
           loadSectionRef={loadSectionRef}
           saveSectionRef={saveSectionRef}
-          appearanceSectionRef={appearanceSectionRef}
           serverSectionRef={serverSectionRef}
           infoSectionRef={infoSectionRef}
           onDismissError={() => setError(null)}
@@ -402,10 +472,10 @@ export function AppMenu({
           onOpenPasteJson={() => setActiveTab('pasteJson')}
           onSave={handleSave}
           onOpenSaveAs={handleOpenSaveAs}
-          onToggleTheme={toggleTheme}
           onOpenLegend={() => setActiveTab('aboutLegend')}
           onRestartServer={handleRestartServer}
           onOpenGenerationSettings={() => setActiveTab('generationSettings')}
+          onOpenCustomNodes={() => setCustomNodesOpen(true)}
         />
       )}
       {activeTab === 'userWorkflows' && (
@@ -416,6 +486,7 @@ export function AppMenu({
           onBack={() => setActiveTab('menu')}
           onDismissError={() => setError(null)}
           onLoadWorkflow={handleLoadUserWorkflow}
+          onRefresh={() => refreshUserWorkflows(true)}
         />
       )}
       {activeTab === 'recent' && (
@@ -466,33 +537,13 @@ export function AppMenu({
       {activeTab === 'generationSettings' && (
         <GenerationSettingsPanel onBack={() => setActiveTab('menu')} />
       )}
-
-      {restartingServer && (
-        <div className="fixed inset-0 z-[2400] bg-slate-950/88 backdrop-blur-md flex items-center justify-center p-6">
-          <div className="w-full max-w-sm rounded-[28px] border border-white/10 bg-slate-900/95 shadow-2xl px-6 py-7 text-white">
-            <div className="flex items-center gap-4">
-              <div className="relative h-12 w-12 shrink-0">
-                <div className="absolute inset-0 rounded-full border-2 border-cyan-400/25" />
-                <div className="absolute inset-0 rounded-full border-2 border-transparent border-t-cyan-300 animate-spin" />
-              </div>
-              <div>
-                <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-cyan-300/80">
-                  Server Restart
-                </p>
-                <h2 className="mt-1 text-lg font-semibold text-white">
-                  Restarting ComfyUI
-                </h2>
-              </div>
-            </div>
-            <p className="mt-5 text-sm leading-6 text-slate-300">
-              Waiting for the backend to come back online. The app will refresh automatically as soon as it reconnects.
-            </p>
-            <div className="mt-5 h-2 overflow-hidden rounded-full bg-white/10">
-              <div className="h-full w-1/3 rounded-full bg-cyan-300/90 animate-pulse" />
-            </div>
-          </div>
-        </div>
-      )}
+      <CustomNodesManagerModal
+        isOpen={customNodesOpen}
+        onClose={() => setCustomNodesOpen(false)}
+        onRestartServer={handleRestartServer}
+      />
     </SlidePanel>
+    {restartingServer && <ServerRestartOverlay />}
+    </>
   );
 }

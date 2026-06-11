@@ -1,11 +1,12 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactElement } from "react";
-import type { WorkflowLink, WorkflowNode } from "@/api/types";
+import type { WorkflowNode } from "@/api/types";
+import { getScopedWorkflowView } from "@/utils/canonicalWorkflowOps";
 import { useWorkflowStore, type ScopeFrame } from "@/hooks/useWorkflow";
-import { useGenerationSettingsStore } from "@/hooks/useGenerationSettings";
 import { useBookmarksStore } from "@/hooks/useBookmarks";
 import { useWorkflowErrorsStore } from "@/hooks/useWorkflowErrors";
-import { useRepositionMode } from "@/hooks/useRepositionMode";
+import { useRepositionMode, type RepositionTarget } from "@/hooks/useRepositionMode";
+import { pushBackEntry } from "@/hooks/useHistoryBackClose";
 import { RepositionOverlay } from "@/components/RepositionOverlay";
 import {
   flattenLayoutToNodeOrder,
@@ -15,6 +16,7 @@ import {
 } from "@/utils/mobileLayout";
 import { findLayoutPath } from "@/utils/layoutTraversal";
 import { collectLayoutHiddenState } from "@/utils/layoutHiddenState";
+import { resolveConnectionHighlightSources } from "@/utils/connectionHighlighting";
 import {
   findConnectedNode,
   findConnectedOutputNodes,
@@ -24,6 +26,7 @@ import {
   hexToRgba,
   type NestedItem,
 } from "@/utils/grouping";
+import { collectAllWorkflowGroups } from "@/utils/workflowNodes";
 import { NodeCard } from "./WorkflowPanel/NodeCard";
 import { AddNodePlaceholder } from "./WorkflowPanel/AddNodePlaceholder";
 import { ContainerFooter } from "./WorkflowPanel/ContainerFooter";
@@ -39,42 +42,11 @@ import {
   DocumentIcon,
   EmptyWorkflowIcon,
 } from "@/components/icons";
+import { fuzzyMatch, normalizeTypes } from "@/utils/workflowSearch";
+import { useErrorBadges } from "./WorkflowPanel/useErrorBadges";
+import { useExecutionFollower } from "./WorkflowPanel/useExecutionFollower";
 
-function normalizeTypes(type: string): string[] {
-  return String(type)
-    .split(",")
-    .map((value) => value.trim().toUpperCase())
-    .filter(Boolean);
-}
-
-function normalizeSearchText(value: string): string {
-  return value.toLowerCase().replace(/[_-]+/g, " ").replace(/\s+/g, " ").trim();
-}
-
-function isSubsequence(needle: string, haystack: string): boolean {
-  let index = 0;
-  for (const char of haystack) {
-    if (char === needle[index]) {
-      index += 1;
-      if (index >= needle.length) return true;
-    }
-  }
-  return needle.length === 0;
-}
-
-function fuzzyMatch(query: string, text: string): boolean {
-  if (!query.trim()) return true;
-  const normalizedText = normalizeSearchText(text);
-  return normalizeSearchText(query)
-    .split(" ")
-    .filter(Boolean)
-    .every(
-      (token) =>
-        normalizedText.includes(token) || isSubsequence(token, normalizedText),
-    );
-}
-
-export function WorkflowPanel({
+export const WorkflowPanel = memo(function WorkflowPanel({
   visible,
   onImageClick,
 }: {
@@ -85,16 +57,7 @@ export function WorkflowPanel({
   ) => void;
 }) {
   const workflow = useWorkflowStore((s) => s.workflow);
-  const isExecuting = useWorkflowStore((s) => s.isExecuting);
-  const executingNodeId = useWorkflowStore((s) => s.executingNodeId);
   const executingNodePath = useWorkflowStore((s) => s.executingNodePath);
-  const executingNodeHierarchicalKey = useWorkflowStore(
-    (s) => s.executingNodeHierarchicalKey,
-  );
-  const expandedNodeIdMap = useWorkflowStore((s) => s.expandedNodeIdMap);
-  const followIntoSubgraphs = useGenerationSettingsStore(
-    (s) => s.followIntoSubgraphs,
-  );
   const connectionHighlightModes = useWorkflowStore(
     (s) => s.connectionHighlightModes,
   );
@@ -171,20 +134,9 @@ export function WorkflowPanel({
   } | null>(null);
   const reposition = useRepositionMode();
   const [topBarHeight, setTopBarHeight] = useState(69);
-  const [errorBadgeByNodeId, setErrorBadgeByNodeId] = useState<
-    Record<number, string>
-  >({});
-  const errorBadgeTimeoutsRef = useRef<Map<number, number>>(new Map());
   const bookmarkLongPressRef = useRef<number | null>(null);
   const bookmarkLongPressTriggeredRef = useRef(false);
   const previousTopBarHeightRef = useRef<number | null>(null);
-  const followExecutingNodeRef = useRef(false);
-  const autoScrollLockUntilRef = useRef(0);
-  const followPointerRef = useRef<{
-    pointerId: number;
-    startX: number;
-    startY: number;
-  } | null>(null);
   const bookmarkPointerRef = useRef<{
     startX: number;
     startY: number;
@@ -222,43 +174,7 @@ export function WorkflowPanel({
     [workflow],
   );
 
-  const scrollToExecutingNode = useCallback(() => {
-    const executionItemKey =
-      executingNodeHierarchicalKey ??
-      (executingNodePath ? expandedNodeIdMap[executingNodePath] : null) ??
-      (executingNodeId ? expandedNodeIdMap[executingNodeId] : null) ??
-      null;
-    if (!executionItemKey) return false;
-
-    // Navigate into subgraph scope if the executing node is inside one
-    if (followIntoSubgraphs) {
-      const subgraphSegments = executionItemKey.match(/subgraph:([^/]+)/g);
-      if (subgraphSegments) {
-        const trail = subgraphSegments.map((s) => s.replace('subgraph:', ''));
-        navigateToSubgraphTrail(trail);
-      } else {
-        // Executing node is at root — exit any subgraph scope
-        const currentScope = useWorkflowStore.getState().scopeStack;
-        if (currentScope.length > 1) {
-          useWorkflowStore.getState().exitToRoot();
-        }
-      }
-    }
-
-    revealNodeWithParents(executionItemKey);
-    autoScrollLockUntilRef.current = Date.now() + 1500;
-    requestAnimationFrame(() => scrollToNode(executionItemKey, "Running"));
-    return true;
-  }, [
-    executingNodeHierarchicalKey,
-    executingNodeId,
-    executingNodePath,
-    expandedNodeIdMap,
-    followIntoSubgraphs,
-    navigateToSubgraphTrail,
-    revealNodeWithParents,
-    scrollToNode,
-  ]);
+  useExecutionFollower(visible);
 
   // Scope-aware workflow and layout for subgraph navigation
   const currentScopeFrame = scopeStack[scopeStack.length - 1];
@@ -303,23 +219,12 @@ export function WorkflowPanel({
     return executionScopePath[currentScopePlaceholderPath.length] ?? null;
   }, [executingNodePath, currentScopePlaceholderPath]);
 
-  const currentScopeWorkflow = useMemo(() => {
-    if (!workflow) return null;
-    if (!currentSubgraphId) return workflow;
-    const subgraph = workflow?.definitions?.subgraphs?.find(
-      (sg) => sg.id === currentSubgraphId,
-    );
-    if (!subgraph) return workflow;
-    // Use the subgraph's own nodes AND links so that link traversal within
-    // this scope (connection highlighting, ConnectionButton) works correctly.
-    return {
-      ...workflow,
-      nodes: subgraph.nodes ?? [],
-      links: (subgraph.links ?? []).map(
-        (l) => [l.id, l.origin_id, l.origin_slot, l.target_id, l.target_slot, l.type] as WorkflowLink,
-      ),
-    };
-  }, [workflow, currentSubgraphId]);
+  // Scope view with the subgraph's own nodes AND links (converted to tuples)
+  // so link traversal within this scope works correctly.
+  const currentScopeWorkflow = useMemo(
+    () => (workflow ? getScopedWorkflowView(workflow, currentSubgraphId) : null),
+    [workflow, currentSubgraphId],
+  );
 
   const currentScopeMobileLayout = useMemo(() => {
     if (!currentSubgraphId) return mobileLayout;
@@ -327,19 +232,25 @@ export function WorkflowPanel({
     return { ...mobileLayout, root: subgraphLayout };
   }, [mobileLayout, currentSubgraphId]);
 
-  // Back-button / hardware-back: push a history state when entering a subgraph
-  // so the browser back button calls exitSubgraph instead of leaving the app.
+  // Back-button / hardware-back: one history entry per subgraph level so Back
+  // exits the subgraph instead of leaving the app. Exiting through the
+  // breadcrumb releases the entries (consuming the pushed history states) so
+  // they don't linger and silently eat later Back presses.
   const scopeDepth = scopeStack.length;
+  const prevScopeDepthRef = useRef(scopeDepth);
+  const navEntryReleasesRef = useRef<Array<() => void>>([]);
   useEffect(() => {
-    if (scopeDepth <= 1) return;
-    window.history.pushState({ mobileSubgraphNav: true }, "");
-    const handlePopState = () => {
-      exitSubgraph();
-    };
-    window.addEventListener("popstate", handlePopState);
-    return () => {
-      window.removeEventListener("popstate", handlePopState);
-    };
+    const prevDepth = prevScopeDepthRef.current;
+    prevScopeDepthRef.current = scopeDepth;
+    if (scopeDepth > prevDepth) {
+      for (let level = prevDepth; level < scopeDepth; level += 1) {
+        navEntryReleasesRef.current.push(pushBackEntry(() => exitSubgraph()));
+      }
+      return;
+    }
+    for (let level = scopeDepth; level < prevDepth; level += 1) {
+      navEntryReleasesRef.current.pop()?.();
+    }
   }, [scopeDepth, exitSubgraph]);
 
   // Track top bar height so the node list wrapper stays below the breadcrumb when visible.
@@ -551,14 +462,19 @@ export function WorkflowPanel({
       setItemHidden(itemKey, false);
       setItemCollapsed(itemKey, false);
 
-      const headerSelector = `[data-subgraph-header-id="${subgraphId}"]`;
-      const wrapperSelector = `[data-reposition-item="subgraph-${subgraphId}"]`;
+      // Subgraph placeholders render as node items in the panel, so scroll
+      // to the placeholder node's wrapper (bookmarks are definition-keyed;
+      // with several instances the first placeholder is the jump target).
+      const placeholderNode = currentScopeWorkflow?.nodes.find(
+        (n) => n.type === subgraphId,
+      );
+      if (!placeholderNode) return;
+      const wrapperSelector = `[data-reposition-item="node-${placeholderNode.id}"]`;
       requestAnimationFrame(() => {
         requestAnimationFrame(() => {
-          const headerEl = document.querySelector(headerSelector);
-          const wrapperEl = document.querySelector(wrapperSelector);
-          const scrollTarget = headerEl ?? wrapperEl;
-          scrollTarget?.scrollIntoView({ behavior: "smooth", block: "start" });
+          document
+            .querySelector(wrapperSelector)
+            ?.scrollIntoView({ behavior: "smooth", block: "start" });
         });
       });
     },
@@ -568,6 +484,7 @@ export function WorkflowPanel({
       setItemHidden,
       itemKeyByPointer,
       subgraphItemKeyById,
+      currentScopeWorkflow,
     ],
   );
 
@@ -711,6 +628,13 @@ export function WorkflowPanel({
     const barHeight = bar.getBoundingClientRect().height;
     const minTop = 16;
     const bottomMargin = getBottomBarOffset() + 8;
+    // While the panel is (re)mounting — e.g. swiping back to it — the wrapper may
+    // not be laid out yet, so its measured height is ~0. Treating that as real
+    // would collapse maxTop down to minTop and clamp a restored/persisted
+    // bookmark position up to the top. Report "no bounds" until there's genuine
+    // room for the bar, so callers skip clamping rather than destroying the
+    // saved position (which is still rendered directly from bookmarkBarTop).
+    if (wrapperHeight <= minTop + barHeight + bottomMargin) return null;
     const maxTop = Math.max(minTop, wrapperHeight - barHeight - bottomMargin);
     return { minTop, maxTop };
   }, [getBottomBarOffset]);
@@ -920,12 +844,7 @@ export function WorkflowPanel({
 
   const matchingGroupIds = useMemo(() => {
     if (!searchActive || !workflow) return new Set<number>();
-    const groups = [
-      ...(workflow.groups ?? []),
-      ...(workflow.definitions?.subgraphs ?? []).flatMap(
-        (subgraph) => subgraph.groups ?? [],
-      ),
-    ];
+    const groups = collectAllWorkflowGroups(workflow);
     const matching = new Set<number>();
     for (const group of groups) {
       if (fuzzyMatch(normalizedQuery, group.title)) {
@@ -1092,9 +1011,10 @@ export function WorkflowPanel({
 
   const highlightedNodeIds = useMemo(() => {
     if (!currentScopeWorkflow) return new Set<number>();
-    const activeEntries = Object.entries(connectionHighlightModes)
-      .filter(([, mode]) => mode !== "off")
-      .map(([id, mode]) => ({ id: Number(id), mode }));
+    const activeEntries = resolveConnectionHighlightSources(
+      currentScopeWorkflow.nodes,
+      connectionHighlightModes,
+    );
     if (activeEntries.length === 0) return new Set<number>();
 
     const nodeMap = new Map(currentScopeWorkflow.nodes.map((node) => [node.id, node]));
@@ -1165,10 +1085,7 @@ export function WorkflowPanel({
       return sources;
     };
 
-    activeEntries.forEach(({ id: activeId, mode }) => {
-      const activeNode = nodeMap.get(activeId);
-      if (!activeNode) return;
-
+    activeEntries.forEach(({ node: activeNode, mode }) => {
       if (mode === "inputs" || mode === "both") {
         activeNode.inputs?.forEach((input, index) => {
           if (input.link === null) return;
@@ -1216,54 +1133,7 @@ export function WorkflowPanel({
     return highlighted;
   }, [currentScopeWorkflow, connectionHighlightModes, hiddenItems]);
 
-  useEffect(() => {
-    const handleTemporaryLabelErrorNode = (event: Event) => {
-      const detail = (event as CustomEvent).detail;
-      const nodeId = typeof detail === "number" ? detail : detail.nodeId;
-      const label = typeof detail === "object" ? detail.label : undefined;
-
-      if (typeof nodeId !== "number") return;
-      const nodeExists = filteredNodes.some((node) => node.id === nodeId);
-      if (!nodeExists) return;
-
-      const errorOrder = errorOrderByNodeId.get(nodeId);
-      const badgeLabel =
-        label ?? (errorOrder ? `Error #${errorOrder}` : "Error");
-
-      setErrorBadgeByNodeId((prev) => ({ ...prev, [nodeId]: badgeLabel }));
-      const existingTimeout = errorBadgeTimeoutsRef.current.get(nodeId);
-      if (existingTimeout) {
-        window.clearTimeout(existingTimeout);
-      }
-      const timeoutId = window.setTimeout(() => {
-        setErrorBadgeByNodeId((prev) => {
-          const next = { ...prev };
-          delete next[nodeId];
-          return next;
-        });
-        errorBadgeTimeoutsRef.current.delete(nodeId);
-      }, 2000);
-      errorBadgeTimeoutsRef.current.set(nodeId, timeoutId);
-    };
-
-    window.addEventListener(
-      "workflow-label-error-node",
-      handleTemporaryLabelErrorNode as EventListener,
-    );
-    return () =>
-      window.removeEventListener(
-        "workflow-label-error-node",
-        handleTemporaryLabelErrorNode as EventListener,
-      );
-  }, [filteredNodes, errorOrderByNodeId]);
-
-  useEffect(() => {
-    const timeouts = errorBadgeTimeoutsRef.current;
-    return () => {
-      timeouts.forEach((timeoutId) => window.clearTimeout(timeoutId));
-      timeouts.clear();
-    };
-  }, []);
+  const errorBadgeByNodeId = useErrorBadges(filteredNodes, errorOrderByNodeId);
 
   useEffect(() => {
     const handleScrollToNode = (event: Event) => {
@@ -1302,107 +1172,19 @@ export function WorkflowPanel({
   }, [setItemCollapsed, scrollToNode, workflow]);
 
   useEffect(() => {
-    const handleFollowExecutingNode = () => {
-      followExecutingNodeRef.current = true;
-      scrollToExecutingNode();
+    const handleScrollToTop = () => {
+      parentRef.current?.scrollTo({ top: 0, behavior: "auto" });
     };
 
     window.addEventListener(
-      "workflow-follow-executing-node",
-      handleFollowExecutingNode as EventListener,
+      "workflow-scroll-to-top",
+      handleScrollToTop as EventListener,
     );
     return () =>
       window.removeEventListener(
-        "workflow-follow-executing-node",
-        handleFollowExecutingNode as EventListener,
+        "workflow-scroll-to-top",
+        handleScrollToTop as EventListener,
       );
-  }, [scrollToExecutingNode]);
-
-  useEffect(() => {
-    if (!visible || !followExecutingNodeRef.current || !isExecuting) return;
-    scrollToExecutingNode();
-  }, [
-    executingNodeId,
-    executingNodePath,
-    isExecuting,
-    scrollToExecutingNode,
-    visible,
-  ]);
-
-  useEffect(() => {
-    if (isExecuting) return;
-    followExecutingNodeRef.current = false;
-    followPointerRef.current = null;
-  }, [isExecuting]);
-
-  useEffect(() => {
-    const container = parentRef.current;
-    if (!container) return;
-
-    const stopFollowingIfUserControlled = () => {
-      if (!followExecutingNodeRef.current) return;
-      if (Date.now() <= autoScrollLockUntilRef.current) return;
-      followExecutingNodeRef.current = false;
-      followPointerRef.current = null;
-    };
-
-    const handlePointerDown = (event: PointerEvent) => {
-      if (!followExecutingNodeRef.current) return;
-      followPointerRef.current = {
-        pointerId: event.pointerId,
-        startX: event.clientX,
-        startY: event.clientY,
-      };
-    };
-
-    const handlePointerMove = (event: PointerEvent) => {
-      const active = followPointerRef.current;
-      if (!active || active.pointerId !== event.pointerId) return;
-      const deltaX = Math.abs(event.clientX - active.startX);
-      const deltaY = Math.abs(event.clientY - active.startY);
-      if (deltaX >= 8 || deltaY >= 8) {
-        stopFollowingIfUserControlled();
-      }
-    };
-
-    const clearPointer = (event: PointerEvent) => {
-      const active = followPointerRef.current;
-      if (active && active.pointerId === event.pointerId) {
-        followPointerRef.current = null;
-      }
-    };
-
-    const handleTouchMove = () => {
-      stopFollowingIfUserControlled();
-    };
-
-    const handleWheel = () => {
-      stopFollowingIfUserControlled();
-    };
-
-    container.addEventListener("pointerdown", handlePointerDown, {
-      passive: true,
-    });
-    container.addEventListener("pointermove", handlePointerMove, {
-      passive: true,
-    });
-    container.addEventListener("pointerup", clearPointer, { passive: true });
-    container.addEventListener("pointercancel", clearPointer, {
-      passive: true,
-    });
-    container.addEventListener("touchmove", handleTouchMove, {
-      passive: true,
-    });
-    container.addEventListener("wheel", handleWheel, { passive: true });
-
-    return () => {
-      container.removeEventListener("pointerdown", handlePointerDown);
-      container.removeEventListener("pointermove", handlePointerMove);
-      container.removeEventListener("pointerup", clearPointer);
-      container.removeEventListener("pointercancel", clearPointer);
-      container.removeEventListener("touchmove", handleTouchMove);
-      container.removeEventListener("wheel", handleWheel);
-    };
   }, []);
 
   useEffect(() => {
@@ -1582,22 +1364,37 @@ export function WorkflowPanel({
     [setItemHidden, itemKeyByPointer, subgraphItemKeyById],
   );
 
-  function hasNestedNodeMatching(items: NestedItem[], predicate: (mode: number) => boolean): boolean {
-    for (const item of items) {
-      if (item.type === "hiddenBlock") continue;
-      if (item.type === "node") {
-        if (predicate(item.node.mode ?? 0)) return true;
-        continue;
+  // Per-item callbacks are cached by item identity so NodeCard's memo holds —
+  // fresh inline closures would re-render every card on every panel render.
+  const moveNodeHandlers = useMemo(() => {
+    const cache = new Map<string, () => void>();
+    return (cacheKey: string, target: RepositionTarget) => {
+      let handler = cache.get(cacheKey);
+      if (!handler) {
+        handler = () => reposition.openOverlay(target);
+        cache.set(cacheKey, handler);
       }
-      if (hasNestedNodeMatching(item.children, predicate)) return true;
-    }
-    return false;
-  }
+      return handler;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [reposition.openOverlay]);
+  const enterSubgraphHandlers = useMemo(() => {
+    const cache = new Map<number, () => void>();
+    return (placeholderNodeId: number) => {
+      let handler = cache.get(placeholderNodeId);
+      if (!handler) {
+        handler = () => enterSubgraph(placeholderNodeId);
+        cache.set(placeholderNodeId, handler);
+      }
+      return handler;
+    };
+  }, [enterSubgraph]);
 
-  const renderItems = (items: NestedItem[], parentKey: string) =>
-    items.map((item, index) => {
-      const keyBase = `${parentKey}-${index}`;
-
+  // Keys are identity-based (group key / placeholder id / node id) — never
+  // positional. An index in the key remounts every later sibling's subtree
+  // on delete/search/collapse, losing local state and re-decoding previews.
+  const renderItems = (items: NestedItem[]) =>
+    items.map((item) => {
       if (item.type === "hiddenBlock") {
         return null;
       }
@@ -1620,8 +1417,11 @@ export function WorkflowPanel({
         const canShowGroupBookmarkAction =
           bookmarkedItems.length < 5 || isGroupBookmarked;
         const hiddenNodeCount = hiddenState.hiddenNodeCount;
-        const hasBypassedNodes = hasNestedNodeMatching(item.children, (m) => m === 4);
-        const hasEngagedNodes = hasNestedNodeMatching(item.children, (m) => m !== 4);
+        // Derive from the group's own node counts (not item.children) so these
+        // actions stay available when the group is folded — folding empties
+        // item.children, but nodeCount/bypassedNodeCount remain accurate.
+        const hasBypassedNodes = item.bypassedNodeCount > 0;
+        const hasEngagedNodes = item.bypassedNodeCount < item.nodeCount;
         const foldAllLabel = hasExpandedChildren ? "Fold all" : "Unfold all";
         const handleFoldAll = () => {
           if (!hasExpandedChildren) {
@@ -1637,7 +1437,7 @@ export function WorkflowPanel({
 
         return (
           <div
-            key={`group-${item.group.id}-${keyBase}`}
+            key={`group-${groupHierarchicalKey}`}
             className="group-wrapper shadow-md rounded-xl border mb-3 overflow-hidden"
             style={{
               backgroundColor: bypassState === 'all' ? hexToRgba(themeColors.brand.bypassPurple, 0.08) : backgroundColor,
@@ -1733,13 +1533,13 @@ export function WorkflowPanel({
                 }`}
               >
                 {hiddenNodeCount > 0 && item.nodeCount > 0 && (
-                  <div className="px-3 pb-2 -mt-1 text-xs text-gray-400 text-center">
+                  <div className="px-3 pb-2 -mt-1 text-xs text-slate-400 text-center">
                     {hiddenNodeCount} hidden node
                     {hiddenNodeCount === 1 ? "" : "s"}
                   </div>
                 )}
                 {hasVisibleChildren ? (
-                  renderItems(item.children, keyBase)
+                  renderItems(item.children)
                 ) : !searchActive || matchingGroupIds.has(item.group.id) ? (
                   <GraphContainerPlaceholder
                     containerType="group"
@@ -1762,7 +1562,7 @@ export function WorkflowPanel({
                 title={item.group.title}
                 nodeCount={item.nodeCount}
                 color={resolvedGroupColor}
-                textClassName="text-gray-500 dark:text-gray-400"
+                textClassName="text-slate-400"
                 className="group-footer"
                 allBypassed={bypassState === 'all'}
               />
@@ -1773,15 +1573,19 @@ export function WorkflowPanel({
 
       if (item.type === "subgraph") {
         // In the canonical model, subgraph placeholders are rendered as NodeCards.
-        // The placeholder node is the root canonical node whose type = the subgraph UUID.
-        const placeholderNode = currentScopeWorkflow?.nodes.find(
-          (n) => n.type === item.subgraph.id,
+        // Resolve the specific placeholder instance when the layout recorded
+        // one; first-match by type is only a legacy-layout fallback (it picks
+        // the wrong card when one definition has several placeholders).
+        const placeholderNode = currentScopeWorkflow?.nodes.find((n) =>
+          item.placeholderNodeId != null
+            ? n.id === item.placeholderNodeId && n.type === item.subgraph.id
+            : n.type === item.subgraph.id,
         );
         if (!placeholderNode) return null;
 
         return (
           <div
-            key={`subgraph-placeholder-${item.subgraph.id}-${keyBase}`}
+            key={`subgraph-placeholder-${item.subgraph.id}-${placeholderNode.id}`}
             data-reposition-item={`node-${placeholderNode.id}`}
             data-item-key={requireHierarchicalKey(
               placeholderNode.itemKey,
@@ -1794,10 +1598,11 @@ export function WorkflowPanel({
               isConnectionHighlighted={highlightedNodeIds.has(placeholderNode.id)}
               errorBadgeLabel={errorBadgeByNodeId[placeholderNode.id] ?? null}
               onImageClick={onImageClick}
-              onMoveNode={() =>
-                reposition.openOverlay({ type: "subgraph", id: item.subgraph.id })
-              }
-              onEnterSubgraph={() => enterSubgraph(placeholderNode.id)}
+              onMoveNode={moveNodeHandlers(
+                `subgraph-${item.subgraph.id}-${placeholderNode.id}`,
+                { type: "subgraph", id: item.subgraph.id, nodeId: placeholderNode.id },
+              )}
+              onEnterSubgraph={enterSubgraphHandlers(placeholderNode.id)}
             />
           </div>
         );
@@ -1805,7 +1610,7 @@ export function WorkflowPanel({
 
       return (
         <div
-          key={`node-${item.node.id}-${keyBase}`}
+          key={`node-${item.node.id}`}
           data-reposition-item={`node-${item.node.id}`}
           data-item-key={requireHierarchicalKey(item.node.itemKey, `node ${item.node.id}`)}
         >
@@ -1815,9 +1620,10 @@ export function WorkflowPanel({
             isConnectionHighlighted={highlightedNodeIds.has(item.node.id)}
             errorBadgeLabel={errorBadgeByNodeId[item.node.id] ?? null}
             onImageClick={onImageClick}
-            onMoveNode={() =>
-              reposition.openOverlay({ type: "node", id: item.node.id })
-            }
+            onMoveNode={moveNodeHandlers(`node-${item.node.id}`, {
+              type: "node",
+              id: item.node.id,
+            })}
           />
         </div>
       );
@@ -1828,19 +1634,22 @@ export function WorkflowPanel({
     content = (
       <div
         id="node-list-no-workflow"
-        className="flex items-center justify-center h-full text-gray-500"
+        className="flex items-center justify-center h-full text-slate-400"
       >
-        <div id="no-workflow-content" className="text-center p-8">
+        <div
+          id="no-workflow-content"
+          className="text-center p-8 rounded-xl border border-white/10 bg-slate-900/95 shadow-lg"
+        >
           <div
             id="no-workflow-icon-container"
             className="flex items-center justify-center mb-4"
           >
-            <DocumentIcon className="w-10 h-10 text-gray-300" />
+            <DocumentIcon className="w-10 h-10 text-slate-500" />
           </div>
-          <p id="no-workflow-title" className="text-lg font-medium">
+          <p id="no-workflow-title" className="text-lg font-semibold text-slate-100">
             No workflow loaded
           </p>
-          <p id="no-workflow-description" className="text-sm mt-2">
+          <p id="no-workflow-description" className="text-sm mt-2 text-slate-400">
             Open the menu to load a workflow
           </p>
         </div>
@@ -1850,19 +1659,22 @@ export function WorkflowPanel({
     content = (
       <div
         id="node-list-empty"
-        className="flex items-center justify-center h-full text-gray-500"
+        className="flex items-center justify-center h-full text-slate-400"
       >
-        <div id="empty-workflow-content" className="text-center p-8">
+        <div
+          id="empty-workflow-content"
+          className="text-center p-8 rounded-xl border border-white/10 bg-slate-900/95 shadow-lg"
+        >
           <div
             id="empty-workflow-icon-container"
             className="flex items-center justify-center mb-4"
           >
-            <EmptyWorkflowIcon className="w-10 h-10 text-gray-300" />
+            <EmptyWorkflowIcon className="w-10 h-10 text-slate-500" />
           </div>
-          <p id="empty-workflow-title" className="text-lg font-medium">
+          <p id="empty-workflow-title" className="text-lg font-semibold text-slate-100">
             Empty workflow
           </p>
-          <p id="empty-workflow-description" className="text-sm mt-2">
+          <p id="empty-workflow-description" className="text-sm mt-2 text-slate-400">
             This workflow has no nodes
           </p>
           <div className="mt-6 w-64 max-w-full mx-auto">
@@ -1879,16 +1691,16 @@ export function WorkflowPanel({
     );
   } else {
     content = (
-      <div id="node-list-shell" className="h-full flex flex-col">
+      <div id="node-list-shell" className="h-full flex flex-col w-full max-w-3xl mx-auto">
         {searchOpen && (
-          <div className="node-search-bar bg-gray-100 px-4 py-2">
+          <div className="node-search-bar bg-slate-900/95 border-b border-white/10 px-4 py-2">
             <SearchBar
               inputRef={searchInputRef}
               value={searchQuery}
               onChange={setSearchQuery}
               onClear={handleClearSearch}
               placeholder="Search nodes..."
-              inputClassName="comfy-input border-gray-300"
+              inputClassName="comfy-input border-white/10 bg-slate-950/80 text-slate-100 placeholder:text-slate-500 focus:ring-cyan-400"
             />
           </div>
         )}
@@ -1901,14 +1713,14 @@ export function WorkflowPanel({
           data-node-list="true"
         >
           {nestedItems.length === 0 ? (
-            <div className="flex items-center justify-center h-full text-gray-500">
-              <div className="text-center p-8">
-                <p className="text-sm font-medium">No matching nodes</p>
+            <div className="flex items-center justify-center h-full text-slate-400">
+              <div className="text-center p-6 rounded-xl border border-white/10 bg-slate-900/95">
+                <p className="text-sm font-semibold text-slate-100">No matching nodes</p>
                 <p className="text-xs mt-2">Try a different search.</p>
               </div>
             </div>
           ) : (
-            <div id="node-list-inner">{renderItems(nestedItems, "root")}</div>
+            <div id="node-list-inner">{renderItems(nestedItems)}</div>
           )}
         </div>
       </div>
@@ -1940,7 +1752,7 @@ export function WorkflowPanel({
     <div
       id="node-list-wrapper"
       ref={wrapperRef}
-      className="absolute inset-x-0 bottom-0 bg-gray-100"
+      className="absolute inset-x-0 bottom-0 bg-slate-950/88"
       style={{ display: visible ? "block" : "none", top: topBarHeight }}
     >
       {content}
@@ -1990,7 +1802,7 @@ export function WorkflowPanel({
           ref={bookmarkBarRef}
           className={`absolute z-[200] flex flex-col items-center gap-2 pointer-events-auto ${
             isBookmarkRepositioning
-              ? "rounded-2xl ring-2 ring-blue-400/70 bg-white/30 shadow-lg"
+              ? "rounded-2xl ring-2 ring-cyan-400/70 bg-slate-900/60 shadow-lg"
               : ""
           }`}
           style={bookmarkBarStyle}
@@ -2008,7 +1820,7 @@ export function WorkflowPanel({
               <button
                 key={entry.itemKey}
                 type="button"
-                className="w-10 h-10 rounded-full border border-transparent bg-gray-900/10 text-[11px] font-bold text-gray-800 shadow-sm backdrop-blur-sm dark:bg-white/10 dark:text-gray-100 select-none"
+                className="w-10 h-10 rounded-full border border-white/10 bg-slate-900/70 text-[11px] font-bold text-slate-100 shadow-sm backdrop-blur-sm select-none"
                 onClick={handleBookmarkButtonClick(entry, index)}
               >
                 {entry.text}
@@ -2017,7 +1829,7 @@ export function WorkflowPanel({
             {bookmarkEntries.length > 1 && (
               <button
                 type="button"
-                className="w-10 h-10 rounded-full border border-transparent bg-gray-900/10 text-gray-600 shadow-sm backdrop-blur-sm flex items-center justify-center dark:bg-white/10 dark:text-gray-200 select-none"
+                className="w-10 h-10 rounded-full border border-white/10 bg-slate-900/70 text-slate-300 shadow-sm backdrop-blur-sm flex items-center justify-center select-none"
                 aria-label="Cycle bookmarks"
                 onClick={handleBookmarkCycleClick}
               >
@@ -2029,4 +1841,4 @@ export function WorkflowPanel({
       )}
     </div>
   );
-}
+});

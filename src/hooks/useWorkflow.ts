@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { persist, createJSONStorage } from "zustand/middleware";
+import { persist } from "zustand/middleware";
 import type {
   HistoryOutputImage,
   Workflow,
@@ -7,7 +7,6 @@ import type {
   WorkflowLink,
   WorkflowNode,
   WorkflowSubgraphLink,
-  WorkflowSubgraphDefinition,
   NodeTypes,
 } from "@/api/types";
 import { useImageViewerStore } from "@/hooks/useImageViewer";
@@ -17,11 +16,18 @@ import {
 } from "@/hooks/useWorkflowErrors";
 import * as api from "@/api/client";
 import { useQueueStore } from "@/hooks/useQueue";
+import { computeQueueWorkflowDiff, selectDiffBase } from "@/utils/workflowDiff";
 import { useNavigationStore } from "@/hooks/useNavigation";
 import { usePinnedWidgetStore } from "@/hooks/usePinnedWidget";
 import { useRecentWorkflowsStore } from "@/hooks/useRecentWorkflows";
+import { useWorkflowHiddenStore } from "@/hooks/useWorkflowHidden";
 import { useSeedStore } from "@/hooks/useSeed";
 import { useGenerationSettingsStore } from "@/hooks/useGenerationSettings";
+import {
+  hasRecognizedFilePrefixAliasShape,
+  obfuscateQueuedInputPaths,
+  restoreWorkflowFilePrefixes,
+} from "@/utils/inputPathAliases";
 import {
   buildWorkflowPromptInputs,
   getNodeWidgetIndexMap,
@@ -30,7 +36,13 @@ import {
   resolveComboOption,
 } from "@/utils/workflowInputs";
 import { buildWorkflowCacheKey } from "@/utils/workflowCacheKey";
+import { collectAllWorkflowGroups, collectAllWorkflowNodes } from "@/utils/workflowNodes";
+import { isPowerLoraLoaderNodeType } from "@/utils/loraManager";
+import { userScrolledSince } from "@/utils/scrollInterrupt";
+import { addInputFileOptionToNodeTypes } from "@/utils/nodeTypeOptions";
+import { createThrottledPersistStorage } from "@/utils/idbStorage";
 import { expandWorkflowSubgraphs } from "@/utils/expandWorkflowSubgraphs";
+import { dissolveSubgraph } from "@/utils/dissolveSubgraph";
 import {
   type SeedMode,
   SPECIAL_SEED_RANDOM,
@@ -64,13 +76,11 @@ import {
   type ContainerId,
   createEmptyMobileLayout,
   buildDefaultLayout,
-  flattenLayoutToNodeOrder,
-  getGroupKey,
   makeLocationPointer,
-  parseLocationPointer,
   findItemInLayout,
   removeNodeFromLayout,
   addNodeToLayout,
+  placeLayoutItemAfter,
   removeGroupFromLayoutByKey,
 } from "@/utils/mobileLayout";
 import {
@@ -83,6 +93,7 @@ import { syncWorkflowGeometryFromLayoutChange } from "@/utils/graphSync";
 import {
   type ScopeFrame,
   resolveCurrentScope,
+  resolveScopeForHierarchicalKey,
   resolveNodeByHierarchicalKey,
   getLinkId,
   getLinkOriginId,
@@ -91,11 +102,50 @@ import {
   getLinkTargetSlot,
   getLinkType,
   makeScopeLink,
+  maxNodeIdAcrossScopes,
 } from "@/utils/canonicalWorkflowOps";
-import { computeNodeGroupsFor } from "@/utils/nodeGroups";
+import { duplicateWorkflowNode } from "@/utils/duplicateNode";
+import type { HierarchicalKey, ScopedNodeIdentity } from "@/utils/workflowHierarchy";
+import {
+  annotateWorkflowWithHierarchicalKeys,
+  buildScopeStackForSubgraphTrail,
+  buildSubgraphParentMap,
+  canonicalizeWorkflowHierarchicalKeys,
+  clearNodeUiStateForTargets,
+  collectBypassContainerTargetNodesFromLayout,
+  collectBypassGroupTargetNodes,
+  collectBypassSubgraphTargetNodes,
+  collectDescendantSubgraphs,
+  collectGroupHierarchicalKeys,
+  collectNodeHierarchicalKeys,
+  collectNodeStateKeys,
+  dedupeScopedNodeIdentities,
+  findSubgraphHierarchicalKey,
+  getGroupIdForNode,
+  getParentSubgraphIdFromContainer,
+  getSubgraphChildMap,
+  hasLayoutGroupKeyMismatch,
+  hasMissingHierarchicalKeys,
+  layoutMatchesWorkflowNodes,
+  layoutRecordFromPointerRecord,
+  normalizeManuallyHiddenNodeKeys,
+  normalizeMobileLayoutGroupKeys,
+  normalizePointerBookmarkList,
+  normalizePointerBooleanRecord,
+  normalizePointerCollapsedRecord,
+  pointerCollapsedRecordFromLayoutRecord,
+  pointerRecordFromLayoutRecord,
+  reconcilePointerRegistry,
+  resolveContainerIdentityFromHierarchicalKey,
+  resolveNodeIdentityFromHierarchicalKey,
+} from "@/utils/workflowHierarchy";
 import { findLayoutPath } from "@/utils/layoutTraversal";
 import { resolveWorkflowColor, themeColors } from "@/theme/colors";
 import { validateAndNormalizeWorkflow } from "@/utils/workflowValidator";
+import {
+  HIDDEN_WORKFLOW_EXTRA_DATA_KEY,
+  isWorkflowHidden,
+} from "@/utils/workflowHidden";
 
 // ScopeFrame is defined in canonicalWorkflowOps.ts and re-exported here.
 export type { ScopeFrame };
@@ -103,6 +153,11 @@ export type { ScopeFrame };
 // Re-export utilities for external consumers
 export type { SeedMode };
 export type { MobileLayout } from "@/utils/mobileLayout";
+import {
+  normalizeWorkflowNodes,
+  stripWorkflowClientMetadata,
+} from "./useWorkflow/metadataNormalization";
+export { stripWorkflowClientMetadata };
 export {
   SPECIAL_SEED_RANDOM,
   SPECIAL_SEED_INCREMENT,
@@ -128,8 +183,22 @@ export {
 // Internal type alias
 type SeedModeType = SeedMode;
 type SeedLastValues = Record<number, number | null>;
-type HierarchicalKey = string;
-type ScopedNodeIdentity = { nodeId: number; subgraphId: string | null };
+
+function yieldToBrowserPaint(): Promise<void> {
+  if (typeof window === "undefined") return Promise.resolve();
+
+  return new Promise((resolve) => {
+    if (typeof window.requestAnimationFrame === "function") {
+      window.requestAnimationFrame(() => {
+        window.setTimeout(resolve, 0);
+      });
+      return;
+    }
+
+    window.setTimeout(resolve, 0);
+  });
+}
+
 type RepositionScrollTarget =
   | { type: "node"; id: number }
   | { type: "group"; id: number; subgraphId: string | null }
@@ -148,581 +217,6 @@ function buildLayoutForWorkflow(
   );
 }
 
-function collectLayoutObjectKeys(layout: MobileLayout): string[] {
-  const keys: string[] = [];
-  const visitedGroups = new Set<string>();
-  const visitedSubgraphs = new Set<string>();
-  const visit = (refs: ItemRef[], currentSubgraphId: string | null) => {
-    for (const ref of refs) {
-      if (ref.type === "node") {
-        keys.push(
-          makeLocationPointer({
-            type: "node",
-            nodeId: ref.id,
-            subgraphId: currentSubgraphId,
-          }),
-        );
-        continue;
-      }
-      if (ref.type === "group") {
-        keys.push(getGroupKey(ref.id, ref.subgraphId));
-        if (visitedGroups.has(getGroupKey(ref.id, ref.subgraphId))) continue;
-        visitedGroups.add(getGroupKey(ref.id, ref.subgraphId));
-        visit(layout.groups[getGroupKey(ref.id, ref.subgraphId)] ?? [], currentSubgraphId);
-        continue;
-      }
-      if (ref.type === "subgraph") {
-        if (ref.nodeId !== undefined) {
-          keys.push(
-            makeLocationPointer({
-              type: "node",
-              nodeId: ref.nodeId,
-              subgraphId: currentSubgraphId,
-            }),
-          );
-        }
-        // Each placeholder instance gets a unique pointer keyed by its node ID.
-        // This ensures two instances of the same definition occupy separate pointer-keyed
-        // slots in collapsedItems / pointerByHierarchicalKey rather than colliding on the
-        // definition UUID.
-        const instanceId = ref.nodeId !== undefined ? String(ref.nodeId) : ref.id;
-        const sgKey = makeLocationPointer({ type: "subgraph", subgraphId: instanceId });
-        keys.push(sgKey);
-        // Inner nodes are shared across all instances of the same definition —
-        // only traverse once per definition UUID.
-        if (visitedSubgraphs.has(ref.id)) continue;
-        visitedSubgraphs.add(ref.id);
-        visit(layout.subgraphs[ref.id] ?? [], ref.id);
-      }
-    }
-  };
-  visit(layout.root, null);
-  return keys;
-}
-
-function reconcilePointerRegistry(
-  layout: MobileLayout,
-  _prevLayoutToStable: Record<string, HierarchicalKey>,
-  _prevStableToLayout: Record<HierarchicalKey, string>,
-): {
-  layoutToStable: Record<string, HierarchicalKey>;
-  stableToLayout: Record<HierarchicalKey, string>;
-} {
-  void _prevLayoutToStable;
-  void _prevStableToLayout;
-  const nextPointers = collectLayoutObjectKeys(layout);
-  const layoutToStable: Record<string, HierarchicalKey> = {};
-  const stableToLayout: Record<HierarchicalKey, string> = {};
-
-  for (const pointer of nextPointers) {
-    layoutToStable[pointer] = pointer;
-    stableToLayout[pointer] = pointer;
-  }
-
-  return { layoutToStable, stableToLayout };
-}
-
-function layoutMatchesWorkflowNodes(
-  layout: MobileLayout,
-  workflow: Workflow,
-): boolean {
-  const workflowNodeIds = new Set(workflow.nodes.map((node) => node.id));
-  const layoutNodeIds = new Set(flattenLayoutToNodeOrder(layout));
-  if (workflowNodeIds.size !== layoutNodeIds.size) return false;
-  for (const nodeId of workflowNodeIds) {
-    if (!layoutNodeIds.has(nodeId)) return false;
-  }
-  return true;
-}
-
-function nodeStateKey(
-  nodeId: number,
-  subgraphId: string | null = null,
-): string {
-  return makeLocationPointer({ type: "node", nodeId, subgraphId });
-}
-
-function getNodeStateKeyForNode(node: WorkflowNode): string {
-  // Under the canonical model, workflow.nodes only contains root-scope nodes.
-  return nodeStateKey(node.id, null);
-}
-
-const nodeStateKeyIndexCache = new WeakMap<Workflow, Map<number, string[]>>();
-
-function getNodeStateKeyIndex(workflow: Workflow): Map<number, string[]> {
-  const cached = nodeStateKeyIndexCache.get(workflow);
-  if (cached) return cached;
-
-  const index = new Map<number, string[]>();
-  for (const node of workflow.nodes) {
-    const key = getNodeStateKeyForNode(node);
-    const bucket = index.get(node.id);
-    if (bucket) {
-      if (!bucket.includes(key)) bucket.push(key);
-    } else {
-      index.set(node.id, [key]);
-    }
-  }
-  nodeStateKeyIndexCache.set(workflow, index);
-  return index;
-}
-
-function collectNodeStateKeys(
-  workflow: Workflow,
-  nodeId: number,
-  subgraphId: string | null = null,
-): string[] {
-  if (subgraphId != null) {
-    return [nodeStateKey(nodeId, subgraphId)];
-  }
-
-  const keys = getNodeStateKeyIndex(workflow).get(nodeId) ?? [];
-
-  if (keys.length > 0) {
-    return [...keys];
-  }
-  return [nodeStateKey(nodeId, null)];
-}
-
-function normalizeManuallyHiddenNodeKeys(
-  workflow: Workflow,
-  hiddenItems: Record<string, boolean> | undefined,
-): Record<string, boolean> {
-  if (!hiddenItems) return {};
-  const normalized: Record<string, boolean> = {};
-  for (const [key, hidden] of Object.entries(hiddenItems)) {
-    if (!hidden) continue;
-    if (key.includes(":node:") || key.includes("/node:")) {
-      const parsed = parseLocationPointer(key);
-      if (parsed?.type === "node") {
-        normalized[nodeStateKey(parsed.nodeId, parsed.subgraphId)] = true;
-        continue;
-      }
-      const legacy = key.match(/^(root|subgraph:(.*)):node:(\d+)$/);
-      if (!legacy) continue;
-      const nodeId = Number(legacy[3]);
-      if (!Number.isFinite(nodeId)) continue;
-      normalized[
-        nodeStateKey(nodeId, legacy[1] === "root" ? null : (legacy[2] ?? null))
-      ] = true;
-      continue;
-    }
-    const legacyNodeId = Number(key);
-    if (!Number.isFinite(legacyNodeId)) continue;
-    for (const nodeKey of collectNodeStateKeys(workflow, legacyNodeId)) {
-      normalized[nodeKey] = true;
-    }
-  }
-  return normalized;
-}
-
-function normalizeMobileLayoutGroupKeys(layout: MobileLayout): MobileLayout {
-  const normalizeRefs = (refs: ItemRef[]): ItemRef[] =>
-    refs.map((ref) => {
-      if (ref.type !== "group") return ref;
-      return {
-        ...ref,
-      };
-    });
-
-  const nextGroups: Record<string, ItemRef[]> = {};
-  for (const [groupKey, refs] of Object.entries(layout.groups)) {
-    const normalizedKey = groupKey;
-    const normalizedRefs = normalizeRefs(refs);
-    if (nextGroups[normalizedKey]) {
-      nextGroups[normalizedKey] = [
-        ...nextGroups[normalizedKey],
-        ...normalizedRefs,
-      ];
-    } else {
-      nextGroups[normalizedKey] = normalizedRefs;
-    }
-  }
-
-  const nextSubgraphs: Record<string, ItemRef[]> = {};
-  for (const [subgraphId, refs] of Object.entries(layout.subgraphs)) {
-    nextSubgraphs[subgraphId] = normalizeRefs(refs);
-  }
-
-  return {
-    ...layout,
-    root: normalizeRefs(layout.root),
-    groups: nextGroups,
-    subgraphs: nextSubgraphs,
-  };
-}
-
-function collectGroupHierarchicalKeys(
-  layout: MobileLayout,
-  groupId: number,
-  subgraphId: string | null = null,
-): string[] {
-  const keys = new Set<string>();
-  const visit = (refs: ItemRef[], currentSubgraphId: string | null) => {
-    for (const ref of refs) {
-      if (ref.type === "group") {
-        if (ref.id === groupId && currentSubgraphId === subgraphId) {
-          keys.add(getGroupKey(ref.id, ref.subgraphId));
-        }
-        visit(layout.groups[getGroupKey(ref.id, ref.subgraphId)] ?? [], currentSubgraphId);
-      } else if (ref.type === "subgraph") {
-        visit(layout.subgraphs[ref.id] ?? [], ref.id);
-      }
-    }
-  };
-  visit(layout.root, null);
-  return [...keys];
-}
-
-function scopedNodeIdentityKey(identity: ScopedNodeIdentity): string {
-  return `${identity.subgraphId ?? "root"}:${identity.nodeId}`;
-}
-
-function dedupeScopedNodeIdentities(
-  identities: Iterable<ScopedNodeIdentity>,
-): ScopedNodeIdentity[] {
-  const keyed = new Map<string, ScopedNodeIdentity>();
-  for (const identity of identities) {
-    keyed.set(scopedNodeIdentityKey(identity), identity);
-  }
-  return [...keyed.values()];
-}
-
-function collectScopedNodeIdentitiesFromLayoutRefs(
-  layout: MobileLayout,
-  refs: ItemRef[],
-  currentSubgraphId: string | null = null,
-  visitedGroups = new Set<string>(),
-  visitedSubgraphs = new Set<string>(),
-): ScopedNodeIdentity[] {
-  const identities: ScopedNodeIdentity[] = [];
-  for (const ref of refs) {
-    if (ref.type === "node") {
-      identities.push({ nodeId: ref.id, subgraphId: currentSubgraphId });
-      continue;
-    }
-    if (ref.type === "hiddenBlock") {
-      for (const nodeId of layout.hiddenBlocks[ref.blockId] ?? []) {
-        identities.push({ nodeId, subgraphId: currentSubgraphId });
-      }
-      continue;
-    }
-    if (ref.type === "group") {
-      if (visitedGroups.has(getGroupKey(ref.id, ref.subgraphId))) continue;
-      visitedGroups.add(getGroupKey(ref.id, ref.subgraphId));
-      const nestedNodeIds = collectScopedNodeIdentitiesFromLayoutRefs(
-        layout,
-        layout.groups[getGroupKey(ref.id, ref.subgraphId)] ?? [],
-        currentSubgraphId,
-        visitedGroups,
-        visitedSubgraphs,
-      );
-      identities.push(...nestedNodeIds);
-      visitedGroups.delete(getGroupKey(ref.id, ref.subgraphId));
-      continue;
-    }
-    if (visitedSubgraphs.has(ref.id)) continue;
-    visitedSubgraphs.add(ref.id);
-    const nestedNodeIds = collectScopedNodeIdentitiesFromLayoutRefs(
-      layout,
-      layout.subgraphs[ref.id] ?? [],
-      ref.id,
-      visitedGroups,
-      visitedSubgraphs,
-    );
-    identities.push(...nestedNodeIds);
-    visitedSubgraphs.delete(ref.id);
-  }
-  return dedupeScopedNodeIdentities(identities);
-}
-
-function toHierarchicalKey(
-  pointer: string,
-  itemKeyByPointer: Record<string, HierarchicalKey>,
-): HierarchicalKey | null {
-  return itemKeyByPointer[pointer] ?? null;
-}
-
-function toHierarchicalKeys(
-  pointers: string[],
-  itemKeyByPointer: Record<string, HierarchicalKey>,
-): HierarchicalKey[] {
-  const seen = new Set<HierarchicalKey>();
-  const keys: HierarchicalKey[] = [];
-  for (const pointer of pointers) {
-    const itemKey = toHierarchicalKey(pointer, itemKeyByPointer);
-    if (!itemKey || seen.has(itemKey)) continue;
-    seen.add(itemKey);
-    keys.push(itemKey);
-  }
-  return keys;
-}
-
-function collectNodeHierarchicalKeysFromRegistry(
-  itemKeyByPointer: Record<string, HierarchicalKey>,
-  nodeId: number,
-  subgraphId: string | null = null,
-): HierarchicalKey[] {
-  const keys: HierarchicalKey[] = [];
-  const seen = new Set<HierarchicalKey>();
-  for (const [pointer, itemKey] of Object.entries(itemKeyByPointer)) {
-    if (seen.has(itemKey)) continue;
-    const parsed = parseLocationPointer(pointer);
-    if (parsed?.type !== "node") continue;
-    if (parsed.nodeId !== nodeId) continue;
-    if (subgraphId !== null && parsed.subgraphId !== subgraphId) continue;
-    seen.add(itemKey);
-    keys.push(itemKey);
-  }
-  return keys;
-}
-
-function collectNodeHierarchicalKeys(
-  workflow: Workflow,
-  itemKeyByPointer: Record<string, HierarchicalKey>,
-  nodeId: number,
-  subgraphId: string | null = null,
-): HierarchicalKey[] {
-  const keys = collectNodeHierarchicalKeysFromRegistry(
-    itemKeyByPointer,
-    nodeId,
-    subgraphId,
-  );
-  if (keys.length > 0) return keys;
-  return toHierarchicalKeys(
-    collectNodeStateKeys(workflow, nodeId, subgraphId),
-    itemKeyByPointer,
-  );
-}
-
-function clearNodeUiStateForTargets(
-  workflow: Workflow,
-  itemKeyByPointer: Record<string, HierarchicalKey>,
-  hiddenItems: Record<string, boolean>,
-  connectionHighlightModes: Record<HierarchicalKey, "off" | "inputs" | "outputs" | "both">,
-  targets: ScopedNodeIdentity[],
-): {
-  hiddenItems: Record<string, boolean>;
-  connectionHighlightModes: Record<HierarchicalKey, "off" | "inputs" | "outputs" | "both">;
-} {
-  const nextHiddenItems = { ...hiddenItems };
-  const nextHighlightModes = { ...connectionHighlightModes };
-  for (const { nodeId, subgraphId } of targets) {
-    const nodeHierarchicalKeys = collectNodeHierarchicalKeys(
-      workflow,
-      itemKeyByPointer,
-      nodeId,
-      subgraphId,
-    );
-    for (const nodeHierarchicalKey of nodeHierarchicalKeys) {
-      delete nextHiddenItems[nodeHierarchicalKey];
-      delete nextHighlightModes[nodeHierarchicalKey];
-    }
-    for (const legacyPointer of collectNodeStateKeys(
-      workflow,
-      nodeId,
-      subgraphId,
-    )) {
-      delete nextHiddenItems[legacyPointer];
-    }
-  }
-  return {
-    hiddenItems: nextHiddenItems,
-    connectionHighlightModes: nextHighlightModes,
-  };
-}
-
-function resolveNodeIdentityFromHierarchicalKey(
-  workflow: Workflow,
-  itemKey: HierarchicalKey,
-  _pointerByHierarchicalKey?: Record<string, string>,
-): { nodeId: number; subgraphId: string | null } | null {
-  void _pointerByHierarchicalKey;
-  // Search root canonical nodes first
-  const rootNode = workflow.nodes.find((entry) => entry.itemKey === itemKey);
-  if (rootNode) {
-    return { nodeId: rootNode.id, subgraphId: null };
-  }
-  // Search subgraph inner nodes
-  for (const sg of workflow.definitions?.subgraphs ?? []) {
-    const innerNode = (sg.nodes ?? []).find((n) => n.itemKey === itemKey);
-    if (innerNode) {
-      return { nodeId: innerNode.id, subgraphId: sg.id };
-    }
-  }
-  return null;
-}
-
-type ContainerIdentity =
-  | { type: "group"; groupId: number; subgraphId: string | null; itemKey: HierarchicalKey }
-  | { type: "subgraph"; subgraphId: string; itemKey: HierarchicalKey };
-
-function resolveLayoutPointerForStateKey(
-  key: string,
-  stableToLayout: Record<string, string>,
-): string | null {
-  const mappedPointer = stableToLayout[key];
-  if (mappedPointer) return mappedPointer;
-  if (parseLocationPointer(key)) return key;
-  return null;
-}
-
-function resolveContainerIdentityFromHierarchicalKey(
-  workflow: Workflow,
-  itemKey: HierarchicalKey,
-  _pointerByHierarchicalKey?: Record<string, string>,
-): ContainerIdentity | null {
-  void _pointerByHierarchicalKey;
-  const rootGroup = (workflow.groups ?? []).find((group) => group.itemKey === itemKey);
-  if (rootGroup) {
-    return {
-      type: "group",
-      groupId: rootGroup.id,
-      subgraphId: null,
-      itemKey,
-    };
-  }
-
-  for (const subgraph of workflow.definitions?.subgraphs ?? []) {
-    if (subgraph.itemKey === itemKey) {
-      return {
-        type: "subgraph",
-        subgraphId: subgraph.id,
-        itemKey,
-      };
-    }
-    const nestedGroup = (subgraph.groups ?? []).find((group) => group.itemKey === itemKey);
-    if (nestedGroup) {
-      return {
-        type: "group",
-        groupId: nestedGroup.id,
-        subgraphId: subgraph.id,
-        itemKey,
-      };
-    }
-  }
-
-  return null;
-}
-
-function findSubgraphHierarchicalKey(
-  workflow: Workflow,
-  subgraphId: string,
-): HierarchicalKey | null {
-  const subgraph = (workflow.definitions?.subgraphs ?? []).find(
-    (entry) => entry.id === subgraphId,
-  );
-  return subgraph?.itemKey ?? null;
-}
-
-function findGroupSubgraphIdByHierarchicalKey(
-  layout: MobileLayout,
-  groupHierarchicalKey: string,
-): string | null {
-  const parent = layout.groupParents?.[groupHierarchicalKey];
-  if (!parent) return null;
-  if (parent.scope === "subgraph") return parent.subgraphId;
-  if (parent.scope === "root") return null;
-  return findGroupSubgraphIdByHierarchicalKey(layout, parent.groupKey);
-}
-
-function pointerRecordFromLayoutRecord(
-  layoutState: Record<string, boolean> | undefined,
-  itemKeyByPointer: Record<string, HierarchicalKey>,
-): Record<string, boolean> {
-  if (!layoutState) return {};
-  const next: Record<string, boolean> = {};
-  for (const [pointer, value] of Object.entries(layoutState)) {
-    if (!value) continue;
-    const itemKey = toHierarchicalKey(pointer, itemKeyByPointer);
-    if (!itemKey) continue;
-    next[itemKey] = true;
-  }
-  return next;
-}
-
-function pointerCollapsedRecordFromLayoutRecord(
-  layoutState: Record<string, boolean> | undefined,
-  itemKeyByPointer: Record<string, HierarchicalKey>,
-): Record<string, boolean> {
-  if (!layoutState) return {};
-  const next: Record<string, boolean> = {};
-  for (const [pointer, value] of Object.entries(layoutState)) {
-    if (value !== true) continue;
-    const itemKey = toHierarchicalKey(pointer, itemKeyByPointer);
-    if (!itemKey) continue;
-    next[itemKey] = true;
-  }
-  return next;
-}
-
-function normalizePointerBooleanRecord(
-  state: Record<string, boolean> | undefined,
-  itemKeyByPointer: Record<string, HierarchicalKey>,
-  pointerByHierarchicalKey: Record<string, string>,
-): Record<string, boolean> {
-  if (!state) return {};
-  const next: Record<string, boolean> = {};
-  for (const [key, value] of Object.entries(state)) {
-    if (!value) continue;
-    const pointer = resolveLayoutPointerForStateKey(key, pointerByHierarchicalKey);
-    const itemKey = pointer ? itemKeyByPointer[pointer] : itemKeyByPointer[key];
-    if (!itemKey) continue;
-    next[itemKey] = true;
-  }
-  return next;
-}
-
-function normalizePointerCollapsedRecord(
-  state: Record<string, boolean> | undefined,
-  itemKeyByPointer: Record<string, HierarchicalKey>,
-  pointerByHierarchicalKey: Record<string, string>,
-): Record<string, boolean> {
-  if (!state) return {};
-  const next: Record<string, boolean> = {};
-  for (const [key, value] of Object.entries(state)) {
-    if (value !== true) continue;
-    const pointer = resolveLayoutPointerForStateKey(key, pointerByHierarchicalKey);
-    const itemKey = pointer ? itemKeyByPointer[pointer] : itemKeyByPointer[key];
-    if (!itemKey) continue;
-    next[itemKey] = true;
-  }
-  return next;
-}
-
-function normalizePointerBookmarkList(
-  bookmarks: string[] | undefined,
-  itemKeyByPointer: Record<string, HierarchicalKey>,
-  pointerByHierarchicalKey: Record<string, string>,
-): string[] {
-  if (!bookmarks || bookmarks.length === 0) return [];
-  const next: string[] = [];
-  const seen = new Set<string>();
-  for (const key of bookmarks) {
-    if (!key) continue;
-    const pointer = resolveLayoutPointerForStateKey(key, pointerByHierarchicalKey);
-    const itemKey = pointer ? itemKeyByPointer[pointer] : itemKeyByPointer[key];
-    if (!itemKey || seen.has(itemKey)) continue;
-    seen.add(itemKey);
-    next.push(itemKey);
-  }
-  return next;
-}
-
-function layoutRecordFromPointerRecord(
-  state: Record<string, boolean> | undefined,
-  pointerByHierarchicalKey: Record<string, string>,
-): Record<string, boolean> {
-  if (!state) return {};
-  const next: Record<string, boolean> = {};
-  for (const [itemKey, value] of Object.entries(state)) {
-    if (!value) continue;
-    const pointer = pointerByHierarchicalKey[itemKey];
-    if (!pointer) continue;
-    next[pointer] = true;
-  }
-  return next;
-}
 
 // Per-node UI state that we want to preserve
 interface SavedNodeState {
@@ -747,13 +241,198 @@ interface NodeOutputImage {
   type: string;
 }
 
+// Output of an Image Comparer node: the two sides to overlay (`a` vs `b`).
+export interface NodeComparerOutput {
+  a: NodeOutputImage[];
+  b: NodeOutputImage[];
+}
+
 // Track where the workflow was loaded from for reload functionality
-export type WorkflowSource =
+export type WorkflowSource = (
   | { type: "user"; filename: string }
   | { type: "history"; promptId: string }
   | { type: "template"; moduleName: string; templateName: string }
   | { type: "file"; filePath: string; assetSource: "output" | "input" | "temp" }
-  | { type: "other" };
+  | { type: "other" }
+) & { hidden?: boolean };
+
+// ---------------------------------------------------------------------------
+// Multi-workflow sessions ("tabs")
+// ---------------------------------------------------------------------------
+// At most one session is "active" at a time: its state lives in the flat store
+// fields (workflow, mobileLayout, scopeStack, execution scalars, etc.). Other
+// open sessions are "parked" — their per-session state is snapshotted into
+// parkedSessions[id]. Switching tabs folds the active flat fields into the
+// outgoing session's snapshot and hydrates the incoming session's snapshot back
+// into the flat fields, so the vast majority of store actions keep operating on
+// get().workflow unchanged.
+export const MAX_WORKFLOW_SESSIONS = 10;
+
+// Cap on the prompt_id → session routing map. Entries are kept after a prompt
+// finishes (so a late straggler message still routes to the right tab) but the
+// oldest are evicted past this bound so it can't grow without limit across a
+// long/infinite run. 200 is a generous grace window — far more than the few
+// in-flight + recently-finished prompts that could still emit messages.
+const MAX_PROMPT_TO_SESSION = 200;
+
+// Insertion-ordered cap: drop the oldest keys so `map` keeps at most
+// MAX_PROMPT_TO_SESSION entries. prompt_ids are unique, so insertion order is
+// queue order and the oldest (longest-finished) entries are evicted first.
+// `protectedIds` (currently running/pending prompts) are never evicted — their
+// websocket messages must keep routing to the owning tab, so dropping the
+// mapping mid-run would misroute outputs to whatever tab is active.
+function capPromptToSession(
+  map: Record<string, string>,
+  protectedIds?: ReadonlySet<string>,
+): Record<string, string> {
+  const keys = Object.keys(map);
+  if (keys.length <= MAX_PROMPT_TO_SESSION) return map;
+  let toRemove = keys.length - MAX_PROMPT_TO_SESSION;
+  for (const key of keys) {
+    if (toRemove <= 0) break;
+    if (protectedIds?.has(key)) continue;
+    delete map[key];
+    toRemove--;
+  }
+  return map;
+}
+
+function workflowDisplayName(filename: string): string {
+  const basename = filename.includes("/")
+    ? filename.substring(filename.lastIndexOf("/") + 1)
+    : filename;
+  return basename.replace(/\.json$/, "");
+}
+
+function queueWorkflowLabel(
+  filename: string | null,
+  source: WorkflowSource | null,
+): string {
+  if (filename) return workflowDisplayName(filename);
+  if (source?.type === "template") return source.templateName;
+  return "Untitled";
+}
+
+// The flat store fields that constitute a single session's state. Everything in
+// the store NOT in this list is global (shared across all tabs): nodeTypes,
+// savedWorkflowStates, *DurationStats, connectionButtonsVisible, search/modal
+// request state, and the session-registry fields themselves.
+const SESSION_STATE_FIELDS = [
+  "workflowSource",
+  "workflow",
+  "originalWorkflow",
+  "diffBaseWorkflow",
+  "lastEnqueuedWorkflow",
+  "scopeStack",
+  "currentFilename",
+  "currentWorkflowKey",
+  "isExecuting",
+  "executingNodeId",
+  "executingNodeHierarchicalKey",
+  "executingNodePath",
+  "executingPromptId",
+  "progress",
+  "expandedNodeIdMap",
+  "expandedNodePathMap",
+  "executionStartTime",
+  "currentNodeStartTime",
+  "nodeOutputs",
+  "nodeComparerOutputs",
+  "nodeTextOutputs",
+  "latentPreviews",
+  "promptOutputs",
+  "runCount",
+  "isStopping",
+  "workflowLoadedAt",
+  "connectionHighlightModes",
+  "collapsedItems",
+  "hiddenItems",
+  "itemKeyByPointer",
+  "pointerByHierarchicalKey",
+  "mobileLayout",
+] as const;
+
+type SessionStateField = (typeof SESSION_STATE_FIELDS)[number];
+
+// A parked session's serialized state. Seed maps come from the seed store
+// (which always mirrors the *active* session) and are folded in here on park.
+type WorkflowSessionSnapshot = Pick<WorkflowState, SessionStateField> & {
+  seedModes: Record<number, SeedMode>;
+  seedLastValues: Record<number, number | null>;
+};
+
+// Lightweight per-tab descriptor kept in the ordered `sessions` list.
+interface WorkflowSessionMeta {
+  id: string;
+}
+
+// A deferred loadWorkflow call, parked while the user picks which open tab to
+// close (when MAX_WORKFLOW_SESSIONS is already reached).
+interface PendingWorkflowOpen {
+  workflow: Workflow;
+  filename?: string;
+  options?: LoadWorkflowOptions;
+}
+
+interface LoadWorkflowOptions {
+  fresh?: boolean;
+  source?: WorkflowSource;
+  replaceActive?: boolean;
+  navigate?: boolean;
+  filePrefixAliasesResolved?: boolean;
+}
+
+// The workflow-content fields that both `unloadWorkflow` and the
+// active-session-empty branch of `closeSession` reset to their empty defaults.
+// Centralized so the two resets can't drift (a field added to one but not the
+// other). Returns a fresh object each call (mobileLayout must not be shared).
+function clearedWorkflowContent(): Partial<WorkflowState> {
+  return {
+    workflowSource: null,
+    workflow: null,
+    originalWorkflow: null,
+    diffBaseWorkflow: null,
+    lastEnqueuedWorkflow: null,
+    scopeStack: [{ type: "root" as const }],
+    currentFilename: null,
+    currentWorkflowKey: null,
+    collapsedItems: {},
+    hiddenItems: {},
+    mobileLayout: createEmptyMobileLayout(),
+    itemKeyByPointer: {},
+    pointerByHierarchicalKey: {},
+    runCount: 1,
+    infiniteLoop: false,
+    infiniteLoopAwaitingRun: false,
+    isStopping: false,
+    nodeOutputs: {},
+    nodeComparerOutputs: {},
+    nodeTextOutputs: {},
+    latentPreviews: {},
+    promptOutputs: {},
+    followQueue: false,
+    connectionHighlightModes: {},
+  };
+}
+
+// Drop each parked snapshot's `latentPreviews` before persisting: they are
+// transient blob: object URLs that are invalid (and would render broken) after
+// a page reload. Node outputs (file references) are kept and re-render fine.
+function stripLatentPreviewsFromSnapshots(
+  parkedSessions: Record<string, WorkflowSessionSnapshot>,
+): Record<string, WorkflowSessionSnapshot> {
+  const result: Record<string, WorkflowSessionSnapshot> = {};
+  for (const [id, snapshot] of Object.entries(parkedSessions)) {
+    result[id] = { ...snapshot, latentPreviews: {} };
+  }
+  return result;
+}
+
+let sessionIdCounter = 0;
+function generateSessionId(): string {
+  sessionIdCounter += 1;
+  return `wf-${Date.now().toString(36)}-${sessionIdCounter.toString(36)}`;
+}
 
 interface WorkflowState {
   // Workflow source tracking for reload functionality
@@ -762,6 +441,10 @@ interface WorkflowState {
   // Workflow data
   workflow: Workflow | null;
   originalWorkflow: Workflow | null; // For dirty check
+  // Per-session baselines for queue-item diffs (see queueWorkflow): the
+  // workflow to diff the next enqueue against, and the last enqueued snapshot.
+  diffBaseWorkflow: Workflow | null;
+  lastEnqueuedWorkflow: Workflow | null;
 
   // Scope navigation stack; [{ type: 'root' }] when at the top level
   scopeStack: ScopeFrame[];
@@ -792,15 +475,47 @@ interface WorkflowState {
 
   // Node output images (keyed by node ID)
   nodeOutputs: Record<string, NodeOutputImage[]>;
+  // Image-comparer A/B outputs (keyed by node ID)
+  nodeComparerOutputs: Record<string, NodeComparerOutput>;
   // Node text output previews (keyed by node ID)
   nodeTextOutputs: Record<string, string>;
   // Prompt output images (keyed by prompt ID)
   promptOutputs: Record<string, HistoryOutputImage[]>;
   runCount: number;
   infiniteLoop: boolean;
+  // True when the user just armed infinite mode but hasn't started a run yet.
+  // Arming must NOT auto-start generation (that's the Run button's job); this
+  // flag suppresses the websocket idle-resume driver until a run goes live. It
+  // is intentionally NOT persisted, so a reload that restores an actively-running
+  // loop still auto-resumes.
+  infiniteLoopAwaitingRun: boolean;
   isStopping: boolean;
+  // Session id currently being saved to disk (drives the tab's save spinner).
+  savingSessionId: string | null;
   followQueue: boolean;
   workflowLoadedAt: number;
+
+  // Multi-workflow sessions ("tabs"). The active session's state lives in the
+  // flat fields above; other open sessions are snapshotted in parkedSessions.
+  sessions: WorkflowSessionMeta[];
+  activeSessionId: string | null;
+  parkedSessions: Record<string, WorkflowSessionSnapshot>;
+  // The single session (if any) currently in infinite-generation mode. Only one
+  // session loops at a time; switching tabs does not move it.
+  infiniteLoopSessionId: string | null;
+  // Maps an enqueued ComfyUI prompt_id to the session that submitted it, so
+  // websocket/queue events route to the owning session.
+  promptToSession: Record<string, string>;
+  // Per-session "queue submit in flight" flags (active session also mirrors the
+  // flat isLoading). Guards against double re-enqueue for parked infinite loops.
+  isLoadingBySession: Record<string, boolean>;
+  // Signature of the last prompt each session submitted to ComfyUI. Used by the
+  // infinite-loop safety check to detect a stuck loop (identical prompt re-sent,
+  // e.g. a fixed seed). Transient — not persisted.
+  lastPromptSignatureBySession: Record<string, string>;
+  // Set when a load is deferred because MAX_WORKFLOW_SESSIONS is reached; the UI
+  // prompts the user to pick a tab to close, then resolves/cancels.
+  closeForNewWorkflowRequest: PendingWorkflowOpen | null;
   connectionHighlightModes: Record<
     HierarchicalKey,
     "off" | "inputs" | "outputs" | "both"
@@ -827,6 +542,9 @@ interface WorkflowState {
 
   // Actions
   deleteNode: (itemKey: HierarchicalKey, reconnect: boolean) => void;
+  // Duplicate a node (or subgraph placeholder): copies values + incoming
+  // connections, leaves outgoing connections blank. Returns the new node ID.
+  duplicateNode: (itemKey: HierarchicalKey) => number | null;
   connectNodes: (
     srcHierarchicalKey: HierarchicalKey,
     srcSlot: number,
@@ -855,9 +573,15 @@ interface WorkflowState {
   loadWorkflow: (
     workflow: Workflow,
     filename?: string,
-    options?: { fresh?: boolean; source?: WorkflowSource },
+    options?: LoadWorkflowOptions,
   ) => void;
   unloadWorkflow: () => void;
+
+  // Tab management
+  switchToSession: (id: string) => void;
+  closeSession: (id: string) => void;
+  resolveCloseForNewWorkflow: (closeId: string) => void;
+  cancelCloseForNewWorkflow: () => void;
   setSavedWorkflow: (workflow: Workflow, filename: string) => void;
   updateNodeWidget: (
     itemKey: HierarchicalKey,
@@ -881,28 +605,59 @@ interface WorkflowState {
   ) => void;
   updateNodeTitle: (itemKey: HierarchicalKey, title: string | null) => void;
   toggleBypass: (itemKey: HierarchicalKey) => void;
-  scrollToNode: (itemKey: HierarchicalKey, label?: string) => void;
+  scrollToNode: (
+    itemKey: HierarchicalKey,
+    label?: string,
+    // DOM id of a connection button to flash in sync with the node pulse.
+    flashConnectionDomId?: string | null,
+  ) => void;
   setNodeTypes: (types: NodeTypes) => void;
+  // Splice a freshly-added input file into every image-upload combo's option
+  // list, so it resolves as a real combo choice without refetching object_info.
+  addInputComboOption: (value: string) => void;
   setExecutionState: (
     executing: boolean,
     itemKey: HierarchicalKey | null,
     promptId: string | null,
     progress: number,
     executingNodePath?: string | null,
+    sessionId?: string | null,
   ) => void;
-  queueWorkflow: (count: number) => Promise<void>;
+  queueWorkflow: (
+    count: number,
+    sessionId?: string | null,
+    isInfiniteReEnqueue?: boolean,
+  ) => Promise<void>;
   saveCurrentWorkflowState: () => void;
-  setNodeOutput: (itemKey: HierarchicalKey, images: NodeOutputImage[]) => void;
-  setNodeTextOutput: (itemKey: HierarchicalKey, text: string) => void;
+  setNodeOutput: (
+    itemKey: HierarchicalKey,
+    images: NodeOutputImage[],
+    sessionId?: string | null,
+  ) => void;
+  setNodeComparerOutput: (
+    itemKey: HierarchicalKey,
+    output: NodeComparerOutput,
+    sessionId?: string | null,
+  ) => void;
+  setNodeTextOutput: (
+    itemKey: HierarchicalKey,
+    text: string,
+    sessionId?: string | null,
+  ) => void;
   clearNodeOutputs: () => void;
   latentPreviews: Record<string, string>;
   setLatentPreview: (url: string, itemKey: string | null) => void;
   clearAllLatentPreviews: () => void;
-  addPromptOutputs: (promptId: string, images: HistoryOutputImage[]) => void;
-  clearPromptOutputs: (promptId?: string) => void;
+  addPromptOutputs: (
+    promptId: string,
+    images: HistoryOutputImage[],
+    sessionId?: string | null,
+  ) => void;
+  clearPromptOutputs: (promptId?: string, sessionId?: string | null) => void;
   setRunCount: (count: number) => void;
   setInfiniteLoop: (val: boolean) => void;
   setIsStopping: (val: boolean) => void;
+  setSavingSessionId: (id: string | null) => void;
   setFollowQueue: (followQueue: boolean) => void;
   cycleConnectionHighlight: (itemKey: HierarchicalKey) => void;
   setConnectionHighlightMode: (
@@ -937,7 +692,7 @@ interface WorkflowState {
   updateWorkflowDuration: (signature: string, durationMs: number) => void;
   clearWorkflowCache: () => void;
   ensureHierarchicalKeysAndRepair: () => boolean;
-  applyControlAfterGenerate: () => void;
+  applyControlAfterGenerate: (sessionId?: string | null) => void;
 
   // Scope navigation
   enterSubgraph: (placeholderNodeId: number) => void;
@@ -948,374 +703,6 @@ interface WorkflowState {
   navigateToSubgraphTrail: (subgraphIds: string[]) => boolean;
 }
 
-function normalizeWorkflowNodes(nodes: WorkflowNode[]): WorkflowNode[] {
-  return nodes.map((node) => {
-    const normalized = {
-      ...node,
-      inputs: node.inputs ?? [],
-      outputs: node.outputs ?? [],
-      flags: node.flags ?? {},
-      properties: node.properties ?? {},
-      mode: node.mode ?? 0,
-      order: node.order ?? 0,
-    };
-
-    if (
-      normalized.type === "Fast Groups Bypasser (rgthree)" &&
-      Array.isArray(normalized.widgets_values) &&
-      normalized.widgets_values.length === 0
-    ) {
-      const withoutWidgetsValues = { ...normalized } as Partial<WorkflowNode>;
-      delete withoutWidgetsValues.widgets_values;
-      return withoutWidgetsValues as WorkflowNode;
-    }
-
-    return normalized;
-  });
-}
-
-
-function stripNodeClientMetadata(node: WorkflowNode): WorkflowNode {
-  if (!("itemKey" in node)) return node;
-  const { itemKey, ...rest } = node;
-  void itemKey;
-  return rest as WorkflowNode;
-}
-
-function stripGroupClientMetadata(group: WorkflowGroup): WorkflowGroup {
-  if (!("itemKey" in group)) return group;
-  const { itemKey, ...rest } = group;
-  void itemKey;
-  return rest as WorkflowGroup;
-}
-
-export function stripWorkflowClientMetadata(workflow: Workflow): Workflow {
-  const nextNodes = workflow.nodes.map(stripNodeClientMetadata);
-  const nextGroups = (workflow.groups ?? []).map(stripGroupClientMetadata);
-  const hadRootHierarchicalKeys =
-    nextNodes.some((node, index) => node !== workflow.nodes[index]) ||
-    nextGroups.some((group, index) => group !== (workflow.groups ?? [])[index]);
-  const subgraphs = workflow.definitions?.subgraphs;
-  if (!subgraphs) {
-    return hadRootHierarchicalKeys
-      ? { ...workflow, nodes: nextNodes, groups: nextGroups }
-      : workflow;
-  }
-
-  let subgraphChanged = false;
-  const nextSubgraphs = subgraphs.map((subgraph) => {
-    const cleanedNodes = subgraph.nodes.map(stripNodeClientMetadata);
-    const cleanedGroups = (subgraph.groups ?? []).map(stripGroupClientMetadata);
-    let changed =
-      cleanedNodes.some((node, index) => node !== subgraph.nodes[index]) ||
-      cleanedGroups.some((group, index) => group !== (subgraph.groups ?? [])[index]);
-    if (subgraph.itemKey != null) changed = true;
-    if (!changed) return subgraph;
-    subgraphChanged = true;
-    const { itemKey, ...subgraphRest } = subgraph;
-    void itemKey;
-    return { ...subgraphRest, nodes: cleanedNodes, groups: cleanedGroups };
-  });
-
-  if (!hadRootHierarchicalKeys && !subgraphChanged) return workflow;
-
-  return {
-    ...workflow,
-    nodes: nextNodes,
-    groups: nextGroups,
-    definitions: {
-      ...(workflow.definitions ?? {}),
-      subgraphs: nextSubgraphs,
-    },
-  };
-}
-
-
-function getNodePointerFromWorkflowNode(node: WorkflowNode): string {
-  // Under the canonical model, this is only called for root-scope nodes.
-  return makeLocationPointer({ type: "node", nodeId: node.id, subgraphId: null });
-}
-
-function buildScopeStackForSubgraphTrail(
-  workflow: Workflow,
-  subgraphIds: string[],
-): ScopeFrame[] | null {
-  const subgraphById = new Map(
-    (workflow.definitions?.subgraphs ?? []).map((subgraph) => [subgraph.id, subgraph]),
-  );
-  const scopeStack: ScopeFrame[] = [{ type: "root" }];
-  let currentNodes = workflow.nodes;
-
-  for (const subgraphId of subgraphIds) {
-    const placeholderNode = currentNodes.find((node) => node.type === subgraphId);
-    const subgraph = subgraphById.get(subgraphId);
-    if (!placeholderNode || !subgraph) return null;
-    scopeStack.push({
-      type: "subgraph",
-      id: subgraphId,
-      placeholderNodeId: placeholderNode.id,
-    });
-    currentNodes = subgraph.nodes ?? [];
-  }
-
-  return scopeStack;
-}
-
-function withHierarchicalKeysForNodes(
-  nodes: WorkflowNode[],
-  itemKeyByPointer: Record<string, HierarchicalKey>,
-  forcedSubgraphId: string | null = null,
-): WorkflowNode[] {
-  return nodes.map((node) => {
-    const pointer =
-      forcedSubgraphId === null
-        ? getNodePointerFromWorkflowNode(node)
-        : makeLocationPointer({
-            type: "node",
-            nodeId: node.id,
-            subgraphId: forcedSubgraphId,
-          });
-    const itemKey = itemKeyByPointer[pointer];
-    if (!itemKey) return node;
-    if (node.itemKey === itemKey) return node;
-    return { ...node, itemKey };
-  });
-}
-
-function withHierarchicalKeysForGroups(
-  groups: WorkflowGroup[],
-  itemKeyByPointer: Record<string, HierarchicalKey>,
-  subgraphId: string | null,
-): WorkflowGroup[] {
-  return groups.map((group) => {
-    const pointer = makeLocationPointer({
-      type: "group",
-      groupId: group.id,
-      subgraphId,
-    });
-    const itemKey = itemKeyByPointer[pointer];
-    if (!itemKey) return group;
-    if (group.itemKey === itemKey) return group;
-    return { ...group, itemKey };
-  });
-}
-
-function hasMissingHierarchicalKeys(workflow: Workflow): boolean {
-  if (workflow.nodes.some((node) => !node.itemKey)) return true;
-  if ((workflow.groups ?? []).some((group) => !group.itemKey)) return true;
-  for (const subgraph of workflow.definitions?.subgraphs ?? []) {
-    if (!subgraph.itemKey) return true;
-    if ((subgraph.nodes ?? []).some((node) => !node.itemKey)) return true;
-    if ((subgraph.groups ?? []).some((group) => !group.itemKey)) return true;
-  }
-  return false;
-}
-
-function hasLayoutGroupKeyMismatch(workflow: Workflow, layout: MobileLayout): boolean {
-  for (const group of workflow.groups ?? []) {
-    if (group.itemKey && !(group.itemKey in layout.groups)) return true;
-  }
-  for (const subgraph of workflow.definitions?.subgraphs ?? []) {
-    for (const group of subgraph.groups ?? []) {
-      if (group.itemKey && !(group.itemKey in layout.groups)) return true;
-    }
-  }
-  return false;
-}
-
-function ensureWorkflowHasHierarchicalKeys(workflow: Workflow): Workflow {
-  const nextNodes = (workflow.nodes ?? []).map((node) => {
-    const itemKey = makeLocationPointer({
-      type: "node",
-      nodeId: node.id,
-      subgraphId: null,
-    });
-    return node.itemKey === itemKey ? node : { ...node, itemKey };
-  });
-  const nextGroups = (workflow.groups ?? []).map((group) => {
-    const itemKey = makeLocationPointer({
-      type: "group",
-      groupId: group.id,
-      subgraphId: null,
-    });
-    return group.itemKey === itemKey ? group : { ...group, itemKey };
-  });
-  const nextSubgraphs = (workflow.definitions?.subgraphs ?? []).map((subgraph) => {
-    const itemKey = makeLocationPointer({
-      type: "subgraph",
-      subgraphId: subgraph.id,
-    });
-    const nodes = (subgraph.nodes ?? []).map((n) => {
-      const nodeKey = makeLocationPointer({
-        type: "node",
-        nodeId: n.id,
-        subgraphId: subgraph.id,
-      });
-      return n.itemKey === nodeKey ? n : { ...n, itemKey: nodeKey };
-    });
-    const groups = (subgraph.groups ?? []).map((g) => {
-      const groupKey = makeLocationPointer({
-        type: "group",
-        groupId: g.id,
-        subgraphId: subgraph.id,
-      });
-      return g.itemKey === groupKey ? g : { ...g, itemKey: groupKey };
-    });
-    return { ...subgraph, itemKey, nodes, groups };
-  });
-
-  if (
-    nextNodes.every((node, index) => node === workflow.nodes[index]) &&
-    nextGroups.every((group, index) => group === (workflow.groups ?? [])[index]) &&
-    nextSubgraphs.every(
-      (subgraph, index) => subgraph === (workflow.definitions?.subgraphs ?? [])[index],
-    )
-  ) {
-    return workflow;
-  }
-
-  return {
-    ...workflow,
-    nodes: nextNodes,
-    groups: nextGroups,
-    definitions: workflow.definitions
-      ? {
-          ...workflow.definitions,
-          subgraphs: nextSubgraphs,
-        }
-      : workflow.definitions,
-  };
-}
-
-function canonicalizeWorkflowHierarchicalKeys(
-  workflow: Workflow,
-  itemKeyByPointer: Record<string, HierarchicalKey>,
-): Workflow {
-  return annotateWorkflowWithHierarchicalKeys(workflow, itemKeyByPointer);
-}
-
-function annotateWorkflowWithHierarchicalKeys(
-  workflow: Workflow,
-  itemKeyByPointer: Record<string, HierarchicalKey>,
-): Workflow {
-  const workflowWithStableFallbacks = ensureWorkflowHasHierarchicalKeys(workflow);
-  const nextNodes = withHierarchicalKeysForNodes(
-    workflowWithStableFallbacks.nodes,
-    itemKeyByPointer,
-  );
-  const nextGroups = withHierarchicalKeysForGroups(
-    workflowWithStableFallbacks.groups ?? [],
-    itemKeyByPointer,
-    null,
-  );
-  const rootNodesChanged = nextNodes.some(
-    (node, index) => node !== workflowWithStableFallbacks.nodes[index],
-  );
-  const rootGroupsChanged = nextGroups.some(
-    (group, index) => group !== (workflowWithStableFallbacks.groups ?? [])[index],
-  );
-
-  const subgraphs = workflowWithStableFallbacks.definitions?.subgraphs;
-  if (!subgraphs) {
-    return rootNodesChanged || rootGroupsChanged
-      ? { ...workflowWithStableFallbacks, nodes: nextNodes, groups: nextGroups }
-      : workflowWithStableFallbacks;
-  }
-
-  let subgraphsChanged = false;
-  const nextSubgraphs = subgraphs.map((subgraph) => {
-    const nextSubgraphNodes = withHierarchicalKeysForNodes(
-      subgraph.nodes ?? [],
-      itemKeyByPointer,
-      subgraph.id,
-    );
-    const nextSubgraphGroups = withHierarchicalKeysForGroups(
-      subgraph.groups ?? [],
-      itemKeyByPointer,
-      subgraph.id,
-    );
-    const subgraphPointer = makeLocationPointer({
-      type: "subgraph",
-      subgraphId: subgraph.id,
-    });
-    const subgraphHierarchicalKey = itemKeyByPointer[subgraphPointer];
-    const changed =
-      nextSubgraphNodes.some(
-        (node, index) => node !== (subgraph.nodes ?? [])[index],
-      ) ||
-      nextSubgraphGroups.some(
-        (group, index) => group !== (subgraph.groups ?? [])[index],
-      ) ||
-      (subgraphHierarchicalKey != null && subgraph.itemKey !== subgraphHierarchicalKey);
-    if (!changed) return subgraph;
-    subgraphsChanged = true;
-    return {
-      ...subgraph,
-      itemKey: subgraphHierarchicalKey ?? subgraph.itemKey,
-      nodes: nextSubgraphNodes,
-      groups: nextSubgraphGroups,
-    };
-  });
-
-  if (!rootNodesChanged && !rootGroupsChanged && !subgraphsChanged)
-    return workflowWithStableFallbacks;
-
-  return {
-    ...workflowWithStableFallbacks,
-    nodes: nextNodes,
-    groups: nextGroups,
-    definitions: {
-      ...(workflowWithStableFallbacks.definitions ?? {}),
-      subgraphs: nextSubgraphs,
-    },
-  };
-}
-
-function collectDescendantSubgraphs(
-  startIds: Iterable<string>,
-  childMap: Map<string, Set<string>>,
-): Set<string> {
-  const result = new Set<string>();
-  const stack = Array.from(startIds);
-  while (stack.length > 0) {
-    const current = stack.pop();
-    if (!current || result.has(current)) continue;
-    result.add(current);
-    const children = childMap.get(current);
-    if (children) {
-      for (const child of children) {
-        if (!result.has(child)) stack.push(child);
-      }
-    }
-  }
-  return result;
-}
-
-function buildSubgraphParentMap(
-  subgraphs: WorkflowSubgraphDefinition[],
-): Map<string, Array<{ parentId: string; nodeId: number }>> {
-  const subgraphIds = new Set(subgraphs.map((sg) => sg.id));
-  const map = new Map<string, Array<{ parentId: string; nodeId: number }>>();
-  for (const subgraph of subgraphs) {
-    for (const node of subgraph.nodes ?? []) {
-      if (!subgraphIds.has(node.type)) continue;
-      const entry = map.get(node.type) ?? [];
-      entry.push({ parentId: subgraph.id, nodeId: node.id });
-      map.set(node.type, entry);
-    }
-  }
-  return map;
-}
-
-function getGroupIdForNode(
-  targetNodeId: number,
-  nodes: WorkflowNode[],
-  groups: Workflow["groups"],
-): number | null {
-  if (!groups || groups.length === 0) return null;
-  const nodeToGroup = computeNodeGroupsFor(nodes, groups);
-  return nodeToGroup.get(targetNodeId) ?? null;
-}
 
 interface LayoutPathToTarget {
   groupKeys: string[];
@@ -1348,209 +735,7 @@ function findPathToRepositionTarget(
   };
 }
 
-export function collectBypassGroupTargetNodes(
-  workflow: Workflow,
-  groupId: number,
-  subgraphId: string | null = null,
-): ScopedNodeIdentity[] {
-  const groups = workflow.groups ?? [];
-  const subgraphs = workflow.definitions?.subgraphs ?? [];
 
-  const subgraphById = new Map(subgraphs.map((sg) => [sg.id, sg]));
-  const subgraphIds = new Set(subgraphs.map((sg) => sg.id));
-  // Under the canonical model, workflow.nodes contains only root nodes (+ placeholders).
-  // Inner subgraph nodes live in sg.nodes, not in workflow.nodes.
-  const rootNodes: WorkflowNode[] = workflow.nodes ?? [];
-
-  const subgraphChildMap = new Map<string, Set<string>>();
-  for (const subgraph of subgraphs) {
-    const children = new Set<string>();
-    for (const node of subgraph.nodes ?? []) {
-      if (subgraphIds.has(node.type)) {
-        children.add(node.type);
-      }
-    }
-    if (children.size > 0) {
-      subgraphChildMap.set(subgraph.id, children);
-    }
-  }
-
-  const targetNodes: ScopedNodeIdentity[] = [];
-
-  if (subgraphId) {
-    const subgraph = subgraphById.get(subgraphId);
-    if (!subgraph) return [];
-    const subgraphGroups = subgraph.groups ?? [];
-    const group = subgraphGroups.find((g) => g.id === groupId);
-    if (!group) return [];
-
-    const subgraphNodes = subgraph.nodes ?? [];
-    const nodeToGroup = computeNodeGroupsFor(subgraphNodes, subgraphGroups);
-    const nestedSubgraphIds = new Set<string>();
-    const directNodeOriginIds = new Set<number>();
-
-    for (const node of subgraphNodes) {
-      if (nodeToGroup.get(node.id) !== groupId) continue;
-      if (subgraphIds.has(node.type)) {
-        nestedSubgraphIds.add(node.type);
-      } else {
-        directNodeOriginIds.add(node.id);
-      }
-    }
-
-    // Canonical model: directNodeOriginIds contains inner node IDs directly
-    for (const nodeId of directNodeOriginIds) {
-      targetNodes.push({ nodeId, subgraphId });
-    }
-
-    // Include nodes in descendant subgraphs (nested placeholders)
-    const descendantSubgraphs = collectDescendantSubgraphs(
-      nestedSubgraphIds,
-      subgraphChildMap,
-    );
-    for (const nestedId of descendantSubgraphs) {
-      const nestedSubgraph = subgraphById.get(nestedId);
-      for (const node of nestedSubgraph?.nodes ?? []) {
-        targetNodes.push({ nodeId: node.id, subgraphId: nestedId });
-      }
-    }
-  } else {
-    const group = groups.find((g) => g.id === groupId);
-    if (!group) return [];
-
-    const nodeToGroup = computeNodeGroupsFor(rootNodes, groups);
-    for (const node of rootNodes) {
-      if (nodeToGroup.get(node.id) === groupId) {
-        targetNodes.push({ nodeId: node.id, subgraphId: null });
-      }
-    }
-
-    // Under the canonical model, placeholder nodes whose type is a subgraph UUID
-    // identify which subgraphs are directly contained in this group.
-    const directSubgraphIds = new Set<string>();
-    for (const node of rootNodes) {
-      if (nodeToGroup.get(node.id) === groupId && subgraphIds.has(node.type)) {
-        directSubgraphIds.add(node.type);
-      }
-    }
-
-    const descendantSubgraphs = collectDescendantSubgraphs(
-      directSubgraphIds,
-      subgraphChildMap,
-    );
-    // Under the canonical model, inner nodes of descendant subgraphs are in sg.nodes.
-    // Placeholder nodes (already in targetNodeIds) serve as the delete/bypass targets.
-    // Additionally collect all inner nodes of descendant subgraphs so callers can
-    // clean up subgraph definitions and hidden-item state.
-    for (const sgId of descendantSubgraphs) {
-      const sg = subgraphById.get(sgId);
-      for (const node of sg?.nodes ?? []) {
-        targetNodes.push({ nodeId: node.id, subgraphId: sgId });
-      }
-    }
-  }
-
-  return dedupeScopedNodeIdentities(targetNodes);
-}
-
-function collectBypassContainerTargetNodesFromLayout(
-  workflow: Workflow,
-  layout: MobileLayout,
-  itemKey: HierarchicalKey,
-): ScopedNodeIdentity[] {
-  const identity = resolveContainerIdentityFromHierarchicalKey(workflow, itemKey);
-  if (!identity) return [];
-
-  if (identity.type === "group") {
-    const groupHierarchicalKeys = collectGroupHierarchicalKeys(
-      layout,
-      identity.groupId,
-      identity.subgraphId,
-    );
-    const nodeIdentities: ScopedNodeIdentity[] = [];
-    for (const groupHierarchicalKey of groupHierarchicalKeys) {
-      const nestedNodeIds = collectScopedNodeIdentitiesFromLayoutRefs(
-        layout,
-        layout.groups[groupHierarchicalKey] ?? [],
-        identity.subgraphId,
-      );
-      nodeIdentities.push(...nestedNodeIds);
-    }
-    return dedupeScopedNodeIdentities(nodeIdentities);
-  }
-
-  const subgraphRefs = layout.subgraphs[identity.subgraphId] ?? [];
-  return collectScopedNodeIdentitiesFromLayoutRefs(
-    layout,
-    subgraphRefs,
-    identity.subgraphId,
-  );
-}
-
-function getSubgraphChildMap(workflow: Workflow): Map<string, Set<string>> {
-  const subgraphs = workflow.definitions?.subgraphs ?? [];
-  const subgraphIds = new Set(subgraphs.map((sg) => sg.id));
-  const childMap = new Map<string, Set<string>>();
-  for (const subgraph of subgraphs) {
-    const children = new Set<string>();
-    for (const node of subgraph.nodes ?? []) {
-      if (subgraphIds.has(node.type)) children.add(node.type);
-    }
-    if (children.size > 0) childMap.set(subgraph.id, children);
-  }
-  return childMap;
-}
-
-function collectBypassSubgraphTargetNodes(
-  workflow: Workflow,
-  subgraphId: string,
-): ScopedNodeIdentity[] {
-  const subgraphs = workflow.definitions?.subgraphs ?? [];
-  const subgraphIds = new Set(subgraphs.map((sg) => sg.id));
-  const subgraphById = new Map(subgraphs.map((sg) => [sg.id, sg]));
-  const subgraphChildMap = getSubgraphChildMap(workflow);
-  const descendantSubgraphs = collectDescendantSubgraphs(
-    [subgraphId],
-    subgraphChildMap,
-  );
-  const targetNodes: ScopedNodeIdentity[] = [];
-  for (const sgId of descendantSubgraphs) {
-    const sg = subgraphById.get(sgId);
-    for (const node of sg?.nodes ?? []) {
-      // Exclude nested placeholder nodes (they are subgraph containers, not real nodes)
-      if (!subgraphIds.has(node.type)) {
-        targetNodes.push({ nodeId: node.id, subgraphId: sgId });
-      }
-    }
-  }
-  return dedupeScopedNodeIdentities(targetNodes);
-}
-
-function getParentSubgraphIdFromContainer(
-  containerId: ContainerId,
-  layout: MobileLayout,
-): string | null {
-  if (containerId.scope === "subgraph") return containerId.subgraphId;
-  if (containerId.scope === "root") return null;
-  return findGroupSubgraphIdByHierarchicalKey(layout, containerId.groupKey);
-}
-
-function remapPromotedGroups(
-  sourceGroups: WorkflowGroup[],
-  targetGroups: WorkflowGroup[],
-): {
-  idMap: Map<number, number>;
-  promotedGroups: WorkflowGroup[];
-} {
-  const idMap = new Map<number, number>();
-  let nextId = Math.max(0, ...targetGroups.map((g) => g.id)) + 1;
-  const promotedGroups = sourceGroups.map((group) => {
-    const mappedId = nextId++;
-    idMap.set(group.id, mappedId);
-    return { ...group, id: mappedId };
-  });
-  return { idMap, promotedGroups };
-}
 
 function removeNodesFromWorkflow(
   workflow: Workflow,
@@ -1705,7 +890,7 @@ function updateNodeWidgetValues(
     newWidgetValues[widgetIndex] = value;
   }
 
-  if (node.type === "Power Lora Loader (rgthree)") {
+  if (isPowerLoraLoaderNodeType(node.type)) {
     newWidgetValues = newWidgetValues.filter((v) => v !== null);
   }
 
@@ -1780,6 +965,23 @@ function inferSeedMode(
   return "fixed";
 }
 
+// Derive seed modes for every root + inner-subgraph node that has a seed widget.
+function deriveSeedModes(
+  workflow: Workflow,
+  nodeTypes: NodeTypes | null,
+): Record<number, SeedMode> {
+  const seedModes: Record<number, SeedMode> = {};
+  if (!nodeTypes) return seedModes;
+  const allNodesForSeed = collectAllWorkflowNodes(workflow);
+  for (const node of allNodesForSeed) {
+    const seedWidgetIndex = findSeedWidgetIndex(workflow, nodeTypes, node);
+    if (seedWidgetIndex !== null) {
+      seedModes[node.id] = inferSeedMode(workflow, nodeTypes, node);
+    }
+  }
+  return seedModes;
+}
+
 function collectWorkflowLoadErrors(
   workflow: Workflow,
   nodeTypes: NodeTypes,
@@ -1787,6 +989,8 @@ function collectWorkflowLoadErrors(
   const errors: Record<string, NodeError[]> = {};
 
   for (const node of workflow.nodes) {
+    if (node.mode === 4) continue;
+
     const typeDef = nodeTypes[node.type];
     if (!typeDef?.input) continue;
 
@@ -1908,6 +1112,195 @@ function normalizeWorkflowComboValues(
     changed: true
   };
 }
+
+// Fields a session-shaped object must expose for rehydration normalization.
+// Both the active session (flat store fields) and each parked snapshot match.
+type SessionNormalizable = {
+  workflow: Workflow | null;
+  originalWorkflow: Workflow | null;
+  mobileLayout: MobileLayout;
+  itemKeyByPointer: Record<string, string>;
+  pointerByHierarchicalKey: Record<string, string>;
+  hiddenItems: Record<string, boolean>;
+  collapsedItems: Record<string, boolean>;
+  currentWorkflowKey: string | null;
+};
+
+/** Reconcile a rehydrated store draft so the tab strip, the active session, and
+ *  the parked snapshots stay mutually consistent even when the persisted payload
+ *  was partial or corrupt — so we never show a workflow with no matching tab,
+ *  render a tab that can't be switched to (no snapshot), or leak an orphan
+ *  snapshot. Mutates `state` in place. Exported for testing. */
+export function reconcileRehydratedSessions(state: WorkflowState): void {
+  const parked = state.parkedSessions ?? {};
+  // Copy a parked snapshot's per-session fields into the active flat fields. The
+  // snapshot's seed UI is left to useSeedStore's own persistence — close enough
+  // for this rare recovery path.
+  const promoteSnapshot = (snap: WorkflowSessionSnapshot): void => {
+    const target = state as unknown as Record<string, unknown>;
+    for (const field of SESSION_STATE_FIELDS) {
+      target[field] = snap[field as SessionStateField];
+    }
+  };
+  let sessions = (Array.isArray(state.sessions) ? state.sessions : [])
+    .filter((s): s is WorkflowSessionMeta => !!s && typeof s.id === 'string')
+    // Drop ghost tabs: a non-active session with no parked snapshot can be
+    // neither rendered nor switched to.
+    .filter((s) => s.id === state.activeSessionId || !!parked[s.id]);
+
+  // Salvage case: the active id has a parked snapshot but the flat fields are
+  // empty. The active session's content normally lives in the flat fields and
+  // is never duplicated into parkedSessions, so this only arises from a corrupt
+  // payload — promote the snapshot into the flat fields rather than letting the
+  // parked-filter below drop it and leave the active tab blank.
+  if (state.activeSessionId && !state.workflow && parked[state.activeSessionId]) {
+    promoteSnapshot(parked[state.activeSessionId]);
+  }
+
+  // The active flat-field workflow must have a matching tab. If its id went
+  // missing, re-add it; if there's no active id but a workflow is loaded, mint
+  // one (same as the legacy single-workflow migration path). Both only apply
+  // when a workflow is actually loaded in the flat fields — otherwise a dangling
+  // active id should fall through to promote a parked tab, not spawn an empty one.
+  if (
+    state.activeSessionId &&
+    state.workflow &&
+    !sessions.some((s) => s.id === state.activeSessionId)
+  ) {
+    sessions = [{ id: state.activeSessionId }, ...sessions];
+  } else if (!state.activeSessionId && state.workflow) {
+    const id = generateSessionId();
+    state.activeSessionId = id;
+    sessions = [{ id }, ...sessions];
+  }
+
+  // Active id still dangling (no flat-field workflow to anchor it): adopt the
+  // first tab that has a snapshot, or clear to empty. The promoted snapshot's
+  // per-session seed UI is left to useSeedStore's own persistence — close enough
+  // for this rare recovery path.
+  if (
+    !state.activeSessionId ||
+    !sessions.some((s) => s.id === state.activeSessionId)
+  ) {
+    const next = sessions.find((s) => parked[s.id]);
+    if (next) {
+      promoteSnapshot(parked[next.id]);
+      state.activeSessionId = next.id;
+    } else {
+      Object.assign(state, clearedWorkflowContent());
+      state.activeSessionId = null;
+      sessions = [];
+    }
+  }
+
+  // Keep only snapshots for an existing, non-active tab.
+  const validIds = new Set(sessions.map((s) => s.id));
+  const nextParked: Record<string, WorkflowSessionSnapshot> = {};
+  for (const [pid, snap] of Object.entries(parked)) {
+    if (validIds.has(pid) && pid !== state.activeSessionId) {
+      nextParked[pid] = snap;
+    }
+  }
+  state.sessions = sessions;
+  state.parkedSessions = nextParked;
+  // Loop ownership can only point at a tab that still exists.
+  if (
+    state.infiniteLoopSessionId &&
+    !validIds.has(state.infiniteLoopSessionId)
+  ) {
+    state.infiniteLoopSessionId = null;
+  }
+}
+
+// Normalize one session's persisted layout/registry/workflow on rehydrate,
+// mutating `s` in place. Returns the (possibly updated) savedWorkflowStates so
+// callers can thread the global map across multiple sessions. This is the
+// per-session form of the logic that used to live inline in onRehydrateStorage.
+function normalizeSessionInPlace(
+  s: SessionNormalizable,
+  savedWorkflowStates: Record<string, SavedWorkflowState>,
+): Record<string, SavedWorkflowState> {
+  if (!s.workflow) {
+    s.mobileLayout = createEmptyMobileLayout();
+    s.itemKeyByPointer = {};
+    s.pointerByHierarchicalKey = {};
+    return savedWorkflowStates;
+  }
+  const normalizedWorkflow = canonicalizeWorkflowHierarchicalKeys(
+    s.workflow,
+    s.itemKeyByPointer ?? {},
+  );
+  const normalizedLayout = s.mobileLayout
+    ? normalizeMobileLayoutGroupKeys(s.mobileLayout)
+    : null;
+  const hiddenNodesLayout = normalizeManuallyHiddenNodeKeys(
+    normalizedWorkflow,
+    s.hiddenItems ?? {},
+  );
+  s.mobileLayout =
+    normalizedLayout &&
+    layoutMatchesWorkflowNodes(normalizedLayout, normalizedWorkflow)
+      ? normalizedLayout
+      : buildLayoutForWorkflow(normalizedWorkflow, hiddenNodesLayout);
+  const reconciled = reconcilePointerRegistry(
+    s.mobileLayout,
+    s.itemKeyByPointer ?? {},
+    s.pointerByHierarchicalKey ?? {},
+  );
+  s.workflow = annotateWorkflowWithHierarchicalKeys(
+    normalizedWorkflow,
+    reconciled.layoutToStable,
+  );
+  if (s.originalWorkflow) {
+    const normalizedOriginalWorkflow = canonicalizeWorkflowHierarchicalKeys(
+      s.originalWorkflow,
+      s.itemKeyByPointer ?? {},
+    );
+    s.originalWorkflow = annotateWorkflowWithHierarchicalKeys(
+      normalizedOriginalWorkflow,
+      reconciled.layoutToStable,
+    );
+  }
+  s.itemKeyByPointer = reconciled.layoutToStable;
+  s.pointerByHierarchicalKey = reconciled.stableToLayout;
+  s.hiddenItems = normalizePointerBooleanRecord(
+    s.hiddenItems,
+    reconciled.layoutToStable,
+    reconciled.stableToLayout,
+  );
+  s.collapsedItems = normalizePointerCollapsedRecord(
+    s.collapsedItems,
+    reconciled.layoutToStable,
+    reconciled.stableToLayout,
+  );
+  const key = s.currentWorkflowKey;
+  if (key && savedWorkflowStates && savedWorkflowStates[key]) {
+    const savedState = savedWorkflowStates[key];
+    return {
+      ...savedWorkflowStates,
+      [key]: {
+        ...savedState,
+        collapsedItems: normalizePointerCollapsedRecord(
+          savedState.collapsedItems,
+          reconciled.layoutToStable,
+          reconciled.stableToLayout,
+        ),
+        hiddenItems: normalizePointerBooleanRecord(
+          savedState.hiddenItems,
+          reconciled.layoutToStable,
+          reconciled.stableToLayout,
+        ),
+        bookmarkedItems: normalizePointerBookmarkList(
+          savedState.bookmarkedItems,
+          reconciled.layoutToStable,
+          reconciled.stableToLayout,
+        ),
+      },
+    };
+  }
+  return savedWorkflowStates;
+}
+
 export const useWorkflowStore = create<WorkflowState>()(
   persist(
     (set, get) => {
@@ -1959,11 +1352,10 @@ export const useWorkflowStore = create<WorkflowState>()(
           mobileLayout,
           itemKeyByPointer,
           pointerByHierarchicalKey,
-          scopeStack,
         } = get();
         if (!workflow) return;
 
-        const scope = resolveCurrentScope(scopeStack, workflow);
+        const scope = resolveScopeForHierarchicalKey(workflow, itemKey);
         const node = resolveNodeByHierarchicalKey(scope.nodes, itemKey);
         if (!node) return;
         const nodeId = node.id;
@@ -1983,7 +1375,7 @@ export const useWorkflowStore = create<WorkflowState>()(
           return isOutgoing;
         });
 
-        let nextLastLinkId = workflow.last_link_id;
+        let nextLastLinkId = scope.linkIdBase;
         const bridgeInputLinks = new Map<string, number>();
         const bridgeOutputLinks = new Map<string, number[]>();
         const bridgeLinks: (import('@/api/types').WorkflowLink | import('@/api/types').WorkflowSubgraphLink)[] = [];
@@ -2123,9 +1515,10 @@ export const useWorkflowStore = create<WorkflowState>()(
         tgtSlot,
         type,
       ) => {
-        const { workflow, scopeStack } = get();
+        const { workflow } = get();
         if (!workflow) return;
-        const scope = resolveCurrentScope(scopeStack, workflow);
+        // Both endpoints must live in the source key's scope.
+        const scope = resolveScopeForHierarchicalKey(workflow, srcHierarchicalKey);
 
         const srcNode = resolveNodeByHierarchicalKey(scope.nodes, srcHierarchicalKey);
         const tgtNode = resolveNodeByHierarchicalKey(scope.nodes, tgtHierarchicalKey);
@@ -2134,7 +1527,7 @@ export const useWorkflowStore = create<WorkflowState>()(
         const tgtNodeId = tgtNode.id;
 
         let newLinks = [...scope.links];
-        let nextLastLinkId = workflow.last_link_id;
+        let nextLastLinkId = scope.linkIdBase;
 
         // If target input already has a link, remove it first
         const existingLinkId = tgtNode.inputs[tgtSlot]?.link;
@@ -2205,9 +1598,9 @@ export const useWorkflowStore = create<WorkflowState>()(
         itemKey,
         inputIndex,
       ) => {
-        const { workflow, scopeStack } = get();
+        const { workflow } = get();
         if (!workflow) return;
-        const scope = resolveCurrentScope(scopeStack, workflow);
+        const scope = resolveScopeForHierarchicalKey(workflow, itemKey);
         const node = resolveNodeByHierarchicalKey(scope.nodes, itemKey);
         if (!node) return;
         const nodeId = node.id;
@@ -2255,7 +1648,7 @@ export const useWorkflowStore = create<WorkflowState>()(
         const typeDef = nodeTypes[nodeType];
         if (!typeDef) return null;
 
-        const newId = workflow.last_node_id + 1;
+        const newId = maxNodeIdAcrossScopes(workflow) + 1;
 
         // Build inputs from type definition
         const inputs: Array<{ name: string; type: string; link: null }> = [];
@@ -2386,12 +1779,7 @@ export const useWorkflowStore = create<WorkflowState>()(
         }
 
         if (options?.inGroupId != null) {
-          const groups = [
-            ...(workflow.groups ?? []),
-            ...(workflow.definitions?.subgraphs ?? []).flatMap(
-              (sg) => sg.groups ?? [],
-            ),
-          ];
+          const groups = collectAllWorkflowGroups(workflow);
           const group = groups.find((g) => g.id === options.inGroupId);
           if (group) {
             pos = clampPositionToGroup(pos, group, [200, 100]);
@@ -2457,6 +1845,45 @@ export const useWorkflowStore = create<WorkflowState>()(
         });
 
         return newId;
+      };
+
+      const duplicateNode: WorkflowState["duplicateNode"] = (itemKey) => {
+        const { workflow, hiddenItems, itemKeyByPointer, pointerByHierarchicalKey } = get();
+        if (!workflow) return null;
+
+        const result = duplicateWorkflowNode(workflow, itemKey);
+        if (!result) return null;
+
+        // Rebuild the layout from the new workflow so a duplicated subgraph
+        // placeholder is laid out as a subgraph item (not a plain node), then
+        // move the copy to sit directly below the original in the list.
+        const rebuiltLayout = buildLayoutForWorkflow(
+          result.workflow,
+          layoutRecordFromPointerRecord(hiddenItems, pointerByHierarchicalKey),
+        );
+        const nextLayout = placeLayoutItemAfter(
+          rebuiltLayout,
+          result.newNodeId,
+          result.originalNodeId,
+        );
+        const reconciled = reconcilePointerRegistry(
+          nextLayout,
+          itemKeyByPointer,
+          pointerByHierarchicalKey,
+        );
+        const nextWorkflowWithHierarchicalKeys = annotateWorkflowWithHierarchicalKeys(
+          result.workflow,
+          reconciled.layoutToStable,
+        );
+
+        set({
+          workflow: nextWorkflowWithHierarchicalKeys,
+          mobileLayout: nextLayout,
+          itemKeyByPointer: reconciled.layoutToStable,
+          pointerByHierarchicalKey: reconciled.stableToLayout,
+        });
+
+        return result.newNodeId;
       };
 
       const addGroupNearNode: WorkflowState["addGroupNearNode"] = (
@@ -2668,7 +2095,14 @@ export const useWorkflowStore = create<WorkflowState>()(
         if (!targetIdentity) return null;
         const targetNodeId = targetIdentity.nodeId;
 
-        const targetNode = workflow.nodes.find((n) => n.id === targetNodeId);
+        // Resolve the target in its own scope — the key may point inside a subgraph.
+        const targetScopeNodes =
+          targetIdentity.subgraphId == null
+            ? workflow.nodes
+            : (workflow.definitions?.subgraphs?.find(
+                (sg) => sg.id === targetIdentity.subgraphId,
+              )?.nodes ?? []);
+        const targetNode = targetScopeNodes.find((n) => n.id === targetNodeId);
         if (!targetNode) return null;
 
         const targetInput = targetNode.inputs[targetInputIndex];
@@ -2686,6 +2120,7 @@ export const useWorkflowStore = create<WorkflowState>()(
 
         const newId = get().addNode(nodeType, {
           nearNodeHierarchicalKey: targetHierarchicalKey,
+          inSubgraphId: targetIdentity.subgraphId ?? undefined,
         });
         if (newId === null) return null;
         const newPointer = makeLocationPointer({
@@ -2706,54 +2141,125 @@ export const useWorkflowStore = create<WorkflowState>()(
         return newId;
       };
 
+      // Resolve which session a write targets. Returns null for the active
+      // session (write flat fields), or the parked snapshot to mutate.
+      const resolveWriteTarget = (
+        state: WorkflowState,
+        sessionId?: string | null,
+      ): WorkflowSessionSnapshot | null => {
+        if (
+          !sessionId ||
+          sessionId === state.activeSessionId ||
+          !state.parkedSessions[sessionId]
+        ) {
+          return null;
+        }
+        return state.parkedSessions[sessionId];
+      };
+
+      // Merge a patch into a parked session snapshot, returning the state slice.
+      const patchParkedSession = (
+        state: WorkflowState,
+        sid: string,
+        patch: Partial<WorkflowSessionSnapshot>,
+      ): Partial<WorkflowState> => ({
+        parkedSessions: {
+          ...state.parkedSessions,
+          [sid]: { ...state.parkedSessions[sid], ...patch },
+        },
+      });
+
+      // Resolve the write target (parked snapshot vs flat active state) along
+      // with the workflow + pointer maps to use for node identity resolution.
+      const resolveWriteContext = (
+        state: WorkflowState,
+        sessionId?: string | null,
+      ): {
+        parked: WorkflowSessionSnapshot | null;
+        workflow: Workflow | null;
+        pointers: Record<string, string>;
+      } => {
+        const parked = resolveWriteTarget(state, sessionId);
+        return {
+          parked,
+          workflow: parked ? parked.workflow : state.workflow,
+          pointers: parked
+            ? parked.pointerByHierarchicalKey
+            : state.pointerByHierarchicalKey,
+        };
+      };
+
+      // Resolve a node identity from a hierarchical item key and write a single
+      // node-keyed record field, routing to the parked snapshot or flat state.
+      // Returns an empty slice when the identity can't be resolved.
+      const writeNodeKeyedField = <
+        F extends "nodeOutputs" | "nodeComparerOutputs" | "nodeTextOutputs",
+      >(
+        state: WorkflowState,
+        sessionId: string | null | undefined,
+        itemKey: string,
+        field: F,
+        value: WorkflowState[F][string],
+      ): Partial<WorkflowState> => {
+        const { parked, workflow, pointers } = resolveWriteContext(
+          state,
+          sessionId,
+        );
+        const identity = workflow
+          ? resolveNodeIdentityFromHierarchicalKey(workflow, itemKey, pointers)
+          : null;
+        if (!identity) return {};
+        const nodeId = String(identity.nodeId);
+        if (parked) {
+          return patchParkedSession(state, sessionId as string, {
+            [field]: { ...parked[field], [nodeId]: value },
+          } as Partial<WorkflowSessionSnapshot>);
+        }
+        return {
+          [field]: { ...state[field], [nodeId]: value },
+        } as Partial<WorkflowState>;
+      };
+
       const setNodeOutput: WorkflowState["setNodeOutput"] = (
         itemKey,
         images,
+        sessionId,
       ) => {
-        set((state) => ({
-          ...(() => {
-            const identity = state.workflow
-              ? resolveNodeIdentityFromHierarchicalKey(
-                  state.workflow,
-                  itemKey,
-                  state.pointerByHierarchicalKey,
-                )
-              : null;
-            if (!identity) return {};
-            const nodeId = String(identity.nodeId);
-            return {
-              nodeOutputs: {
-                ...state.nodeOutputs,
-                [nodeId]: images,
-              },
-            };
-          })(),
-        }));
+        set((state) =>
+          writeNodeKeyedField(state, sessionId, itemKey, "nodeOutputs", images),
+        );
+      };
+
+      const setNodeComparerOutput: WorkflowState["setNodeComparerOutput"] = (
+        itemKey,
+        output,
+        sessionId,
+      ) => {
+        set((state) =>
+          writeNodeKeyedField(
+            state,
+            sessionId,
+            itemKey,
+            "nodeComparerOutputs",
+            output,
+          ),
+        );
       };
 
       const setNodeTextOutput: WorkflowState["setNodeTextOutput"] = (
         itemKey,
         text,
+        sessionId,
       ) => {
-        set((state) => ({
-          ...(() => {
-            const identity = state.workflow
-              ? resolveNodeIdentityFromHierarchicalKey(
-                  state.workflow,
-                  itemKey,
-                  state.pointerByHierarchicalKey,
-                )
-              : null;
-            if (!identity) return {};
-            const nodeId = String(identity.nodeId);
-            return {
-              nodeTextOutputs: {
-                ...state.nodeTextOutputs,
-                [nodeId]: text,
-              },
-            };
-          })(),
-        }));
+        set((state) =>
+          writeNodeKeyedField(
+            state,
+            sessionId,
+            itemKey,
+            "nodeTextOutputs",
+            text,
+          ),
+        );
       };
 
       const cycleConnectionHighlight: WorkflowState["cycleConnectionHighlight"] =
@@ -2771,23 +2277,31 @@ export const useWorkflowStore = create<WorkflowState>()(
                   : current === "outputs"
                     ? "both"
                     : "off";
+            if (next === "off") {
+              const nextModes = { ...state.connectionHighlightModes };
+              delete nextModes[canonicalHierarchicalKey];
+              return { connectionHighlightModes: nextModes };
+            }
             return {
-              connectionHighlightModes: {
-                ...state.connectionHighlightModes,
-                [canonicalHierarchicalKey]: next,
-              },
+              connectionHighlightModes: { [canonicalHierarchicalKey]: next },
             };
           });
         };
 
       const setConnectionHighlightMode: WorkflowState["setConnectionHighlightMode"] =
         (itemKey, mode) => {
-          set((state) => ({
-            connectionHighlightModes: {
-              ...state.connectionHighlightModes,
-              [state.itemKeyByPointer[itemKey] ?? itemKey]: mode,
-            },
-          }));
+          set((state) => {
+            const canonicalHierarchicalKey =
+              state.itemKeyByPointer[itemKey] ?? itemKey;
+            if (mode === "off") {
+              const nextModes = { ...state.connectionHighlightModes };
+              delete nextModes[canonicalHierarchicalKey];
+              return { connectionHighlightModes: nextModes };
+            }
+            return {
+              connectionHighlightModes: { [canonicalHierarchicalKey]: mode },
+            };
+          });
         };
 
       const setItemHidden: WorkflowState["setItemHidden"] = (
@@ -3017,9 +2531,9 @@ export const useWorkflowStore = create<WorkflowState>()(
         value,
         widgetName,
       ) => {
-        const { workflow, scopeStack } = get();
+        const { workflow } = get();
         if (!workflow) return;
-        const scope = resolveCurrentScope(scopeStack, workflow);
+        const scope = resolveScopeForHierarchicalKey(workflow, itemKey);
         const node = resolveNodeByHierarchicalKey(scope.nodes, itemKey);
         if (!node) return;
         const nextNodes = scope.nodes.map((n) =>
@@ -3036,9 +2550,9 @@ export const useWorkflowStore = create<WorkflowState>()(
         itemKey,
         updates,
       ) => {
-        const { workflow, scopeStack } = get();
+        const { workflow } = get();
         if (!workflow) return;
-        const scope = resolveCurrentScope(scopeStack, workflow);
+        const scope = resolveScopeForHierarchicalKey(workflow, itemKey);
         const node = resolveNodeByHierarchicalKey(scope.nodes, itemKey);
         if (!node) return;
         const nextNodes = scope.nodes.map((n) =>
@@ -3093,9 +2607,9 @@ export const useWorkflowStore = create<WorkflowState>()(
         itemKey,
         properties,
       ) => {
-        const { workflow, scopeStack } = get();
+        const { workflow } = get();
         if (!workflow) return;
-        const scope = resolveCurrentScope(scopeStack, workflow);
+        const scope = resolveScopeForHierarchicalKey(workflow, itemKey);
         const node = resolveNodeByHierarchicalKey(scope.nodes, itemKey);
         if (!node) return;
         const nextNodes = scope.nodes.map((n) => {
@@ -3116,9 +2630,9 @@ export const useWorkflowStore = create<WorkflowState>()(
         itemKey,
         title,
       ) => {
-        const { workflow, scopeStack } = get();
+        const { workflow } = get();
         if (!workflow) return;
-        const scope = resolveCurrentScope(scopeStack, workflow);
+        const scope = resolveScopeForHierarchicalKey(workflow, itemKey);
         const node = resolveNodeByHierarchicalKey(scope.nodes, itemKey);
         if (!node) return;
         const normalized = title?.trim() ?? "";
@@ -3132,12 +2646,14 @@ export const useWorkflowStore = create<WorkflowState>()(
             ...n,
             properties: nextProps,
           } as WorkflowNode & { title?: string };
+          // node.title is the canonical label. Older builds also mirrored it into
+          // properties.title, which nothing reads and which leaked into the bottom
+          // "Note" display — scrub that key and keep the label only on node.title.
+          delete nextProps.title;
           if (normalized) {
             nextNode.title = normalized;
-            nextProps.title = normalized;
           } else {
             delete nextNode.title;
-            delete nextProps.title;
           }
           return nextNode as WorkflowNode;
         });
@@ -3146,24 +2662,47 @@ export const useWorkflowStore = create<WorkflowState>()(
       };
 
       const toggleBypass: WorkflowState["toggleBypass"] = (itemKey) => {
-        const { workflow, scopeStack } = get();
+        const { workflow } = get();
         if (!workflow) return;
-        const scope = resolveCurrentScope(scopeStack, workflow);
+        const scope = resolveScopeForHierarchicalKey(workflow, itemKey);
         const node = resolveNodeByHierarchicalKey(scope.nodes, itemKey);
         if (!node) return;
+        const currentMode = node.mode || 0;
+        const newMode = currentMode === 4 ? 0 : 4;
         const nextNodes = scope.nodes.map((n) => {
           if (n.id !== node.id) return n;
-          const currentMode = n.mode || 0;
-          const newMode = currentMode === 4 ? 0 : 4;
           return { ...n, mode: newMode };
         });
         const nextWorkflow = scope.applyPatch(workflow, { nodes: nextNodes });
         set({ workflow: nextWorkflow });
+
+        // A bypassed node is excluded from the queued prompt, so it can never be
+        // the cause of a real error — clear any stale validation error it carries
+        // (e.g. a load-time "missing image option") so it doesn't keep flagging.
+        // Validation re-runs on load / queue, so un-bypassing resurfaces it if the
+        // value is still invalid.
+        if (newMode === 4) {
+          const errorsStore = useWorkflowErrorsStore.getState();
+          if (errorsStore.nodeErrors[String(node.id)]?.length) {
+            errorsStore.clearNodeError(node.id);
+            const remaining = Object.values(
+              useWorkflowErrorsStore.getState().nodeErrors,
+            ).flat();
+            if (remaining.length === 0) {
+              errorsStore.setError(null);
+            } else if (remaining.every((e) => e.type === "workflow_load")) {
+              errorsStore.setError(
+                `Workflow load error: ${remaining.length} input${remaining.length === 1 ? "" : "s"} reference missing options.`,
+              );
+            }
+          }
+        }
       };
 
       const scrollToNode: WorkflowState["scrollToNode"] = (
         itemKey,
         label,
+        flashConnectionDomId,
       ) => {
         const { hiddenItems, workflow, pointerByHierarchicalKey } = get();
         if (!workflow) return;
@@ -3182,10 +2721,15 @@ export const useWorkflowStore = create<WorkflowState>()(
           return;
         }
         get().setItemCollapsed(itemKey, false);
+        // If the user starts manually scrolling/dragging after this reveal kicks
+        // off, abort: don't keep retrying to find the node or re-correcting the
+        // alignment, which would fight them and yank the viewport back.
+        const startedAt = Date.now();
         const attemptScroll = (
           attemptsLeft: number,
           delayedAttemptsLeft: number,
         ) => {
+          if (userScrolledSince(startedAt)) return;
           const anchor =
             document.getElementById(`node-anchor-${nodeId}`) ??
             document.getElementById(`node-${nodeId}`);
@@ -3207,18 +2751,26 @@ export const useWorkflowStore = create<WorkflowState>()(
           const container = anchor.closest<HTMLElement>(
             '[data-node-list="true"]',
           );
-          if (container) {
-            const anchorRect = anchor.getBoundingClientRect();
-            const containerRect = container.getBoundingClientRect();
-            const offset = anchorRect.top - containerRect.top;
-            const targetTop = Math.max(0, container.scrollTop + offset);
-            container.scrollTo({ top: targetTop, behavior: "smooth" });
-          } else {
-            anchor.scrollIntoView({ behavior: "smooth", block: "start" });
-          }
-
           const scrollContainer = container || window;
           let scrollEndTimeout: ReturnType<typeof setTimeout> | null = null;
+          // Offset of the anchor from the container's top (0 = aligned at top).
+          const measureOffset = () =>
+            container
+              ? anchor.getBoundingClientRect().top -
+                container.getBoundingClientRect().top
+              : anchor.getBoundingClientRect().top;
+
+          const alignNow = () => {
+            if (container) {
+              const targetTop = Math.max(
+                0,
+                container.scrollTop + measureOffset(),
+              );
+              container.scrollTo({ top: targetTop, behavior: "smooth" });
+            } else {
+              anchor.scrollIntoView({ behavior: "smooth", block: "start" });
+            }
+          };
 
           const highlight = () => {
             document
@@ -3226,6 +2778,21 @@ export const useWorkflowStore = create<WorkflowState>()(
               .forEach((el) => el.classList.remove("highlight-pulse"));
             nodeEl.classList.add("highlight-pulse");
             setTimeout(() => nodeEl.classList.remove("highlight-pulse"), 1200);
+            // Flash the reciprocal connection button in the SAME instant and for
+            // the same duration as the node pulse, so the two read as one event.
+            document
+              .querySelectorAll(".connection-highlight-pulse")
+              .forEach((el) => el.classList.remove("connection-highlight-pulse"));
+            const connectionEl = flashConnectionDomId
+              ? document.getElementById(flashConnectionDomId)
+              : null;
+            if (connectionEl) {
+              connectionEl.classList.add("connection-highlight-pulse");
+              setTimeout(
+                () => connectionEl.classList.remove("connection-highlight-pulse"),
+                1200,
+              );
+            }
             if ("vibrate" in navigator) navigator.vibrate(10);
 
             if (label) {
@@ -3237,13 +2804,14 @@ export const useWorkflowStore = create<WorkflowState>()(
             }
           };
 
-          const handleScroll = () => {
-            if (scrollEndTimeout) clearTimeout(scrollEndTimeout);
-            scrollEndTimeout = setTimeout(() => {
-              cleanup();
-              highlight();
-            }, 120);
-          };
+          // The destination's connections section is unfolded and its card is
+          // un-collapsed (and parents revealed) right before this scroll — those
+          // animate open AFTER the initial scroll target is computed, growing the
+          // content and leaving the smooth scroll short of (or past) the node.
+          // So once scrolling settles, re-measure and correct, bounded, until the
+          // anchor actually sits at the top (or we run out of attempts).
+          let corrections = 0;
+          const MAX_CORRECTIONS = 5;
 
           const cleanup = () => {
             if (scrollEndTimeout) {
@@ -3256,15 +2824,41 @@ export const useWorkflowStore = create<WorkflowState>()(
             );
           };
 
-          scrollContainer.addEventListener(
-            "scroll",
-            handleScroll as EventListener,
-            { passive: true },
-          );
-          scrollEndTimeout = setTimeout(() => {
+          const finalize = () => {
             cleanup();
+            // User took over the scroll — stop correcting (and skip the arrival
+            // highlight); they're deliberately looking somewhere else.
+            if (userScrolledSince(startedAt)) return;
+            if (
+              container &&
+              Math.abs(measureOffset()) > 2 &&
+              corrections < MAX_CORRECTIONS
+            ) {
+              corrections += 1;
+              alignNow();
+              watchForSettle();
+              return;
+            }
             highlight();
-          }, 200);
+          };
+
+          function handleScroll() {
+            if (scrollEndTimeout) clearTimeout(scrollEndTimeout);
+            scrollEndTimeout = setTimeout(finalize, 120);
+          }
+
+          function watchForSettle() {
+            scrollContainer.addEventListener(
+              "scroll",
+              handleScroll as EventListener,
+              { passive: true },
+            );
+            // Fallback in case the corrective growth doesn't emit scroll events.
+            scrollEndTimeout = setTimeout(finalize, 200);
+          }
+
+          alignNow();
+          watchForSettle();
         };
 
         attemptScroll(10, 2);
@@ -3276,8 +2870,51 @@ export const useWorkflowStore = create<WorkflowState>()(
         executingPromptId,
         progress,
         executingNodePath,
+        sessionId,
       ) => {
         set((state) => {
+          // Route execution updates for a parked (background-executing) session
+          // into its snapshot. Only the scalar execution fields are tracked
+          // there; per-node duration stats are intentionally skipped for
+          // non-visible sessions.
+          const parked = resolveWriteTarget(state, sessionId);
+          if (parked) {
+            const identity =
+              isExecuting && executingNodeHierarchicalKey && parked.workflow
+                ? resolveNodeIdentityFromHierarchicalKey(
+                    parked.workflow,
+                    executingNodeHierarchicalKey,
+                    parked.pointerByHierarchicalKey,
+                  )
+                : null;
+            const nextPromptId = isExecuting
+              ? (executingPromptId ?? parked.executingPromptId)
+              : null;
+            return {
+              parkedSessions: {
+                ...state.parkedSessions,
+                [sessionId as string]: {
+                  ...parked,
+                  isExecuting,
+                  progress,
+                  executingPromptId: nextPromptId,
+                  executingNodeId: isExecuting
+                    ? (identity ? String(identity.nodeId) : parked.executingNodeId)
+                    : null,
+                  executingNodeHierarchicalKey: isExecuting
+                    ? (executingNodeHierarchicalKey ??
+                       parked.executingNodeHierarchicalKey)
+                    : null,
+                  executingNodePath: isExecuting
+                    ? (executingNodePath !== undefined
+                        ? executingNodePath
+                        : parked.executingNodePath)
+                    : null,
+                },
+              },
+            };
+          }
+
           const now = Date.now();
           const resolvedExecutingNodeId =
             isExecuting && executingNodeHierarchicalKey && state.workflow
@@ -3470,11 +3107,315 @@ export const useWorkflowStore = create<WorkflowState>()(
         });
       };
 
+      // Capture the active session's flat fields (+ seed-store maps) into a
+      // serializable snapshot.
+      const captureActiveSnapshot = (): WorkflowSessionSnapshot => {
+        const state = get();
+        const snapshot = {} as WorkflowSessionSnapshot;
+        for (const field of SESSION_STATE_FIELDS) {
+          (snapshot as Record<string, unknown>)[field] = state[field];
+        }
+        const seed = useSeedStore.getState();
+        snapshot.seedModes = { ...seed.seedModes };
+        snapshot.seedLastValues = { ...seed.seedLastValues };
+        return snapshot;
+      };
+
+      // Fold the active session's flat fields into parkedSessions[activeId].
+      const parkActiveSession = () => {
+        const { activeSessionId, parkedSessions } = get();
+        if (!activeSessionId) return;
+        set({
+          parkedSessions: {
+            ...parkedSessions,
+            [activeSessionId]: captureActiveSnapshot(),
+          },
+        });
+      };
+
+      // Build the flat-field slice to hydrate from a snapshot, and push the
+      // snapshot's seed maps into the (active-mirroring) seed store.
+      const flatFieldsFromSnapshot = (
+        snapshot: WorkflowSessionSnapshot,
+      ): Partial<WorkflowState> => {
+        useSeedStore.getState().setSeedModes({ ...(snapshot.seedModes ?? {}) });
+        useSeedStore
+          .getState()
+          .setSeedLastValues({ ...(snapshot.seedLastValues ?? {}) });
+        const slice: Record<string, unknown> = {};
+        for (const field of SESSION_STATE_FIELDS) {
+          slice[field] = snapshot[field];
+        }
+        return slice as Partial<WorkflowState>;
+      };
+
+      const switchToSession: WorkflowState["switchToSession"] = (id) => {
+        const state = get();
+        if (id === state.activeSessionId) return;
+        const target = state.parkedSessions[id];
+        if (!target) return;
+        // Persist outgoing session's per-cache-key UI state, then park it.
+        if (state.currentFilename) get().saveCurrentWorkflowState();
+        const outgoingSnapshot = captureActiveSnapshot();
+        const nextParked = { ...state.parkedSessions };
+        if (state.activeSessionId) {
+          nextParked[state.activeSessionId] = outgoingSnapshot;
+        }
+        delete nextParked[id];
+        useWorkflowErrorsStore.getState().clearNodeErrors();
+        set({
+          ...flatFieldsFromSnapshot(target),
+          parkedSessions: nextParked,
+          activeSessionId: id,
+          isLoading: state.isLoadingBySession[id] ?? false,
+          infiniteLoop: state.infiniteLoopSessionId === id,
+          // infiniteLoopAwaitingRun is NOT touched here: it guards the loop
+          // owner (possibly a parked tab) against auto-starting a run the user
+          // never began, so it must survive tab switches. It clears when the
+          // owner's run actually starts, or when the loop is disarmed.
+        });
+        usePinnedWidgetStore
+          .getState()
+          .restorePinnedWidgetForWorkflow(
+            target.currentWorkflowKey ?? "",
+            target.workflow ?? ({ nodes: [] } as unknown as Workflow),
+          );
+        // If the tab we just entered had a background run error, surface it now
+        // (as the global banner) and clear its tab marker.
+        const errStore = useWorkflowErrorsStore.getState();
+        const incomingError = errStore.sessionErrors[id];
+        if (incomingError) {
+          errStore.setError(incomingError);
+          errStore.clearSessionError(id);
+        }
+      };
+
+      const closeSession: WorkflowState["closeSession"] = (id) => {
+        const state = get();
+        if (!state.sessions.some((s) => s.id === id)) return;
+        // Revoke the closing session's latent-preview object URLs. They live in
+        // the active flat field or the parked snapshot and are otherwise dropped
+        // (snapshot discarded / flat field overwritten) without revoking.
+        const closingPreviews =
+          id === state.activeSessionId
+            ? state.latentPreviews
+            : state.parkedSessions[id]?.latentPreviews;
+        if (closingPreviews) {
+          for (const url of Object.values(closingPreviews)) {
+            URL.revokeObjectURL(url);
+          }
+        }
+        const remaining = state.sessions.filter((s) => s.id !== id);
+        const nextParked = { ...state.parkedSessions };
+        delete nextParked[id];
+        // Keep a tombstone mapping for the closed session's still-live prompts
+        // (running or pending on the backend). Their terminal websocket events
+        // still arrive after close; retaining the mapping lets getSessionContext
+        // flag them as orphaned and DROP their output/seed/error routing instead
+        // of mis-applying it to whatever tab is active. The entries age out via
+        // the promptToSession cap once the prompts leave the queue. Completed
+        // prompts of the closed session emit nothing more, so they're dropped.
+        const queueState = useQueueStore.getState();
+        const livePromptIds = new Set<string>([
+          ...queueState.running.map((item) => item.prompt_id),
+          ...queueState.pending.map((item) => item.prompt_id),
+        ]);
+        const nextPromptToSession: Record<string, string> = {};
+        const closedSessionPromptIds: string[] = [];
+        for (const [promptId, sid] of Object.entries(state.promptToSession)) {
+          if (sid !== id) {
+            nextPromptToSession[promptId] = sid;
+          } else {
+            closedSessionPromptIds.push(promptId);
+            if (livePromptIds.has(promptId)) nextPromptToSession[promptId] = sid;
+          }
+        }
+        // Drop any still-live queue-store outputs owned by the closed session
+        // (completed prompts are pruned as they finish, but an in-flight one may
+        // still have a live entry) so livePromptOutputs doesn't leak on close.
+        const clearLive = queueState.clearLivePromptOutputs;
+        for (const promptId of closedSessionPromptIds) clearLive(promptId);
+        // Drop any background-error marker for the closed tab.
+        useWorkflowErrorsStore.getState().clearSessionError(id);
+        const nextIsLoadingBySession = { ...state.isLoadingBySession };
+        delete nextIsLoadingBySession[id];
+        const nextLastPromptSignatureBySession = {
+          ...state.lastPromptSignatureBySession,
+        };
+        delete nextLastPromptSignatureBySession[id];
+        const nextInfiniteLoopSessionId =
+          state.infiniteLoopSessionId === id ? null : state.infiniteLoopSessionId;
+
+        // Closing a parked (non-active) session leaves the active one untouched.
+        if (id !== state.activeSessionId) {
+          set({
+            sessions: remaining,
+            parkedSessions: nextParked,
+            promptToSession: nextPromptToSession,
+            isLoadingBySession: nextIsLoadingBySession,
+            lastPromptSignatureBySession: nextLastPromptSignatureBySession,
+            infiniteLoopSessionId: nextInfiniteLoopSessionId,
+          });
+          return;
+        }
+
+        // Closing the active session: discard it and activate a neighbour.
+        useWorkflowErrorsStore.getState().clearNodeErrors();
+        if (remaining.length === 0) {
+          set({
+            ...clearedWorkflowContent(),
+            sessions: [],
+            activeSessionId: null,
+            parkedSessions: {},
+            promptToSession: {},
+            isLoadingBySession: {},
+            lastPromptSignatureBySession: {},
+            infiniteLoopSessionId: null,
+            closeForNewWorkflowRequest: null,
+            isLoading: false,
+            isExecuting: false,
+            executingNodeId: null,
+            executingNodeHierarchicalKey: null,
+            executingNodePath: null,
+            executingPromptId: null,
+            progress: 0,
+            expandedNodeIdMap: {},
+            expandedNodePathMap: {},
+            executionStartTime: null,
+            currentNodeStartTime: null,
+          });
+          useSeedStore.getState().clearSeedState();
+          usePinnedWidgetStore.getState().clearCurrentPin();
+          return;
+        }
+        const closingIndex = state.sessions.findIndex((s) => s.id === id);
+        const nextActiveMeta =
+          remaining[Math.min(closingIndex, remaining.length - 1)];
+        const target = nextParked[nextActiveMeta.id];
+        delete nextParked[nextActiveMeta.id];
+        set({
+          ...(target ? flatFieldsFromSnapshot(target) : {}),
+          sessions: remaining,
+          activeSessionId: nextActiveMeta.id,
+          parkedSessions: nextParked,
+          promptToSession: nextPromptToSession,
+          isLoadingBySession: nextIsLoadingBySession,
+          lastPromptSignatureBySession: nextLastPromptSignatureBySession,
+          infiniteLoopSessionId: nextInfiniteLoopSessionId,
+          isLoading: nextIsLoadingBySession[nextActiveMeta.id] ?? false,
+          infiniteLoop: nextInfiniteLoopSessionId === nextActiveMeta.id,
+        });
+        if (target) {
+          usePinnedWidgetStore
+            .getState()
+            .restorePinnedWidgetForWorkflow(
+              target.currentWorkflowKey ?? "",
+              target.workflow ?? ({ nodes: [] } as unknown as Workflow),
+            );
+        }
+      };
+
+      const resolveCloseForNewWorkflow: WorkflowState["resolveCloseForNewWorkflow"] =
+        (closeId) => {
+          const pending = get().closeForNewWorkflowRequest;
+          set({ closeForNewWorkflowRequest: null });
+          get().closeSession(closeId);
+          if (pending) {
+            get().loadWorkflow(pending.workflow, pending.filename, pending.options);
+          }
+        };
+
+      const cancelCloseForNewWorkflow: WorkflowState["cancelCloseForNewWorkflow"] =
+        () => {
+          set({ closeForNewWorkflowRequest: null });
+        };
+
       const loadWorkflow: WorkflowState["loadWorkflow"] = (
         workflow,
         filename,
         options,
       ) => {
+        const aliasNodeTypes = get().nodeTypes;
+        if (
+          !options?.filePrefixAliasesResolved
+          && aliasNodeTypes
+          && hasRecognizedFilePrefixAliasShape(workflow, aliasNodeTypes)
+        ) {
+          void restoreWorkflowFilePrefixes(workflow, aliasNodeTypes)
+            .then((resolvedWorkflow) => {
+              get().loadWorkflow(resolvedWorkflow, filename, {
+                ...options,
+                filePrefixAliasesResolved: true,
+              });
+            })
+            .catch((error) => {
+              console.error("Failed to resolve filename prefix aliases:", error);
+              useWorkflowErrorsStore.getState().setError(
+                "Unable to resolve local filename prefix aliases. Loading their opaque values instead.",
+              );
+              get().loadWorkflow(workflow, filename, {
+                ...options,
+                filePrefixAliasesResolved: true,
+              });
+            });
+          return;
+        }
+
+        // Session bookkeeping: decide whether this load opens a new tab or
+        // replaces the active one in place (reload/revert callers pass
+        // replaceActive).
+        {
+          const st = get();
+          const replaceActive = options?.replaceActive ?? false;
+          // Only open a new tab when there's a real current workflow to park.
+          // An active session with no workflow (e.g. a freshly reset store)
+          // is reused in place rather than spawning an empty tab.
+          if (!replaceActive && st.activeSessionId != null && st.workflow != null) {
+            if (st.sessions.length >= MAX_WORKFLOW_SESSIONS) {
+              set({
+                closeForNewWorkflowRequest: { workflow, filename, options },
+              });
+              return;
+            }
+            // Persist + park the outgoing active session, then start a fresh
+            // session so the body below builds a clean layout/registry.
+            if (st.currentFilename) get().saveCurrentWorkflowState();
+            parkActiveSession();
+            const newId = generateSessionId();
+            set({
+              sessions: [...st.sessions, { id: newId }],
+              activeSessionId: newId,
+              itemKeyByPointer: {},
+              pointerByHierarchicalKey: {},
+              collapsedItems: {},
+              hiddenItems: {},
+              connectionHighlightModes: {},
+              nodeOutputs: {},
+              nodeComparerOutputs: {},
+              nodeTextOutputs: {},
+              latentPreviews: {},
+              promptOutputs: {},
+              currentFilename: null,
+              currentWorkflowKey: null,
+              isExecuting: false,
+              executingNodeId: null,
+              executingNodeHierarchicalKey: null,
+              executingNodePath: null,
+              executingPromptId: null,
+              progress: 0,
+              expandedNodeIdMap: {},
+              expandedNodePathMap: {},
+              executionStartTime: null,
+              currentNodeStartTime: null,
+            });
+          } else if (st.activeSessionId == null) {
+            const newId = generateSessionId();
+            set({ sessions: [{ id: newId }], activeSessionId: newId });
+          } else if (replaceActive && st.infiniteLoopSessionId === st.activeSessionId) {
+            // Reloading/reverting the session that was looping cancels its loop.
+            set({ infiniteLoopSessionId: null });
+          }
+        }
         const {
           currentFilename,
           savedWorkflowStates,
@@ -3499,7 +3440,8 @@ export const useWorkflowStore = create<WorkflowState>()(
           config: workflow.config ?? {},
           last_node_id:
             workflow.last_node_id ??
-            Math.max(0, ...normalizedNodes.map((n) => n.id)),
+            // Include subgraph inner node IDs — they share the global ID space.
+            maxNodeIdAcrossScopes({ ...workflow, nodes: normalizedNodes }),
           last_link_id: workflow.last_link_id ?? 0,
           version: workflow.version ?? 0.4,
         };
@@ -3536,27 +3478,7 @@ export const useWorkflowStore = create<WorkflowState>()(
         }
 
         // Initialize seed modes from workflow (root nodes + inner subgraph nodes)
-        const seedModes: Record<number, SeedMode> = {};
-        if (nodeTypes) {
-          const allNodesForSeed: WorkflowNode[] = [
-            ...canonicalWorkflow.nodes,
-            ...(canonicalWorkflow.definitions?.subgraphs ?? []).flatMap((sg) => sg.nodes ?? []),
-          ];
-          for (const node of allNodesForSeed) {
-            const seedWidgetIndex = findSeedWidgetIndex(
-              canonicalWorkflow,
-              nodeTypes,
-              node,
-            );
-            if (seedWidgetIndex !== null) {
-              seedModes[node.id] = inferSeedMode(
-                canonicalWorkflow,
-                nodeTypes,
-                node,
-              );
-            }
-          }
-        }
+        const seedModes = deriveSeedModes(canonicalWorkflow, nodeTypes);
 
         // Check if we have saved state for this workflow (skip if loading fresh)
         let savedState = !fresh ? savedWorkflowStates[workflowKey] : null;
@@ -3641,9 +3563,11 @@ export const useWorkflowStore = create<WorkflowState>()(
           set({
             workflowSource: source,
             workflow: restoredWorkflowWithHierarchicalKeys,
-            originalWorkflow: JSON.parse(
-              JSON.stringify(restoredWorkflowWithHierarchicalKeys),
+            originalWorkflow: structuredClone(
+              restoredWorkflowWithHierarchicalKeys,
             ), // Keep original for dirty check
+            diffBaseWorkflow: null,
+            lastEnqueuedWorkflow: null,
             scopeStack: [{ type: "root" as const }],
             currentFilename: filename || null,
             currentWorkflowKey: workflowKey,
@@ -3660,14 +3584,21 @@ export const useWorkflowStore = create<WorkflowState>()(
             pointerByHierarchicalKey: reconciled.stableToLayout,
             runCount: 1,
             infiniteLoop: false,
+            // Keep the loop owner's armed-but-not-run guard while a loop is
+            // still armed (it may belong to a parked tab); reset it only when
+            // no loop remains.
+            infiniteLoopAwaitingRun: get().infiniteLoopSessionId
+              ? get().infiniteLoopAwaitingRun
+              : false,
             isStopping: false,
-            followQueue: false,
             workflowLoadedAt: Date.now(),
           });
           // Intentional: always derive seed modes from the loaded workflow.
           useSeedStore.getState().setSeedModes(seedModes);
           useSeedStore.getState().setSeedLastValues({});
-          useNavigationStore.getState().setCurrentPanel("workflow");
+          if (options?.navigate !== false) {
+            useNavigationStore.getState().setCurrentPanel("workflow");
+          }
           useImageViewerStore.getState().setViewerState({
             viewerOpen: false,
             viewerImages: [],
@@ -3717,9 +3648,11 @@ export const useWorkflowStore = create<WorkflowState>()(
           set({
             workflowSource: source,
             workflow: normalizedWorkflowWithHierarchicalKeys,
-            originalWorkflow: JSON.parse(
-              JSON.stringify(normalizedWorkflowWithHierarchicalKeys),
+            originalWorkflow: structuredClone(
+              normalizedWorkflowWithHierarchicalKeys,
             ),
+            diffBaseWorkflow: null,
+            lastEnqueuedWorkflow: null,
             scopeStack: [{ type: "root" as const }],
             currentFilename: filename || null,
             currentWorkflowKey: workflowKey,
@@ -3733,14 +3666,21 @@ export const useWorkflowStore = create<WorkflowState>()(
             hiddenItems: normalizedHiddenNodesStable,
             runCount: 1,
             infiniteLoop: false,
+            // Keep the loop owner's armed-but-not-run guard while a loop is
+            // still armed (it may belong to a parked tab); reset it only when
+            // no loop remains.
+            infiniteLoopAwaitingRun: get().infiniteLoopSessionId
+              ? get().infiniteLoopAwaitingRun
+              : false,
             isStopping: false,
-            followQueue: false,
             workflowLoadedAt: Date.now(),
           });
           // Intentional: always derive seed modes from the loaded workflow.
           useSeedStore.getState().setSeedModes(seedModes);
           useSeedStore.getState().setSeedLastValues({});
-          useNavigationStore.getState().setCurrentPanel("workflow");
+          if (options?.navigate !== false) {
+            useNavigationStore.getState().setCurrentPanel("workflow");
+          }
           useImageViewerStore.getState().setViewerState({
             viewerOpen: false,
             viewerImages: [],
@@ -3778,43 +3718,21 @@ export const useWorkflowStore = create<WorkflowState>()(
         }
       };
 
+      // Close the currently-active workflow tab (activating a neighbour, or
+      // emptying the store when it was the last tab).
       const unloadWorkflow: WorkflowState["unloadWorkflow"] = () => {
-        const { currentWorkflowKey, savedWorkflowStates } = get();
-
-        // Clear saved state for this workflow
-        if (currentWorkflowKey) {
-          const newSavedStates = { ...savedWorkflowStates };
-          delete newSavedStates[currentWorkflowKey];
-          set({ savedWorkflowStates: newSavedStates });
+        const { activeSessionId } = get();
+        if (activeSessionId) {
+          get().closeSession(activeSessionId);
+        } else {
+          useWorkflowErrorsStore.getState().clearNodeErrors();
+          set({
+            ...clearedWorkflowContent(),
+            workflowLoadedAt: Date.now(),
+          });
+          useSeedStore.getState().clearSeedState();
+          usePinnedWidgetStore.getState().clearCurrentPin();
         }
-
-        // Always clear all workflow errors so node error popovers cannot carry over.
-        useWorkflowErrorsStore.getState().clearNodeErrors();
-        set({
-          workflowSource: null,
-          workflow: null,
-          originalWorkflow: null,
-          scopeStack: [{ type: "root" as const }],
-          currentFilename: null,
-          currentWorkflowKey: null,
-          collapsedItems: {},
-          hiddenItems: {},
-          mobileLayout: createEmptyMobileLayout(),
-          itemKeyByPointer: {},
-          pointerByHierarchicalKey: {},
-          runCount: 1,
-          infiniteLoop: false,
-          isStopping: false,
-          nodeOutputs: {},
-          nodeTextOutputs: {},
-          latentPreviews: {},
-          promptOutputs: {},
-          followQueue: false,
-          workflowLoadedAt: Date.now(),
-          connectionHighlightModes: {},
-        });
-        useSeedStore.getState().clearSeedState();
-        usePinnedWidgetStore.getState().clearCurrentPin();
         useNavigationStore.getState().setCurrentPanel("workflow");
         useImageViewerStore.getState().setViewerState({
           viewerOpen: false,
@@ -3830,6 +3748,11 @@ export const useWorkflowStore = create<WorkflowState>()(
         filename,
       ) => {
         useWorkflowErrorsStore.getState().setError(null);
+        // Capture hidden-ness BEFORE we overwrite the source/filename below: if the
+        // workflow being saved is hidden, the saved copy (e.g. a Save-As under a new
+        // name) must stay hidden too, per "anything created from a hidden workflow
+        // stays hidden".
+        const wasHidden = isWorkflowHidden(get().workflowSource, get().currentFilename);
         const workflowKey = buildWorkflowCacheKey(workflow, get().nodeTypes);
         const nextLayout = buildLayoutForWorkflow(
           workflow,
@@ -3849,7 +3772,9 @@ export const useWorkflowStore = create<WorkflowState>()(
         );
         set({
           workflow: workflowWithHierarchicalKeys,
-          originalWorkflow: JSON.parse(JSON.stringify(workflowWithHierarchicalKeys)),
+          originalWorkflow: structuredClone(workflowWithHierarchicalKeys),
+          diffBaseWorkflow: null,
+          lastEnqueuedWorkflow: null,
           currentFilename: filename,
           currentWorkflowKey: workflowKey,
           workflowSource: { type: 'user', filename },
@@ -3857,6 +3782,17 @@ export const useWorkflowStore = create<WorkflowState>()(
           itemKeyByPointer: reconciled.layoutToStable,
           pointerByHierarchicalKey: reconciled.stableToLayout,
         });
+        // Persist hidden provenance onto the saved file's path (no-op if it's
+        // already hidden, e.g. saved into a hidden folder or a dot path).
+        if (wasHidden) {
+          const hiddenStore = useWorkflowHiddenStore.getState();
+          const alreadyHidden = isWorkflowHidden(
+            { type: 'user', filename },
+            filename,
+            hiddenStore.hidden,
+          );
+          if (!alreadyHidden) hiddenStore.toggleHidden(filename);
+        }
       };
 
       const setNodeTypes: WorkflowState["setNodeTypes"] = (types) => {
@@ -3908,6 +3844,18 @@ export const useWorkflowStore = create<WorkflowState>()(
         pinnedStore.restorePinnedWidgetForWorkflow(nextKey, workflow);
       };
 
+      const addInputComboOption: WorkflowState["addInputComboOption"] = (
+        value,
+      ) => {
+        const { nodeTypes } = get();
+        if (!nodeTypes || !value) return;
+        const next = addInputFileOptionToNodeTypes(nodeTypes, value);
+        // Only the option lists change (not which node types exist), so the
+        // workflow cache key is unaffected — a plain nodeTypes swap is enough,
+        // no need for setNodeTypes' cache-key/pin bookkeeping.
+        if (next !== nodeTypes) set({ nodeTypes: next });
+      };
+
       const saveCurrentWorkflowState: WorkflowState["saveCurrentWorkflowState"] =
         () => {
           const {
@@ -3949,7 +3897,7 @@ export const useWorkflowStore = create<WorkflowState>()(
         };
 
       const clearNodeOutputs: WorkflowState["clearNodeOutputs"] = () => {
-        set({ nodeOutputs: {}, nodeTextOutputs: {} });
+        set({ nodeOutputs: {}, nodeComparerOutputs: {}, nodeTextOutputs: {} });
       };
 
       const setLatentPreview: WorkflowState["setLatentPreview"] = (url, itemKey) => {
@@ -3972,25 +3920,78 @@ export const useWorkflowStore = create<WorkflowState>()(
       const addPromptOutputs: WorkflowState["addPromptOutputs"] = (
         promptId,
         images,
+        sessionId,
       ) => {
         if (!promptId || images.length === 0) return;
-        set((state) => ({
-          promptOutputs: {
-            ...state.promptOutputs,
-            [promptId]: [...(state.promptOutputs[promptId] ?? []), ...images],
-          },
-        }));
+        set((state) => {
+          const parked = resolveWriteTarget(state, sessionId);
+          if (parked) {
+            return patchParkedSession(state, sessionId as string, {
+              promptOutputs: {
+                ...parked.promptOutputs,
+                [promptId]: [
+                  ...(parked.promptOutputs[promptId] ?? []),
+                  ...images,
+                ],
+              },
+            });
+          }
+          return {
+            promptOutputs: {
+              ...state.promptOutputs,
+              [promptId]: [...(state.promptOutputs[promptId] ?? []), ...images],
+            },
+          };
+        });
       };
 
       const clearPromptOutputs: WorkflowState["clearPromptOutputs"] = (
         promptId,
+        sessionId,
       ) => {
         if (!promptId) {
-          set({ promptOutputs: {} });
+          set((state) => {
+            // When a session is named, scope the clear to that session only —
+            // a single session's event must never wipe every tab's outputs/routing.
+            if (sessionId) {
+              const parked = resolveWriteTarget(state, sessionId);
+              if (parked) {
+                return patchParkedSession(state, sessionId as string, {
+                  promptOutputs: {},
+                });
+              }
+              return { promptOutputs: {} };
+            }
+            // Only a truly unscoped call (no promptId AND no sessionId) clears all.
+            const parkedSessions = Object.fromEntries(
+              Object.entries(state.parkedSessions).map(([sid, snap]) => [
+                sid,
+                { ...snap, promptOutputs: {} },
+              ]),
+            );
+            return {
+              promptOutputs: {},
+              parkedSessions,
+              promptToSession: {},
+            };
+          });
           return;
         }
         set((state) => {
-          if (!state.promptOutputs[promptId]) return state;
+          const parked = resolveWriteTarget(state, sessionId);
+          // Intentionally leave the promptToSession entry in place: it's bounded
+          // by capPromptToSession and pruned on session close, and keeping it
+          // means a late straggler message for this finished prompt still routes
+          // to its owning tab instead of falling back to the active one.
+          if (parked) {
+            if (!parked.promptOutputs[promptId]) return {};
+            const nextPromptOutputs = { ...parked.promptOutputs };
+            delete nextPromptOutputs[promptId];
+            return patchParkedSession(state, sessionId as string, {
+              promptOutputs: nextPromptOutputs,
+            });
+          }
+          if (!state.promptOutputs[promptId]) return {};
           const next = { ...state.promptOutputs };
           delete next[promptId];
           return { promptOutputs: next };
@@ -4002,11 +4003,24 @@ export const useWorkflowStore = create<WorkflowState>()(
       };
 
       const setInfiniteLoop: WorkflowState["setInfiniteLoop"] = (val) => {
-        set({ infiniteLoop: val });
+        // Toggling infinite mode for the visible session is the single source of
+        // truth: enabling it for the active session implicitly disables it for
+        // whichever other session previously held it.
+        const { activeSessionId } = get();
+        set({
+          infiniteLoop: val,
+          infiniteLoopSessionId: val ? activeSessionId : null,
+          // Arming waits for an explicit Run; disarming clears the wait.
+          infiniteLoopAwaitingRun: val,
+        });
       };
 
       const setIsStopping: WorkflowState["setIsStopping"] = (val) => {
         set({ isStopping: val });
+      };
+
+      const setSavingSessionId: WorkflowState["setSavingSessionId"] = (id) => {
+        set({ savingSessionId: id });
       };
 
       const setFollowQueue: WorkflowState["setFollowQueue"] = (followQueue) => {
@@ -4405,60 +4419,19 @@ export const useWorkflowStore = create<WorkflowState>()(
           return;
         }
 
-        // Delete container only: promote direct contents and remap direct groups into parent scope.
-        const parentScopeGroups =
-          parentSubgraphId == null
-            ? (workflow.groups ?? [])
-            : (subgraphDefs.find((sg) => sg.id === parentSubgraphId)?.groups ??
-              []);
-        const { idMap, promotedGroups } = remapPromotedGroups(
-          targetSubgraph.groups ?? [],
-          parentScopeGroups,
+        // Delete container only: dissolve the placeholder — promote inner
+        // nodes/links/groups into the parent scope with fresh IDs, bridge the
+        // boundary connections, and bake promoted widget values into the
+        // promoted nodes.
+        const dissolved = dissolveSubgraph(
+          workflow,
+          subgraphId,
+          parentSubgraphId,
+          get().nodeTypes,
         );
-
-        // Under the canonical model, inner nodes live in targetSubgraph.nodes.
-        // Promote them into the parent scope (root or parent subgraph).
-        const innerNodes = targetSubgraph.nodes ?? [];
-        const nextNodes =
-          parentSubgraphId == null
-            ? [
-                // Remove placeholder for this subgraph, then append inner nodes.
-                ...(workflow.nodes ?? []).filter((n) => n.type !== subgraphId),
-                ...innerNodes,
-              ]
-            : (workflow.nodes ?? []);
-
-        const nextSubgraphs = subgraphDefs
-          .filter((sg) => sg.id !== subgraphId)
-          .map((sg) => {
-            if (parentSubgraphId != null && sg.id === parentSubgraphId) {
-              return {
-                ...sg,
-                // Remove placeholder for this subgraph from parent, append inner nodes.
-                nodes: [
-                  ...(sg.nodes ?? []).filter((n) => n.type !== subgraphId),
-                  ...innerNodes,
-                ],
-                groups: [...(sg.groups ?? []), ...promotedGroups],
-              };
-            }
-            return sg;
-          });
-
-        let nextRootGroups = workflow.groups ?? [];
-        if (parentSubgraphId == null && promotedGroups.length > 0) {
-          nextRootGroups = [...nextRootGroups, ...promotedGroups];
-        }
-
-        const nextWorkflow: Workflow = {
-          ...workflow,
-          nodes: nextNodes,
-          groups: nextRootGroups,
-          definitions: {
-            ...(workflow.definitions ?? {}),
-            subgraphs: nextSubgraphs,
-          },
-        };
+        if (!dissolved) return;
+        const idMap = dissolved.groupIdMap;
+        const nextWorkflow = dissolved.workflow;
 
         const nextLayout = buildLayoutForWorkflow(
           nextWorkflow,
@@ -4597,7 +4570,7 @@ export const useWorkflowStore = create<WorkflowState>()(
         itemKey,
         color,
       ) => {
-        const { workflow, pointerByHierarchicalKey, scopeStack } = get();
+        const { workflow, pointerByHierarchicalKey } = get();
         if (!workflow) return;
         const resolved = resolveContainerIdentityFromHierarchicalKey(
           workflow,
@@ -4673,7 +4646,7 @@ export const useWorkflowStore = create<WorkflowState>()(
           }
         }
 
-        const scope = resolveCurrentScope(scopeStack, workflow);
+        const scope = resolveScopeForHierarchicalKey(workflow, itemKey);
         const targetNode = resolveNodeByHierarchicalKey(scope.nodes, itemKey);
         if (!targetNode) return;
         const nextNodes = scope.nodes.map((n) => {
@@ -4802,31 +4775,9 @@ export const useWorkflowStore = create<WorkflowState>()(
           return;
         }
 
-        const seedModes: Record<number, SeedMode> = {};
-        if (nodeTypes) {
-          const allNodesForSeed: WorkflowNode[] = [
-            ...originalWorkflow.nodes,
-            ...(originalWorkflow.definitions?.subgraphs ?? []).flatMap((sg) => sg.nodes ?? []),
-          ];
-          for (const node of allNodesForSeed) {
-            const seedWidgetIndex = findSeedWidgetIndex(
-              originalWorkflow,
-              nodeTypes,
-              node,
-            );
-            if (seedWidgetIndex !== null) {
-              seedModes[node.id] = inferSeedMode(
-                originalWorkflow,
-                nodeTypes,
-                node,
-              );
-            }
-          }
-        }
+        const seedModes = deriveSeedModes(originalWorkflow, nodeTypes);
 
-        const restoredWorkflow = JSON.parse(
-          JSON.stringify(originalWorkflow),
-        ) as Workflow;
+        const restoredWorkflow = structuredClone(originalWorkflow);
         useSeedStore.getState().setSeedModes(seedModes);
         useSeedStore.getState().setSeedLastValues({});
         useWorkflowErrorsStore.getState().setError(null);
@@ -4855,6 +4806,11 @@ export const useWorkflowStore = create<WorkflowState>()(
           })(),
           runCount: 1,
           infiniteLoop: false,
+          // As in loadWorkflow: only reset the armed-but-not-run guard when no
+          // loop remains armed.
+          infiniteLoopAwaitingRun: get().infiniteLoopSessionId
+            ? get().infiniteLoopAwaitingRun
+            : false,
           isStopping: false,
           workflowLoadedAt: Date.now(),
         });
@@ -4927,8 +4883,10 @@ export const useWorkflowStore = create<WorkflowState>()(
 
       // updates PrimitiveNode widget values after a generation completes, based on that node's control_after_generate mode
       const applyControlAfterGenerate: WorkflowState["applyControlAfterGenerate"] =
-        () => {
-          const { workflow } = get();
+        (sessionId) => {
+          const state = get();
+          const parked = resolveWriteTarget(state, sessionId);
+          const workflow = parked ? parked.workflow : state.workflow;
           if (!workflow) return;
 
           let hasChanges = false;
@@ -4991,9 +4949,16 @@ export const useWorkflowStore = create<WorkflowState>()(
 
           if (hasChanges) {
             const nextWorkflow = { ...workflow, nodes: newNodes };
-            set({
-              workflow: nextWorkflow,
-            });
+            if (parked) {
+              set({
+                parkedSessions: {
+                  ...get().parkedSessions,
+                  [sessionId as string]: { ...parked, workflow: nextWorkflow },
+                },
+              });
+            } else {
+              set({ workflow: nextWorkflow });
+            }
           }
         };
 
@@ -5047,42 +5012,139 @@ export const useWorkflowStore = create<WorkflowState>()(
         return true;
       };
 
-      const queueWorkflow: WorkflowState["queueWorkflow"] = async (count) => {
-        const seedStore = useSeedStore.getState();
-        const seedModes = seedStore.seedModes;
-        const seedLastValues = seedStore.seedLastValues;
-        const { workflow, nodeTypes } = get();
-        if (!workflow || !nodeTypes) {
+      const queueWorkflow: WorkflowState["queueWorkflow"] = async (
+        count,
+        sessionId,
+        isInfiniteReEnqueue,
+      ) => {
+        const state = get();
+        const sid = sessionId ?? state.activeSessionId;
+        // A null sid (no sessions registered yet — e.g. tests that set workflow
+        // directly) still targets the flat "active" fields.
+        const isActive = sid == null || sid === state.activeSessionId;
+        const parked = !isActive ? state.parkedSessions[sid!] : null;
+        const nodeTypes = state.nodeTypes;
+        const sourceWorkflow = isActive ? state.workflow : parked?.workflow ?? null;
+        // Seeds: the seed store always mirrors the active session; parked
+        // sessions carry their own seed maps in their snapshot.
+        const seedModes = isActive
+          ? useSeedStore.getState().seedModes
+          : parked?.seedModes ?? {};
+        const seedLastValues = isActive
+          ? useSeedStore.getState().seedLastValues
+          : parked?.seedLastValues ?? {};
+
+        if (!isActive && !parked) return;
+        if (!sourceWorkflow || !nodeTypes) {
           useWorkflowErrorsStore
             .getState()
             .setError("Node types are still loading. Try again in a moment.");
           return;
         }
 
+        // Write helpers route per-iteration mutations to flat fields (active) or
+        // the owning session's snapshot (parked).
+        //
+        // CRITICAL: these run AFTER awaits (the paint yield + each /api/prompt
+        // round-trip). The user can switch tabs mid-enqueue, which folds this
+        // session from active→parked. So each write must re-resolve where session
+        // `sid` lives RIGHT NOW — trusting the captured `isActive` here would
+        // write this enqueue's seed/workflow mutations into whatever tab became
+        // active, silently overwriting it.
+        const liveTarget = (): "active" | "parked" | "gone" => {
+          const cur = get();
+          if (sid == null || sid === cur.activeSessionId) return "active";
+          if (sid && cur.parkedSessions[sid]) return "parked";
+          return "gone"; // session was closed mid-flight — drop the write.
+        };
+        const writeWorkflow = (wf: Workflow) => {
+          const target = liveTarget();
+          if (target === "active") {
+            set({ workflow: wf });
+          } else if (target === "parked") {
+            set((s) => ({
+              parkedSessions: {
+                ...s.parkedSessions,
+                [sid!]: { ...s.parkedSessions[sid!], workflow: wf },
+              },
+            }));
+          }
+        };
+        const writeSeedLastValues = (vals: SeedLastValues) => {
+          const target = liveTarget();
+          if (target === "active") {
+            useSeedStore.getState().setSeedLastValues(vals);
+          } else if (target === "parked") {
+            set((s) => ({
+              parkedSessions: {
+                ...s.parkedSessions,
+                [sid!]: { ...s.parkedSessions[sid!], seedLastValues: vals },
+              },
+            }));
+          }
+        };
+        const writeExpandedMaps = (
+          idMap: Record<string, string>,
+          pathMap: Record<string, string>,
+        ) => {
+          const target = liveTarget();
+          if (target === "active") {
+            set({ expandedNodeIdMap: idMap, expandedNodePathMap: pathMap });
+          } else if (target === "parked") {
+            set((s) => ({
+              parkedSessions: {
+                ...s.parkedSessions,
+                [sid!]: {
+                  ...s.parkedSessions[sid!],
+                  expandedNodeIdMap: idMap,
+                  expandedNodePathMap: pathMap,
+                },
+              },
+            }));
+          }
+        };
+
         useWorkflowErrorsStore.getState().setError(null);
-        set({ isLoading: true });
+        if (liveTarget() === "active") set({ isLoading: true });
+        if (sid) {
+          set((s) => ({
+            isLoadingBySession: { ...s.isLoadingBySession, [sid]: true },
+          }));
+        }
 
         try {
-          let currentWorkflow = workflow;
+          await yieldToBrowserPaint();
+
+          let currentWorkflow = sourceWorkflow;
           let nextSeedLastValues: SeedLastValues = { ...seedLastValues };
 
-          // Process seed mode for a single node; mutates seedOverrides and nextSeedLastValues in-place.
+          // Process seed mode for a single node; mutates seedOverrides and
+          // nextSeedLastValues in-place. Overrides are keyed by scoped key
+          // ("nodeId" at root, "subgraphId:nodeId" inside a definition) so a
+          // root node and an inner node sharing a numeric ID can't clobber
+          // each other; queueing remaps them to expanded node IDs.
           const processSeedNode = (
             node: WorkflowNode,
-            seedOverrides: Record<number, number>,
+            seedOverrides: Record<string, number>,
+            scopeSubgraphId: string | null,
           ): WorkflowNode => {
             const seedIndex = findSeedWidgetIndex(currentWorkflow, nodeTypes, node);
             if (seedIndex === null) return node;
             if (!Array.isArray(node.widgets_values)) return node;
 
-            const mode =
-              seedModes[node.id] ??
-              inferSeedMode(currentWorkflow, nodeTypes, node);
             const controlWidgetIndex = seedIndex + 1;
             const hasControlWidget = hasSeedControlWidget(
               node,
               node.widgets_values[controlWidgetIndex],
             );
+            const controlWidgetMode =
+              hasControlWidget && typeof node.widgets_values[controlWidgetIndex] === "string"
+                ? (node.widgets_values[controlWidgetIndex] as SeedMode)
+                : null;
+            const mode =
+              controlWidgetMode ??
+              seedModes[node.id] ??
+              inferSeedMode(currentWorkflow, nodeTypes, node);
 
             if (hasControlWidget) {
               if (!mode || mode === "fixed") return node;
@@ -5116,21 +5178,25 @@ export const useWorkflowStore = create<WorkflowState>()(
               }
             }
             if (seedToUse === null) return node;
-            seedOverrides[node.id] = seedToUse;
+            const overrideKey =
+              scopeSubgraphId == null
+                ? String(node.id)
+                : `${scopeSubgraphId}:${node.id}`;
+            seedOverrides[overrideKey] = seedToUse;
             nextSeedLastValues = { ...nextSeedLastValues, [node.id]: seedToUse };
             return node;
           };
 
           for (let i = 0; i < count; i++) {
-            const seedOverrides: Record<number, number> = {};
+            const seedOverrides: Record<string, number> = {};
             // Handle seed modes for root nodes and inner subgraph nodes.
             const updatedNodes = currentWorkflow.nodes.map((node) =>
-              processSeedNode(node, seedOverrides),
+              processSeedNode(node, seedOverrides, null),
             );
             const subgraphDefsForSeed = currentWorkflow.definitions?.subgraphs ?? [];
             const updatedSubgraphDefs = subgraphDefsForSeed.map((sg) => {
               const updatedSgNodes = (sg.nodes ?? []).map((node) =>
-                processSeedNode(node, seedOverrides),
+                processSeedNode(node, seedOverrides, sg.id),
               );
               const changed = updatedSgNodes.some((n, idx) => n !== (sg.nodes ?? [])[idx]);
               return changed ? { ...sg, nodes: updatedSgNodes } : sg;
@@ -5144,16 +5210,14 @@ export const useWorkflowStore = create<WorkflowState>()(
                 ? { ...currentWorkflow.definitions, subgraphs: updatedSubgraphDefs }
                 : currentWorkflow.definitions,
             };
-            seedStore.setSeedLastValues(nextSeedLastValues);
-            set({
-              workflow: currentWorkflow,
-            });
+            writeSeedLastValues(nextSeedLastValues);
+            writeWorkflow(currentWorkflow);
 
             // Expand JIT for prompt building (one-way, ephemeral — no sync-back needed).
             // promptKeyMap maps each expanded node's numeric ID to its hierarchical
             // execution ID (e.g. "50:7" for inner node 7 inside placeholder 50),
             // matching the ID scheme used by the main ComfyUI frontend.
-            const { workflow: expandedForQueue, promptKeyMap } = expandWorkflowSubgraphs(currentWorkflow);
+            const { workflow: expandedForQueue, promptKeyMap } = expandWorkflowSubgraphs(currentWorkflow, nodeTypes);
 
             // Build mapping from WS node IDs back to canonical itemKeys.
             // ComfyUI may report either expanded numeric IDs or hierarchical prompt keys,
@@ -5201,7 +5265,37 @@ export const useWorkflowStore = create<WorkflowState>()(
                 pathMap[String(expandedId)] = promptKey;
                 pathMap[promptKey] = promptKey;
               }
-              set({ expandedNodeIdMap: idMap, expandedNodePathMap: pathMap });
+              writeExpandedMaps(idMap, pathMap);
+            }
+
+            // Remap scoped seed overrides ("nodeId" / "subgraphId:nodeId") to
+            // expanded node IDs by walking each prompt key's placeholder path
+            // down to the definition that owns the innermost node.
+            const subgraphDefsById = new Map(
+              (currentWorkflow.definitions?.subgraphs ?? []).map((sg) => [sg.id, sg]),
+            );
+            const scopedOverrideKeyForPromptKey = (promptKey: string): string | null => {
+              const segments = promptKey.split(":");
+              if (segments.length === 1) return segments[0];
+              let scopeNodes = currentWorkflow.nodes;
+              let scopeSgId: string | null = null;
+              for (let s = 0; s < segments.length - 1; s += 1) {
+                const placeholderId = Number(segments[s]);
+                const placeholder = scopeNodes.find((n) => n.id === placeholderId);
+                const sg = placeholder ? subgraphDefsById.get(placeholder.type) : undefined;
+                if (!sg) return null;
+                scopeSgId = sg.id;
+                scopeNodes = sg.nodes ?? [];
+              }
+              return `${scopeSgId}:${segments[segments.length - 1]}`;
+            };
+            const expandedSeedOverrides: Record<number, number> = {};
+            for (const node of expandedForQueue.nodes) {
+              const promptKey = promptKeyMap.get(node.id) ?? String(node.id);
+              const scopedKey = scopedOverrideKeyForPromptKey(promptKey);
+              if (scopedKey != null && seedOverrides[scopedKey] !== undefined) {
+                expandedSeedOverrides[node.id] = seedOverrides[scopedKey];
+              }
             }
 
             const prompt: Record<string, unknown> = {};
@@ -5237,30 +5331,61 @@ export const useWorkflowStore = create<WorkflowState>()(
                 classType,
                 allowedNodeIds,
                 getNodeWidgetIndexMap(expandedForQueue, node),
-                seedOverrides,
+                expandedSeedOverrides,
                 promptKeyMap,
               );
               const promptKey = promptKeyMap.get(node.id) ?? String(node.id);
               prompt[promptKey] = { class_type: classType, inputs };
             }
 
+            // Infinite-loop safety: if an infinite re-enqueue would submit the
+            // exact same prompt as last time (e.g. a fixed seed), the loop would
+            // just regenerate an identical result forever. Stop and explain.
+            const promptSignature = JSON.stringify(prompt);
+            if (
+              isInfiniteReEnqueue &&
+              sid &&
+              promptSignature === get().lastPromptSignatureBySession[sid]
+            ) {
+              set({ infiniteLoopSessionId: null });
+              if (isActive) set({ infiniteLoop: false });
+              useWorkflowErrorsStore
+                .getState()
+                .setError(
+                  "Infinite generation stopped: the workflow would re-run an identical prompt (likely a fixed seed), producing the same result over and over. Set a seed widget to randomize — or change an input — to keep generating new outputs.",
+                );
+              return;
+            }
+
             // Embed the canonical workflow (not expanded) so desktop ComfyUI can reload it correctly.
             // Run validateAndNormalizeWorkflow to repair any stale SubgraphIO.linkIds before embedding.
-            const queuedWorkflow = validateAndNormalizeWorkflow(stripWorkflowClientMetadata(currentWorkflow));
+            let queuedWorkflow = validateAndNormalizeWorkflow(stripWorkflowClientMetadata(currentWorkflow));
+            let queuedPrompt = prompt;
+            if (useGenerationSettingsStore.getState().obfuscateSharedInputPaths) {
+              const obfuscated = await obfuscateQueuedInputPaths(prompt, queuedWorkflow, nodeTypes);
+              queuedPrompt = obfuscated.prompt;
+              queuedWorkflow = obfuscated.workflow;
+            }
+            const metadataFilename = isActive ? state.currentFilename : parked?.currentFilename ?? null;
+            const metadataSource = isActive ? state.workflowSource : parked?.workflowSource ?? null;
+            const metadataWorkflowLabel = queueWorkflowLabel(metadataFilename, metadataSource);
+            const hiddenWorkflow = isWorkflowHidden(metadataSource, metadataFilename);
             const previewMethod = useGenerationSettingsStore.getState().previewMethod;
+            const promptRequest: api.PromptQueueRequest = {
+              prompt: queuedPrompt,
+              client_id: api.clientId,
+              extra_data: {
+                extra_pnginfo: {
+                  workflow: queuedWorkflow,
+                },
+                ...(hiddenWorkflow ? { [HIDDEN_WORKFLOW_EXTRA_DATA_KEY]: true } : {}),
+                ...(previewMethod !== 'none' ? { preview_method: previewMethod } : {}),
+              },
+            };
             const response = await fetch('/api/prompt', {
               method: "POST",
               headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                prompt,
-                client_id: api.clientId,
-                extra_data: {
-                  extra_pnginfo: {
-                    workflow: queuedWorkflow,
-                  },
-                  ...(previewMethod !== 'none' ? { preview_method: previewMethod } : {}),
-                },
-              }),
+              body: JSON.stringify(promptRequest),
             });
 
             if (!response.ok) {
@@ -5315,6 +5440,120 @@ export const useWorkflowStore = create<WorkflowState>()(
               );
             }
 
+            // Record which session owns this prompt_id for websocket routing.
+            try {
+              const okData = (await response.json()) as { prompt_id?: string };
+              const promptId = okData?.prompt_id;
+              if (promptId && sid) {
+                // Prompts still in the backend queue must keep their routing
+                // entry even if the map is over the cap (a long/infinite run can
+                // accumulate >200 entries); only finished ones are safe to evict.
+                const q = useQueueStore.getState();
+                const activePromptIds = new Set<string>([
+                  promptId,
+                  ...q.running.map((item) => item.prompt_id),
+                  ...q.pending.map((item) => item.prompt_id),
+                ]);
+                set((s) => ({
+                  promptToSession: capPromptToSession(
+                    {
+                      ...s.promptToSession,
+                      [promptId]: sid,
+                    },
+                    activePromptIds,
+                  ),
+                  // A run was actually queued for the loop owner, so it is no
+                  // longer "armed but awaiting Run" — the idle-resume driver
+                  // may keep the loop going from here on.
+                  ...(sid === s.infiniteLoopSessionId && s.infiniteLoopAwaitingRun
+                    ? { infiniteLoopAwaitingRun: false }
+                    : {}),
+                }));
+              }
+              if (promptId) {
+                useQueueStore.getState().registerLocalPrompt(promptId);
+                useQueueStore.getState().recordQueuedPrompt(promptId, promptRequest, {
+                  sessionId: sid,
+                });
+                let workflowDiffForMetadata: ReturnType<typeof computeQueueWorkflowDiff> | undefined;
+                // Compute & store this queue item's workflow diff (prompt
+                // preview) against the session's rolling base, then advance the
+                // base for next time. See selectDiffBase for the "same diff
+                // until you make a change" rule.
+                try {
+                  const fresh = get();
+                  // Re-resolve where this session lives now (it may have been
+                  // switched active→parked during the fetch); see liveTarget.
+                  const diffTarget = liveTarget();
+                  const diffUseFlat = diffTarget === "active";
+                  const parkedForDiff =
+                    diffTarget === "parked" && sid ? fresh.parkedSessions[sid] : null;
+                  const diffBase = diffUseFlat
+                    ? fresh.diffBaseWorkflow
+                    : parkedForDiff?.diffBaseWorkflow ?? null;
+                  const lastEnqueued = diffUseFlat
+                    ? fresh.lastEnqueuedWorkflow
+                    : parkedForDiff?.lastEnqueuedWorkflow ?? null;
+                  const originalForSession = diffUseFlat
+                    ? fresh.originalWorkflow
+                    : parkedForDiff?.originalWorkflow ?? null;
+                  const { base, nextDiffBase } = selectDiffBase(
+                    currentWorkflow,
+                    lastEnqueued,
+                    diffBase,
+                    originalForSession,
+                    nodeTypes,
+                  );
+                  const diff = computeQueueWorkflowDiff(base, currentWorkflow);
+                  workflowDiffForMetadata = diff;
+                  useQueueStore.getState().recordWorkflowDiff(promptId, diff);
+                  const enqueuedSnapshot = structuredClone(currentWorkflow);
+                  if (diffUseFlat) {
+                    set({
+                      diffBaseWorkflow: nextDiffBase,
+                      lastEnqueuedWorkflow: enqueuedSnapshot,
+                    });
+                  } else if (diffTarget === "parked" && sid) {
+                    set((s) => ({
+                      parkedSessions: {
+                        ...s.parkedSessions,
+                        [sid]: {
+                          ...s.parkedSessions[sid],
+                          diffBaseWorkflow: nextDiffBase,
+                          lastEnqueuedWorkflow: enqueuedSnapshot,
+                        },
+                      },
+                    }));
+                  }
+                } catch (diffErr) {
+                  console.warn("Failed to compute queue workflow diff:", diffErr);
+                }
+                api.upsertQueuePromptMetadata({
+                  promptId,
+                  workflowLabel: metadataWorkflowLabel,
+                  workflowSource: metadataSource ?? undefined,
+                  sessionId: sid ?? undefined,
+                  clientId: api.clientId,
+                  workflowDiff: workflowDiffForMetadata,
+                }).catch((metadataErr) => {
+                  console.warn("Failed to save mobile queue metadata:", metadataErr);
+                });
+              }
+              // Remember this prompt so an infinite loop can detect a stuck
+              // (identical) re-enqueue on the next iteration.
+              if (sid) {
+                set((s) => ({
+                  lastPromptSignatureBySession: {
+                    ...s.lastPromptSignatureBySession,
+                    [sid]: promptSignature,
+                  },
+                }));
+              }
+            } catch {
+              // Response body not JSON / already consumed — routing falls back
+              // to the active session in the websocket handler.
+            }
+
             // Clear any previous node errors on successful queue
             useWorkflowErrorsStore.getState().clearNodeErrors();
           }
@@ -5326,8 +5565,17 @@ export const useWorkflowStore = create<WorkflowState>()(
               err instanceof Error ? err.message : "Failed to queue workflow",
             );
         } finally {
-          useQueueStore.getState().fetchQueue();
-          set({ isLoading: false });
+          // Keep the submit feedback visible until the queued prompt is
+          // observable, instead of flashing back to Run while queue sync lags.
+          await useQueueStore.getState().fetchQueue();
+          if (liveTarget() === "active") set({ isLoading: false });
+          if (sid) {
+            set((s) => {
+              const next = { ...s.isLoadingBySession };
+              delete next[sid];
+              return { isLoadingBySession: next };
+            });
+          }
         }
       };
 
@@ -5335,6 +5583,8 @@ export const useWorkflowStore = create<WorkflowState>()(
         workflowSource: null,
         workflow: null,
         originalWorkflow: null,
+        diffBaseWorkflow: null,
+        lastEnqueuedWorkflow: null,
         scopeStack: [{ type: "root" as const }],
         currentFilename: null,
         currentWorkflowKey: null,
@@ -5354,14 +5604,25 @@ export const useWorkflowStore = create<WorkflowState>()(
         nodeDurationStats: {},
         workflowDurationStats: {},
         nodeOutputs: {},
+        nodeComparerOutputs: {},
         nodeTextOutputs: {},
         latentPreviews: {},
         promptOutputs: {},
         runCount: 1,
         infiniteLoop: false,
+        infiniteLoopAwaitingRun: false,
         isStopping: false,
         followQueue: false,
         workflowLoadedAt: 0,
+        sessions: [],
+        activeSessionId: null,
+        parkedSessions: {},
+        infiniteLoopSessionId: null,
+        promptToSession: {},
+        isLoadingBySession: {},
+        lastPromptSignatureBySession: {},
+        savingSessionId: null,
+        closeForNewWorkflowRequest: null,
         connectionHighlightModes: {},
         connectionButtonsVisible: true,
         searchQuery: "",
@@ -5383,10 +5644,12 @@ export const useWorkflowStore = create<WorkflowState>()(
         addGroupNearNode,
         addNodeAndConnect,
         deleteNode,
+        duplicateNode,
         deleteContainer,
         connectNodes,
         disconnectInput,
         setNodeOutput,
+        setNodeComparerOutput,
         setNodeTextOutput,
         clearNodeOutputs,
         setLatentPreview,
@@ -5418,6 +5681,7 @@ export const useWorkflowStore = create<WorkflowState>()(
         setRunCount,
         setInfiniteLoop,
         setIsStopping,
+        setSavingSessionId,
         setFollowQueue,
 
         // Cosmetic navigation
@@ -5437,8 +5701,13 @@ export const useWorkflowStore = create<WorkflowState>()(
 
         // Core workflow state
         setNodeTypes,
+        addInputComboOption,
         loadWorkflow,
         unloadWorkflow,
+        switchToSession,
+        closeSession,
+        resolveCloseForNewWorkflow,
+        cancelCloseForNewWorkflow,
         setSavedWorkflow,
         clearWorkflowCache,
         ensureHierarchicalKeysAndRepair,
@@ -5455,8 +5724,12 @@ export const useWorkflowStore = create<WorkflowState>()(
     },
     {
       name: "workflow-storage",
-      storage: createJSONStorage(() => localStorage),
+      // IndexedDB-backed: the persisted payload (every open session's workflow,
+      // layout, and node outputs) can exceed localStorage's quota.
+      storage: createThrottledPersistStorage(),
       partialize: (state) => ({
+        // Active session lives in the flat fields; other open sessions are in
+        // parkedSessions (which by invariant never contains the active id).
         workflow: state.workflow,
         originalWorkflow: state.originalWorkflow,
         currentFilename: state.currentFilename,
@@ -5479,101 +5752,117 @@ export const useWorkflowStore = create<WorkflowState>()(
         currentNodeStartTime: state.currentNodeStartTime,
         nodeDurationStats: state.nodeDurationStats,
         workflowDurationStats: state.workflowDurationStats,
+        // Node outputs are server file references (not blob URLs), so they
+        // re-render after a refresh — persist them so the previous run's images
+        // (incl. Image Comparer A/B) stay visible. `latentPreviews` are
+        // transient blob: URLs (dead after refresh), so they are NOT persisted.
+        nodeOutputs: state.nodeOutputs,
+        nodeComparerOutputs: state.nodeComparerOutputs,
+        nodeTextOutputs: state.nodeTextOutputs,
+        // Session registry
+        sessions: state.sessions,
+        activeSessionId: state.activeSessionId,
+        parkedSessions: stripLatentPreviewsFromSnapshots(state.parkedSessions),
+        infiniteLoopSessionId: state.infiniteLoopSessionId,
+        // Persisted with the loop owner: a loop armed via the toggle but never
+        // explicitly Run must stay awaiting across a reload, or the idle-resume
+        // driver would auto-start a generation the user never began.
+        infiniteLoopAwaitingRun: state.infiniteLoopAwaitingRun,
+        promptToSession: state.promptToSession,
       }),
       onRehydrateStorage: () => (state) => {
         if (!state) return;
-        if (state.workflow) {
-          const normalizedWorkflow = canonicalizeWorkflowHierarchicalKeys(
-            state.workflow,
-            state.itemKeyByPointer ?? {},
-          );
-          const normalizedLayout = state.mobileLayout
-            ? normalizeMobileLayoutGroupKeys(state.mobileLayout)
-            : null;
-          const hiddenNodesLayout = normalizeManuallyHiddenNodeKeys(
-            normalizedWorkflow,
-            state.hiddenItems ?? {},
-          );
-          state.mobileLayout =
-            normalizedLayout &&
-            layoutMatchesWorkflowNodes(normalizedLayout, normalizedWorkflow)
-              ? normalizedLayout
-              : buildLayoutForWorkflow(normalizedWorkflow, hiddenNodesLayout);
-          const reconciled = reconcilePointerRegistry(
-            state.mobileLayout,
-            state.itemKeyByPointer ?? {},
-            state.pointerByHierarchicalKey ?? {},
-          );
-          state.workflow = annotateWorkflowWithHierarchicalKeys(
-            normalizedWorkflow,
-            reconciled.layoutToStable,
-          );
-          if (state.originalWorkflow) {
-            const normalizedOriginalWorkflow = canonicalizeWorkflowHierarchicalKeys(
-              state.originalWorkflow,
-              state.itemKeyByPointer ?? {},
-            );
-            state.originalWorkflow = annotateWorkflowWithHierarchicalKeys(
-              normalizedOriginalWorkflow,
-              reconciled.layoutToStable,
-            );
+
+        try {
+          // Migrate a legacy single-workflow payload (no `sessions`) into one
+          // session so existing users see no behavior change.
+          if (!Array.isArray(state.sessions) || state.sessions.length === 0) {
+            if (state.workflow) {
+              const id = generateSessionId();
+              state.sessions = [{ id }];
+              state.activeSessionId = id;
+              state.infiniteLoopSessionId = state.infiniteLoop ? id : null;
+            } else {
+              state.sessions = [];
+              state.activeSessionId = null;
+              state.infiniteLoopSessionId = null;
+            }
+            state.parkedSessions = state.parkedSessions ?? {};
+            state.promptToSession = state.promptToSession ?? {};
           }
-          state.itemKeyByPointer = reconciled.layoutToStable;
-          state.pointerByHierarchicalKey = reconciled.stableToLayout;
-          state.hiddenItems = normalizePointerBooleanRecord(
-            state.hiddenItems,
-            reconciled.layoutToStable,
-            reconciled.stableToLayout,
+          state.parkedSessions = state.parkedSessions ?? {};
+          state.promptToSession = state.promptToSession ?? {};
+
+          // Normalize the active session (flat fields) and every parked session,
+          // threading the shared savedWorkflowStates map through each.
+          let savedStates = state.savedWorkflowStates ?? {};
+          savedStates = normalizeSessionInPlace(
+            state as unknown as SessionNormalizable,
+            savedStates,
           );
-          state.collapsedItems = normalizePointerCollapsedRecord(
-            state.collapsedItems,
-            reconciled.layoutToStable,
-            reconciled.stableToLayout,
-          );
-          const activeWorkflowKey = state.currentWorkflowKey;
-          if (
-            activeWorkflowKey &&
-            state.savedWorkflowStates &&
-            state.savedWorkflowStates[activeWorkflowKey]
-          ) {
-            const savedState = state.savedWorkflowStates[activeWorkflowKey];
-            const nextCollapsed = normalizePointerCollapsedRecord(
-              savedState.collapsedItems,
-              reconciled.layoutToStable,
-              reconciled.stableToLayout,
+          const nextParked: Record<string, WorkflowSessionSnapshot> = {};
+          for (const [pid, snap] of Object.entries(state.parkedSessions)) {
+            const copy = { ...snap };
+            savedStates = normalizeSessionInPlace(
+              copy as unknown as SessionNormalizable,
+              savedStates,
             );
-            const nextHidden = normalizePointerBooleanRecord(
-              savedState.hiddenItems,
-              reconciled.layoutToStable,
-              reconciled.stableToLayout,
-            );
-            const nextBookmarks = normalizePointerBookmarkList(
-              savedState.bookmarkedItems,
-              reconciled.layoutToStable,
-              reconciled.stableToLayout,
-            );
-            state.savedWorkflowStates = {
-              ...state.savedWorkflowStates,
-              [activeWorkflowKey]: {
-                ...savedState,
-                collapsedItems: nextCollapsed,
-                hiddenItems: nextHidden,
-                bookmarkedItems: nextBookmarks,
-              },
-            };
+            nextParked[pid] = copy;
           }
-        } else {
-          state.mobileLayout = createEmptyMobileLayout();
-          state.itemKeyByPointer = {};
-          state.pointerByHierarchicalKey = {};
+          state.parkedSessions = nextParked;
+          state.savedWorkflowStates = savedStates;
+        } catch (err) {
+          // Normalizing persisted sessions must NEVER brick startup. If this
+          // throws, zustand skips its finish-hydration listeners, App's
+          // `storeHydrated` gate never flips, and the app hangs forever on the
+          // loading spinner. Degrade to safe defaults so hydration still
+          // completes — a slightly-unnormalized session is recoverable; a
+          // permanent spinner is not.
+          console.error('[workflow] Failed to normalize rehydrated state:', err);
+          if (!Array.isArray(state.sessions)) state.sessions = [];
+          state.parkedSessions = state.parkedSessions ?? {};
+          state.promptToSession = state.promptToSession ?? {};
+          state.savedWorkflowStates = state.savedWorkflowStates ?? {};
         }
+
+        // Defensive reconciliation against a corrupt or partially-written
+        // payload (e.g. a crash between the two `set`s that update sessions and
+        // parkedSessions). Keeps the tab strip, the active session, and the
+        // parked snapshots mutually consistent. Wrapped so it can never brick
+        // startup.
+        try {
+          reconcileRehydratedSessions(state);
+        } catch (err) {
+          console.error('[workflow] Failed to reconcile rehydrated sessions:', err);
+        }
+
+        // Transient run flags do not survive a refresh; the websocket reconciles
+        // live execution state against the queue on connect.
+        state.isLoading = false;
+        state.isLoadingBySession = {};
+        state.closeForNewWorkflowRequest = null;
+        state.infiniteLoop = state.infiniteLoopSessionId === state.activeSessionId;
+        // The awaiting-run guard is only meaningful while a loop is armed.
+        if (!state.infiniteLoopSessionId) state.infiniteLoopAwaitingRun = false;
         // Errors are managed by useWorkflowErrors.
       },
     },
   ),
 );
 
+// Cache signatures by workflow object reference. The store replaces the
+// `workflow` reference on every edit, so a cache hit means "same workflow
+// object" — safe to reuse. Parked tabs keep a stable reference across renders,
+// so this makes the per-tab dirty check in WorkflowTabline O(1) between edits.
+const signatureCache = new WeakMap<Workflow, string>();
+const dirtySignatureCache = new WeakMap<Workflow, string>();
+
+/** Structural signature: topology only (ignores widget values), used to key
+ *  duration/timing stats so they aggregate across runs that differ only by
+ *  seed/prompt. NOT suitable for unsaved-changes detection. */
 export function getWorkflowSignature(workflow: Workflow): string {
+  const cached = signatureCache.get(workflow);
+  if (cached !== undefined) return cached;
   const nodes = [...workflow.nodes]
     .sort((a, b) => a.id - b.id)
     .map((node) => ({
@@ -5583,8 +5872,31 @@ export function getWorkflowSignature(workflow: Workflow): string {
       inputs: node.inputs?.map((input) => input.link ?? null) ?? [],
       outputs: node.outputs?.map((output) => output.links ?? []) ?? [],
     }));
-  return JSON.stringify({
+  const signature = JSON.stringify({
     nodes,
     links: workflow.links ?? [],
   });
+  signatureCache.set(workflow, signature);
+  return signature;
+}
+
+/** Full content signature including widget values. Used for unsaved-changes
+ *  detection so widget-only edits (prompt text, steps, cfg, seed) register. */
+function getWorkflowDirtySignature(workflow: Workflow): string {
+  const cached = dirtySignatureCache.get(workflow);
+  if (cached !== undefined) return cached;
+  const signature = JSON.stringify(workflow);
+  dirtySignatureCache.set(workflow, signature);
+  return signature;
+}
+
+/** Whether `workflow` has unsaved changes relative to `original`. Single source
+ *  of truth for the tab `*` indicator and close/discard confirmations — must
+ *  stay consistent with the structural dirty checks elsewhere in the app. */
+export function isWorkflowModified(
+  workflow: Workflow | null | undefined,
+  original: Workflow | null | undefined,
+): boolean {
+  if (!workflow || !original) return false;
+  return getWorkflowDirtySignature(workflow) !== getWorkflowDirtySignature(original);
 }

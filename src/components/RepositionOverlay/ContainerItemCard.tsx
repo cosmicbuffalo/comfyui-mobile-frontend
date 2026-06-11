@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
-import { CaretDownIcon, CaretRightIcon, MenuIcon } from "@/components/icons";
+import { CaretDownIcon, MenuIcon } from "@/components/icons";
+import { FoldIcon } from "@/components/FoldIcon";
 import { themeColors } from "@/theme/colors";
 import { hexToRgba } from "@/utils/grouping";
 
@@ -48,15 +49,15 @@ export function ContainerItemCard({
 
   return (
     <div
-      className="rounded-xl mb-3 bg-white dark:bg-neutral-900"
+      className="rounded-xl mb-3 bg-slate-950/40"
       data-reposition-item={dataKey}
     >
       <div
         data-container-type={containerType}
         className={`rounded-xl shadow-md ${isDragging ? "overflow-visible" : "overflow-hidden"} transition-shadow ${
-          isTarget ? "border-blue-500 border-2 ring-2 ring-blue-400" : "border"
-        } ${isHighlighted && !isTarget ? "ring-2 ring-blue-500 transition-all" : ""} ${
-          isDropTarget ? "ring-2 ring-blue-300 ring-dashed" : ""
+          isTarget ? "border-cyan-400 border-2 ring-2 ring-cyan-400/70" : "border"
+        } ${isHighlighted && !isTarget ? "ring-2 ring-cyan-400 transition-all" : ""} ${
+          isDropTarget ? "ring-2 ring-cyan-300 ring-dashed" : ""
         }`}
         style={{
           backgroundColor,
@@ -90,19 +91,18 @@ export function ContainerItemCard({
             data-reposition-handle={dataKey}
             className="touch-none w-5 h-5 flex items-center justify-center shrink-0"
           >
-            <MenuIcon className={`w-5 h-5 ${isTarget ? "text-blue-500" : "text-gray-500"}`} />
+            <MenuIcon className={`w-5 h-5 ${isTarget ? "text-cyan-300" : "text-slate-400"}`} />
           </span>
-          <span className="font-semibold text-gray-900 flex-1 min-w-0 truncate">
+          <span className="font-semibold text-slate-100 flex-1 min-w-0 truncate">
             {title}
           </span>
-          <span className="ml-auto text-sm shrink-0 text-gray-500">
+          <span className="ml-auto text-sm shrink-0 text-slate-400">
             {nodeCountLabel}
           </span>
-          {isCollapsed ? (
-            <CaretRightIcon className={`w-6 h-6 shrink-0 ${canToggleCollapse ? "text-gray-500" : "text-gray-500 opacity-50"}`} />
-          ) : (
-            <CaretDownIcon className={`w-6 h-6 shrink-0 text-gray-500`} />
-          )}
+          <FoldIcon
+            open={!isCollapsed}
+            className={`w-6 h-6 shrink-0 ${canToggleCollapse ? "text-slate-400" : "text-slate-500 opacity-50"}`}
+          />
         </div>
         {childrenContent}
         {!isCollapsed && (
@@ -120,14 +120,14 @@ export function ContainerItemCard({
             }}
           >
             <div className="flex items-center">
-              <span className="text-xs flex-1 min-w-0 truncate text-gray-500">
+              <span className="text-xs flex-1 min-w-0 truncate text-slate-400">
                 {title}
               </span>
               <div className="ml-auto flex items-center gap-1">
-                <span className="text-xs shrink-0 text-gray-500">
+                <span className="text-xs shrink-0 text-slate-400">
                   {nodeCountLabel}
                 </span>
-                <CaretDownIcon className={`w-6 h-6 shrink-0 rotate-180 ${canToggleCollapse ? "text-gray-500" : "text-gray-500 opacity-50"}`} />
+                <CaretDownIcon className={`w-6 h-6 shrink-0 rotate-180 ${canToggleCollapse ? "text-slate-400" : "text-slate-500 opacity-50"}`} />
               </div>
             </div>
           </div>

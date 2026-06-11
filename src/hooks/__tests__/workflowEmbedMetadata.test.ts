@@ -7,6 +7,9 @@ import { useWorkflowErrorsStore } from '../useWorkflowErrors';
 import { useBookmarksStore } from '../useBookmarks';
 import { createEmptyMobileLayout } from '@/utils/mobileLayout';
 import { queueAndGetEmbeddedWorkflow } from './helpers/queueAndGetEmbeddedWorkflow';
+import { queueAndGetPromptRequest } from './helpers/queueAndGetEmbeddedWorkflow';
+import { useWorkflowHiddenStore } from '@/hooks/useWorkflowHidden';
+import { HIDDEN_WORKFLOW_EXTRA_DATA_KEY } from '@/utils/workflowHidden';
 
 function loadFixtureWorkflow(): Workflow {
   const fixturePath = resolve(
@@ -38,6 +41,7 @@ beforeEach(() => {
     promptOutputs: {},
   });
   useBookmarksStore.setState({ bookmarkedItems: [] });
+  useWorkflowHiddenStore.setState({ hidden: [], serverSynced: false, serverDirty: false });
   useWorkflowErrorsStore.setState({
     error: null,
     nodeErrors: {},
@@ -74,5 +78,19 @@ describe('embed workflow metadata', () => {
     expect(embeddedNode).toBeDefined();
     expect(Array.isArray(embeddedNode?.widgets_values)).toBe(true);
     expect((embeddedNode?.widgets_values as string[])[0]).toBe(updatedValue);
+  });
+
+  it('marks queued payloads from hidden workflows', async () => {
+    const workflow = loadFixtureWorkflow();
+    useWorkflowStore.getState().setNodeTypes({} as NodeTypes);
+    useWorkflowHiddenStore.setState({ hidden: ['secret'] });
+    useWorkflowStore.getState().loadWorkflow(workflow, 'secret/workflow.json', {
+      fresh: true,
+      source: { type: 'user', filename: 'secret/workflow.json' },
+    });
+
+    const request = await queueAndGetPromptRequest();
+
+    expect(request.extra_data?.[HIDDEN_WORKFLOW_EXTRA_DATA_KEY]).toBe(true);
   });
 });

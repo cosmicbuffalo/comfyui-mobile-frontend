@@ -1,7 +1,7 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { WorkflowInput, WorkflowNode } from '@/api/types';
 import { useWorkflowStore, getWidgetDefinitions, getInputWidgetDefinitions, getWidgetIndexForInput, findSeedWidgetIndex, resolveSubgraphPlaceholderWidgetDefs, resolveSubgraphPlaceholderInputWidgetDefs, resolveSubgraphProxyWidgetDefs, resolveSubgraphProxyInputWidgetDefs } from '@/hooks/useWorkflow';
-import type { ProxyWidgetRoute } from '@/utils/widgetDefinitions';
+import type { LinkedWidgetRoute, ProxyWidgetRoute } from '@/utils/widgetDefinitions';
 import { isSubgraphPlaceholder } from '@/utils/canonicalWorkflowOps';
 import { isLoraManagerNodeType } from '@/utils/loraManager';
 import { useSeedStore } from '@/hooks/useSeed';
@@ -11,12 +11,13 @@ import { useWorkflowErrorsStore } from '@/hooks/useWorkflowErrors';
 import { useOverallProgress } from '@/hooks/useOverallProgress';
 import { useQueueStore } from '@/hooks/useQueue';
 import { useNodeErrorPopover } from '@/hooks/useNodeErrorPopover';
-import { getImageUrl } from '@/api/client';
+import { getImageUrl, getImagePreviewUrl } from '@/api/client';
 import { getMediaType } from '@/utils/media';
 import { NodeCardMenu } from './NodeCard/Menu';
 import { NodeCardErrorPopover } from './NodeCard/ErrorPopover';
 import { NodeCardNote } from './NodeCard/Note';
 import { NodeCardOutputPreview } from './NodeCard/OutputPreview';
+import { NodeCardImageComparer } from './NodeCard/ImageComparer';
 import { NodeCardHeader } from './NodeCard/Header';
 import { DeleteNodeModal } from '@/components/modals/DeleteNodeModal';
 import { ErrorHighlightBadge } from './NodeCard/ErrorHighlightBadge';
@@ -29,6 +30,7 @@ import { resolveWorkflowColor, themeColors } from '@/theme/colors';
 
 const EMPTY_IMAGES: Array<{ filename: string; subfolder: string; type: string }> = [];
 type ImageLike = (typeof EMPTY_IMAGES)[number];
+const EMPTY_DURATION_STATS: Record<string, { avgMs: number; count: number }> = {};
 
 interface NodeCardProps {
   node: WorkflowNode;
@@ -75,21 +77,35 @@ export const NodeCard = memo(function NodeCard({
   const bookmarkedItems = useBookmarksStore((s) => s.bookmarkedItems);
   const toggleBookmark = useBookmarksStore((s) => s.toggleBookmark);
   const nodeImages = useWorkflowStore((s) => s.nodeOutputs[String(node.id)]);
+  const comparerOutput = useWorkflowStore((s) => s.nodeComparerOutputs[String(node.id)]);
   const latentPreviewUrl = useWorkflowStore((s) =>
     s.latentPreviews[nodeHierarchicalKey] ?? null
   );
   const nodeTextOutput = useWorkflowStore((s) => s.nodeTextOutputs[String(node.id)] ?? null);
   const nodeErrors = useWorkflowErrorsStore((s) => s.nodeErrors[String(node.id)]);
-  const progress = useWorkflowStore((s) => s.progress);
-  const executingPromptId = useWorkflowStore((s) => s.executingPromptId);
-  const workflowDurationStats = useWorkflowStore((s) => s.workflowDurationStats);
-  const storeIsExecuting = useWorkflowStore((s) => s.isExecuting);
-  const running = useQueueStore((s) => s.running);
-  const runKey = executingPromptId || (running[0]?.prompt_id ?? null);
+  // Execution-state subscriptions are gated on THIS card executing. Ungated,
+  // every sampler step re-rendered all N cards (scalar `progress`), the 2s
+  // queue poll re-rendered them again (fresh `running` array identity), and
+  // every card ran its own 200ms overall-progress ticker.
+  const progress = useWorkflowStore((s) => (isExecuting ? s.progress : 0));
+  const executingPromptId = useWorkflowStore((s) =>
+    isExecuting ? s.executingPromptId : null,
+  );
+  const workflowDurationStats = useWorkflowStore((s) =>
+    isExecuting ? s.workflowDurationStats : EMPTY_DURATION_STATS,
+  );
+  const storeIsExecuting = useWorkflowStore((s) => (isExecuting ? s.isExecuting : false));
+  const firstRunningPromptId = useQueueStore((s) =>
+    isExecuting ? (s.running[0]?.prompt_id ?? null) : null,
+  );
+  const hasRunning = useQueueStore((s) => (isExecuting ? s.running.length > 0 : false));
+  const runKey = executingPromptId || firstRunningPromptId;
+  // With workflow null the hook is inert (no interval) — only the executing
+  // card runs a ticker instead of one per card.
   const overallProgress = useOverallProgress({
-    workflow,
+    workflow: isExecuting ? workflow : null,
     runKey,
-    isRunning: storeIsExecuting || running.length > 0,
+    isRunning: storeIsExecuting || hasRunning,
     workflowDurationStats,
   });
   const displayNodeProgress = overallProgress === 100 ? 100 : progress;
@@ -119,18 +135,25 @@ export const NodeCard = memo(function NodeCard({
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [showFastGroupConfig, setShowFastGroupConfig] = useState(false);
   const deleteNode = useWorkflowStore((s) => s.deleteNode);
+  const duplicateNode = useWorkflowStore((s) => s.duplicateNode);
 
   useEffect(() => {
+    // A return value from an event handler is discarded, so the hide timer
+    // must be tracked here: clear it on re-fire and on unmount.
+    let timer: ReturnType<typeof setTimeout> | null = null;
     const handleShowLabel = (event: Event) => {
       const detail = (event as CustomEvent).detail;
       if (detail.nodeId === node.id) {
         setHighlightLabel(detail.label);
-        const timer = setTimeout(() => setHighlightLabel(null), 1000);
-        return () => clearTimeout(timer);
+        if (timer != null) clearTimeout(timer);
+        timer = setTimeout(() => setHighlightLabel(null), 1000);
       }
     };
     window.addEventListener('node-show-label', handleShowLabel as EventListener);
-    return () => window.removeEventListener('node-show-label', handleShowLabel as EventListener);
+    return () => {
+      window.removeEventListener('node-show-label', handleShowLabel as EventListener);
+      if (timer != null) clearTimeout(timer);
+    };
   }, [node.id]);
 
   // Check if this node has errors
@@ -154,7 +177,9 @@ export const NodeCard = memo(function NodeCard({
   useEffect(() => {
     if (!latestImage) return;
     if (latestKey === previewKey) return;
-    const nextSrc = getImageUrl(latestImage.filename, latestImage.subfolder, latestImage.type);
+    // Preload the same WebP preview the inline OutputPreview displays, so the
+    // gate reflects (and primes the cache for) the fast image, not the full PNG.
+    const nextSrc = getImagePreviewUrl(latestImage.filename, latestImage.subfolder, latestImage.type);
     const img = new Image();
     img.onload = () => setPreviewImage(latestImage);
     img.src = nextSrc;
@@ -177,6 +202,7 @@ export const NodeCard = memo(function NodeCard({
   const isKSampler = node.type === 'KSampler';
   const isLoraManagerNode = isLoraManagerNodeType(node.type);
   const isFastGroupsBypasser = /fast\s+groups/i.test(node.type) && /\(rgthree\)/i.test(node.type);
+  const isImageComparer = /image\s*comparer/i.test(node.type);
   const isBypassed = node.mode === 4;
   const isCollapsed = Boolean(collapsedItems[nodeHierarchicalKey]);
   const isLoadImageNode = /LoadImage/i.test(node.type);
@@ -224,7 +250,9 @@ export const NodeCard = memo(function NodeCard({
   );
   const noteText = useMemo<string | null>(() => {
     const props = node.properties as Record<string, unknown> | undefined;
-    const candidateKeys = ['text', 'note', 'description', 'label', 'title'];
+    // Note *body* keys only. 'title'/'label' are naming fields, not note content —
+    // including them made an edited node label leak into the bottom note display.
+    const candidateKeys = ['text', 'note', 'description'];
     if (props) {
       for (const key of candidateKeys) {
         const value = props[key];
@@ -292,7 +320,7 @@ export const NodeCard = memo(function NodeCard({
           href={url}
           target="_blank"
           rel="noreferrer"
-          className="text-blue-600 underline break-all"
+          className="text-cyan-300 underline break-all"
         >
           {url}
         </a>
@@ -418,7 +446,9 @@ export const NodeCard = memo(function NodeCard({
   const totalBookmarkCount = bookmarkedItems.length;
   const canAddNodeBookmark = totalBookmarkCount < 5 || isNodeBookmarked;
 
-  const showImagePreview = (hasImageOutput || isImageOutputNode) && !!effectivePreviewImage;
+  const showComparer = isImageComparer && !!comparerOutput &&
+    (comparerOutput.a.length > 0 || comparerOutput.b.length > 0);
+  const showImagePreview = !showComparer && (hasImageOutput || isImageOutputNode) && !!effectivePreviewImage;
   const showTextPreview = typeof nodeTextOutput === 'string' && nodeTextOutput.length > 0;
   const inputConnectionCount = node.inputs?.filter((input) => input.link != null).length ?? 0;
   const outputConnectionCount = node.outputs?.reduce((count, output) => count + (output.links?.length ?? 0), 0) ?? 0;
@@ -433,6 +463,9 @@ export const NodeCard = memo(function NodeCard({
         const mediaType = getMediaType(filename);
         return [{
           src,
+          displaySrc: mediaType === 'image'
+            ? getImagePreviewUrl(filename, subfolder, type)
+            : undefined,
           alt: displayName,
           filename,
           mediaType,
@@ -482,19 +515,104 @@ export const NodeCard = memo(function NodeCard({
     return map;
   }, [isPlaceholder, allResolvedWidgets, inputWidgets]);
 
+  const linkedSourceRoutes = useMemo(() => {
+    if (!isPlaceholder) return new Map<number, LinkedWidgetRoute>();
+    const map = new Map<number, LinkedWidgetRoute>();
+    const extract = (defs: Array<{ widgetIndex: number; options?: Record<string, unknown> | unknown[] }>) => {
+      for (const def of defs) {
+        if (!def.options || Array.isArray(def.options)) continue;
+        const linkedSource = def.options.__linkedSource;
+        if (linkedSource && typeof linkedSource === 'object') {
+          map.set(def.widgetIndex, linkedSource as LinkedWidgetRoute);
+        }
+      }
+    };
+    extract(allResolvedWidgets);
+    extract(inputWidgets);
+    return map;
+  }, [isPlaceholder, allResolvedWidgets, inputWidgets]);
+
+  const findLinkedSourceNode = useCallback(
+    (route: LinkedWidgetRoute): WorkflowNode | null => {
+      if (!workflow) return null;
+      const nodes = route.subgraphId == null
+        ? workflow.nodes
+        : workflow.definitions?.subgraphs?.find((sg) => sg.id === route.subgraphId)?.nodes;
+      return nodes?.find((candidate) =>
+        candidate.id === route.nodeId ||
+        Boolean(route.itemKey && candidate.itemKey === route.itemKey)
+      ) ?? null;
+    },
+    [workflow]
+  );
+
+  const readLinkedSourceValue = useCallback(
+    (route: LinkedWidgetRoute): unknown => {
+      const sourceNode = findLinkedSourceNode(route);
+      if (!sourceNode) return undefined;
+      const values = sourceNode.widgets_values;
+      if (Array.isArray(values)) {
+        if (route.widgetIndex >= 0 && route.widgetIndex < values.length) {
+          return values[route.widgetIndex];
+        }
+        return route.widgetIndex !== 0 ? values[0] : undefined;
+      }
+      if (values && typeof values === 'object') {
+        const record = values as Record<string, unknown>;
+        if (route.widgetName && record[route.widgetName] !== undefined) {
+          return record[route.widgetName];
+        }
+        return record[String(route.widgetIndex)];
+      }
+      return undefined;
+    },
+    [findLinkedSourceNode]
+  );
+
+  const updateLinkedSourceWidget = useCallback(
+    (route: LinkedWidgetRoute, value: unknown): boolean => {
+      if (route.subgraphId != null) {
+        updateSubgraphInnerNodeWidget(route.subgraphId, route.nodeId, route.widgetIndex, value);
+        return true;
+      }
+      const sourceNode = findLinkedSourceNode(route);
+      const sourceItemKey = route.itemKey ?? sourceNode?.itemKey;
+      if (!sourceItemKey) return false;
+      updateNodeWidget(
+        sourceItemKey,
+        route.widgetIndex,
+        value,
+        route.widgetName,
+      );
+      return true;
+    },
+    [findLinkedSourceNode, updateNodeWidget, updateSubgraphInnerNodeWidget]
+  );
+
   const handleUpdateNodeWidget = useCallback(
     (widgetIndex: number, value: unknown, widgetName?: string) => {
       const proxy = proxyRoutes.get(widgetIndex);
       if (proxy) {
         updateSubgraphInnerNodeWidget(proxy.subgraphId, proxy.innerNodeId, proxy.innerWidgetIndex, value);
       } else {
+        const linkedSource = linkedSourceRoutes.get(widgetIndex);
+        if (linkedSource && updateLinkedSourceWidget(linkedSource, value)) {
+          return;
+        }
         updateNodeWidget(nodeHierarchicalKey, widgetIndex, value, widgetName);
       }
     },
-    [nodeHierarchicalKey, updateNodeWidget, updateSubgraphInnerNodeWidget, proxyRoutes]
+    [
+      linkedSourceRoutes,
+      nodeHierarchicalKey,
+      proxyRoutes,
+      updateLinkedSourceWidget,
+      updateNodeWidget,
+      updateSubgraphInnerNodeWidget,
+    ]
   );
 
-  // Resolve a widget value, following proxy routes to inner nodes when needed.
+  // Resolve a widget value, following promoted/proxy routes to source nodes when needed.
   const resolveWidgetValue = useCallback(
     (widgetIndex: number): unknown => {
       const proxy = proxyRoutes.get(widgetIndex);
@@ -506,10 +624,15 @@ export const NodeCard = memo(function NodeCard({
           return values[proxy.innerWidgetIndex];
         }
       }
+      const linkedSource = linkedSourceRoutes.get(widgetIndex);
+      if (linkedSource) {
+        const linkedValue = readLinkedSourceValue(linkedSource);
+        if (linkedValue !== undefined) return linkedValue;
+      }
       const values = Array.isArray(node.widgets_values) ? node.widgets_values : [];
       return values[widgetIndex];
     },
-    [node, workflow, proxyRoutes]
+    [linkedSourceRoutes, node.widgets_values, readLinkedSourceValue, workflow, proxyRoutes]
   );
 
   const handleUpdateNodeWidgets = useCallback(
@@ -527,6 +650,10 @@ export const NodeCard = memo(function NodeCard({
             value
           );
         } else {
+          const linkedSource = linkedSourceRoutes.get(widgetIndex);
+          if (linkedSource && updateLinkedSourceWidget(linkedSource, value)) {
+            continue;
+          }
           directUpdates[widgetIndex] = value;
         }
       }
@@ -534,7 +661,14 @@ export const NodeCard = memo(function NodeCard({
         updateNodeWidgets(nodeHierarchicalKey, directUpdates);
       }
     },
-    [nodeHierarchicalKey, updateNodeWidgets, updateSubgraphInnerNodeWidget, proxyRoutes]
+    [
+      linkedSourceRoutes,
+      nodeHierarchicalKey,
+      proxyRoutes,
+      updateLinkedSourceWidget,
+      updateNodeWidgets,
+      updateSubgraphInnerNodeWidget,
+    ]
   );
   const handleSetSeedMode = useCallback(
     (nodeId: number, mode: 'fixed' | 'randomize' | 'increment' | 'decrement') => {
@@ -565,14 +699,14 @@ export const NodeCard = memo(function NodeCard({
     !isExecuting &&
     rawNodeColor.length > 0;
   const nodeCardBorderClass = hasErrors
-    ? '!border-2 !border-red-700'
+    ? '!border !border-red-600'
     : isConnectionHighlighted
-      ? 'border-orange-500 shadow-orange-200'
+      ? 'border-cyan-400 shadow-cyan-900/20'
       : isExecuting
-        ? 'border-green-500 shadow-green-200'
+        ? 'border-emerald-500 shadow-emerald-900/20'
         : isPlaceholder
-          ? 'border-blue-500/60 shadow-blue-100'
-          : 'border-transparent';
+          ? 'border-cyan-400/50 shadow-cyan-900/20'
+          : 'border-white/10';
   return (
     <div
       id={`node-card-wrapper-${node.id}`}
@@ -597,9 +731,9 @@ export const NodeCard = memo(function NodeCard({
         className={`
         node-card-inner
         ${inGroup ? `rounded-lg shadow-sm ${isCollapsed && isBypassed ? 'pt-1 pb-0' : 'py-1'}` : `rounded-xl shadow-md px-2 ${isCollapsed && isBypassed ? 'pt-1 pb-0' : 'py-1'} mb-3`}
-        border-2
+        border
         ${nodeCardBorderClass}
-        ${isBypassed ? 'bg-purple-100/50' : 'bg-white'}
+        ${isBypassed ? 'bg-purple-950/35' : 'bg-slate-900/95'}
       `}
         style={{
           overflow: 'hidden',
@@ -654,6 +788,7 @@ export const NodeCard = memo(function NodeCard({
             toggleBypass={toggleBypass}
             setItemHidden={setItemHidden}
             onDeleteNode={() => setShowDeleteModal(true)}
+            onDuplicateNode={() => duplicateNode(nodeHierarchicalKey)}
             onMoveNode={onMoveNode ?? (() => {})}
             connectionHighlightMode={connectionHighlightMode}
             setConnectionHighlightMode={setConnectionHighlightMode}
@@ -674,7 +809,7 @@ export const NodeCard = memo(function NodeCard({
           }`}
         >
           {nodeTitle && (
-            <div className="node-card-subtitle text-[10px] text-center font-semibold uppercase tracking-wider text-gray-400 mb-2 px-1">
+            <div className="node-card-subtitle text-[10px] text-center font-semibold uppercase tracking-wider text-slate-500 mb-2 px-1">
               {typeDef?.display_name || node.type}
             </div>
           )}
@@ -682,6 +817,7 @@ export const NodeCard = memo(function NodeCard({
           <div id={`node-content-${node.id}`} className={`node-expanded-content ${isBypassed ? 'opacity-60 grayscale' : ''}`}>
             <NodeCardConnectionsSection
               nodeId={node.id}
+              nodeHierarchicalKey={nodeHierarchicalKey}
               nodeType={node.type}
               inputs={connectionInputs}
               outputs={visibleOutputs}
@@ -719,6 +855,15 @@ export const NodeCard = memo(function NodeCard({
                 onUpdateNote={handleUpdateNote}
                 noteTextareaRef={noteTextareaRef}
                 onNoteTap={handleNoteTap}
+              />
+            )}
+
+            {showComparer && comparerOutput && (
+              <NodeCardImageComparer
+                show={showComparer}
+                aImages={comparerOutput.a}
+                bImages={comparerOutput.b}
+                displayName={displayName}
               />
             )}
 

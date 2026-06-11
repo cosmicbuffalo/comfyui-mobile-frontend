@@ -1,8 +1,9 @@
 import { expect, vi } from 'vitest';
 import type { Workflow } from '@/api/types';
+import type { PromptQueueRequest } from '@/api/client';
 import { useWorkflowStore } from '@/hooks/useWorkflow';
 
-export async function queueAndGetEmbeddedWorkflow(): Promise<Workflow> {
+export async function queueAndGetPromptRequest(): Promise<PromptQueueRequest> {
   const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
     const url = String(input);
     if (url.includes('/api/queue')) {
@@ -24,7 +25,11 @@ export async function queueAndGetEmbeddedWorkflow(): Promise<Workflow> {
   );
   expect(promptCall).toBeDefined();
   const requestInit = (promptCall as unknown as [RequestInfo | URL, RequestInit | undefined] | undefined)?.[1];
-  const body = JSON.parse(String(requestInit?.body ?? '{}')) as {
+  return JSON.parse(String(requestInit?.body ?? '{}')) as PromptQueueRequest;
+}
+
+export async function queueAndGetEmbeddedWorkflow(): Promise<Workflow> {
+  const body = await queueAndGetPromptRequest() as PromptQueueRequest & {
     extra_data?: { extra_pnginfo?: { workflow?: Workflow } };
   };
   const embedded = body.extra_data?.extra_pnginfo?.workflow;

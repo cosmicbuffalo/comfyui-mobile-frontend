@@ -1,10 +1,11 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Dialog } from '@/components/modals/Dialog';
+import { ExternalLinkIcon } from '@/components/icons';
 import type { WorkflowGroup, WorkflowNode } from '@/api/types';
-import {
-  collectBypassGroupTargetNodes,
-  useWorkflowStore
-} from '@/hooks/useWorkflow';
+import { useWorkflowStore } from '@/hooks/useWorkflow';
+import { collectBypassGroupTargetNodes } from '@/utils/workflowHierarchy';
+import { findLayoutPath } from '@/utils/layoutTraversal';
+import { getGroupKey } from '@/utils/mobileLayout';
 import { themeColors } from '@/theme/colors';
 import {
   cssColorToHex,
@@ -13,6 +14,13 @@ import {
   normalizeHexColor
 } from '@/utils/colorUtils';
 import { requireHierarchicalKey } from '@/utils/itemKeys';
+import {
+  controlLabelClassName,
+  controlModalFocusClassName,
+  controlModalInputBaseClassName,
+  controlNestedSurfaceClassName,
+  controlToggleButtonClassName,
+} from '@/components/InputControls/controlStyles';
 
 interface FastGroupsBypasserControlsProps {
   node: WorkflowNode;
@@ -26,6 +34,7 @@ interface FastGroupToggleEntry {
   label: string;
   itemKey: string;
   color?: string;
+  subgraphId: string | null;
   isEngaged: boolean;
   isDisabled: boolean;
   group: WorkflowGroup;
@@ -39,6 +48,11 @@ interface FastGroupDraft {
   customSortAlphabet: string;
   toggleRestriction: string;
   showNav: boolean;
+}
+
+interface FastGroupDraftState {
+  properties: WorkflowNode['properties'];
+  draft: FastGroupDraft;
 }
 
 function readStringProperty(
@@ -77,6 +91,10 @@ function buildFastGroupDraft(properties: Record<string, unknown>): FastGroupDraf
   };
 }
 
+function escapeAttributeValue(value: string): string {
+  return value.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+}
+
 export function FastGroupsBypasserControls({
   node,
   isBypassed,
@@ -85,12 +103,31 @@ export function FastGroupsBypasserControls({
 }: FastGroupsBypasserControlsProps) {
   const workflow = useWorkflowStore((state) => state.workflow);
   const scopeStack = useWorkflowStore((state) => state.scopeStack);
+  const mobileLayout = useWorkflowStore((state) => state.mobileLayout);
+  const itemKeyByPointer = useWorkflowStore((state) => state.itemKeyByPointer);
   const updateNodeProperties = useWorkflowStore((state) => state.updateNodeProperties);
   const bypassAllInContainer = useWorkflowStore((state) => state.bypassAllInContainer);
+  const setItemCollapsed = useWorkflowStore((state) => state.setItemCollapsed);
+  const setItemHidden = useWorkflowStore((state) => state.setItemHidden);
+  const navigateToSubgraphTrail = useWorkflowStore((state) => state.navigateToSubgraphTrail);
   const nodeHierarchicalKey = requireHierarchicalKey(node.itemKey, `node ${node.id}`);
-  const [fastGroupDraft, setFastGroupDraft] = useState<FastGroupDraft>(() =>
-    buildFastGroupDraft((node.properties ?? {}) as Record<string, unknown>)
-  );
+  const [fastGroupDraftState, setFastGroupDraftState] = useState<FastGroupDraftState>(() => ({
+    properties: node.properties,
+    draft: buildFastGroupDraft((node.properties ?? {}) as Record<string, unknown>),
+  }));
+  if (fastGroupDraftState.properties !== node.properties) {
+    setFastGroupDraftState({
+      properties: node.properties,
+      draft: buildFastGroupDraft((node.properties ?? {}) as Record<string, unknown>),
+    });
+  }
+  const fastGroupDraft = fastGroupDraftState.draft;
+  const setFastGroupDraft = (updater: (current: FastGroupDraft) => FastGroupDraft) => {
+    setFastGroupDraftState((current) => ({
+      properties: current.properties,
+      draft: updater(current.draft),
+    }));
+  };
 
   const fastGroupToggles = useMemo<FastGroupToggleEntry[]>(() => {
     if (!workflow) return [];
@@ -202,6 +239,7 @@ export function FastGroupsBypasserControls({
         label: group.title?.trim() || `Group ${group.id}`,
         itemKey,
         color: group.color,
+        subgraphId,
         isEngaged,
         isDisabled: targetNodes.length === 0,
         group
@@ -262,16 +300,56 @@ export function FastGroupsBypasserControls({
     }
 
     return entries;
-  }, [node.properties, node.id, scopeStack, workflow]);
-
-  useEffect(() => {
-    setFastGroupDraft(buildFastGroupDraft((node.properties ?? {}) as Record<string, unknown>));
-  }, [node.properties]);
+  }, [node.properties, scopeStack, workflow]);
 
   const handleFastGroupToggle = (entry: FastGroupToggleEntry) => () => {
     if (isBypassed || entry.isDisabled) return;
     bypassAllInContainer(entry.itemKey, entry.isEngaged);
   };
+
+  const handleJumpToGroup = (entry: FastGroupToggleEntry) => (event: React.MouseEvent<HTMLButtonElement>) => {
+    event.stopPropagation();
+    if (!workflow) return;
+
+    const targetGroupKey = getGroupKey(entry.group.id, entry.subgraphId);
+    const path = findLayoutPath(mobileLayout, ({ ref, currentSubgraphId }) => (
+      ref.type === 'group' &&
+      getGroupKey(ref.id, ref.subgraphId ?? currentSubgraphId) === targetGroupKey
+    ));
+    const subgraphTrail = path?.subgraphIds ?? (entry.subgraphId ? [entry.subgraphId] : []);
+
+    for (const subgraphId of subgraphTrail) {
+      const subgraphItemKey = workflow.definitions?.subgraphs?.find((subgraph) => subgraph.id === subgraphId)?.itemKey;
+      if (!subgraphItemKey) continue;
+      setItemHidden(subgraphItemKey, false);
+      setItemCollapsed(subgraphItemKey, false);
+    }
+    for (const groupKey of path?.groupKeys ?? []) {
+      const groupItemKey = itemKeyByPointer[groupKey];
+      if (!groupItemKey) continue;
+      setItemHidden(groupItemKey, false);
+      setItemCollapsed(groupItemKey, false);
+    }
+    setItemHidden(entry.itemKey, false);
+    setItemCollapsed(entry.itemKey, false);
+    navigateToSubgraphTrail(subgraphTrail);
+
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        const itemSelector = `[data-item-key="${escapeAttributeValue(entry.itemKey)}"]`;
+        const repositionSelector = `[data-reposition-item="group-${escapeAttributeValue(entry.itemKey)}"]`;
+        const targetEl = document.querySelector<HTMLElement>(itemSelector) ??
+          document.querySelector<HTMLElement>(repositionSelector);
+        if (!targetEl) return;
+        targetEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        targetEl.classList.add('highlight-pulse');
+        setTimeout(() => targetEl.classList.remove('highlight-pulse'), 1200);
+        if ('vibrate' in navigator) navigator.vibrate(10);
+      });
+    });
+  };
+
+  const fieldClassName = `${controlModalInputBaseClassName} ${controlModalFocusClassName(false)}`;
 
   const applyFastGroupConfig = () => {
     if (isBypassed) return;
@@ -300,42 +378,66 @@ export function FastGroupsBypasserControls({
     <>
       {fastGroupToggles.length > 0 && (
         <div className="mb-4">
-          <div className="text-xs text-gray-400 dark:text-gray-300 mb-1.5 uppercase tracking-wide">
+          <div className="text-xs text-slate-400 mb-1.5 uppercase tracking-wide">
             Groups
           </div>
           <div className="space-y-2">
             {fastGroupToggles.map((entry) => (
               <div
                 key={entry.key}
-                className={`flex items-center justify-between gap-3 rounded-lg border px-3 py-2 ${!entry.isEngaged && !entry.isDisabled ? 'bg-purple-50/60 dark:bg-purple-900/20 border-purple-300 dark:border-purple-400/30' : `bg-gray-50/40 dark:bg-gray-900/60 ${entry.isDisabled ? 'border-gray-200 dark:border-white/10 opacity-60' : 'border-gray-200 dark:border-white/15'}`}`}
+                onClick={handleFastGroupToggle(entry)}
+                className={[
+                  'flex items-center justify-between gap-3 px-3 py-2',
+                  controlNestedSurfaceClassName,
+                  entry.isEngaged && !entry.isDisabled
+                    ? 'border-cyan-400/60 bg-cyan-500/10 ring-1 ring-cyan-400/35'
+                    : 'bg-slate-950/45 text-slate-400',
+                  !entry.isEngaged && !entry.isDisabled ? 'opacity-80' : '',
+                  isBypassed || entry.isDisabled ? 'cursor-not-allowed opacity-50' : 'cursor-pointer',
+                ].filter(Boolean).join(' ')}
               >
                 <div className="flex items-center gap-2 min-w-0">
                   <span
-                    className="h-2.5 w-2.5 rounded-full"
+                    className="h-2.5 w-2.5 rounded-full ring-1 ring-white/20"
                     style={{
                       backgroundColor: entry.color || themeColors.workflow.defaultGroupDot,
                     }}
                   />
-                  <span className="text-sm font-medium text-gray-800 dark:text-gray-100 truncate">
+                  <span className={`text-sm font-medium truncate ${entry.isEngaged ? 'text-slate-100' : 'text-slate-300'}`}>
                     {entry.label}
                   </span>
                 </div>
-                <button
-                  type="button"
-                  role="switch"
-                  aria-checked={entry.isEngaged}
-                  onClick={handleFastGroupToggle(entry)}
-                  disabled={isBypassed || entry.isDisabled}
-                  className={`relative inline-flex h-6 w-11 items-center rounded-full transition ${
-                    entry.isEngaged ? 'bg-emerald-500' : 'bg-gray-300'
-                  } ${(isBypassed || entry.isDisabled) ? 'cursor-not-allowed opacity-60' : 'cursor-pointer'}`}
-                >
-                  <span
-                    className={`inline-block h-5 w-5 transform rounded-full bg-white transition ${
-                      entry.isEngaged ? 'translate-x-5' : 'translate-x-1'
-                    }`}
-                  />
-                </button>
+                <div className="flex items-center gap-2 shrink-0">
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={entry.isEngaged}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      handleFastGroupToggle(entry)();
+                    }}
+                    disabled={isBypassed || entry.isDisabled}
+                    className={`relative inline-flex h-6 w-11 items-center ${controlToggleButtonClassName({
+                      active: entry.isEngaged,
+                      disabled: isBypassed || entry.isDisabled,
+                    })} ${entry.isDisabled ? 'opacity-50' : ''}`}
+                  >
+                    <span
+                      className={`inline-block h-5 w-5 transform rounded-full bg-white transition ${
+                        entry.isEngaged ? 'translate-x-5' : 'translate-x-1'
+                      }`}
+                    />
+                  </button>
+                  <button
+                    type="button"
+                    aria-label={`Jump to ${entry.label}`}
+                    title={`Jump to ${entry.label}`}
+                    onClick={handleJumpToGroup(entry)}
+                    className="h-8 w-8 inline-flex items-center justify-center rounded-lg border border-white/10 bg-slate-950/70 text-slate-300 transition-colors hover:bg-white/10 hover:text-cyan-200 active:scale-95"
+                  >
+                    <ExternalLinkIcon className="w-4 h-4" />
+                  </button>
+                </div>
               </div>
             ))}
           </div>
@@ -348,37 +450,37 @@ export function FastGroupsBypasserControls({
           description={(
             <div className="mt-3 space-y-3 text-left">
               <label className="block">
-                <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-400">
                   Match colors
                 </div>
                 <input
                   type="text"
                   value={fastGroupDraft.matchColors}
                   onChange={(event) => setFastGroupDraft((current) => ({ ...current, matchColors: event.target.value }))}
-                  className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-700"
+                  className={fieldClassName}
                   placeholder="Green, Yellow, #8A8"
                 />
               </label>
               <label className="block">
-                <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-400">
                   Match title
                 </div>
                 <input
                   type="text"
                   value={fastGroupDraft.matchTitle}
                   onChange={(event) => setFastGroupDraft((current) => ({ ...current, matchTitle: event.target.value }))}
-                  className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-700"
+                  className={fieldClassName}
                   placeholder="ALGO"
                 />
               </label>
               <label className="block">
-                <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-400">
                   Sort
                 </div>
                 <select
                   value={fastGroupDraft.sort}
                   onChange={(event) => setFastGroupDraft((current) => ({ ...current, sort: event.target.value }))}
-                  className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-700"
+                  className={fieldClassName}
                 >
                   <option value="position">Position</option>
                   <option value="alphanumeric">Alphanumeric</option>
@@ -386,43 +488,43 @@ export function FastGroupsBypasserControls({
                 </select>
               </label>
               <label className="block">
-                <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-400">
                   Custom alphabet
                 </div>
                 <input
                   type="text"
                   value={fastGroupDraft.customSortAlphabet}
                   onChange={(event) => setFastGroupDraft((current) => ({ ...current, customSortAlphabet: event.target.value }))}
-                  className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-700"
+                  className={fieldClassName}
                   placeholder="ABCDEF or A,B,C"
                 />
               </label>
               <label className="block">
-                <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-400">
                   Toggle restriction
                 </div>
                 <input
                   type="text"
                   value={fastGroupDraft.toggleRestriction}
                   onChange={(event) => setFastGroupDraft((current) => ({ ...current, toggleRestriction: event.target.value }))}
-                  className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-700"
+                  className={fieldClassName}
                   placeholder="default"
                 />
               </label>
-              <label className="flex items-center justify-between rounded-lg border border-slate-200 dark:border-white/15 px-3 py-2 text-slate-700 dark:text-gray-100">
-                <span className="text-sm font-medium text-slate-700 dark:text-gray-100">Show all graphs</span>
+              <label className={`flex items-center justify-between px-3 py-2 text-slate-100 ${controlNestedSurfaceClassName}`}>
+                <span className={`${controlLabelClassName} text-slate-100`}>Show all graphs</span>
                 <input
                   type="checkbox"
-                  className="h-4 w-4 accent-blue-600"
+                  className="h-4 w-4 accent-cyan-500"
                   checked={fastGroupDraft.showAllGraphs}
                   onChange={(event) => setFastGroupDraft((current) => ({ ...current, showAllGraphs: event.target.checked }))}
                 />
               </label>
-              <label className="flex items-center justify-between rounded-lg border border-slate-200 dark:border-white/15 px-3 py-2 text-slate-700 dark:text-gray-100">
-                <span className="text-sm font-medium text-slate-700 dark:text-gray-100">Show nav</span>
+              <label className={`flex items-center justify-between px-3 py-2 text-slate-100 ${controlNestedSurfaceClassName}`}>
+                <span className={`${controlLabelClassName} text-slate-100`}>Show nav</span>
                 <input
                   type="checkbox"
-                  className="h-4 w-4 accent-blue-600"
+                  className="h-4 w-4 accent-cyan-500"
                   checked={fastGroupDraft.showNav}
                   onChange={(event) => setFastGroupDraft((current) => ({ ...current, showNav: event.target.checked }))}
                 />

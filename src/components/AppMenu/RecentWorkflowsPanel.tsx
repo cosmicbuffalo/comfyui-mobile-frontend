@@ -5,12 +5,22 @@ import { useRecentWorkflowsStore, type RecentWorkflowEntry } from '@/hooks/useRe
 import { getDisplayName } from './userWorkflowHelpers';
 import { formatRelativeDate } from './formatRelativeDate';
 import { getFileWorkflowAvailability } from '@/api/client';
+import {
+  menuMutedTextClassName,
+  menuSmallIconClassName,
+  menuSurfaceButtonDisabledClassName,
+  menuTextClassName,
+} from './menuStyles';
 
 interface RecentWorkflowsPanelProps {
   onBack: () => void;
   onLoadUserWorkflow: (filename: string) => void;
   onLoadTemplate: (moduleName: string, templateName: string) => void;
-  onLoadFileWorkflow: (filePath: string, assetSource: 'output' | 'input' | 'temp') => void;
+  onLoadFileWorkflow: (
+    filePath: string,
+    assetSource: 'output' | 'input' | 'temp',
+    hidden?: boolean,
+  ) => void;
 }
 
 function getSourceLabel(entry: RecentWorkflowEntry): string | null {
@@ -106,7 +116,11 @@ export function RecentWorkflowsPanel({
         onLoadTemplate(entry.source.moduleName, entry.source.templateName);
         break;
       case 'file':
-        onLoadFileWorkflow(entry.source.filePath, entry.source.assetSource);
+        onLoadFileWorkflow(
+          entry.source.filePath,
+          entry.source.assetSource,
+          entry.source.hidden,
+        );
         break;
     }
   };
@@ -119,7 +133,7 @@ export function RecentWorkflowsPanel({
         rightElement={entries.length > 0 ? (
           <button
             onClick={clearEntries}
-            className="text-xs font-semibold text-red-500"
+            className="text-xs font-semibold text-red-300"
           >
             Clear
           </button>
@@ -127,8 +141,8 @@ export function RecentWorkflowsPanel({
       />
 
       {entries.length === 0 ? (
-        <div className="flex flex-col items-center justify-center py-12 text-gray-400">
-          <ClockIcon className="w-10 h-10 mb-3 text-gray-300" />
+        <div className={`flex flex-col items-center justify-center py-12 ${menuMutedTextClassName}`}>
+          <ClockIcon className="w-10 h-10 mb-3 text-slate-600" />
           <p className="text-sm">No recent workflows</p>
         </div>
       ) : (
@@ -143,27 +157,25 @@ export function RecentWorkflowsPanel({
                 key={`${entry.filename}-${entry.timestamp}-${i}`}
                 onClick={() => handleLoad(entry)}
                 disabled={!reloadable}
-                className="w-full flex items-center gap-3 px-4 py-3 bg-white border border-gray-200
-                           rounded-xl text-left hover:bg-gray-50 min-h-[56px]
-                           disabled:opacity-50 disabled:cursor-not-allowed"
+                className={menuSurfaceButtonDisabledClassName}
               >
-                <Icon className="w-5 h-5 text-gray-600 shrink-0" />
+                <Icon className={`${menuSmallIconClassName} shrink-0`} />
                 <div className="flex-1 min-w-0">
-                  <p className="font-medium text-gray-900 truncate">
+                  <p className={`${menuTextClassName} truncate`}>
                     {getEntryDisplayName(entry)}
                   </p>
-                  <div className="flex items-center gap-2 text-xs text-gray-500">
+                  <div className={`flex items-center gap-2 text-xs ${menuMutedTextClassName}`}>
                     <span>{formatRelativeDate(entry.timestamp / 1000)}</span>
                     {sourceLabel && (
                       <>
-                        <span className="text-gray-300">&middot;</span>
+                        <span className="text-slate-600">&middot;</span>
                         <span>{sourceLabel}</span>
                       </>
                     )}
                     {unavailable.has(i) && (
                       <>
-                        <span className="text-gray-300">&middot;</span>
-                        <span className="text-red-400">File missing</span>
+                        <span className="text-slate-600">&middot;</span>
+                        <span className="text-red-300">File missing</span>
                       </>
                     )}
                   </div>

@@ -33,7 +33,10 @@ export interface WorkflowNode {
   inputs: WorkflowInput[];
   outputs: WorkflowOutput[];
   properties: Record<string, unknown>;
-  widgets_values: unknown[] | Record<string, unknown>;
+  // Optional: some nodes (e.g. an empty rgthree Fast Groups Bypasser) carry no
+  // widgets_values; normalization may omit it entirely. Access via the
+  // Array.isArray / isRecord guards in workflowInputs rather than assuming shape.
+  widgets_values?: unknown[] | Record<string, unknown>;
   color?: string;
   bgcolor?: string;
 }
@@ -172,6 +175,9 @@ export interface HistoryOutput {
   images?: HistoryOutputImage[];
   gifs?: HistoryOutputImage[];
   videos?: HistoryOutputImage[];
+  // Image Comparer (rgthree) emits its two sides separately rather than in `images`.
+  a_images?: HistoryOutputImage[];
+  b_images?: HistoryOutputImage[];
   [key: string]: unknown;
 }
 

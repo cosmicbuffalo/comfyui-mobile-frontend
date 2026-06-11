@@ -1,12 +1,14 @@
-import type { WorkflowNode, NodeTypes, NodeTypeDefinition, Workflow } from '@/api/types';
+import type { WorkflowLink, WorkflowNode, NodeTypes, NodeTypeDefinition, Workflow, WorkflowSubgraphLink } from '@/api/types';
 import { getNodePropertyWidgetIndexMap, getWidgetValue, isWidgetInputType, skipImplicitSeedControlSlot } from '@/utils/workflowInputs';
-import { findLoraListIndex, isLoraList, isLoraManagerNodeType } from '@/utils/loraManager';
+import { findLoraListIndex, isLoraList, isLoraManagerNodeType, isPowerLoraLoaderNodeType } from '@/utils/loraManager';
+import { modelWidgetKind } from '@/utils/modelWidgetKind';
 import {
   extractTriggerWordList,
   extractTriggerWordListLoose,
   findTriggerWordListIndex,
   isTriggerWordToggleNodeType
 } from '@/utils/triggerWordToggle';
+import { getLinkId, getLinkOriginId, getLinkOriginSlot } from '@/utils/canonicalWorkflowOps';
 
 export interface WidgetDefinition {
   name: string;
@@ -154,7 +156,7 @@ function collectWidgetDefinitions(
     }
 
     // Handle Power Lora Loader (rgthree) specially
-    if (node.type === 'Power Lora Loader (rgthree)') {
+    if (isPowerLoraLoaderNodeType(node.type)) {
       const definitions: WidgetDefinition[] = [];
 
       const showSeparate = node.properties?.['Show Strengths'] === 'Separate Model & Clip';
@@ -399,13 +401,107 @@ export function getInputWidgetDefinitions(
  */
 export const PROXY_INDEX_OFFSET = 10000;
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+export interface LinkedWidgetRoute {
+  subgraphId: string | null;
+  nodeId: number;
+  widgetIndex: number;
+  widgetName?: string;
+  itemKey?: string;
+}
+
+function resolvePlaceholderInlineWidgetValue(
+  placeholderNode: WorkflowNode,
+  input: WorkflowNode['inputs'][number],
+  widgetIndex: number,
+): unknown {
+  const values = placeholderNode.widgets_values;
+  const widgetName = input.widget?.name;
+  if (Array.isArray(values)) {
+    return widgetIndex >= 0 && widgetIndex < values.length
+      ? values[widgetIndex]
+      : undefined;
+  }
+  if (isRecord(values)) {
+    if (widgetName && values[widgetName] !== undefined) return values[widgetName];
+    if (values[input.name] !== undefined) return values[input.name];
+    if (input.localized_name && values[input.localized_name] !== undefined) {
+      return values[input.localized_name];
+    }
+  }
+  return undefined;
+}
+
+function resolvePlaceholderParentScope(
+  placeholderNode: WorkflowNode,
+  canonical: Workflow,
+): {
+  subgraphId: string | null;
+  nodes: WorkflowNode[];
+  links: Array<WorkflowLink | WorkflowSubgraphLink>;
+} | null {
+  if ((canonical.nodes ?? []).some((node) => node === placeholderNode || node.itemKey === placeholderNode.itemKey)) {
+    return { subgraphId: null, nodes: canonical.nodes ?? [], links: canonical.links ?? [] };
+  }
+
+  for (const subgraph of canonical.definitions?.subgraphs ?? []) {
+    if ((subgraph.nodes ?? []).some((node) => node === placeholderNode || node.itemKey === placeholderNode.itemKey)) {
+      return {
+        subgraphId: subgraph.id,
+        nodes: subgraph.nodes ?? [],
+        links: subgraph.links ?? [],
+      };
+    }
+  }
+
+  return null;
+}
+
+function resolveLinkedWidgetRoute(
+  placeholderNode: WorkflowNode,
+  input: WorkflowNode['inputs'][number],
+  canonical: Workflow,
+): { route: LinkedWidgetRoute; value: unknown } | null {
+  if (input.link == null) return null;
+  const parentScope = resolvePlaceholderParentScope(placeholderNode, canonical);
+  if (!parentScope) return null;
+  const link = parentScope.links.find((candidate) => getLinkId(candidate) === input.link);
+  if (!link) return null;
+
+  const originNodeId = getLinkOriginId(link);
+  const originSlot = getLinkOriginSlot(link);
+  if (originNodeId < 0) return null;
+  const sourceNode = parentScope.nodes.find((node) => node.id === originNodeId);
+  if (!sourceNode) return null;
+
+  const widgetName = sourceNode.outputs?.[originSlot]?.name ?? input.widget?.name;
+  const value =
+    getWidgetValue(sourceNode, widgetName ?? '', originSlot) ??
+    (originSlot !== 0 ? getWidgetValue(sourceNode, widgetName ?? '', 0) : undefined);
+
+  return {
+    route: {
+      subgraphId: parentScope.subgraphId,
+      nodeId: sourceNode.id,
+      widgetIndex: originSlot,
+      widgetName,
+      itemKey: sourceNode.itemKey,
+    },
+    value,
+  };
+}
+
 /**
  * Resolve all promoted widget definitions (both COMBO and non-COMBO) for a
  * subgraph placeholder node in a single pass.
  *
  * Promoted widgets appear as placeholder inputs with `input.widget: { name }` set.
- * Their values are stored in `placeholderNode.widgets_values[]` in promoted-input order.
- * (The `sg.widgets` field is always empty in practice and is not used.)
+ * Their values are usually stored in `placeholderNode.widgets_values[]` in
+ * promoted-input order. When ComfyUI serializes the promoted input as a linked
+ * primitive/control node, values live on that linked source instead.
  */
 export function resolveAllSubgraphPlaceholderWidgetDefs(
   placeholderNode: WorkflowNode,
@@ -415,7 +511,6 @@ export function resolveAllSubgraphPlaceholderWidgetDefs(
   const promotedInputs = (placeholderNode.inputs ?? []).filter((inp) => inp.widget != null);
   if (promotedInputs.length === 0) return { widgets: [], inputWidgets: [] };
 
-  const values = Array.isArray(placeholderNode.widgets_values) ? placeholderNode.widgets_values : [];
   const sg = canonical.definitions?.subgraphs?.find((s) => s.id === placeholderNode.type);
 
   const widgets: ReturnType<typeof getWidgetDefinitions> = [];
@@ -426,7 +521,9 @@ export function resolveAllSubgraphPlaceholderWidgetDefs(
     const isCombo = typeName.toUpperCase() === 'COMBO';
     const widgetName = inp.widget!.name;
     const name = inp.localized_name || inp.name;
-    const value = values[widgetIndex];
+    const linkedSource = resolveLinkedWidgetRoute(placeholderNode, inp, canonical);
+    const inlineValue = resolvePlaceholderInlineWidgetValue(placeholderNode, inp, widgetIndex);
+    const value = inlineValue !== undefined ? inlineValue : linkedSource?.value;
     const inputIndex = placeholderNode.inputs.indexOf(inp);
 
     if (isCombo) {
@@ -444,7 +541,25 @@ export function resolveAllSubgraphPlaceholderWidgetDefs(
           }
         }
       }
-      inputWidgets.push({ name, type: 'COMBO', value, options, widgetIndex, connected: false, inputIndex });
+      // The promoted widget is shown under its display label (e.g. "Checkpoint"),
+      // but the rich model picker is detected from the ComfyUI input name. Carry
+      // the kind detected from the inner widget name (e.g. ckpt_name) so the
+      // picker still appears on the promoted widget.
+      const modelKind = modelWidgetKind(widgetName);
+      const extraMeta: Record<string, unknown> = {};
+      if (linkedSource) extraMeta.__linkedSource = linkedSource.route;
+      if (modelKind) extraMeta.__modelKind = modelKind;
+      inputWidgets.push({
+        name,
+        type: 'COMBO',
+        value,
+        options: Object.keys(extraMeta).length
+          ? { ...(Array.isArray(options) ? { options } : options), ...extraMeta }
+          : options,
+        widgetIndex,
+        connected: false,
+        inputIndex,
+      });
     } else {
       let options: Record<string, unknown> | undefined = undefined;
       if (sg && nodeTypes) {
@@ -460,7 +575,17 @@ export function resolveAllSubgraphPlaceholderWidgetDefs(
           }
         }
       }
-      widgets.push({ name, type: typeName, options, value, widgetIndex, connected: false, inputIndex });
+      widgets.push({
+        name,
+        type: typeName,
+        options: linkedSource
+          ? { ...(options ?? {}), __linkedSource: linkedSource.route }
+          : options,
+        value,
+        widgetIndex,
+        connected: false,
+        inputIndex,
+      });
     }
   });
 
@@ -494,6 +619,8 @@ export interface ProxyWidgetRoute {
   innerNodeId: number;
   innerWidgetIndex: number;
 }
+
+const SEED_CONTROL_MODES = ['fixed', 'randomize', 'increment', 'decrement'];
 
 /**
  * Resolve all widget definitions (both COMBO and non-COMBO) for a subgraph
@@ -555,6 +682,9 @@ export function resolveAllSubgraphProxyWidgetDefs(
     const innerInputWidgetDef = getInputWidgetDefinitions(nodeTypes, innerNode).find((def) => def.name === widgetName);
     if (innerInputWidgetDef) {
       proxy.innerWidgetIndex = innerInputWidgetDef.widgetIndex;
+      // Proxy widgets are shown under "Node: widget" labels, so carry the model
+      // picker kind detected from the real inner widget name (e.g. lora_name).
+      const modelKind = modelWidgetKind(widgetName);
       inputWidgets.push({
         ...innerInputWidgetDef,
         name: displayName,
@@ -562,8 +692,45 @@ export function resolveAllSubgraphProxyWidgetDefs(
         options: {
           ...(innerInputWidgetDef.options as Record<string, unknown> ?? {}),
           __proxy: proxy,
+          ...(modelKind ? { __modelKind: modelKind } : {}),
         },
         inputIndex: -1,
+      });
+      return;
+    }
+
+    // Some seed helper nodes (for example EasySeed) expose seed only as an INT
+    // output and store control_after_generate in widgets_values[seedIndex + 1],
+    // so object_info has no COMBO input definition for the control. If the
+    // workflow explicitly proxies that control, synthesize the missing combo so
+    // placeholder cards read/write the actual inner node value.
+    if (widgetName === 'control_after_generate') {
+      const seedWidgetDef = getWidgetDefinitions(nodeTypes, innerNode).find(
+        (def) => def.name === 'seed' || def.name === 'noise_seed',
+      );
+      if (!seedWidgetDef) return;
+
+      const controlWidgetIndex = seedWidgetDef.widgetIndex + 1;
+      const widgetValues = Array.isArray(innerNode.widgets_values)
+        ? innerNode.widgets_values
+        : [];
+      const controlValue = widgetValues[controlWidgetIndex];
+      if (typeof controlValue !== 'string') return;
+
+      proxy.innerWidgetIndex = controlWidgetIndex;
+      inputWidgets.push({
+        name: displayName,
+        type: 'COMBO',
+        value: controlValue,
+        widgetIndex: PROXY_INDEX_OFFSET + proxyIndex,
+        connected: false,
+        inputIndex: -1,
+        options: {
+          options: SEED_CONTROL_MODES.includes(controlValue)
+            ? SEED_CONTROL_MODES
+            : [...SEED_CONTROL_MODES, controlValue],
+          __proxy: proxy,
+        },
       });
     }
   });

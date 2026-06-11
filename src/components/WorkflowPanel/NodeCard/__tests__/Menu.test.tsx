@@ -46,6 +46,7 @@ describe('NodeCardMenu fast groups actions', () => {
           toggleBypass={() => {}}
           setItemHidden={() => {}}
           onDeleteNode={() => {}}
+          onDuplicateNode={() => {}}
           onMoveNode={() => {}}
           connectionHighlightMode="off"
           setConnectionHighlightMode={() => {}}
@@ -100,6 +101,7 @@ describe('NodeCardMenu fast groups actions', () => {
           toggleBypass={() => {}}
           setItemHidden={() => {}}
           onDeleteNode={() => {}}
+          onDuplicateNode={() => {}}
           onMoveNode={() => {}}
           connectionHighlightMode="off"
           setConnectionHighlightMode={() => {}}

@@ -19,29 +19,31 @@ export function DeleteNodeModal({
   type ActionItem = {
     label: string;
     onClick: () => void;
-    className: string;
+    className?: string;
+    variant?: 'secondary' | 'danger' | 'primary';
   };
-  const actions = [
-    hasConnections
-      ? {
-          label: 'Delete & Reconnect',
-          onClick: () => onDelete(true),
-          className: 'w-full px-4 py-2.5 text-sm font-medium text-white bg-red-600 rounded-lg hover:bg-red-700 active:bg-red-800'
-        }
-      : null,
+  const actions: ActionItem[] = [];
+  if (hasConnections) {
+    actions.push({
+      label: 'Delete & Reconnect',
+      onClick: () => onDelete(true),
+      variant: 'danger'
+    });
+  }
+  actions.push(
     {
       label: hasConnections ? 'Delete & Disconnect' : 'Delete',
       onClick: () => onDelete(false),
-      className: hasConnections
-        ? 'w-full px-4 py-2.5 text-sm font-medium text-red-700 bg-red-50 rounded-lg hover:bg-red-100 active:bg-red-200'
-        : 'w-full px-4 py-2.5 text-sm font-medium text-white bg-red-600 rounded-lg hover:bg-red-700 active:bg-red-800'
+      variant: 'danger',
+      className: hasConnections ? 'bg-red-500/15 text-red-300 hover:bg-red-500/20' : undefined
     },
     {
       label: 'Cancel',
       onClick: onCancel,
-      className: 'w-full px-4 py-2.5 text-sm font-medium text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200 active:bg-gray-300'
+      variant: 'secondary',
+      className: 'w-full'
     }
-  ].filter((action): action is ActionItem => action !== null);
+  );
 
   return createPortal(
     <Dialog
@@ -49,7 +51,7 @@ export function DeleteNodeModal({
       title="Delete node"
       description={
         <>
-          Delete <span className="font-medium text-gray-700">{displayName}</span> (#{nodeId})?
+          Delete <span className="font-medium text-slate-100">{displayName}</span> (#{nodeId})?
         </>
       }
       actionsLayout="stack"
