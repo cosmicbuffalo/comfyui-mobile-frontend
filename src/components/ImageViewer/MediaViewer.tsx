@@ -1,6 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useTextareaFocus } from '@/hooks/useTextareaFocus';
+import { useBodyScrollLock } from '@/hooks/useBodyScrollLock';
+import { useWorkflowStore } from '@/hooks/useWorkflow';
+import { useImageViewerStore } from '@/hooks/useImageViewer';
+import { usePinnedWidgetStore } from '@/hooks/usePinnedWidget';
 import type { ViewerImage } from '@/utils/viewerImages';
 import { MediaViewerHeader } from './MediaViewer/Header';
 import { MediaViewerActions } from './MediaViewer/Actions';
@@ -22,10 +26,12 @@ interface MediaViewerProps {
   onLoadInWorkflow: (item: ViewerImage) => void;
   onToggleFavorite?: (item: ViewerImage) => void;
   isFavorited?: (item: ViewerImage) => boolean;
+  onDownload?: (item: ViewerImage) => void;
   showMetadataToggle?: boolean;
   showLoadingPlaceholder?: boolean;
   loadingProgress?: number;
   loadingLabel?: string;
+  loadWorkflowProgress?: number | null;
   initialScale?: number;
   initialTranslate?: { x: number; y: number };
   onTransformChange?: (scale: number, translate: { x: number; y: number }) => void;
@@ -35,10 +41,36 @@ interface MediaViewerProps {
 const DEFAULT_TRANSLATE = { x: 0, y: 0 };
 const MEDIA_VIEWER_Z_INDEX = 2100;
 const MEDIA_VIEWER_OVERLAY_Z_INDEX = MEDIA_VIEWER_Z_INDEX + 10;
+const PRELOAD_IMAGE_COUNT_PER_SIDE = 2;
+const PRELOAD_RETENTION_INDEX_BUFFER = 3;
+// Cap the "already decoded" hint map so a long browse over a huge folder doesn't
+// grow it unbounded. It only suppresses a spinner flash, so resetting on overflow
+// is harmless (at worst a brief spinner if a dropped image is revisited).
+const LOADED_SRCS_MAX = 256;
 const workflowAvailabilityCache = new Map<string, boolean>();
 
 function makeWorkflowAvailabilityCacheKey(source: string, path: string): string {
   return `${source}:${path}`;
+}
+
+function isEditableElement(element: HTMLElement | null): boolean {
+  if (!element) return false;
+  const tag = element.tagName.toLowerCase();
+  return element.isContentEditable || tag === 'input' || tag === 'textarea' || tag === 'select';
+}
+
+function getFullScreenImageSrc(item: ViewerImage): string {
+  const name = item.filename ?? item.file?.name ?? item.src;
+  return /\.jpe?g(?:$|[?#])/i.test(name) ? item.src : (item.displaySrc ?? item.src);
+}
+
+function isViewerVideo(item: ViewerImage): boolean {
+  const name = item.filename ?? item.file?.name ?? item.alt ?? item.src ?? '';
+  return Boolean(
+    item.mediaType === 'video' ||
+    item.file?.type === 'video' ||
+    (name && isVideoFilename(name))
+  );
 }
 
 export function MediaViewer({
@@ -52,10 +84,12 @@ export function MediaViewer({
   onLoadInWorkflow,
   onToggleFavorite,
   isFavorited,
+  onDownload,
   showMetadataToggle = false,
   showLoadingPlaceholder = false,
   loadingProgress = 0,
   loadingLabel,
+  loadWorkflowProgress,
   initialScale = 1,
   initialTranslate = DEFAULT_TRANSLATE,
   onTransformChange,
@@ -66,6 +100,9 @@ export function MediaViewer({
   const imageRef = useRef<HTMLImageElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const naturalSizeRef = useRef<{ width: number; height: number } | null>(null);
+  const adjacentPreloadsRef = useRef<
+    Map<string, { image: HTMLImageElement; itemIndex: number }>
+  >(new Map());
   // MediaViewer remounts whenever the viewer opens (ImageViewer returns null
   // when closed), so initializing from props is sufficient — no useLayoutEffect
   // needed to re-sync. Re-syncing on every initialScale/initialTranslate prop
@@ -99,15 +136,32 @@ export function MediaViewer({
   const [workflowAvailableById, setWorkflowAvailableById] = useState<Record<string, boolean>>({});
   const [workflowLoadingById, setWorkflowLoadingById] = useState<Record<string, boolean>>({});
   const [videoError, setVideoError] = useState(false);
+  // Pixel resolution of the currently displayed media, shown under the filename.
+  const [naturalSize, setNaturalSize] = useState<{ width: number; height: number } | null>(null);
+  // Full-screen image srcs that have finished decoding at least once (current
+  // swap-preloads + adjacent preloads both report in). Drives the loading
+  // spinner: it shows only while the *currently viewed* image isn't loaded yet,
+  // so swiping back to an already-loaded image hides it even though a
+  // swiped-past image keeps loading in the background.
+  const [loadedSrcs, setLoadedSrcs] = useState<Record<string, true>>({});
+  const markLoaded = useCallback((src: string | null | undefined) => {
+    if (!src) return;
+    setLoadedSrcs((prev) => {
+      if (prev[src]) return prev;
+      if (Object.keys(prev).length >= LOADED_SRCS_MAX) return { [src]: true };
+      return { ...prev, [src]: true };
+    });
+  }, []);
   const { isInputFocused } = useTextareaFocus();
+  const setViewerState = useImageViewerStore((s) => s.setViewerState);
+  const setFollowQueue = useWorkflowStore((s) => s.setFollowQueue);
+  const followQueue = useWorkflowStore((s) => s.followQueue);
+  const pinnedWidget = usePinnedWidgetStore((s) => s.pinnedWidget);
+  const pinOverlayOpen = usePinnedWidgetStore((s) => s.pinOverlayOpen);
+  const togglePinOverlay = usePinnedWidgetStore((s) => s.togglePinOverlay);
 
   const currentItem = index >= 0 ? (items[index] ?? items[0] ?? null) : null;
-  const fallbackName = currentItem?.filename ?? currentItem?.file?.name ?? currentItem?.alt ?? currentItem?.src ?? '';
-  const isVideo = Boolean(
-    currentItem?.mediaType === 'video' ||
-    currentItem?.file?.type === 'video' ||
-    (fallbackName && isVideoFilename(fallbackName))
-  );
+  const isVideo = Boolean(currentItem && isViewerVideo(currentItem));
 
   // Double-buffered display: keep the previously rendered item visible until the
   // next image is decoded, then swap atomically with its computed transform so
@@ -116,17 +170,36 @@ export function MediaViewer({
     () => (index >= 0 ? (items[index] ?? items[0] ?? null) : null),
   );
   const displayedItemRef = useRef<ViewerImage | null>(null);
-  displayedItemRef.current = displayedItem;
+  useEffect(() => {
+    displayedItemRef.current = displayedItem;
+  }, [displayedItem]);
   // When there is no previous item to preserve (initial display, or follow-queue
   // arriving from an empty state) render the current item directly to avoid a
   // one-render-gap black frame before the swap effect fires.
   const renderItem = displayedItem ?? currentItem;
-  const renderFallbackName = renderItem?.filename ?? renderItem?.file?.name ?? renderItem?.alt ?? renderItem?.src ?? '';
-  const renderIsVideo = Boolean(
-    renderItem?.mediaType === 'video' ||
-    renderItem?.file?.type === 'video' ||
-    (renderFallbackName && isVideoFilename(renderFallbackName))
+
+  // Show a centered loading spinner while the *currently viewed* image hasn't
+  // finished decoding yet (these full-res outputs can be tens of MB). A short
+  // delay keeps fast/cached images from flashing a spinner.
+  const currentFullSrc =
+    currentItem && !isViewerVideo(currentItem)
+      ? getFullScreenImageSrc(currentItem)
+      : null;
+  const isCurrentImageLoading = Boolean(
+    open && currentFullSrc && !loadedSrcs[currentFullSrc],
   );
+  const [showImageSpinner, setShowImageSpinner] = useState(false);
+  useEffect(() => {
+    if (!isCurrentImageLoading) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- syncing debounced spinner visibility to a derived flag
+      setShowImageSpinner(false);
+      return;
+    }
+    const timer = window.setTimeout(() => setShowImageSpinner(true), 200);
+    return () => window.clearTimeout(timer);
+  }, [isCurrentImageLoading]);
+  const renderIsVideo = Boolean(renderItem && isViewerVideo(renderItem));
+  const renderFullSrc = renderItem && !renderIsVideo ? getFullScreenImageSrc(renderItem) : null;
   const fileId = currentItem?.file?.id ?? null;
   const fetchedMetadata = fileId ? metadataById[fileId] : undefined;
   const metadata = currentItem?.metadata ?? (fetchedMetadata === undefined ? undefined : fetchedMetadata);
@@ -180,12 +253,29 @@ export function MediaViewer({
     onToggleFavorite?.(currentItem);
   }, [currentItem, onToggleFavorite, resetIdleTimer]);
 
+  const handleDownloadClick = useCallback(() => {
+    if (!currentItem) return;
+    resetIdleTimer();
+    onDownload?.(currentItem);
+  }, [currentItem, onDownload, resetIdleTimer]);
+
+  const shouldIgnoreViewerKeyboard = useCallback(() => {
+    const active = document.activeElement;
+    if (!(active instanceof HTMLElement)) return false;
+    if (!isEditableElement(active)) return false;
+    if (overlayRef.current?.contains(active)) return true;
+    if (pinOverlayOpen) return true;
+    if (active.closest('[data-dialog-root="true"], [role="dialog"]')) return true;
+    return false;
+  }, [pinOverlayOpen]);
+
   const currentIsFavorited = Boolean(
     currentItem && isFavorited && isFavorited(currentItem),
   );
   const canFavoriteCurrent = Boolean(
     currentItem?.file && onToggleFavorite,
   );
+  const canDownloadCurrent = Boolean(currentItem?.src && onDownload);
 
   useEffect(() => {
     if (open) {
@@ -201,6 +291,19 @@ export function MediaViewer({
     };
   }, [open, resetIdleTimer]);
 
+  // Surface the idle/overlay-hidden state so siblings (the bottom bar) can fade
+  // in sync with the viewer overlays. Treat a closed viewer as not-idle so the
+  // bottom bar is fully visible again once the viewer leaves the screen.
+  useEffect(() => {
+    setViewerState({ viewerIdle: open && isIdle });
+  }, [open, isIdle, setViewerState]);
+
+  useEffect(() => {
+    return () => {
+      setViewerState({ viewerIdle: false });
+    };
+  }, [setViewerState]);
+
   useEffect(() => {
     if (!open) return;
     targetZoomModeRef.current = 'fit';
@@ -209,6 +312,72 @@ export function MediaViewer({
     pinchRef.current = null;
     lastTapRef.current = null;
   }, [open, index]);
+
+  useEffect(() => {
+    if (!open || index < 0 || items.length <= 1) {
+      adjacentPreloadsRef.current.clear();
+      return;
+    }
+
+    const preloadIndexes = new Set<number>();
+    for (const direction of [-1, 1]) {
+      let found = 0;
+      for (
+        let candidateIndex = index + direction;
+        candidateIndex >= 0 &&
+        candidateIndex < items.length &&
+        found < PRELOAD_IMAGE_COUNT_PER_SIDE;
+        candidateIndex += direction
+      ) {
+        const candidate = items[candidateIndex];
+        if (!candidate || isViewerVideo(candidate)) continue;
+        preloadIndexes.add(candidateIndex);
+        found += 1;
+      }
+    }
+
+    const nextPreloads = new Map<
+      string,
+      { image: HTMLImageElement; itemIndex: number }
+    >();
+    const currentIndexBySrc = new Map<string, number>();
+    items.forEach((item, itemIndex) => {
+      if (isViewerVideo(item)) return;
+      currentIndexBySrc.set(getFullScreenImageSrc(item), itemIndex);
+    });
+    for (const [src, preload] of adjacentPreloadsRef.current) {
+      const currentItemIndex = currentIndexBySrc.get(src);
+      if (
+        currentItemIndex !== undefined &&
+        Math.abs(currentItemIndex - index) <= PRELOAD_RETENTION_INDEX_BUFFER
+      ) {
+        nextPreloads.set(src, { ...preload, itemIndex: currentItemIndex });
+      }
+    }
+
+    const currentSrc = currentItem ? getFullScreenImageSrc(currentItem) : null;
+    for (const itemIndex of preloadIndexes) {
+      const item = items[itemIndex];
+      if (!item) continue;
+      const src = getFullScreenImageSrc(item);
+      if (!src || src === currentSrc) continue;
+      const existing = adjacentPreloadsRef.current.get(src);
+      if (existing) {
+        // eslint-disable-next-line react-hooks/set-state-in-effect -- recording an already-decoded preload into loadedSrcs
+        if (existing.image.complete && existing.image.naturalWidth > 0) markLoaded(src);
+        nextPreloads.set(src, { ...existing, itemIndex });
+        continue;
+      }
+      const preload = new Image();
+      // Report into loadedSrcs so the spinner clears the instant the user swipes
+      // onto a preloaded image. Treat error as settled too (don't hang a spinner).
+      preload.onload = () => markLoaded(src);
+      preload.onerror = () => markLoaded(src);
+      preload.src = src;
+      nextPreloads.set(src, { image: preload, itemIndex });
+    }
+    adjacentPreloadsRef.current = nextPreloads;
+  }, [open, index, items, currentItem, markLoaded]);
 
   /* eslint-disable react-hooks/set-state-in-effect */
   useEffect(() => {
@@ -223,19 +392,17 @@ export function MediaViewer({
 
     const displayed = displayedItemRef.current;
     if (!displayed || currentItem.src === displayed.src) {
+      // No swap to preload here (initial open, or the displayed item is already
+      // current). The swap-preload below and the adjacent-preload effect both
+      // skip the current src, so the visible <img> itself is what clears the
+      // spinner — see handleImageLoad and the cached-complete effect below.
       setDisplayedItem(currentItem);
       return;
     }
 
     // Videos handle their own loading state via <video>; swap immediately.
-    const displayedName = displayed.filename ?? displayed.file?.name ?? displayed.alt ?? displayed.src ?? '';
-    const displayedIsVideoItem = displayed.mediaType === 'video'
-      || displayed.file?.type === 'video'
-      || (displayedName ? isVideoFilename(displayedName) : false);
-    const currentName = currentItem.filename ?? currentItem.file?.name ?? currentItem.alt ?? currentItem.src ?? '';
-    const currentIsVideoItem = currentItem.mediaType === 'video'
-      || currentItem.file?.type === 'video'
-      || (currentName ? isVideoFilename(currentName) : false);
+    const displayedIsVideoItem = isViewerVideo(displayed);
+    const currentIsVideoItem = isViewerVideo(currentItem);
     if (displayedIsVideoItem || currentIsVideoItem) {
       setDisplayedItem(currentItem);
       return;
@@ -243,9 +410,16 @@ export function MediaViewer({
 
     let cancelled = false;
     const preload = new Image();
-    preload.src = currentItem.src;
+    // JPEG orientation is commonly stored in EXIF. ComfyUI's on-the-fly WebP
+    // preview strips it, so JPEGs use the original while other formats retain
+    // the faster preview path.
+    const fullSrc = getFullScreenImageSrc(currentItem);
+    preload.src = fullSrc;
 
     const finish = () => {
+      // Mark loaded even when cancelled: a swiped-past image that finishes in
+      // the background should count as loaded so returning to it shows no spinner.
+      markLoaded(fullSrc);
       if (cancelled) return;
 
       const container = containerRef.current;
@@ -299,7 +473,7 @@ export function MediaViewer({
     return () => {
       cancelled = true;
     };
-  }, [open, currentItem]);
+  }, [open, currentItem, markLoaded]);
   /* eslint-enable react-hooks/set-state-in-effect */
 
   /* eslint-disable react-hooks/set-state-in-effect */
@@ -353,16 +527,12 @@ export function MediaViewer({
   /* eslint-disable react-hooks/set-state-in-effect */
   useEffect(() => {
     setVideoError(false);
+    // Clear the resolution subtitle until the new media reports its dimensions.
+    setNaturalSize(null);
   }, [renderItem?.src]);
   /* eslint-enable react-hooks/set-state-in-effect */
 
-  useEffect(() => {
-    if (!open) return;
-    document.body.style.overflow = 'hidden';
-    return () => {
-      document.body.style.overflow = '';
-    };
-  }, [open]);
+  useBodyScrollLock(open);
 
   useEffect(() => {
     if (!open) return;
@@ -377,18 +547,131 @@ export function MediaViewer({
         onClose();
         return;
       }
-      if (isInputFocused) return;
-      if (event.key === 'ArrowLeft' && index > 0) {
-        event.preventDefault();
-        onIndexChange(index - 1);
-      } else if (event.key === 'ArrowRight' && index < items.length - 1) {
-        event.preventDefault();
-        onIndexChange(index + 1);
+      if (shouldIgnoreViewerKeyboard()) return;
+      // Modifier-keyed shortcuts (Ctrl+F find, Cmd+R reload, etc.) should not
+      // be intercepted as viewer shortcuts.
+      if (event.metaKey || event.ctrlKey || event.altKey) return;
+      switch (event.key) {
+        case 'ArrowLeft':
+          if (index > 0) {
+            event.preventDefault();
+            resetIdleTimer();
+            onIndexChange(index - 1);
+          }
+          return;
+        case 'ArrowRight':
+          if (index < items.length - 1) {
+            event.preventDefault();
+            resetIdleTimer();
+            onIndexChange(index + 1);
+          }
+          return;
+        case 'Delete':
+        case 'Backspace':
+          if (currentItem) {
+            event.preventDefault();
+            handleDeleteClick();
+          }
+          return;
+        case 'f':
+        case 'F':
+          if (canFavoriteCurrent) {
+            event.preventDefault();
+            handleToggleFavoriteClick();
+          }
+          return;
+        case 'w':
+        case 'W':
+          if (canLoadWorkflow) {
+            event.preventDefault();
+            handleLoadWorkflowClick();
+          }
+          return;
+        case 'u':
+        case 'U':
+          if (!isVideo && currentItem) {
+            event.preventDefault();
+            handleLoadInWorkflowClick();
+          }
+          return;
+        case 'i':
+        case 'I':
+          if (showMetadataToggle && canToggleMetadata) {
+            event.preventDefault();
+            handleToggleMetadata();
+          }
+          return;
+        case 'd':
+        case 'D':
+          if (canDownloadCurrent) {
+            event.preventDefault();
+            handleDownloadClick();
+          }
+          return;
+        case 'q':
+        case 'Q':
+          event.preventDefault();
+          setFollowQueue(!followQueue);
+          return;
+        case 'p':
+        case 'P':
+          if (pinnedWidget) {
+            event.preventDefault();
+            const willOpen = !pinOverlayOpen;
+            togglePinOverlay();
+            if (willOpen) {
+              // The pinned-widget overlay renders via createPortal at the
+              // bottom of the document, so the textarea/input we want to
+              // focus is the most recently mounted text input. Place the
+              // caret at the end so typing appends.
+              setTimeout(() => {
+                const inputs = document.querySelectorAll<
+                  HTMLTextAreaElement | HTMLInputElement
+                >('textarea[data-swipe-nav-ignore="true"], input[data-swipe-nav-ignore="true"]');
+                const target = inputs[inputs.length - 1];
+                if (!target) return;
+                target.focus();
+                const value = target.value ?? '';
+                try {
+                  target.setSelectionRange(value.length, value.length);
+                } catch {
+                  // Some input types (number, etc.) don't support setSelectionRange.
+                }
+              }, 0);
+            }
+          }
+          return;
       }
     };
     document.addEventListener('keydown', handleKey);
     return () => document.removeEventListener('keydown', handleKey);
-  }, [open, onClose, isInputFocused, index, items.length, onIndexChange]);
+  }, [
+    open,
+    onClose,
+    shouldIgnoreViewerKeyboard,
+    index,
+    items.length,
+    onIndexChange,
+    currentItem,
+    isVideo,
+    canFavoriteCurrent,
+    canLoadWorkflow,
+    showMetadataToggle,
+    canToggleMetadata,
+    resetIdleTimer,
+    handleDeleteClick,
+    handleToggleFavoriteClick,
+    handleLoadWorkflowClick,
+    handleLoadInWorkflowClick,
+    handleToggleMetadata,
+    canDownloadCurrent,
+    handleDownloadClick,
+    followQueue,
+    setFollowQueue,
+    pinnedWidget,
+    pinOverlayOpen,
+    togglePinOverlay,
+  ]);
 
   /* eslint-disable react-hooks/set-state-in-effect */
   useEffect(() => {
@@ -501,7 +784,14 @@ export function MediaViewer({
 
   const handleImageLoad = (event: React.SyntheticEvent<HTMLImageElement>) => {
     const img = event.currentTarget;
+    // The visible <img> is the only thing that marks the *current* src loaded on
+    // the no-swap path (initial open / follow-queue). Key off the same helper the
+    // spinner uses, not img.src, so the absolute-resolved URL doesn't mismatch.
+    markLoaded(renderItem ? getFullScreenImageSrc(renderItem) : null);
     naturalSizeRef.current = { width: img.naturalWidth, height: img.naturalHeight };
+    if (img.naturalWidth > 0 && img.naturalHeight > 0) {
+      setNaturalSize({ width: img.naturalWidth, height: img.naturalHeight });
+    }
     const container = containerRef.current;
     if (!container || img.naturalWidth === 0) return;
     const containerWidth = container.clientWidth;
@@ -517,6 +807,14 @@ export function MediaViewer({
     const img = imageRef.current;
     const container = containerRef.current;
     if (!img || !container) return;
+
+    // An already-cached image may be `complete` before React attaches onLoad, so
+    // handleImageLoad never fires — mark it loaded here so the spinner clears.
+    if (renderFullSrc && img.complete && img.naturalWidth > 0) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- recording an already-decoded image into loadedSrcs
+      markLoaded(renderFullSrc);
+      setNaturalSize({ width: img.naturalWidth, height: img.naturalHeight });
+    }
 
     const updateSizes = () => {
       const natural = naturalSizeRef.current;
@@ -536,7 +834,7 @@ export function MediaViewer({
     const observer = new ResizeObserver(updateSizes);
     observer.observe(container);
     return () => observer.disconnect();
-  }, [open, renderItem?.src, renderIsVideo]);
+  }, [open, renderFullSrc, renderItem?.src, renderIsVideo, markLoaded]);
 
   useEffect(() => {
     if (renderIsVideo) return;
@@ -745,8 +1043,8 @@ export function MediaViewer({
           iconSize={6}
           zIndex={MEDIA_VIEWER_OVERLAY_Z_INDEX}
         />
-        <p className="text-gray-400 mb-2">No images to display</p>
-        <p className="text-gray-500 text-sm">images: {items.length}, index: {index}</p>
+        <p className="text-slate-300 mb-2">No images to display</p>
+        <p className="text-slate-500 text-sm">images: {items.length}, index: {index}</p>
       </div>,
       document.body
     );
@@ -770,14 +1068,14 @@ export function MediaViewer({
       >
         {showLoadingPlaceholder ? (
           <div className="absolute inset-0 flex flex-col items-center justify-center text-white">
-            <div className="w-12 h-12 border-4 border-gray-600 border-t-white rounded-full animate-spin" />
-            <div className="mt-4 w-48 h-2 rounded-full bg-gray-700 overflow-hidden">
+            <div className="w-12 h-12 border-4 border-slate-700 border-t-cyan-300 rounded-full animate-spin" />
+            <div className="mt-4 w-48 h-2 rounded-full bg-slate-800 overflow-hidden">
               <div
-                className="h-full bg-white transition-all duration-300"
+                className="h-full bg-cyan-400 transition-all duration-300"
                 style={{ width: `${Math.min(100, Math.max(0, loadingProgress))}%` }}
               />
             </div>
-            <div className="mt-2 text-sm text-gray-300">
+            <div className="mt-2 text-sm text-slate-300">
               {loadingLabel ?? `${Math.min(100, Math.max(0, loadingProgress))}%`}
             </div>
           </div>
@@ -786,6 +1084,10 @@ export function MediaViewer({
             {renderIsVideo ? (
               <>
                 <video
+                  // Key by src so swiping to another video remounts the element
+                  // and releases the previous decoder, instead of reusing one
+                  // element whose old (looping, autoplaying) stream keeps decoding.
+                  key={renderItem.src}
                   ref={videoRef}
                   src={renderItem.src}
                   controls
@@ -796,6 +1098,12 @@ export function MediaViewer({
                   className="w-full h-full object-contain select-none"
                   onDragStart={(event) => event.preventDefault()}
                   onError={() => setVideoError(true)}
+                  onLoadedMetadata={(event) => {
+                    const { videoWidth, videoHeight } = event.currentTarget;
+                    if (videoWidth > 0 && videoHeight > 0) {
+                      setNaturalSize({ width: videoWidth, height: videoHeight });
+                    }
+                  }}
                 />
                 {videoError && (
                   <div className="absolute inset-0 flex items-center justify-center text-white text-sm bg-black/60">
@@ -806,7 +1114,7 @@ export function MediaViewer({
             ) : (
               <img
                 ref={imageRef}
-                src={renderItem.src}
+                src={getFullScreenImageSrc(renderItem)}
                 alt={renderItem.alt || 'Generation'}
                 className="w-full h-auto block select-none relative"
                 draggable={false}
@@ -821,6 +1129,21 @@ export function MediaViewer({
               />
             )}
           </>
+        )}
+
+        {/* Loading spinner over the image while the current one decodes — mirrors
+            the server-restart overlay's dual-ring spinner. */}
+        {!showLoadingPlaceholder && showImageSpinner && (
+          <div
+            role="status"
+            aria-label="Loading image"
+            className="image-loading-spinner pointer-events-none absolute inset-0 z-[2] flex items-center justify-center"
+          >
+            <div className="relative h-24 w-24">
+              <div className="absolute inset-0 rounded-full border-4 border-cyan-400/25" />
+              <div className="absolute inset-0 rounded-full border-4 border-transparent border-t-cyan-300 animate-spin" />
+            </div>
+          </div>
         )}
       </div>
 
@@ -844,6 +1167,7 @@ export function MediaViewer({
               index={index}
               total={items.length}
               displayName={displayName}
+              resolution={naturalSize}
             />
             <MediaViewerActions
               isVideo={isVideo}
@@ -852,11 +1176,14 @@ export function MediaViewer({
               canToggleMetadata={canToggleMetadata}
               canFavorite={canFavoriteCurrent}
               isFavorited={currentIsFavorited}
+              canDownload={canDownloadCurrent}
+              loadWorkflowProgress={loadWorkflowProgress}
               onDelete={handleDeleteClick}
               onLoadWorkflow={handleLoadWorkflowClick}
               onUseInWorkflow={handleLoadInWorkflowClick}
               onToggleMetadata={handleToggleMetadata}
               onToggleFavorite={handleToggleFavoriteClick}
+              onDownload={handleDownloadClick}
             />
             <MediaViewerMetadata
               isVideo={isVideo}

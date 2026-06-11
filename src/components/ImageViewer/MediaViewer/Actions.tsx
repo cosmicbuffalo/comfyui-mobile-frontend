@@ -1,4 +1,5 @@
 import { DeleteButton } from "@/components/buttons/DeleteButton";
+import { DownloadButton } from "@/components/buttons/DownloadButton";
 import { FavoriteButton } from "@/components/buttons/FavoriteButton";
 import { LoadWorkflowButton } from "@/components/buttons/LoadWorkflowButton";
 import { UseInWorkflowButton } from "@/components/buttons/UseInWorkflowButton";
@@ -11,11 +12,14 @@ interface MediaViewerActionsProps {
   canToggleMetadata: boolean;
   canFavorite: boolean;
   isFavorited: boolean;
+  canDownload: boolean;
+  loadWorkflowProgress?: number | null;
   onDelete: () => void;
   onLoadWorkflow: () => void;
   onUseInWorkflow: () => void;
   onToggleMetadata: () => void;
   onToggleFavorite: () => void;
+  onDownload: () => void;
 }
 
 export function MediaViewerActions({
@@ -25,11 +29,14 @@ export function MediaViewerActions({
   canToggleMetadata,
   canFavorite,
   isFavorited,
+  canDownload,
+  loadWorkflowProgress,
   onDelete,
   onLoadWorkflow,
   onUseInWorkflow,
   onToggleMetadata,
   onToggleFavorite,
+  onDownload,
 }: MediaViewerActionsProps) {
   return (
     <div
@@ -41,7 +48,13 @@ export function MediaViewerActions({
         {canFavorite && (
           <FavoriteButton onClick={onToggleFavorite} isFavorited={isFavorited} />
         )}
-        {canLoadWorkflow && <LoadWorkflowButton onClick={onLoadWorkflow} />}
+        {canDownload && <DownloadButton onClick={onDownload} />}
+        {canLoadWorkflow && (
+          <LoadWorkflowButton
+            onClick={onLoadWorkflow}
+            progress={loadWorkflowProgress}
+          />
+        )}
         {!isVideo && (
           <>
           <UseInWorkflowButton onClick={onUseInWorkflow} />

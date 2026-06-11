@@ -5,15 +5,18 @@ interface FavoritesSectionProps {
 
 export function FavoritesSection({ checked, onChange }: FavoritesSectionProps) {
   return (
-    <div id="favorites-toggle-container" className="flex items-center gap-2">
-      <input
-        type="checkbox"
-        id="favOnly"
-        checked={checked}
-        onChange={(e) => onChange(e.target.checked)}
-        className="rounded text-blue-600 focus:ring-blue-500"
-      />
-      <label htmlFor="favOnly" className="text-sm text-gray-700">Show Favorites Only</label>
-    </div>
+    <button
+      id="favorites-toggle-button"
+      type="button"
+      aria-pressed={checked}
+      onClick={() => onChange(!checked)}
+      className={`w-full rounded-lg border px-3 py-2.5 text-sm font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-900 ${
+        checked
+          ? 'border-cyan-400/40 bg-cyan-500 text-slate-950'
+          : 'border-white/10 bg-slate-950/80 text-slate-200 hover:border-cyan-400/40 hover:text-cyan-300'
+      }`}
+    >
+      Show Favorites Only
+    </button>
   );
 }

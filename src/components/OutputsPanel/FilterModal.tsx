@@ -1,5 +1,4 @@
 import { type FilterState, type SortState } from '@/hooks/useOutputs';
-import { SearchBar } from '@/components/SearchBar';
 import type { SortMode } from '@/api/client';
 import { OptionSection } from './OptionSection';
 import { FavoritesSection } from './FavoritesSection';
@@ -12,10 +11,13 @@ interface FilterModalProps {
   sort: SortState;
   onChangeFilter: (filter: Partial<FilterState>) => void;
   onChangeSort: (sort: SortState) => void;
+  zIndex?: number;
+  /** Hide the File Type section (e.g. the move picker, which lists folders). */
+  hideTypeFilter?: boolean;
 }
 
 export function FilterModal({
-  open, onClose, filter, sort, onChangeFilter, onChangeSort
+  open, onClose, filter, sort, onChangeFilter, onChangeSort, zIndex = 1600, hideTypeFilter = false
 }: FilterModalProps) {
   if (!open) return null;
 
@@ -46,37 +48,33 @@ export function FilterModal({
   };
 
   return (
-    <div id="filter-modal-root" className="fixed inset-0 z-[1600] bg-black/50 flex items-center justify-center p-4" onClick={onClose}>
-      <div id="filter-modal-content" className="bg-white rounded-xl shadow-lg w-full max-w-sm max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
-        <div id="filter-modal-header" className="p-4 border-b border-gray-100 flex items-center justify-between">
-          <h3 id="filter-modal-title" className="font-semibold text-gray-900">Filter & Sort</h3>
+    <div id="filter-modal-root" className="fixed inset-0 bg-black/50 flex items-center justify-center p-4" style={{ zIndex }} onClick={onClose}>
+      <div
+        id="filter-modal-content"
+        className="bg-slate-900 border border-white/10 text-slate-100 rounded-xl shadow-lg w-full max-w-sm max-h-[90vh] overflow-y-auto"
+        onClick={e => e.stopPropagation()}
+      >
+        <div id="filter-modal-header" className="p-4 border-b border-white/10 flex items-center justify-between">
+          <h3 id="filter-modal-title" className="font-semibold text-slate-100">Filter & Sort</h3>
           <CloseButton variant="plain" onClick={onClose} buttonSize={8} iconSize={6} />
         </div>
 
         <div id="filter-modal-body" className="p-4 space-y-6">
-          <div id="search-input-container">
-            <label id="search-input-label" className="block text-sm font-medium text-gray-700 mb-1">
-              Search
-            </label>
-            <SearchBar
-              placeholder="Search by filename..."
-              value={filter.search}
-              onChange={(search) => onChangeFilter({ search })}
+          {!hideTypeFilter && (
+            <OptionSection<FilterState['type']>
+              idPrefix="filter-type-group"
+              title="File Type"
+              items={[
+                { value: 'all', label: 'All' },
+                { value: 'image', label: 'Image' },
+                { value: 'video', label: 'Video' }
+              ]}
+              selectedValue={filter.type}
+              onSelect={(type) => onChangeFilter({ type })}
+              gridClassName="flex gap-2"
+              buttonClassName="flex-1"
             />
-          </div>
-          <OptionSection<FilterState['type']>
-            idPrefix="filter-type-group"
-            title="File Type"
-            items={[
-              { value: 'all', label: 'All' },
-              { value: 'image', label: 'Image' },
-              { value: 'video', label: 'Video' }
-            ]}
-            selectedValue={filter.type}
-            onSelect={(type) => onChangeFilter({ type })}
-            gridClassName="flex gap-2"
-            buttonClassName="flex-1"
-          />
+          )}
           <FavoritesSection
             checked={filter.favoritesOnly}
             onChange={(favoritesOnly) => onChangeFilter({ favoritesOnly })}
@@ -111,9 +109,9 @@ export function FilterModal({
           />
         </div>
 
-        <div id="filter-modal-footer" className="p-4 border-t border-gray-100 bg-gray-50 flex justify-end">
+        <div id="filter-modal-footer" className="p-4 border-t border-white/10 bg-slate-950/70 flex justify-end">
           <button
-             className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700"
+             className="px-4 py-2 bg-cyan-500 text-slate-950 rounded-lg text-sm font-semibold hover:bg-cyan-400"
              onClick={onClose}
           >
             Close

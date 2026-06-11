@@ -4,8 +4,12 @@ import type { HistoryEntry } from './useHistory';
 import type { ViewerImage } from '@/utils/viewerImages';
 
 type HistoryWorkflowEntry = {
-  workflow: NonNullable<ViewerImage['workflow']>;
+  // Absent for runs whose history entry has no embedded workflow. promptId is
+  // always present, so callers can still associate a file with its run (e.g. to
+  // delete the run's queue card) even when no workflow is available to load.
+  workflow?: NonNullable<ViewerImage['workflow']>;
   promptId: string;
+  hidden?: boolean;
 };
 
 export function buildHistoryWorkflowByFileIdMap(
@@ -13,7 +17,6 @@ export function buildHistoryWorkflowByFileIdMap(
 ): Map<string, HistoryWorkflowEntry> {
   const map = new Map<string, HistoryWorkflowEntry>();
   for (const entry of history) {
-    if (!entry.workflow) continue;
     for (const output of entry.outputs.images ?? []) {
       const path = output.subfolder
         ? `${output.subfolder}/${output.filename}`
@@ -24,6 +27,7 @@ export function buildHistoryWorkflowByFileIdMap(
       map.set(key, {
         workflow: entry.workflow,
         promptId: entry.prompt_id,
+        hidden: entry.hidden,
       });
     }
   }

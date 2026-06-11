@@ -1,19 +1,21 @@
 import type { MouseEvent } from 'react';
 import type { FileItem } from '@/api/client';
-import { ChevronDownIcon, ChevronRightIcon } from '@/components/icons';
+import { Collapsible } from '@/components/Collapsible';
+import { FoldIcon } from '@/components/FoldIcon';
 import { FileCard } from './FileCard';
 
 interface OutputsFoldersSectionProps {
   folders: FileItem[];
   foldersCollapsed: boolean;
-  toggleFoldersCollapsed: () => void;
+  toggleFoldersCollapsed: (sectionElement: HTMLElement | null) => void;
   selectionMode: boolean;
   selectedIds: string[];
   favorites: string[];
   setCurrentFolder: (folder: string) => void;
   handleOpen: (file: FileItem) => void;
   handleMenu: (file: FileItem, event: MouseEvent) => void;
-  toggleSelection: (id: string) => void;
+  toggleSelection: (id: string, event: MouseEvent, options?: { range?: boolean }) => void;
+  showContextMenus?: boolean;
 }
 
 export function OutputsFoldersSection({
@@ -26,25 +28,25 @@ export function OutputsFoldersSection({
   setCurrentFolder,
   handleOpen,
   handleMenu,
-  toggleSelection
+  toggleSelection,
+  showContextMenus = true
 }: OutputsFoldersSectionProps) {
   if (folders.length === 0) return null;
 
   return (
-    <div id="outputs-folders-section" className="mb-4">
+    <div id="outputs-folders-section" data-outputs-section className="mb-4">
       <button
-        onClick={toggleFoldersCollapsed}
-        className="flex items-center gap-2 w-full text-left mb-2 py-1 text-sm font-medium text-gray-600 hover:text-gray-900"
-      >
-        {foldersCollapsed ? (
-          <ChevronRightIcon className="w-4 h-4" />
-        ) : (
-          <ChevronDownIcon className="w-4 h-4" />
+        data-sticky-section-header
+        onClick={(event) => toggleFoldersCollapsed(
+          event.currentTarget.closest<HTMLElement>('[data-outputs-section]'),
         )}
+        className="sticky top-[-16px] z-20 -mx-4 mb-2 flex w-[calc(100%+2rem)] items-center gap-2 bg-slate-950/95 px-4 py-2 text-left text-sm font-medium text-slate-400 backdrop-blur-sm hover:text-slate-100"
+      >
+        <FoldIcon open={!foldersCollapsed} variant="chevron" className="w-4 h-4" />
         <span>Folders ({folders.length})</span>
       </button>
-      {!foldersCollapsed && (
-        <div className="flex flex-col border border-gray-200 rounded-lg overflow-hidden">
+      <Collapsible open={!foldersCollapsed}>
+        <div className="flex flex-col gap-2">
           {folders.map((file) => (
             <FileCard
               key={file.id}
@@ -57,10 +59,11 @@ export function OutputsFoldersSection({
               onOpen={handleOpen}
               onMenu={handleMenu}
               onToggleSelection={toggleSelection}
+              showContextMenu={showContextMenus}
             />
           ))}
         </div>
-      )}
+      </Collapsible>
     </div>
   );
 }
