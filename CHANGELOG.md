@@ -1,5 +1,19 @@
 # Changelog
 
+## 3.0.1 - 2026-06-17
+
+### Added
+
+- **Load a workflow from an image:** drag an image onto the workflow panel or pick one via "From Device" to load the workflow embedded in its metadata, extracted entirely client-side from PNG `tEXt`/`iTXt` or WEBP/JPEG EXIF. The device picker now accepts images alongside `.json`, the panel shows a "Drop to load workflow" overlay while dragging, and a dismissible dialog explains when an image carries no embedded workflow
+- **Image viewer zoom & pan (desktop):** zooming (Ctrl-scroll / trackpad pinch) now anchors at the cursor instead of growing from center, and a plain scroll wheel / trackpad pans the image once zoomed in (no more click-drag-only)
+
+### Fixed
+
+- **Workflows silently producing no output:** a stale closed-enum combo value (e.g. a captured action-widget placeholder) was sent verbatim, so ComfyUI dropped that node's whole branch and the prompt "succeeded" with no output. Closed-enum values now fall back to the default, while file-picker values are still kept as-is so the server can resolve or clearly reject them
+- **Over-max seeds rejected at validation:** randomized/queued seeds are now clamped to each node's declared seed maximum (with a universal 2^32-1 ceiling), so nodes that cap the seed below 2^64 (e.g. Qwen-VL) no longer get silently dropped from the run
+- **405 on Custom Nodes Manager install:** the queue reset/start calls now try `POST` and fall back to `GET`, so install/update works across ComfyUI-Manager versions that register those endpoints with either method
+- **Prompt-preview overflow:** long unbroken values (file paths, seeds, hex tokens) in the prompt-preview diff now wrap instead of overflowing the container
+
 ## 3.0.0 - 2026-06-11
 
 ### Added
