@@ -57,6 +57,7 @@ import {
   getSeedStep,
   getSeedRandomBounds,
   generateSeedFromNode,
+  clampSeedToNodeBounds,
   hasSeedControlWidget,
   resolveSpecialSeedToUse,
 } from "@/utils/seedUtils";
@@ -4928,11 +4929,14 @@ export const useWorkflowStore = create<WorkflowState>()(
                     ? currentValue - 1
                     : currentValue - 0.01;
               } else if (controlMode === "randomize") {
-                // For INT, generate a large random number (like seed)
-                // For FLOAT, generate between 0 and 1
+                // For INT, generate a random seed within the safe universal
+                // ceiling (2^32-1). A primitive feeds its value to a consumer by
+                // connection, whose seed max isn't known here; 2^32-1 is accepted
+                // by ~every node (going higher made nodes like Qwen-VL reject the
+                // branch at validation). For FLOAT, generate between 0 and 1.
                 newValue =
                   normalizedType === "INT"
-                    ? Math.floor(Math.random() * 0xffffffffffff)
+                    ? Math.floor(Math.random() * (DEFAULT_SPECIAL_SEED_RANGE + 1))
                     : Math.random();
               }
 
@@ -5157,7 +5161,7 @@ export const useWorkflowStore = create<WorkflowState>()(
                 default: return node;
               }
               const newWidgetValues = [...node.widgets_values];
-              newWidgetValues[seedIndex] = nextSeed;
+              newWidgetValues[seedIndex] = clampSeedToNodeBounds(nextSeed, nodeTypes, node);
               return { ...node, widgets_values: newWidgetValues };
             }
 
@@ -5178,6 +5182,9 @@ export const useWorkflowStore = create<WorkflowState>()(
               }
             }
             if (seedToUse === null) return node;
+            // Never hand the node a seed outside its declared range, or ComfyUI
+            // silently drops that node's branch at validation.
+            seedToUse = clampSeedToNodeBounds(seedToUse, nodeTypes, node);
             const overrideKey =
               scopeSubgraphId == null
                 ? String(node.id)

@@ -16,6 +16,8 @@ import { isWorkflowModified, useWorkflowStore } from '@/hooks/useWorkflow';
 import { getWorkflowForPersistence } from '@/utils/workflowPersistence';
 import { useGenerationSettingsStore } from '@/hooks/useGenerationSettings';
 import { obfuscateWorkflowInputPaths } from '@/utils/inputPathAliases';
+import { readWorkflowFromFile } from '@/utils/workflowFromFile';
+import { useNoWorkflowImageModal } from '@/hooks/useNoWorkflowImageModal';
 import type { Workflow } from '@/api/types';
 import {
   listUserWorkflows,
@@ -218,29 +220,22 @@ export function AppMenu({
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (!file) return;
-
-    try {
-      const text = await file.text();
-      const data = JSON.parse(text) as Workflow;
-
-      // Validate basic structure
-      if (!data.nodes || !Array.isArray(data.nodes)) {
-        throw new Error('Invalid workflow: missing nodes array');
-      }
-
-      loadWorkflow(data, file.name); // Pass filename when loading from device
-      setError(null);
-      onClose();
-
-      vibrate(10);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load workflow');
-    }
-
-    // Reset input
+    // Reset the input up front so re-picking the same file still fires onChange.
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
+    }
+    if (!file) return;
+
+    const result = await readWorkflowFromFile(file);
+    if (result.kind === 'workflow') {
+      loadWorkflow(result.workflow, result.filename); // filename when loading from device
+      setError(null);
+      onClose();
+      vibrate(10);
+    } else if (result.kind === 'no-workflow') {
+      useNoWorkflowImageModal.getState().show(result.filename);
+    } else {
+      setError(result.message);
     }
   };
 

@@ -6,13 +6,15 @@ import {
   getSpecialSeedMode,
   getSpecialSeedValueForMode,
   getSeedRandomBounds,
+  generateSeedFromNode,
+  clampSeedToNodeBounds,
   RGTHREE_SEED_NODE_TYPE,
   SPECIAL_SEED_RANDOM,
   SPECIAL_SEED_INCREMENT,
   SPECIAL_SEED_DECREMENT,
   DEFAULT_SPECIAL_SEED_RANGE
 } from '../seedUtils';
-import type { WorkflowNode } from '@/api/types';
+import type { NodeTypes, WorkflowNode } from '@/api/types';
 
 function makeSeedNode(type: string, widgetsValues: unknown[]): WorkflowNode {
   return {
@@ -29,6 +31,67 @@ function makeSeedNode(type: string, widgetsValues: unknown[]): WorkflowNode {
     widgets_values: widgetsValues,
   } as unknown as WorkflowNode;
 }
+
+// A node whose seed input caps at 2^32-1 (like SeedVR2), vs the default 2^50 range.
+const cappedSeedNodeTypes: NodeTypes = {
+  CappedSeedNode: {
+    input: { required: { seed: ['INT', { min: 0, max: 4294967295 }] } },
+    output: [],
+    output_name: [],
+    name: 'CappedSeedNode', display_name: 'CappedSeedNode',
+    description: '', python_module: '', category: 'test',
+  },
+} as unknown as NodeTypes;
+
+describe('seed bounds respect the node input max', () => {
+  it('generateSeedFromNode never exceeds the node-declared seed max', () => {
+    const node = makeSeedNode('CappedSeedNode', [0, 'randomize']);
+    for (let i = 0; i < 200; i += 1) {
+      const seed = generateSeedFromNode(cappedSeedNodeTypes, node);
+      expect(seed).toBeGreaterThanOrEqual(0);
+      expect(seed).toBeLessThanOrEqual(4294967295);
+    }
+  });
+
+  it('clampSeedToNodeBounds clamps an out-of-range seed to the node max', () => {
+    const node = makeSeedNode('CappedSeedNode', [0, 'increment']);
+    expect(clampSeedToNodeBounds(283905968141975, cappedSeedNodeTypes, node)).toBe(4294967295);
+    expect(clampSeedToNodeBounds(-5, cappedSeedNodeTypes, node)).toBe(0);
+    expect(clampSeedToNodeBounds(123, cappedSeedNodeTypes, node)).toBe(123);
+  });
+
+  it('leaves seeds untouched when the node declares no bounds', () => {
+    const noBoundsTypes = {
+      FreeSeedNode: {
+        input: { required: { seed: ['INT', {}] } },
+        output: [], output_name: [], name: 'FreeSeedNode', display_name: 'FreeSeedNode',
+        description: '', python_module: '', category: 'test',
+      },
+    } as unknown as NodeTypes;
+    const node = makeSeedNode('FreeSeedNode', [0, 'fixed']);
+    expect(clampSeedToNodeBounds(283905968141975, noBoundsTypes, node)).toBe(283905968141975);
+  });
+
+  it('caps a generated seed at the universal 2^32-1 ceiling even with no declared bounds', () => {
+    // A seed provider (Seed (rgthree) / primitive) feeds its value to consumers
+    // by connection, where the consumer's max isn't known. Generating must stay
+    // within the safe universal ceiling so a 2^32-capped consumer (e.g. Qwen-VL)
+    // doesn't get rejected at validation.
+    const noBoundsTypes = {
+      FreeSeedNode: {
+        input: { required: { seed: ['INT', {}] } },
+        output: [], output_name: [], name: 'FreeSeedNode', display_name: 'FreeSeedNode',
+        description: '', python_module: '', category: 'test',
+      },
+    } as unknown as NodeTypes;
+    const node = makeSeedNode('FreeSeedNode', [0, 'randomize']);
+    for (let i = 0; i < 200; i += 1) {
+      const seed = generateSeedFromNode(noBoundsTypes, node);
+      expect(seed).toBeGreaterThanOrEqual(0);
+      expect(seed).toBeLessThanOrEqual(4294967295);
+    }
+  });
+});
 
 describe('isSpecialSeedValue', () => {
   it('returns true for -1, -2, -3', () => {

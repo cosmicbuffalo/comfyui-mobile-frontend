@@ -6,6 +6,7 @@ import {
   isWidgetInputType,
   normalizeWidgetValue,
   normalizeComboValue,
+  optionsAreFileLike,
   isValueCompatible,
   resolveComboOption,
   resolveSource,
@@ -189,15 +190,67 @@ describe('normalizeComboValue', () => {
     expect(normalizeComboValue('models/v1-5.safetensors', ['v1-5.safetensors', 'xl.safetensors'])).toBe('v1-5.safetensors');
   });
 
-  it('keeps the original value when nothing matches (no substitution)', () => {
-    // A picked input that isn't in the (stale/incomplete) option list must be
+  it('keeps an unmatched FILE-PICKER value as-is (incomplete option list)', () => {
+    // A picked file that isn't in the (stale/incomplete) option list must be
     // sent as-is so the server errors clearly, not swapped for another file.
     expect(normalizeComboValue('my_new_input.png', ['other_a.png', 'other_b.png'])).toBe('my_new_input.png');
-    expect(normalizeComboValue('nonexistent', ['euler', 'ddim'])).toBe('nonexistent');
+    expect(
+      normalizeComboValue('subdir/new.safetensors', ['a.safetensors', 'b.safetensors']),
+    ).toBe('subdir/new.safetensors');
+  });
+
+  it('falls back to the first option for a CLOSED ENUM when nothing matches', () => {
+    // Closed enums list every valid value, so an unmatched value is stale.
+    // ComfyUI silently drops a node with an out-of-range combo value (and its
+    // whole downstream branch), producing "no output". Falling back to the
+    // default keeps the prompt executable. Regression: a dynamic
+    // ImpactWildcardProcessor "Select to add Wildcard" placeholder captured in
+    // widgets_values ("Select Wildcard 🟢 Full Cache") used to be sent verbatim
+    // and excluded the entire prompt-processing branch from the run.
+    expect(normalizeComboValue('nonexistent', ['euler', 'ddim'])).toBe('euler');
+    expect(
+      normalizeComboValue(
+        'Select Wildcard 🟢 Full Cache',
+        ['Select the Wildcard to add to the text'],
+      ),
+    ).toBe('Select the Wildcard to add to the text');
+  });
+
+  it('treats combos with path-like options as file pickers (keeps value)', () => {
+    // Format combos such as VHS "video/h264-mp4" contain a path separator and
+    // must not be coerced to a different option.
+    expect(
+      normalizeComboValue('video/unknown-codec', ['video/h264-mp4', 'image/gif']),
+    ).toBe('video/unknown-codec');
+  });
+
+  it('keeps a file-like value even when the options list looks enum-like', () => {
+    // A picker whose current options happen to lack a recognizable extension
+    // must not clobber a genuine file selection; the file-like value is kept.
+    expect(
+      normalizeComboValue('my_model.safetensors', ['baseline', 'turbo']),
+    ).toBe('my_model.safetensors');
+    expect(
+      normalizeComboValue('subdir/clip', ['baseline', 'turbo']),
+    ).toBe('subdir/clip');
   });
 
   it('returns value as-is for empty options', () => {
     expect(normalizeComboValue('anything', [])).toBe('anything');
+  });
+});
+
+describe('optionsAreFileLike', () => {
+  it('detects file-picker option lists (extensions or path separators)', () => {
+    expect(optionsAreFileLike(['a.safetensors', 'b.safetensors'])).toBe(true);
+    expect(optionsAreFileLike(['subdir/model.ckpt'])).toBe(true);
+    expect(optionsAreFileLike(['photo.png', 'clip.mp4'])).toBe(true);
+  });
+
+  it('treats human-readable enums as closed (not file-like)', () => {
+    expect(optionsAreFileLike(['euler', 'dpmpp_2m'])).toBe(false);
+    expect(optionsAreFileLike(['Select the Wildcard to add to the text'])).toBe(false);
+    expect(optionsAreFileLike(['enable', 'disable'])).toBe(false);
   });
 });
 

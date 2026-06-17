@@ -152,20 +152,27 @@ export async function fetchManagerQueueStatus(): Promise<ManagerQueueStatus> {
   return response.json();
 }
 
-export async function resetManagerQueue(): Promise<void> {
-  // ComfyUI-Manager defines this as a POST action endpoint; GET yields 405.
-  const response = await fetch('/manager/queue/reset', { method: 'POST', cache: 'no-store' });
-  if (!response.ok) {
-    throw await parseError(response, 'Failed to reset manager queue');
+// ComfyUI-Manager versions disagree on the HTTP method for the queue-control
+// endpoints (reset/start): some register them as POST, others as GET. Sending the
+// wrong one yields 405 Method Not Allowed. Try POST first, then fall back to GET
+// on a 405 so install/update works across Manager versions. A 405 is rejected by
+// the router before the handler runs, so the retry has no side effects.
+async function managerQueueControl(path: string, fallbackMessage: string): Promise<void> {
+  let response = await fetch(path, { method: 'POST', cache: 'no-store' });
+  if (response.status === 405) {
+    response = await fetch(path, { method: 'GET', cache: 'no-store' });
+  }
+  if (!response.ok && response.status !== 201) {
+    throw await parseError(response, fallbackMessage);
   }
 }
 
+export async function resetManagerQueue(): Promise<void> {
+  await managerQueueControl('/manager/queue/reset', 'Failed to reset manager queue');
+}
+
 export async function startManagerQueue(): Promise<void> {
-  // ComfyUI-Manager defines this as a POST action endpoint; GET yields 405.
-  const response = await fetch('/manager/queue/start', { method: 'POST', cache: 'no-store' });
-  if (!response.ok && response.status !== 201) {
-    throw await parseError(response, 'Failed to start manager queue');
-  }
+  await managerQueueControl('/manager/queue/start', 'Failed to start manager queue');
 }
 
 export async function queueCustomNodeAction(

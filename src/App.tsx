@@ -6,6 +6,7 @@ import { BottomBar } from './components/BottomBar';
 import { QueuePanel } from './components/QueuePanel';
 import { ImageViewer } from './components/ImageViewer';
 import { ConnectionLostOverlay } from './components/BackendStatusOverlay';
+import { NoWorkflowImageDialog } from './components/modals/NoWorkflowImageDialog';
 import { useWebSocket } from './hooks/useWebSocket';
 import { useWorkflowStore } from './hooks/useWorkflow';
 import { useNavigationStore } from './hooks/useNavigation';
@@ -304,6 +305,7 @@ function App() {
       />
 
       <ConnectionLostOverlay />
+      <NoWorkflowImageDialog />
     </div>
   );
 }

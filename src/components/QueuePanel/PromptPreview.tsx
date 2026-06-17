@@ -163,7 +163,7 @@ export function PromptPreview({
                     {node.changes.map((change, i) => (
                       <div
                         key={`${change.field}-${i}`}
-                        className="rounded bg-black/20 px-2 py-1 text-xs text-slate-300 break-words"
+                        className="rounded bg-black/20 px-2 py-1 text-xs text-slate-300 [overflow-wrap:anywhere]"
                       >
                         <span className="text-slate-500">{change.field}: </span>
                         <span className="rounded-sm bg-red-500/20 px-1 text-red-200 line-through decoration-red-300/50">
@@ -196,7 +196,7 @@ export function PromptPreview({
                   labelClassName="text-[11px] font-semibold text-cyan-300"
                   iconClassName="text-cyan-300/70"
                 >
-                  <div className="rounded bg-black/20 px-2 py-1.5 text-sm leading-snug text-slate-200 whitespace-pre-wrap break-words">
+                  <div className="rounded bg-black/20 px-2 py-1.5 text-sm leading-snug text-slate-200 whitespace-pre-wrap [overflow-wrap:anywhere]">
                     <DiffText segments={prompt.segments} />
                   </div>
                 </FoldChunk>

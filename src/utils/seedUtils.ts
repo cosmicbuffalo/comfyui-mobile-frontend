@@ -13,7 +13,15 @@ export interface SeedWidgetDescriptor {
 export const SPECIAL_SEED_RANDOM = -1;
 export const SPECIAL_SEED_INCREMENT = -2;
 export const SPECIAL_SEED_DECREMENT = -3;
-export const DEFAULT_SPECIAL_SEED_RANGE = 1125899906842624;
+// Default ceiling for a generated random seed: 2^32-1. A node's own seed widget
+// is further clamped to its declared max (see clampSeedToNodeBounds), but a seed
+// PROVIDER (Seed (rgthree), a primitive) feeds its value to consumers by
+// connection, where the consumer's max isn't known at generation time. Many
+// nodes cap the seed at 2^32-1 (e.g. Qwen-VL); generating beyond that made
+// ComfyUI reject the consumer's whole branch at validation. 2^32-1 is accepted
+// by ~every node (those allowing 2^64 still accept anything <= 2^32-1), so it's
+// the safe universal ceiling.
+export const DEFAULT_SPECIAL_SEED_RANGE = 4294967295;
 
 export const RGTHREE_SEED_NODE_TYPE = 'Seed (rgthree)';
 
@@ -218,11 +226,55 @@ export function getSeedRandomBounds(node: WorkflowNode): { min: number; max: num
   return min <= max ? { min, max } : { min: max, max: min };
 }
 
+/**
+ * The min/max the node's seed INPUT actually accepts, read from object_info.
+ * Many samplers allow a huge range (2^64), but some custom nodes cap the seed at
+ * 2^32-1 (e.g. SeedVR2). Generating outside this range makes ComfyUI silently
+ * reject that node's whole branch at validation, so the random seed must respect
+ * it. Returns null when the node declares no numeric bounds.
+ */
+export function getSeedInputTypeBounds(
+  nodeTypes: NodeTypes,
+  node: WorkflowNode,
+): { min?: number; max?: number } | null {
+  const typeDef = nodeTypes[node.type];
+  if (!typeDef?.input) return null;
+  const inputDef =
+    typeDef.input.required?.seed ||
+    typeDef.input.optional?.seed ||
+    typeDef.input.required?.noise_seed ||
+    typeDef.input.optional?.noise_seed;
+  const options = inputDef?.[1];
+  const min = typeof options?.min === 'number' ? options.min : undefined;
+  const max = typeof options?.max === 'number' ? options.max : undefined;
+  if (min === undefined && max === undefined) return null;
+  return { min, max };
+}
+
+/** Clamp a resolved seed into the node's declared seed-input range (if any). */
+export function clampSeedToNodeBounds(
+  seed: number,
+  nodeTypes: NodeTypes,
+  node: WorkflowNode,
+): number {
+  const bounds = getSeedInputTypeBounds(nodeTypes, node);
+  if (!bounds) return seed;
+  let clamped = seed;
+  if (bounds.max !== undefined && clamped > bounds.max) clamped = bounds.max;
+  if (bounds.min !== undefined && clamped < bounds.min) clamped = bounds.min;
+  return clamped;
+}
+
 export function generateSeedFromNode(nodeTypes: NodeTypes, node: WorkflowNode): number {
   const step = getSeedStep(nodeTypes, node);
-  const { min, max } = getSeedRandomBounds(node);
+  const bounds = getSeedRandomBounds(node);
+  // Intersect the (properties-based) random range with what the seed input
+  // actually accepts, so we never generate a value the node will reject.
+  const typeBounds = getSeedInputTypeBounds(nodeTypes, node);
+  const min = typeBounds?.min !== undefined ? Math.max(bounds.min, typeBounds.min) : bounds.min;
+  const max = typeBounds?.max !== undefined ? Math.min(bounds.max, typeBounds.max) : bounds.max;
   const scaledStep = step > 0 ? step / 10 : 1;
-  const range = max - min;
+  const range = Math.max(0, max - min);
   let seed = min + Math.random() * range;
   if (scaledStep > 0) {
     seed = Math.round((seed - min) / scaledStep) * scaledStep + min;

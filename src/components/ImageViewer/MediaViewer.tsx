@@ -1007,16 +1007,65 @@ export function MediaViewer({
 
   const handleWheel = useCallback((event: WheelEvent) => {
     if (isVideo) return;
-    if (!event.ctrlKey) return;
+
+    // No modifier: pan with the scroll wheel / trackpad (desktop). clampTranslate
+    // keeps a fit image centered, so this only moves the image when zoomed in.
+    if (!event.ctrlKey) {
+      event.preventDefault();
+      const next = clampTranslate(
+        {
+          x: translateRef.current.x - event.deltaX,
+          y: translateRef.current.y - event.deltaY,
+        },
+        scaleRef.current,
+      );
+      translateRef.current = next;
+      setTranslate(next);
+      return;
+    }
+
+    // Ctrl-scroll / trackpad pinch: zoom, anchored at the cursor so the image
+    // point under the pointer stays fixed on screen. The rendered transform is
+    //   screen = baseOffset(scale) + translate + localPx * scale   (origin top-left)
+    // so invert it at the old scale, then solve for the translate that keeps that
+    // point under the cursor at the new scale.
     event.preventDefault();
+    const prevScale = scaleRef.current;
     const delta = -event.deltaY * 0.005;
-    const nextScale = Math.max(fitScale, Math.min(5, scaleRef.current + delta));
+    const nextScale = Math.max(fitScale, Math.min(5, prevScale + delta));
+    if (nextScale === prevScale) return;
+
+    const container = containerRef.current;
+    const prevTranslate = translateRef.current;
+    let nextTranslate = prevTranslate;
+    if (container && baseSize && containerSize) {
+      const rect = container.getBoundingClientRect();
+      const cx = event.clientX - rect.left;
+      const cy = event.clientY - rect.top;
+      const baseOffset = (s: number) => {
+        const w = baseSize.width * s;
+        const h = baseSize.height * s;
+        return {
+          x: w < containerSize.width ? (containerSize.width - w) / 2 : 0,
+          y: h < containerSize.height ? (containerSize.height - h) / 2 : 0,
+        };
+      };
+      const prevOffset = baseOffset(prevScale);
+      const localX = (cx - prevOffset.x - prevTranslate.x) / prevScale;
+      const localY = (cy - prevOffset.y - prevTranslate.y) / prevScale;
+      const nextOffset = baseOffset(nextScale);
+      nextTranslate = {
+        x: cx - nextOffset.x - localX * nextScale,
+        y: cy - nextOffset.y - localY * nextScale,
+      };
+    }
+
     scaleRef.current = nextScale;
     setScale(nextScale);
-    const nextTranslate = clampTranslate(translateRef.current, nextScale);
-    translateRef.current = nextTranslate;
-    setTranslate(nextTranslate);
-  }, [clampTranslate, fitScale, isVideo]);
+    const clamped = clampTranslate(nextTranslate, nextScale);
+    translateRef.current = clamped;
+    setTranslate(clamped);
+  }, [clampTranslate, fitScale, isVideo, baseSize, containerSize]);
 
   useEffect(() => {
     const overlay = overlayRef.current;

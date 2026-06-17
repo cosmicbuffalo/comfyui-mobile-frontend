@@ -39,7 +39,7 @@ export function MenuLoadSection({
       <input
         ref={fileInputRef}
         type="file"
-        accept=".json"
+        accept=".json,.png,.jpg,.jpeg,.webp,image/png,image/jpeg,image/webp"
         onChange={onFileChange}
         className="hidden"
       />

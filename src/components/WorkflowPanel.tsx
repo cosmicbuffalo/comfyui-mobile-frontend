@@ -5,6 +5,8 @@ import { getScopedWorkflowView } from "@/utils/canonicalWorkflowOps";
 import { useWorkflowStore, type ScopeFrame } from "@/hooks/useWorkflow";
 import { useBookmarksStore } from "@/hooks/useBookmarks";
 import { useWorkflowErrorsStore } from "@/hooks/useWorkflowErrors";
+import { useNoWorkflowImageModal } from "@/hooks/useNoWorkflowImageModal";
+import { readWorkflowFromFile } from "@/utils/workflowFromFile";
 import { useRepositionMode, type RepositionTarget } from "@/hooks/useRepositionMode";
 import { pushBackEntry } from "@/hooks/useHistoryBackClose";
 import { RepositionOverlay } from "@/components/RepositionOverlay";
@@ -111,6 +113,12 @@ export const WorkflowPanel = memo(function WorkflowPanel({
   const bookmarkBarRef = useRef<HTMLDivElement>(null);
   const parentRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
+  const loadWorkflow = useWorkflowStore((s) => s.loadWorkflow);
+  // Drag-and-drop a workflow .json or an image (workflow extracted from its
+  // embedded metadata) onto the panel to load it. dragDepthRef counters the
+  // enter/leave events from descendant elements so the overlay doesn't flicker.
+  const [isFileDragging, setIsFileDragging] = useState(false);
+  const dragDepthRef = useRef(0);
   const [bookmarkCycleIndex, setBookmarkCycleIndex] = useState(0);
   const [pendingBookmarkEntry, setPendingBookmarkEntry] =
     useState<BookmarkEntry | null>(null);
@@ -1748,13 +1756,68 @@ export const WorkflowPanel = memo(function WorkflowPanel({
       bookmarkBarTop == null && bookmarkDragPosition == null ? "none" : "auto",
   } as const;
 
+  const dragHasFiles = (event: React.DragEvent) =>
+    Array.from(event.dataTransfer?.types ?? []).includes("Files");
+
+  const handleFileDragEnter = (event: React.DragEvent) => {
+    if (!dragHasFiles(event)) return;
+    event.preventDefault();
+    dragDepthRef.current += 1;
+    setIsFileDragging(true);
+  };
+
+  const handleFileDragOver = (event: React.DragEvent) => {
+    if (!dragHasFiles(event)) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "copy";
+  };
+
+  const handleFileDragLeave = (event: React.DragEvent) => {
+    if (!dragHasFiles(event)) return;
+    dragDepthRef.current = Math.max(0, dragDepthRef.current - 1);
+    if (dragDepthRef.current === 0) setIsFileDragging(false);
+  };
+
+  const handleFileDrop = async (event: React.DragEvent) => {
+    if (!dragHasFiles(event)) return;
+    event.preventDefault();
+    dragDepthRef.current = 0;
+    setIsFileDragging(false);
+    const file = event.dataTransfer.files?.[0];
+    if (!file) return;
+    const result = await readWorkflowFromFile(file);
+    if (result.kind === "workflow") {
+      loadWorkflow(result.workflow, result.filename);
+      useWorkflowErrorsStore.getState().setError(null);
+    } else if (result.kind === "no-workflow") {
+      useNoWorkflowImageModal.getState().show(result.filename);
+    } else {
+      useWorkflowErrorsStore.getState().setError(result.message);
+    }
+  };
+
   return (
     <div
       id="node-list-wrapper"
       ref={wrapperRef}
       className="absolute inset-x-0 bottom-0 bg-slate-950/88"
       style={{ display: visible ? "block" : "none", top: topBarHeight }}
+      onDragEnter={handleFileDragEnter}
+      onDragOver={handleFileDragOver}
+      onDragLeave={handleFileDragLeave}
+      onDrop={handleFileDrop}
     >
+      {isFileDragging && (
+        <div
+          id="workflow-drop-overlay"
+          className="pointer-events-none absolute inset-0 z-[1400] flex items-center justify-center bg-slate-950/70 backdrop-blur-[1px]"
+        >
+          <div className="m-4 flex flex-col items-center gap-1 rounded-2xl border-2 border-dashed border-cyan-400/70 px-8 py-6 text-center">
+            <span className="text-sm font-semibold text-cyan-200">Drop to load workflow</span>
+            <span className="text-xs text-slate-400">Workflow .json or an image with an embedded workflow</span>
+          </div>
+        </div>
+      )}
       {content}
       <AddNodeModal
         isOpen={addNodeModalOpen}

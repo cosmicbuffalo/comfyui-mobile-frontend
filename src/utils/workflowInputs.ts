@@ -277,12 +277,46 @@ export function normalizeComboValue(
   if (resolved !== undefined) {
     return resolved;
   }
-  // No exact/basename/extensionless match: keep the original value rather than
-  // substituting a different valid option (e.g. options[0] or a default). An
-  // invalid selection then surfaces as a clear server-side error instead of
-  // silently running with the wrong file — the option list is also inherently
-  // incomplete for file pickers (uploads/new inputs aren't in object_info).
+  // No exact/basename/extensionless match. How we recover depends on whether the
+  // combo is a file picker or a closed enum:
+  //
+  // - File pickers (loras, checkpoints, images, …) have an inherently incomplete
+  //   option list — uploads and newly-added files never appear in object_info —
+  //   so an unmatched value may still be valid. Keep it as-is and let the server
+  //   decide, rather than swapping in a different (wrong) file.
+  //
+  // - Closed enums (action widgets like "Select to add Wildcard", sampler /
+  //   scheduler names, …) enumerate EVERY valid value, so an unmatched value is
+  //   stale — e.g. a dynamic combo whose placeholder option was captured into
+  //   widgets_values at save time. ComfyUI does not error on an out-of-range
+  //   combo value; it silently EXCLUDES that node (and its whole downstream
+  //   branch) from the run, completing with "success" and no output. To keep the
+  //   prompt executable we fall back to the first option (ComfyUI's default).
+  //
+  // Only substitute when NEITHER the option list nor the stale value looks
+  // file-like. A picker whose options happen to lack a recognizable extension
+  // (e.g. a custom node listing bare names) would otherwise be misread as an
+  // enum and a genuine file selection clobbered; keeping a file-like value as-is
+  // lets the server resolve or clearly reject it instead.
+  if (!optionsAreFileLike(options) && !isFileLikeToken(value)) {
+    return options[0];
+  }
   return value;
+}
+
+// A token is "file-like" when it carries a path separator or a known
+// model/media/config file extension. Combo lists with such options are
+// inherently incomplete (uploads aren't enumerated), so unmatched values are
+// kept as-is. Everything else is a closed enum that lists all valid values.
+const FILE_LIKE_OPTION =
+  /[\\/]|\.(safetensors|sft|ckpt|pt|pth|bin|gguf|onnx|vae|yaml|yml|json|txt|csv|png|jpe?g|webp|gif|bmp|tiff?|mp4|webm|mov|mkv|wav|mp3|flac|ogg|npy|npz|pkl|engine|trt)$/i;
+
+function isFileLikeToken(token: unknown): boolean {
+  return FILE_LIKE_OPTION.test(String(token));
+}
+
+export function optionsAreFileLike(options: unknown[]): boolean {
+  return options.some(isFileLikeToken);
 }
 
 const SAFETENSORS_SUFFIX = '.safetensors';
