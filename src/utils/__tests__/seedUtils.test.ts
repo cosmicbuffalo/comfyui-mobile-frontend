@@ -95,6 +95,26 @@ describe('seed bounds respect the node input max', () => {
       expect(seed).toBeLessThanOrEqual(4294967295);
     }
   });
+
+  it('caps a generated seed at the universal 2^32-1 ceiling even with no declared bounds', () => {
+    // A seed provider (Seed (rgthree) / primitive) feeds its value to consumers
+    // by connection, where the consumer's max isn't known. Generating must stay
+    // within the safe universal ceiling so a 2^32-capped consumer (e.g. Qwen-VL)
+    // doesn't get rejected at validation.
+    const noBoundsTypes = {
+      FreeSeedNode: {
+        input: { required: { seed: ['INT', {}] } },
+        output: [], output_name: [], name: 'FreeSeedNode', display_name: 'FreeSeedNode',
+        description: '', python_module: '', category: 'test',
+      },
+    } as unknown as NodeTypes;
+    const node = makeSeedNode('FreeSeedNode', [0, 'randomize']);
+    for (let i = 0; i < 200; i += 1) {
+      const seed = generateSeedFromNode(noBoundsTypes, node);
+      expect(seed).toBeGreaterThanOrEqual(0);
+      expect(seed).toBeLessThanOrEqual(4294967295);
+    }
+  });
 });
 
 describe('isSpecialSeedValue', () => {
