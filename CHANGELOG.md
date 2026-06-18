@@ -1,5 +1,20 @@
 # Changelog
 
+## 3.0.2 - 2026-06-18
+
+### Added
+
+- **Push notification backend.** Server-side completion detection (poll-and-diff on `PromptServer.instance.prompt_queue.history`) plus two delivery sinks:
+  - **Native-app push** via a relay: `/mobile/api/push/app-targets` registers a `{relay_url, pairing_code, server_id, label}` target; the node POSTs `/event` to the relay on completion; the relay holds the APNs key and fans out to paired devices. `server_id` is forwarded so the iOS app can route a notification tap to the right server when multiple are paired.
+  - **Web Push** (browser, self-hosted, no third party): `/mobile/api/push/{config,subscribe,unsubscribe,test}` for VAPID/pywebpush subscriptions; service worker shows the notification.
+- `/mobile/api/push/preferences` toggles for `notifyOnComplete`, `notifyOnError`, and `includeThumbnail`.
+- Regression tests for the native-app push module (`tests/test_mobile_app_push.py`).
+
+### Notes
+
+- **Web Push UI (in-app menu toggles, subscribe button, service worker registration) is intentionally not included in this release.** Those changes depend on other unrelated v3.1.0 work. Backend is functional for direct API callers (and for the iOS app, which doesn't use the web UI anyway). The Web Push browser UI will land in a later release alongside its supporting frontend changes.
+- New runtime dep `pywebpush>=2.0` (declared in `requirements.txt`). If it's missing the node still loads; `/mobile/api/push/config` reports `{"enabled": false, "reason": …}` and web push is no-op'd.
+
 ## 3.0.1 - 2026-06-17
 
 ### Added

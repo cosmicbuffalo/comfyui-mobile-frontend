@@ -21,6 +21,13 @@ _mobile_input_aliases = _import_module('mobile_input_aliases')
 _mobile_file_prefix_aliases = _import_module('mobile_file_prefix_aliases')
 _mobile_video_thumbs = _import_module('mobile_video_thumbs')
 _mobile_image_preview = _import_module('mobile_image_preview')
+# Push notifications: native-app delivery via a relay (mobile_app_push) and
+# self-hosted web-push (mobile_web_push). mobile_push polls history and fans
+# out completions to both sinks; mobile_push_prefs stores the user toggles.
+_mobile_push = _import_module('mobile_push')
+_mobile_web_push = _import_module('mobile_web_push')
+_mobile_app_push = _import_module('mobile_app_push')
+_mobile_push_prefs = _import_module('mobile_push_prefs')
 list_files = _file_utils.list_files
 entry_matches_name_or_path = _file_utils.entry_matches_name_or_path
 _is_within_dir = _file_utils.is_within_dir
@@ -1086,6 +1093,132 @@ def setup_mobile_route():
 
     mobile_app.router.add_get('/assets/{path:.*}', serve_asset)
 
+    # --- Web Push (browser notifications on generation completion) ---
+    async def api_push_config(request):
+        """Frontend reads this to get the VAPID public key (applicationServerKey)
+        it needs to subscribe, plus whether push is available at all."""
+        try:
+            if not _mobile_web_push.is_available():
+                return web.json_response({"enabled": False, "reason": _mobile_web_push.import_error()})
+            return web.json_response({
+                "enabled": True,
+                "vapidPublicKey": _mobile_web_push.get_public_key(),
+                "subscriptions": _mobile_web_push.subscription_count(),
+            })
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=500)
+
+    async def api_push_subscribe(request):
+        try:
+            if not _mobile_web_push.is_available():
+                return web.json_response({"error": "push_unavailable"}, status=503)
+            body = await request.json()
+            # Accept either {subscription: {...}} or the raw PushSubscription JSON.
+            subscription = body.get("subscription") if isinstance(body, dict) else None
+            if subscription is None and isinstance(body, dict) and "endpoint" in body:
+                subscription = body
+            if not _mobile_web_push.add_subscription(subscription):
+                return web.json_response({"error": "invalid_subscription"}, status=400)
+            return web.json_response({"ok": True, "subscriptions": _mobile_web_push.subscription_count()})
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=500)
+
+    async def api_push_unsubscribe(request):
+        try:
+            body = await request.json()
+            endpoint = body.get("endpoint") if isinstance(body, dict) else None
+            removed = _mobile_web_push.remove_subscription(endpoint)
+            return web.json_response({"ok": True, "removed": removed})
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=500)
+
+    async def api_push_test(request):
+        """Send a test notification to all subscriptions — used by the UI's
+        'send test' button to confirm the whole pipeline works."""
+        try:
+            if not _mobile_web_push.is_available():
+                return web.json_response({"error": "push_unavailable"}, status=503)
+            loop = asyncio.get_event_loop()
+            result = await loop.run_in_executor(
+                None, _mobile_web_push.send_to_all,
+                "Test notification", "Push notifications are working \U0001f389", {"test": True},
+            )
+            return web.json_response(result)
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=500)
+
+    # --- App push targets (native app pairs automatically via these) ---
+    async def api_push_app_targets_get(request):
+        try:
+            return web.json_response({"targets": _mobile_app_push.list_targets()})
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=500)
+
+    async def api_push_app_targets_add(request):
+        """Called by the native app on pairing — registers a relay + pairing code
+        so this server notifies that device on completion."""
+        try:
+            body = await request.json()
+            if not isinstance(body, dict):
+                return web.json_response({"error": "invalid_body"}, status=400)
+            ok = _mobile_app_push.add_target(
+                body.get("relay_url"),
+                body.get("pairing_code"),
+                body.get("label"),
+                body.get("added"),
+                server_id=body.get("server_id"),
+            )
+            if not ok:
+                return web.json_response({"error": "invalid_target"}, status=400)
+            return web.json_response({"ok": True, "targets": _mobile_app_push.target_count()})
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=500)
+
+    async def api_push_app_targets_remove(request):
+        try:
+            body = await request.json()
+            removed = _mobile_app_push.remove_target(
+                body.get("pairing_code") if isinstance(body, dict) else None,
+                body.get("relay_url") if isinstance(body, dict) else None,
+            )
+            return web.json_response({"ok": True, "removed": removed})
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=500)
+
+    async def api_push_app_test(request):
+        try:
+            loop = asyncio.get_event_loop()
+            result = await loop.run_in_executor(None, _mobile_app_push.send_test)
+            return web.json_response(result)
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=500)
+
+    async def api_push_prefs_get(request):
+        try:
+            return web.json_response(_mobile_push_prefs.get_prefs())
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=500)
+
+    async def api_push_prefs_set(request):
+        try:
+            body = await request.json()
+            return web.json_response(_mobile_push_prefs.set_prefs(body))
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=500)
+
+    # Register API routes — these must register before the SPA catchall below,
+    # otherwise '/api/push/*' GETs would be swallowed by the index.html fallback.
+    mobile_app.router.add_get('/api/push/config', api_push_config)
+    mobile_app.router.add_post('/api/push/subscribe', api_push_subscribe)
+    mobile_app.router.add_post('/api/push/unsubscribe', api_push_unsubscribe)
+    mobile_app.router.add_post('/api/push/test', api_push_test)
+    mobile_app.router.add_get('/api/push/app-targets', api_push_app_targets_get)
+    mobile_app.router.add_post('/api/push/app-targets', api_push_app_targets_add)
+    mobile_app.router.add_post('/api/push/app-targets/remove', api_push_app_targets_remove)
+    mobile_app.router.add_post('/api/push/app-test', api_push_app_test)
+    mobile_app.router.add_get('/api/push/preferences', api_push_prefs_get)
+    mobile_app.router.add_post('/api/push/preferences', api_push_prefs_set)
+
     # Serve index.html for root and all non-API routes (SPA)
     mobile_app.router.add_get('/', serve_index)
     mobile_app.router.add_get('/{path:.*}', serve_index)
@@ -1098,6 +1231,11 @@ def setup_mobile_route():
 
     # Mount the sub-application at /mobile
     server.PromptServer.instance.app.add_subapp('/mobile', mobile_app)
+
+    # Push completion detection runs on the main app's event loop so it works
+    # regardless of any client being connected — start/stop with the server.
+    server.PromptServer.instance.app.on_startup.append(_mobile_push.on_startup)
+    server.PromptServer.instance.app.on_cleanup.append(_mobile_push.on_cleanup)
 
     print(f"[\033[34mMobile Frontend\033[0m] Mobile UI enabled at: \033[34m/mobile\033[0m")
 
