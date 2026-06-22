@@ -12,6 +12,8 @@ import {
   useAutocompleteStore,
 } from '@/hooks/useAutocompleteStore';
 import { getVisualViewportFrame } from '@/hooks/useVisualViewportFrame';
+import { getCaretCoordinates } from '@/utils/caretCoordinates';
+import { computeDropdownPlacement } from '@/utils/dropdownPlacement';
 
 interface TagAutocompleteTextareaProps {
   textareaRef: RefObject<HTMLTextAreaElement | null>;
@@ -100,11 +102,11 @@ export function TagAutocompleteTextarea({
     active && focused && !dismissed && dataStatus === 'loading' && tokenQualifies;
   const showDropdown = open || loadingVisible;
 
-  // The dropdown is rendered in a portal with fixed positioning anchored to the
-  // textarea, so it can't be clipped by an ancestor's overflow — notably the
-  // fullscreen prompt modal, which previously cut it to ~2 visible rows. It is
-  // positioned against the visual viewport (which shrinks when the on-screen
-  // keyboard opens) and flips above the field when there's no room below.
+  // The dropdown is rendered in a portal with fixed positioning, anchored to the
+  // caret's line (not the whole textarea) so it appears right under the line
+  // being typed. It's measured against the visual viewport (which shrinks when
+  // the on-screen keyboard opens) and flips above the caret when there isn't
+  // room for ~2 rows below. The portal escapes the fullscreen modal's overflow.
   const [pos, setPos] = useState<{
     left: number; width: number; top?: number; bottom?: number; maxHeight: number;
   } | null>(null);
@@ -114,18 +116,22 @@ export function TagAutocompleteTextarea({
       const el = textareaRef.current;
       if (!el) return;
       const r = el.getBoundingClientRect();
+      const c = getCaretCoordinates(el, el.selectionStart ?? caret);
+      // Viewport y of the caret's line, accounting for any scroll inside the
+      // textarea, then let the pure helper decide below-vs-above placement.
+      const lineTop = r.top + c.top - el.scrollTop;
       const frame = getVisualViewportFrame();
-      const visibleBottom = frame.offsetTop + frame.height;
-      const below = visibleBottom - r.bottom - 8;
-      const above = r.top - frame.offsetTop - 8;
-      const placeAbove = below < 160 && above > below;
-      setPos({
-        left: r.left,
-        width: r.width,
-        top: placeAbove ? undefined : r.bottom + 4,
-        bottom: placeAbove ? window.innerHeight - r.top + 4 : undefined,
-        maxHeight: Math.max(120, Math.min(280, placeAbove ? above : below)),
-      });
+      setPos(
+        computeDropdownPlacement({
+          caretLineTop: lineTop,
+          caretLineBottom: lineTop + c.height,
+          fieldLeft: r.left,
+          fieldWidth: r.width,
+          viewportTop: frame.offsetTop,
+          viewportBottom: frame.offsetTop + frame.height,
+          windowHeight: window.innerHeight,
+        }),
+      );
     };
     update();
     window.addEventListener('scroll', update, true);
@@ -138,7 +144,7 @@ export function TagAutocompleteTextarea({
       window.visualViewport?.removeEventListener('resize', update);
       window.visualViewport?.removeEventListener('scroll', update);
     };
-  }, [showDropdown, value, suggestions.length, textareaRef]);
+  }, [showDropdown, value, caret, suggestions.length, textareaRef]);
 
   // Keep the keyboard-highlighted row visible as it moves past the scroll edge.
   useEffect(() => {
