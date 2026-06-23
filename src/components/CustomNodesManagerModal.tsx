@@ -34,6 +34,7 @@ import { useBodyScrollLock } from '@/hooks/useBodyScrollLock';
 import { useModalKeyboard } from '@/hooks/useModalKeyboard';
 import { FullscreenModalHeader } from './modals/FullscreenModalHeader';
 import {
+  CheckIcon,
   ChevronDownIcon,
   DownloadIcon,
   EyeOffIcon,
@@ -44,8 +45,10 @@ import {
   SearchIcon,
   StarIcon,
   TrashIcon,
+  XMarkIcon,
 } from './icons';
 import { ContextMenuButton } from './buttons/ContextMenuButton';
+import { getCustomNodeNote } from '@/data/customNodeNotes';
 
 interface CustomNodesManagerModalProps {
   isOpen: boolean;
@@ -591,6 +594,8 @@ function CustomNodeCard({
   const menuRef = useRef<HTMLDivElement>(null);
   const actions = getCustomNodeActionOptions(row);
   const repository = rowRepository(row);
+  // Maintained mobile-frontend support notes, keyed off the node's identity.
+  const note = getCustomNodeNote([rowTitle(row), row.id, row.key, repository]);
   const lastUpdate = formatLastUpdate(row.last_update);
   const description = plainTextFromHtml(row.description);
   const subtitleItems = [
@@ -680,6 +685,8 @@ function CustomNodeCard({
         </p>
       )}
 
+      {note && <CustomNodeNotes note={note} />}
+
       <div className="mt-3 flex items-center justify-between gap-3 text-xs text-slate-400">
         <MetadataItems className="min-w-0 text-xs text-slate-400" items={bottomItems} />
         <div className="flex items-center gap-2 shrink-0">
@@ -703,6 +710,43 @@ function CustomNodeCard({
         </div>
       ) : null}
     </article>
+  );
+}
+
+function CustomNodeNotes({ note }: { note: ReturnType<typeof getCustomNodeNote> }) {
+  if (!note) return null;
+  const supported = note.supported ?? [];
+  const unsupported = note.unsupported ?? [];
+  if (supported.length === 0 && unsupported.length === 0 && !note.summary) return null;
+  return (
+    <div className="custom-node-notes mt-2 rounded-md border border-white/10 bg-slate-950/40 p-2.5">
+      <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+        Mobile frontend support
+      </p>
+      {note.summary && (
+        <p className="mt-1 text-xs leading-5 text-slate-300 break-words">{note.summary}</p>
+      )}
+      {supported.length > 0 && (
+        <ul className="mt-1.5 space-y-1">
+          {supported.map((item, index) => (
+            <li key={`s-${index}`} className="flex items-start gap-1.5 text-xs leading-5 text-slate-200">
+              <CheckIcon className="mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-400" />
+              <span className="min-w-0 break-words">{item}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+      {unsupported.length > 0 && (
+        <ul className="mt-1.5 space-y-1">
+          {unsupported.map((item, index) => (
+            <li key={`u-${index}`} className="flex items-start gap-1.5 text-xs leading-5 text-slate-400">
+              <XMarkIcon className="mt-0.5 h-3.5 w-3.5 shrink-0 text-slate-500" />
+              <span className="min-w-0 break-words">{item}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
   );
 }
 

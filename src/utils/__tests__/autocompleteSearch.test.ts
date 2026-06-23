@@ -4,6 +4,7 @@ import {
   applySuggestion,
   escapeParentheses,
   getActiveToken,
+  getSuggestionWikiUrl,
   normalizeTagToInsert,
   parseToken,
   searchNames,
@@ -12,7 +13,7 @@ import {
 } from '../autocompleteSearch';
 
 const TAGS: TagEntry[] = [
-  { tag: 'blue_eyes', category: 0, count: 1000, aliases: [] },
+  { tag: 'blue_eyes', category: 0, count: 1000, aliases: ['青い目'] },
   { tag: 'blue_hair', category: 0, count: 800, aliases: [] },
   { tag: 'long_hair', category: 0, count: 1200, aliases: ['longhair'] },
   { tag: 'dark_blue_background', category: 0, count: 50, aliases: [] },
@@ -71,6 +72,40 @@ describe('searchTags', () => {
     const results = searchTags(TAGS, 'longhair');
     expect(results[0].label).toBe('long_hair');
     expect(results[0].matchedAlias).toBe('longhair');
+  });
+
+  it('carries the full alias list on every suggestion (not just alias matches)', () => {
+    // A plain prefix match should still expose the tag's aliases for display.
+    const results = searchTags(TAGS, 'blue e');
+    expect(results[0].label).toBe('blue_eyes');
+    expect(results[0].aliases).toEqual(['青い目']);
+  });
+});
+
+describe('getSuggestionWikiUrl', () => {
+  it('builds a Danbooru wiki URL for a wiki-eligible tag', () => {
+    const url = getSuggestionWikiUrl({
+      kind: 'tag',
+      label: 'blue eyes',
+      insertText: 'blue eyes',
+      category: 0,
+    });
+    expect(url).toBe('https://danbooru.donmai.us/wiki_pages/blue_eyes');
+  });
+
+  it('returns undefined for meta tags (category 5)', () => {
+    expect(
+      getSuggestionWikiUrl({ kind: 'tag', label: 'highres', insertText: 'highres', category: 5 }),
+    ).toBeUndefined();
+  });
+
+  it('returns undefined for loras and embeddings', () => {
+    expect(
+      getSuggestionWikiUrl({ kind: 'lora', label: 'x', insertText: '<lora:x>' }),
+    ).toBeUndefined();
+    expect(
+      getSuggestionWikiUrl({ kind: 'embedding', label: 'y', insertText: 'embedding:y' }),
+    ).toBeUndefined();
   });
 });
 

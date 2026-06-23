@@ -3,10 +3,12 @@ import { createPortal } from 'react-dom';
 import {
   applySuggestion,
   getActiveToken,
+  getSuggestionWikiUrl,
   parseToken,
   MIN_TAG_QUERY_LENGTH,
   type Suggestion,
 } from '@/utils/autocompleteSearch';
+import { ExternalLinkIcon } from '@/components/icons';
 import {
   selectAutocompleteActive,
   useAutocompleteStore,
@@ -279,6 +281,21 @@ export function TagAutocompleteTextarea({
                   suggestion.kind === 'tag'
                     ? CATEGORY_COLORS[suggestion.category ?? 0] ?? CATEGORY_COLORS[0]
                     : '#38bdf8';
+                // Show the full alias list (parity with the desktop extension),
+                // surfacing the matched alias first so the user sees why it hit.
+                // The CSV sometimes repeats the canonical tag in its own alias
+                // column; drop that redundant entry.
+                const aliasList = (suggestion.aliases ?? []).filter(
+                  (a) => a.toLowerCase() !== suggestion.label.toLowerCase(),
+                );
+                const orderedAliases = suggestion.matchedAlias
+                  ? [
+                      suggestion.matchedAlias,
+                      ...aliasList.filter((a) => a !== suggestion.matchedAlias),
+                    ]
+                  : aliasList;
+                const aliasText = orderedAliases.join(', ');
+                const wikiUrl = getSuggestionWikiUrl(suggestion);
                 return (
                   <li
                     key={`${suggestion.kind}:${suggestion.label}`}
@@ -298,14 +315,37 @@ export function TagAutocompleteTextarea({
                       className="autocomplete-option-dot h-2 w-2 shrink-0 rounded-full"
                       style={{ backgroundColor: color }}
                     />
-                    <span className="autocomplete-option-label min-w-0 flex-1 truncate">
+                    <span className="autocomplete-option-label max-w-[55%] shrink-0 truncate">
                       {suggestion.label}
-                      {suggestion.matchedAlias && (
-                        <span className="autocomplete-option-alias ml-1 text-xs text-slate-400">
-                          ({suggestion.matchedAlias})
-                        </span>
-                      )}
                     </span>
+                    {aliasText && (
+                      <span
+                        className="autocomplete-option-alias min-w-0 flex-1 truncate text-xs text-slate-400"
+                        title={aliasText}
+                      >
+                        {aliasText}
+                      </span>
+                    )}
+                    {!aliasText && <span className="min-w-0 flex-1" />}
+                    {wikiUrl && (
+                      <a
+                        className="autocomplete-option-wiki shrink-0 text-slate-400 hover:text-slate-100"
+                        href={wikiUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        aria-label={`Open the Danbooru wiki page for ${suggestion.label}`}
+                        // Don't let opening the wiki also accept the suggestion;
+                        // keep focus on the textarea (preventDefault on mousedown
+                        // doesn't block the anchor's click navigation).
+                        onClick={(e) => e.stopPropagation()}
+                        onMouseDown={(e) => {
+                          e.stopPropagation();
+                          e.preventDefault();
+                        }}
+                      >
+                        <ExternalLinkIcon className="h-3.5 w-3.5" />
+                      </a>
+                    )}
                     {suggestion.count != null && suggestion.count > 0 && (
                       <span className="autocomplete-option-count shrink-0 text-xs text-slate-400">
                         {formatCount(suggestion.count)}

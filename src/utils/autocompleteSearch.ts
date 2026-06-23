@@ -22,7 +22,11 @@ export interface Suggestion {
   insertText: string;
   count?: number;
   category?: number;
-  /** Set when the match was on an alias rather than the canonical tag. */
+  /** The tag's full alias list, shown as a column on every row (parity with the
+   * desktop extension's always-on alias display). */
+  aliases?: string[];
+  /** Set when the match was on an alias rather than the canonical tag; surfaced
+   * first in the alias column so the user sees why the row matched. */
   matchedAlias?: string;
 }
 
@@ -83,8 +87,28 @@ function toTagSuggestion(entry: TagEntry, matchedAlias?: string): Suggestion {
     insertText: entry.tag,
     count: entry.count,
     category: entry.category,
+    aliases: entry.aliases,
     matchedAlias,
   };
+}
+
+// Danbooru tag categories that have wiki pages (parity with the desktop
+// extension's hasWikiPage): general(0), artist(1), copyright(3), character(4).
+// Meta(5) and the model "kinds" (lora/embedding) have no wiki.
+const WIKI_CATEGORIES = new Set([0, 1, 3, 4]);
+
+/**
+ * Build the Danbooru wiki URL for a tag suggestion, or undefined when the tag
+ * has no wiki page (meta tags, loras, embeddings). Mirrors the desktop
+ * extension: spaces→underscores, URI-encoded.
+ */
+export function getSuggestionWikiUrl(suggestion: Suggestion): string | undefined {
+  if (suggestion.kind !== 'tag') return undefined;
+  if (suggestion.category != null && !WIKI_CATEGORIES.has(suggestion.category)) {
+    return undefined;
+  }
+  const tag = encodeURIComponent(suggestion.label.replace(/ /g, '_'));
+  return `https://danbooru.donmai.us/wiki_pages/${tag}`;
 }
 
 /**
