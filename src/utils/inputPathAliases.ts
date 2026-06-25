@@ -11,7 +11,16 @@ const ALIAS_PREFIX = ".mi-";
 const FILE_PREFIX_ALIAS_PREFIX = "mp-";
 
 function isLoadImageType(value: unknown): boolean {
-  return typeof value === "string" && /load[\s_-]*image/i.test(value);
+  if (typeof value !== "string" || !/load[\s_-]*image/i.test(value)) return false;
+  // LoadImageOutput ("Load Image (from Outputs)") and similarly-named variants
+  // read from the OUTPUT folder, not the input folder this alias mechanism
+  // manages. Their values reference output-resident files (often carrying a
+  // "[output]" annotation that ComfyUI resolves natively), so aliasing them
+  // against input/ raises "Input file not found" and blocks the whole queue.
+  // Leave them untouched. (Mobile-authored output picks are copied into input/
+  // first — see resolveUploadFolder — so they don't reach this node type.)
+  if (/output/i.test(value)) return false;
+  return true;
 }
 
 // App-generated aliases are `<prefix><hex token>` (input aliases may also carry
