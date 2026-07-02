@@ -65,6 +65,16 @@ export function maxNodeIdAcrossScopes(workflow: Workflow): number {
   return max;
 }
 
+/** Highest root link ID actually in use (regardless of the stored counter). */
+export function maxRootLinkId(workflow: Workflow): number {
+  let max = 0;
+  for (const link of workflow.links ?? []) {
+    const id = getLinkId(link);
+    if (id > max) max = id;
+  }
+  return max;
+}
+
 function maxSubgraphLinkId(subgraph: WorkflowSubgraphDefinition): number {
   let max = 0;
   for (const link of subgraph.links ?? []) {
@@ -97,7 +107,10 @@ export function resolveCurrentScope(
       nodes: canonical.nodes,
       links: canonical.links,
       groups: canonical.groups ?? [],
-      linkIdBase: canonical.last_link_id,
+      // Never trust the stored counter alone: a stale/absent last_link_id in a
+      // tool-generated file would mint a duplicate id, and disconnectInput
+      // deletes by id — one duplicate silently kills two links.
+      linkIdBase: Math.max(canonical.last_link_id ?? 0, maxRootLinkId(canonical)),
       applyPatch: (c, patch) => ({
         ...c,
         ...(patch.nodes != null ? { nodes: patch.nodes } : {}),

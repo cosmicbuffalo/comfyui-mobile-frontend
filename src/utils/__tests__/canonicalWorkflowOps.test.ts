@@ -129,6 +129,22 @@ describe('resolveCurrentScope', () => {
     const scope = resolveCurrentScope([], workflow);
     expect(scope.subgraphId).toBeNull();
   });
+
+  it('root linkIdBase clamps to the max link id in use when the counter is stale', () => {
+    // Tool-generated file: links exist up to id 7 but last_link_id says 2.
+    // Trusting the counter would mint id 3 — a duplicate — and deleting by
+    // id would then kill two links at once.
+    const workflow: Workflow = {
+      ...makeWorkflow([makeNode(1), makeNode(2)]),
+      last_link_id: 2,
+      links: [
+        [5, 1, 0, 2, 0, 'LATENT'],
+        [7, 1, 0, 2, 1, 'LATENT'],
+      ],
+    };
+    const scope = resolveCurrentScope([{ type: 'root' }], workflow);
+    expect(scope.linkIdBase).toBe(7);
+  });
 });
 
 describe('resolveNodeByHierarchicalKey', () => {
