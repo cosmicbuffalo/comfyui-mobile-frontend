@@ -60,7 +60,10 @@ describe('seed bounds respect the node input max', () => {
     expect(clampSeedToNodeBounds(123, cappedSeedNodeTypes, node)).toBe(123);
   });
 
-  it('leaves seeds untouched when the node declares no bounds', () => {
+  it('applies the universal 2^32-1 ceiling even when the node declares no bounds', () => {
+    // A seed PROVIDER with a huge (or absent) declared max still feeds
+    // consumers that may cap at 2^32-1; a legacy over-max seed on increment
+    // must converge into the safe range instead of staying over-max forever.
     const noBoundsTypes = {
       FreeSeedNode: {
         input: { required: { seed: ['INT', {}] } },
@@ -68,8 +71,9 @@ describe('seed bounds respect the node input max', () => {
         description: '', python_module: '', category: 'test',
       },
     } as unknown as NodeTypes;
-    const node = makeSeedNode('FreeSeedNode', [0, 'fixed']);
-    expect(clampSeedToNodeBounds(283905968141975, noBoundsTypes, node)).toBe(283905968141975);
+    const node = makeSeedNode('FreeSeedNode', [0, 'increment']);
+    expect(clampSeedToNodeBounds(283905968141975, noBoundsTypes, node)).toBe(4294967295);
+    expect(clampSeedToNodeBounds(123, noBoundsTypes, node)).toBe(123);
   });
 
   it('caps a generated seed at the universal 2^32-1 ceiling even with no declared bounds', () => {

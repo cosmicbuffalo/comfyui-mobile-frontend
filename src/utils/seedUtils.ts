@@ -251,15 +251,24 @@ export function getSeedInputTypeBounds(
   return { min, max };
 }
 
-/** Clamp a resolved seed into the node's declared seed-input range (if any). */
+/**
+ * Clamp a machine-produced seed (randomize/increment/decrement result) into
+ * the node's declared seed-input range, and always under the universal
+ * 2^32-1 ceiling. The ceiling matters for seed PROVIDERS whose own declared
+ * max is huge (rgthree Seed: 2^64) but whose CONSUMERS may cap at 2^32-1 —
+ * without it, a legacy over-max seed set to increment stayed over-max forever
+ * and kept silently killing the consumer's branch at validation. Callers only
+ * pass generated/stepped seeds, never a user's explicit fixed value, so the
+ * ceiling can't rewrite a deliberate out-of-range choice.
+ */
 export function clampSeedToNodeBounds(
   seed: number,
   nodeTypes: NodeTypes,
   node: WorkflowNode,
 ): number {
+  let clamped = Math.min(seed, DEFAULT_SPECIAL_SEED_RANGE);
   const bounds = getSeedInputTypeBounds(nodeTypes, node);
-  if (!bounds) return seed;
-  let clamped = seed;
+  if (!bounds) return clamped;
   if (bounds.max !== undefined && clamped > bounds.max) clamped = bounds.max;
   if (bounds.min !== undefined && clamped < bounds.min) clamped = bounds.min;
   return clamped;
