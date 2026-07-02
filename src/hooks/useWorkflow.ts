@@ -104,6 +104,7 @@ import {
   getLinkType,
   makeScopeLink,
   maxNodeIdAcrossScopes,
+  maxRootLinkId,
 } from "@/utils/canonicalWorkflowOps";
 import { duplicateWorkflowNode } from "@/utils/duplicateNode";
 import type { HierarchicalKey, ScopedNodeIdentity } from "@/utils/workflowHierarchy";
@@ -155,6 +156,7 @@ export type { ScopeFrame };
 export type { SeedMode };
 export type { MobileLayout } from "@/utils/mobileLayout";
 import {
+  findWorkflowShapeProblem,
   normalizeWorkflowNodes,
   stripWorkflowClientMetadata,
 } from "./useWorkflow/metadataNormalization";
@@ -3336,6 +3338,19 @@ export const useWorkflowStore = create<WorkflowState>()(
         filename,
         options,
       ) => {
+        // Reject junk-but-JSON-parseable payloads BEFORE any session
+        // bookkeeping: throwing later (normalization, key annotation) used to
+        // park the active session first and strand the user on a broken
+        // blank tab with no explanation.
+        const shapeProblem = findWorkflowShapeProblem(workflow);
+        if (shapeProblem) {
+          useWorkflowErrorsStore
+            .getState()
+            .setError(
+              `Couldn't load${filename ? ` "${filename}"` : " the workflow"}: the file is ${shapeProblem}.`,
+            );
+          return;
+        }
         const aliasNodeTypes = get().nodeTypes;
         if (
           !options?.filePrefixAliasesResolved
@@ -3439,11 +3454,14 @@ export const useWorkflowStore = create<WorkflowState>()(
           links: workflow.links ?? [],
           groups: workflow.groups ?? [],
           config: workflow.config ?? {},
-          last_node_id:
-            workflow.last_node_id ??
+          last_node_id: Math.max(
+            workflow.last_node_id ?? 0,
             // Include subgraph inner node IDs — they share the global ID space.
-            maxNodeIdAcrossScopes({ ...workflow, nodes: normalizedNodes }),
-          last_link_id: workflow.last_link_id ?? 0,
+            // Clamp rather than trust: a stale counter in a tool-generated file
+            // would mint duplicate ids.
+            maxNodeIdAcrossScopes({ ...workflow, nodes: normalizedNodes, last_node_id: 0 }),
+          ),
+          last_link_id: Math.max(workflow.last_link_id ?? 0, maxRootLinkId(workflow)),
           version: workflow.version ?? 0.4,
         };
         const canonicalWorkflow = canonicalizeWorkflowHierarchicalKeys(
