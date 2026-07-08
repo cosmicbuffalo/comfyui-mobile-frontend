@@ -383,9 +383,11 @@ export const useOutputsStore = create<OutputsState>()(
 
           const serverFavoritePaths = await api.loadFileFavoritesFromServer(source).catch((err) => {
             console.warn('Failed to load file favorites:', err);
-            return [] as string[];
+            const prefix = sourcePrefix(source);
+            return state.favorites
+              .filter((id) => id.startsWith(prefix))
+              .map((id) => id.slice(prefix.length));
           });
-
           // The mobile backend returns the full folder listing (no server-side
           // limit/offset/sort — those positional args are ignored by
           // getUserImages); the grid sorts/filters client-side and renders
