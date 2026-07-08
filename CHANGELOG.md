@@ -1,5 +1,15 @@
 # Changelog
 
+## 3.0.3 - 2026-07-08
+
+### Added
+
+- **Tag autocomplete:** when ComfyUI-Autocomplete-Plus is installed, prompt text fields can suggest Danbooru tags, LoRA names, and embeddings. The integration is opt-in under Preferences and includes alias matching, caret-anchored placement, an in-popup dismiss button, and wiki links for supported Danbooru tags.
+
+### Fixed
+
+- **Mobile node order persistence:** reordering nodes in the mobile layout now writes tidy canvas geometry, so saving and reopening a workflow reconstructs the same mobile order instead of falling back to the default dependency order.
+
 ## 3.0.2 - 2026-06-18
 
 ### Added
