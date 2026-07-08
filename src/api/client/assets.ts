@@ -132,6 +132,7 @@ export interface FileItem {
   // True only when this exact item is in the hidden set (not merely inherited),
   // so it can be unhidden directly. Drives the Hide/Unhide menu label.
   hiddenSelf?: boolean;
+  favorite?: boolean;
 }
 
 export type AssetSource = 'output' | 'input' | 'temp';
@@ -148,6 +149,7 @@ interface MobileFileItem {
   count?: number; // for directories
   hidden?: boolean; // effectively hidden (self or inherited); only present when showHidden
   hiddenSelf?: boolean; // this exact item is in the hidden set
+  favorite?: boolean;
 }
 
 interface MobileFilesResponse {
@@ -236,6 +238,7 @@ export async function searchUserImagesByPrompt(
       size: f.size,
       hidden: f.hidden,
       hiddenSelf: f.hiddenSelf,
+      favorite: f.favorite,
     };
   });
 }
@@ -300,7 +303,8 @@ export async function getUserImages(
         size: f.size,
         count: f.count,
         hidden: f.hidden,
-      hiddenSelf: f.hiddenSelf,
+        hiddenSelf: f.hiddenSelf,
+        favorite: f.favorite,
       };
     }
 
@@ -316,8 +320,38 @@ export async function getUserImages(
       size: f.size,
       hidden: f.hidden,
       hiddenSelf: f.hiddenSelf,
+      favorite: f.favorite,
     };
   });
+}
+
+export async function loadFileFavoritesFromServer(source: AssetSource = 'output'): Promise<string[]> {
+  const params = new URLSearchParams({ source });
+  const response = await fetch(`/mobile/api/files/favorites?${params.toString()}`);
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({}));
+    throw new Error(error.error || 'Failed to load file favorites');
+  }
+  const data = await response.json() as { favorites?: string[] };
+  return Array.isArray(data.favorites) ? data.favorites : [];
+}
+
+export async function setFileFavorite(
+  path: string,
+  favorite: boolean,
+  source: AssetSource = 'output'
+): Promise<string[]> {
+  const response = await fetch(`/mobile/api/files/favorites`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ path, source, favorite })
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({}));
+    throw new Error(error.error || 'Failed to update file favorite');
+  }
+  const data = await response.json() as { favorites?: string[] };
+  return Array.isArray(data.favorites) ? data.favorites : [];
 }
 
 export async function deleteFile(path: string, source: AssetSource = 'output'): Promise<void> {
@@ -425,4 +459,3 @@ export async function renameFile(
     throw new Error(error.error || 'Failed to rename file');
   }
 }
-

@@ -10,6 +10,8 @@ vi.mock('@/api/client', async (importOriginal) => {
     ...actual,
     getUserImages: vi.fn(async () => []),
     getUserImageFolders: vi.fn(async () => ({ input: [], output: [] })),
+    loadFileFavoritesFromServer: vi.fn(async () => []),
+    setFileFavorite: vi.fn(async () => []),
   };
 });
 
@@ -30,6 +32,7 @@ beforeEach(() => {
     filter: { search: '', favoritesOnly: false, type: 'all' },
     sort: { mode: 'modified' },
     favorites: [],
+    migratedFavoriteSources: [],
     showHidden: false,
     promptSearchActive: false,
     promptSearchResults: [],
