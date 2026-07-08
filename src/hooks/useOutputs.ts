@@ -543,16 +543,13 @@ export const useOutputsStore = create<OutputsState>()(
       toggleFavorite: (id) => {
         const fallbackSource = get().source;
         const { source, path } = splitFileId(id, fallbackSource);
-        let shouldFavorite = false;
-        set((s) => {
-          const exists = s.favorites.includes(id);
-          shouldFavorite = !exists;
-          return {
-            favorites: exists
-              ? s.favorites.filter(p => p !== id)
-              : [...s.favorites, id]
-          };
-        });
+        const exists = get().favorites.includes(id);
+        const shouldFavorite = !exists;
+
+        set((s) => ({
+          favorites: exists ? s.favorites.filter((p) => p !== id) : [...s.favorites, id],
+        }));
+
         void api.setFileFavorite(path, shouldFavorite, source)
           .then((paths) => {
             const ids = favoriteIdsForSource(source, paths);
