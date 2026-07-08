@@ -1,10 +1,27 @@
 import { describe, expect, it } from 'vitest';
+import type { Workflow, WorkflowNode } from '@/api/types';
 import type { MobileLayout } from '@/utils/mobileLayout';
 import {
+  buildDefaultLayout,
   extractLayoutNodeMembership,
   extractLayoutSubgraphNodeMembership,
   makeLocationPointer,
 } from '@/utils/mobileLayout';
+
+function node(id: number): WorkflowNode {
+  return {
+    id,
+    type: 'TestNode',
+    pos: [0, 0],
+    size: [100, 100],
+    flags: {},
+    order: 0,
+    mode: 0,
+    inputs: [],
+    outputs: [],
+    properties: {},
+  };
+}
 
 describe('mobileLayout membership extraction', () => {
   it('extracts root-scope grouped membership including hidden blocks and nested groups', () => {
@@ -68,5 +85,35 @@ describe('mobileLayout membership extraction', () => {
     expect(membership.get(4)).toBe(subgraphGroupKey);
     expect(membership.get(5)).toBe(subgraphGroupKey);
     expect(membership.has(6)).toBe(false);
+  });
+
+  it('orders same-position subgraph nodes deterministically by id', () => {
+    const workflow: Workflow = {
+      last_node_id: 0,
+      last_link_id: 0,
+      nodes: [],
+      links: [],
+      groups: [],
+      config: {},
+      version: 0.4,
+      definitions: {
+        subgraphs: [
+          {
+            id: 'sg-a',
+            nodes: [node(9), node(3), node(6)],
+            groups: [],
+            links: [],
+          },
+        ],
+      },
+    };
+
+    const layout = buildDefaultLayout([], workflow, {});
+
+    expect(layout.subgraphs['sg-a']).toEqual([
+      { type: 'node', id: 3 },
+      { type: 'node', id: 6 },
+      { type: 'node', id: 9 },
+    ]);
   });
 });

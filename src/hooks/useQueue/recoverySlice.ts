@@ -21,6 +21,7 @@ export type QueueRecoverySlice = Pick<
   | 'markPromptCompleted'
   | 'detectRecoverableJobs'
   | 'clearRecoverableJobs'
+  | 'discardRecoverableJobs'
   | 'restoreLostJobs'
 >;
 
@@ -133,6 +134,21 @@ export const createQueueRecoverySlice: StateCreator<
 
   clearRecoverableJobs: () => {
     set({ recoverableJobIds: [] });
+  },
+
+  discardRecoverableJobs: () => {
+    // Unlike clearRecoverableJobs (which only resets the derived id list, so
+    // the next detect pass re-flags the same jobs), this drops the underlying
+    // shadow records: the user dismissed the banner, so these jobs must never
+    // be offered for recovery again, including after a page reload.
+    set((state) => {
+      if (state.recoverableJobIds.length === 0) return {};
+      const shadowQueueJobs = { ...state.shadowQueueJobs };
+      for (const id of state.recoverableJobIds) {
+        delete shadowQueueJobs[id];
+      }
+      return { shadowQueueJobs, recoverableJobIds: [] };
+    });
   },
 
   restoreLostJobs: async (options) => {

@@ -17,6 +17,7 @@ _mobile_queue_metadata = _import_module('mobile_queue_metadata')
 _restart_utils = _import_module('restart_utils')
 _model_metadata = _import_module('model_metadata')
 _mobile_hidden_items = _import_module('mobile_hidden_items')
+_mobile_file_favorites = _import_module('mobile_file_favorites')
 _mobile_input_aliases = _import_module('mobile_input_aliases')
 _mobile_file_prefix_aliases = _import_module('mobile_file_prefix_aliases')
 _mobile_video_thumbs = _import_module('mobile_video_thumbs')
@@ -28,6 +29,8 @@ _mobile_push = _import_module('mobile_push')
 _mobile_web_push = _import_module('mobile_web_push')
 _mobile_app_push = _import_module('mobile_app_push')
 _mobile_push_prefs = _import_module('mobile_push_prefs')
+# General per-server frontend preferences (e.g. autocomplete opt-in).
+_mobile_app_prefs = _import_module('mobile_app_prefs')
 list_files = _file_utils.list_files
 entry_matches_name_or_path = _file_utils.entry_matches_name_or_path
 _is_within_dir = _file_utils.is_within_dir
@@ -52,6 +55,7 @@ QUEUE_METADATA_CACHE_PATH = os.path.join(CACHE_DIR, "queue_metadata_cache.json")
 # it. Keep them in ComfyUI's user-data area and migrate any legacy copies once.
 _MOBILE_USERDATA_DIR = os.path.join(folder_paths.get_user_directory(), "default", "mobile")
 HIDDEN_ITEMS_CACHE_PATH = os.path.join(_MOBILE_USERDATA_DIR, "hidden_items.json")
+FILE_FAVORITES_CACHE_PATH = os.path.join(_MOBILE_USERDATA_DIR, "file_favorites.json")
 INPUT_ALIASES_CACHE_PATH = os.path.join(_MOBILE_USERDATA_DIR, "input_aliases.json")
 FILE_PREFIX_ALIASES_CACHE_PATH = os.path.join(_MOBILE_USERDATA_DIR, "file_prefix_aliases.json")
 LEGACY_HIDDEN_ITEMS_CACHE_PATHS = [
@@ -257,6 +261,13 @@ def setup_mobile_route():
                 if not show_hidden:
                     results = [r for r in results if not r.get('hidden')]
 
+                _mobile_file_favorites.mark_favorites(
+                    FILE_FAVORITES_CACHE_PATH,
+                    source,
+                    base_dir,
+                    results,
+                )
+
                 total = len(results)
                 if limit > 0:
                     results = results[offset:offset+limit]
@@ -306,6 +317,7 @@ def setup_mobile_route():
                 # Clean up any leftover hidden-state trace for this item (and,
                 # for a folder, its descendants).
                 _mobile_hidden_items.remove_path(HIDDEN_ITEMS_CACHE_PATH, source, filepath)
+                _mobile_file_favorites.remove_path(FILE_FAVORITES_CACHE_PATH, source, filepath)
                 return True
 
             loop = asyncio.get_event_loop()
@@ -562,6 +574,50 @@ def setup_mobile_route():
         except Exception as e:
             return web.json_response({"error": str(e)}, status=500)
 
+    async def api_get_file_favorites(request):
+        try:
+            source = request.rel_url.query.get('source', 'output')
+            base_dir = _source_base_dir(source)
+            loop = asyncio.get_event_loop()
+            favorites = await loop.run_in_executor(
+                None,
+                _mobile_file_favorites.get_favorite_paths,
+                FILE_FAVORITES_CACHE_PATH,
+                source,
+                base_dir,
+            )
+            return web.json_response({"favorites": favorites})
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=500)
+
+    async def api_set_file_favorite(request):
+        try:
+            data = await request.json()
+            path = data.get('path')
+            source = data.get('source', 'output')
+            favorite = data.get('favorite')
+            if not path:
+                return web.json_response({"error": "No path provided"}, status=400)
+            if not isinstance(favorite, bool):
+                return web.json_response({"error": "favorite must be a boolean"}, status=400)
+            base_dir = _source_base_dir(source)
+            target_path = _safe_join(base_dir, path)
+            if target_path is None:
+                return web.json_response({"error": "Access denied"}, status=403)
+            loop = asyncio.get_event_loop()
+            favorites = await loop.run_in_executor(
+                None,
+                _mobile_file_favorites.set_favorite,
+                FILE_FAVORITES_CACHE_PATH,
+                source,
+                base_dir,
+                path,
+                favorite,
+            )
+            return web.json_response({"favorites": favorites})
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=500)
+
     async def api_create_input_aliases(request):
         try:
             data = await request.json()
@@ -649,6 +705,7 @@ def setup_mobile_route():
                     # Keep hidden state attached to the item across the move.
                     new_rel = os.path.relpath(target, os.path.abspath(base_dir))
                     _mobile_hidden_items.rename_path(HIDDEN_ITEMS_CACHE_PATH, asset_source, rel, new_rel)
+                    _mobile_file_favorites.rename_path(FILE_FAVORITES_CACHE_PATH, asset_source, rel, new_rel)
 
             loop = asyncio.get_event_loop()
             await loop.run_in_executor(None, _move_all)
@@ -752,6 +809,7 @@ def setup_mobile_route():
             # Keep hidden state attached to the item across the rename.
             new_rel = os.path.relpath(dst_path, os.path.abspath(base_dir))
             _mobile_hidden_items.rename_path(HIDDEN_ITEMS_CACHE_PATH, source, path, new_rel)
+            _mobile_file_favorites.rename_path(FILE_FAVORITES_CACHE_PATH, source, path, new_rel)
             return web.json_response({"success": True})
         except Exception as e:
             return web.json_response({"error": str(e)}, status=500)
@@ -1016,6 +1074,8 @@ def setup_mobile_route():
     mobile_app.router.add_get('/api/files', api_list_files)
     mobile_app.router.add_delete('/api/files', api_delete_file)
     mobile_app.router.add_post('/api/files/hidden', api_set_hidden)
+    mobile_app.router.add_get('/api/files/favorites', api_get_file_favorites)
+    mobile_app.router.add_post('/api/files/favorites', api_set_file_favorite)
     mobile_app.router.add_post('/api/input-aliases', api_create_input_aliases)
     mobile_app.router.add_post('/api/file-prefix-aliases', api_create_file_prefix_aliases)
     mobile_app.router.add_post('/api/file-prefix-aliases/resolve', api_resolve_file_prefix_aliases)
@@ -1206,6 +1266,19 @@ def setup_mobile_route():
         except Exception as e:
             return web.json_response({"error": str(e)}, status=500)
 
+    async def api_app_prefs_get(request):
+        try:
+            return web.json_response(_mobile_app_prefs.get_prefs())
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=500)
+
+    async def api_app_prefs_set(request):
+        try:
+            body = await request.json()
+            return web.json_response(_mobile_app_prefs.set_prefs(body))
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=500)
+
     # Register API routes — these must register before the SPA catchall below,
     # otherwise '/api/push/*' GETs would be swallowed by the index.html fallback.
     mobile_app.router.add_get('/api/push/config', api_push_config)
@@ -1218,6 +1291,8 @@ def setup_mobile_route():
     mobile_app.router.add_post('/api/push/app-test', api_push_app_test)
     mobile_app.router.add_get('/api/push/preferences', api_push_prefs_get)
     mobile_app.router.add_post('/api/push/preferences', api_push_prefs_set)
+    mobile_app.router.add_get('/api/preferences', api_app_prefs_get)
+    mobile_app.router.add_post('/api/preferences', api_app_prefs_set)
 
     # Serve index.html for root and all non-API routes (SPA)
     mobile_app.router.add_get('/', serve_index)

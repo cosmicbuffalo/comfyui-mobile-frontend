@@ -22,6 +22,42 @@ function hasHiddenPathSegment(file: FileItem, source: AssetSource): boolean {
   return relativePath.split('/').some((part) => part.startsWith('.'));
 }
 
+function sourcePrefix(source: AssetSource): string {
+  return `${source}/`;
+}
+
+function splitFileId(id: string, fallbackSource: AssetSource): { source: AssetSource; path: string } {
+  for (const source of ['output', 'input', 'temp'] as const) {
+    const prefix = sourcePrefix(source);
+    if (id.startsWith(prefix)) {
+      return { source, path: id.slice(prefix.length) };
+    }
+  }
+  return { source: fallbackSource, path: id };
+}
+
+function favoriteIdsForSource(source: AssetSource, paths: string[]): string[] {
+  const prefix = sourcePrefix(source);
+  return paths.map((path) => `${prefix}${path}`);
+}
+
+function replaceSourceFavorites(
+  favorites: string[],
+  source: AssetSource,
+  nextSourceFavorites: string[],
+): string[] {
+  const prefix = sourcePrefix(source);
+  const next = new Set(favorites.filter((id) => !id.startsWith(prefix)));
+  nextSourceFavorites.forEach((id) => next.add(id));
+  return Array.from(next);
+}
+
+function sameFavoriteIds(a: string[], b: string[]): boolean {
+  if (a.length !== b.length) return false;
+  const seen = new Set(a);
+  return b.every((id) => seen.has(id));
+}
+
 export interface FilterState {
   search: string;
   favoritesOnly: boolean;
@@ -71,6 +107,7 @@ interface OutputsState {
   filter: FilterState;
   sort: SortState;
   favorites: string[];
+  migratedFavoriteSources: AssetSource[];
   searchOpen: boolean;
   searchDraft: string;
 
@@ -157,6 +194,7 @@ export const useOutputsStore = create<OutputsState>()(
         mode: 'modified'
       },
       favorites: [],
+      migratedFavoriteSources: [],
       searchOpen: false,
       searchDraft: '',
       promptSearchActive: false,
@@ -326,6 +364,40 @@ export const useOutputsStore = create<OutputsState>()(
         set({ isLoading: true, error: null });
 
         try {
+          const state = get();
+          const migratedFavoriteSources = state.migratedFavoriteSources ?? [];
+          if (!migratedFavoriteSources.includes(source)) {
+            const legacyIds = state.favorites.filter((id) => id.startsWith(sourcePrefix(source)));
+            let migrationFailed = false;
+            for (const id of legacyIds) {
+              const { path } = splitFileId(id, source);
+              await api.setFileFavorite(path, true, source).catch((err) => {
+                console.warn('Failed to migrate file favorite:', err);
+                migrationFailed = true;
+              });
+            }
+            // Only mark migrated once every legacy favorite made it to the
+            // server — otherwise a failed call (e.g. offline) would
+            // permanently suppress retrying migration for this source.
+            if (!migrationFailed) {
+              set((s) => ({
+                migratedFavoriteSources: s.migratedFavoriteSources.includes(source)
+                  ? s.migratedFavoriteSources
+                  : [...s.migratedFavoriteSources, source],
+              }));
+            }
+          }
+
+          const serverFavoritePaths = await api.loadFileFavoritesFromServer(source).catch((err) => {
+            console.warn('Failed to load file favorites:', err);
+            // Fall back to what's already known locally rather than treating
+            // "couldn't load" as "no favorites" — a transient failure here
+            // shouldn't wipe out existing favorites for this source.
+            const prefix = sourcePrefix(source);
+            return state.favorites
+              .filter((id) => id.startsWith(prefix))
+              .map((id) => id.slice(prefix.length));
+          });
           // The mobile backend returns the full folder listing (no server-side
           // limit/offset/sort — those positional args are ignored by
           // getUserImages); the grid sorts/filters client-side and renders
@@ -339,15 +411,20 @@ export const useOutputsStore = create<OutputsState>()(
             currentFolder,
             showHidden
           );
+          const backendFavoriteIds = new Set(favoriteIdsForSource(source, serverFavoritePaths));
+          for (const file of files) {
+            if (file.favorite) backendFavoriteIds.add(file.id);
+          }
           // Remember hidden folders we encounter so breadcrumb ancestors can be
           // italicized even once we've navigated down into them.
-          const prefix = `${source}/`;
+          const prefix = sourcePrefix(source);
           const seenHiddenFolders = files
             .filter((f) => f.type === 'folder' && f.hidden)
             .map((f) => (f.id.startsWith(prefix) ? f.id.slice(prefix.length) : f.id));
           set((s) => ({
             files,
             isLoading: false,
+            favorites: replaceSourceFavorites(s.favorites, source, Array.from(backendFavoriteIds)),
             hiddenFolderPaths: seenHiddenFolders.length
               ? Array.from(new Set([...s.hiddenFolderPaths, ...seenHiddenFolders]))
               : s.hiddenFolderPaths,
@@ -402,14 +479,23 @@ export const useOutputsStore = create<OutputsState>()(
             currentFolder,
             showHidden,
           );
-          set({
+          const backendFavoriteIds = results
+            .filter((file) => file.favorite)
+            .map((file) => file.id);
+          set((s) => ({
             filter: { ...get().filter, search: trimmed },
             searchDraft: trimmed,
             promptSearchActive: true,
             promptSearchResults: results,
             promptSearchQuery: trimmed,
             promptSearchLoading: false,
-          });
+            favorites: backendFavoriteIds.length
+              ? replaceSourceFavorites(s.favorites, source, [
+                ...s.favorites.filter((id) => id.startsWith(sourcePrefix(source))),
+                ...backendFavoriteIds,
+              ])
+              : s.favorites,
+          }));
         } catch (err) {
           console.error('Prompt search failed:', err);
           // Distinguish "the search failed" from "no matches".
@@ -465,14 +551,27 @@ export const useOutputsStore = create<OutputsState>()(
       },
 
       toggleFavorite: (id) => {
-        set((s) => {
-          const exists = s.favorites.includes(id);
-          return {
-            favorites: exists
-              ? s.favorites.filter(p => p !== id)
-              : [...s.favorites, id]
-          };
-        });
+        const fallbackSource = get().source;
+        const { source, path } = splitFileId(id, fallbackSource);
+        const exists = get().favorites.includes(id);
+        const shouldFavorite = !exists;
+
+        set((s) => ({
+          favorites: exists ? s.favorites.filter((p) => p !== id) : [...s.favorites, id],
+        }));
+
+        void api.setFileFavorite(path, shouldFavorite, source)
+          .then((paths) => {
+            const ids = favoriteIdsForSource(source, paths);
+            set((s) => {
+              const favorites = replaceSourceFavorites(s.favorites, source, ids);
+              if (sameFavoriteIds(s.favorites, favorites)) return {};
+              return { favorites };
+            });
+          })
+          .catch((err) => {
+            console.warn('Failed to update file favorite:', err);
+          });
       },
 
       setItemHidden: (id, hidden) => get().setItemsHidden([id], hidden),
@@ -569,12 +668,60 @@ export const useOutputsStore = create<OutputsState>()(
           ids.forEach((id) => next.add(id));
           return { favorites: Array.from(next) };
         });
+        const fallbackSource = get().source;
+        void Promise.all(
+          ids.map((id) => {
+            const { source, path } = splitFileId(id, fallbackSource);
+            return api.setFileFavorite(path, true, source).then((paths) => ({ source, paths }));
+          })
+        )
+          .then((results) => {
+            set((s) => {
+              let favorites = s.favorites;
+              for (const result of results) {
+                favorites = replaceSourceFavorites(
+                  favorites,
+                  result.source,
+                  favoriteIdsForSource(result.source, result.paths),
+                );
+              }
+              if (sameFavoriteIds(s.favorites, favorites)) return {};
+              return { favorites };
+            });
+          })
+          .catch((err) => {
+            console.warn('Failed to add file favorites:', err);
+          });
       },
 
       removeFavorites: (ids) => {
         set((s) => ({
           favorites: s.favorites.filter((id) => !ids.includes(id))
         }));
+        const fallbackSource = get().source;
+        void Promise.all(
+          ids.map((id) => {
+            const { source, path } = splitFileId(id, fallbackSource);
+            return api.setFileFavorite(path, false, source).then((paths) => ({ source, paths }));
+          })
+        )
+          .then((results) => {
+            set((s) => {
+              let favorites = s.favorites;
+              for (const result of results) {
+                favorites = replaceSourceFavorites(
+                  favorites,
+                  result.source,
+                  favoriteIdsForSource(result.source, result.paths),
+                );
+              }
+              if (sameFavoriteIds(s.favorites, favorites)) return {};
+              return { favorites };
+            });
+          })
+          .catch((err) => {
+            console.warn('Failed to remove file favorites:', err);
+          });
       },
 
       refresh: () => {
@@ -724,7 +871,8 @@ export const useOutputsStore = create<OutputsState>()(
         showHidden: state.showHidden,
         sort: state.sort,
         filter: { ...state.filter, search: '' },
-        favorites: state.favorites
+        favorites: state.favorites,
+        migratedFavoriteSources: state.migratedFavoriteSources,
       })
     }
   )

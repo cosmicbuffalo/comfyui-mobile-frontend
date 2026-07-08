@@ -33,7 +33,8 @@ export function RepositionScrollContainer({
       onPointerUp={onPointerUp}
       onPointerCancel={onPointerCancel}
     >
-      {children}
+      {/* Centered, capped to the same max width as the normal workflow panel. */}
+      <div className="mx-auto w-full max-w-3xl">{children}</div>
     </div>
   );
 }

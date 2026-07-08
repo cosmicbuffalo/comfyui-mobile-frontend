@@ -10,6 +10,8 @@ vi.mock('@/api/client', async (importOriginal) => {
     searchUserImagesByPrompt: vi.fn(async () => []),
     copyFileToInput: vi.fn(async () => ({ name: 'foo.png', subfolder: '', type: 'input' })),
     uploadImageFile: vi.fn(async () => ({ name: 'foo.png', subfolder: '', type: 'input' })),
+    loadFileFavoritesFromServer: vi.fn(async () => []),
+    setFileFavorite: vi.fn(async (path: string) => [path]),
   };
 });
 
@@ -185,6 +187,9 @@ describe('InputFilePicker options menu', () => {
       document.querySelector<HTMLDivElement>('.file-card-grid-item > div')?.click();
     });
     await flushUntil(() => useOutputsStore.getState().favorites.includes('input/foo.png'));
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
 
     expect(useOutputsStore.getState().favorites).toContain('input/foo.png');
     // Original output favorite is untouched.

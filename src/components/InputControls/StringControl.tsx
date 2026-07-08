@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { TextareaActions } from './TextareaActions';
+import { TagAutocompleteTextarea } from './TagAutocompleteTextarea';
 import { FullscreenWidgetModal } from '../modals/FullscreenWidgetModal';
 import { PinButton } from './PinButton';
 import { PromotedWidgetIcon } from '../icons';
@@ -124,10 +125,6 @@ export function StringControl({
     handleDraftChange(String(next ?? ''));
     flush();
   };
-  const handleTextareaChange = (event: React.ChangeEvent<HTMLTextAreaElement>) => {
-    handleDraftChange(event.target.value);
-  };
-
   const [internalModalOpen, setInternalModalOpen] = useState(false);
   const showModal = forceModalOpen || internalModalOpen;
 
@@ -247,13 +244,12 @@ export function StringControl({
           ) : null}
         >
           {isMultiline ? (
-            <textarea
-              ref={textareaRef}
+            <TagAutocompleteTextarea
+              textareaRef={textareaRef}
               value={valueString}
-              onChange={(e) => handleDraftChange(e.target.value)}
+              onValueChange={handleDraftChange}
               onBlur={flush}
               placeholder={placeholder}
-              data-swipe-nav-ignore="true"
               className={`${controlModalInputBaseClassName} min-h-[150px] resize-none overflow-hidden ${controlModalFocusClassName(isPromoted)}`}
               autoFocus={!forceModalOpen}
               disabled={disabled}
@@ -299,13 +295,12 @@ export function StringControl({
           />
         </div>
         <div className="relative">
-          <textarea
-            ref={textareaRef}
+          <TagAutocompleteTextarea
+            textareaRef={textareaRef}
             value={valueString}
-            onChange={handleTextareaChange}
+            onValueChange={handleDraftChange}
             onBlur={flush}
             placeholder={placeholder}
-            data-swipe-nav-ignore="true"
             className={`${controlInputBaseClassName} min-h-[100px] resize-none overflow-hidden ${hasPin ? 'pr-10' : ''} ${controlStateClassName({ disabled, hasError, isPromoted })}`} // TODO - determine if overflow should be hidden or auto here
             style={{ overflowAnchor: 'none' }}
             disabled={disabled}

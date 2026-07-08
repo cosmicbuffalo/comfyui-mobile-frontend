@@ -20,6 +20,34 @@ describe("recordWorkflowDiff insertion order", () => {
   });
 });
 
+describe("discardRecoverableJobs", () => {
+  beforeEach(() => {
+    useQueueStore.setState({ recoverableJobIds: [], shadowQueueJobs: {} });
+  });
+
+  it("drops the recoverable jobs' shadow records so they can't be re-detected", () => {
+    const job = (id: string) => ({
+      originalPromptId: id,
+      prompt: {},
+      outputsToExecute: [],
+      number: 0,
+      status: "pending" as const,
+      queuedAt: 0,
+    });
+    useQueueStore.setState({
+      shadowQueueJobs: { a: job("a"), b: job("b"), c: job("c") },
+      recoverableJobIds: ["a", "b"],
+    });
+    useQueueStore.getState().discardRecoverableJobs();
+    const state = useQueueStore.getState();
+    expect(state.recoverableJobIds).toEqual([]);
+    // Discarded jobs are gone for good; the unrelated shadow job survives.
+    expect(Object.keys(state.shadowQueueJobs)).toEqual(["c"]);
+    // A later detect pass over the remaining shadow jobs can't resurface them.
+    expect(state.detectRecoverableJobs()).toEqual(["c"]);
+  });
+});
+
 describe("markPromptCompleted", () => {
   beforeEach(() => {
     useQueueStore.setState({ completing: [], recoverableJobIds: [], shadowQueueJobs: {} });
