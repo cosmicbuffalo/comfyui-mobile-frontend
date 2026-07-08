@@ -90,7 +90,7 @@ import {
   getBottomPlacementForScope,
   getPositionNearNode,
 } from "@/utils/nodePositioning";
-import { syncWorkflowGeometryFromLayoutChange } from "@/utils/graphSync";
+import { computeTidyWorkflowGeometry } from "@/utils/tidyLayout";
 import {
   type ScopeFrame,
   resolveCurrentScope,
@@ -3090,13 +3090,13 @@ export const useWorkflowStore = create<WorkflowState>()(
             };
           }
 
-          const syncResult = syncWorkflowGeometryFromLayoutChange({
-            oldLayout: state.mobileLayout,
-            newLayout: normalized,
-            workflow: baseWorkflow,
-          });
+          const tidiedWorkflow = computeTidyWorkflowGeometry(
+            baseWorkflow,
+            normalized,
+            state.nodeTypes,
+          );
           const nextWorkflow = annotateWorkflowWithHierarchicalKeys(
-            syncResult.workflow,
+            tidiedWorkflow,
             reconciled.layoutToStable,
           );
           return {

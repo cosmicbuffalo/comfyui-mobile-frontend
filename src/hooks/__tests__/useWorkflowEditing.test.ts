@@ -1849,12 +1849,10 @@ describe('useWorkflow editing actions', () => {
     const repositioned = useWorkflowStore.getState().workflow?.nodes.map((node) => ({ id: node.id, pos: node.pos })) ?? [];
     const node1Pos = repositioned.find((entry) => entry.id === 1)?.pos;
     const node2Pos = repositioned.find((entry) => entry.id === 2)?.pos;
-    expect(node1Pos?.[0]).toBeGreaterThanOrEqual(124);
-    expect(node2Pos?.[0]).toBeGreaterThanOrEqual(124);
-    expect(node1Pos?.[1]).toBeGreaterThanOrEqual(148);
-    expect(node1Pos?.[1]).toBeLessThanOrEqual(300);
-    expect(node2Pos?.[1]).toBeGreaterThanOrEqual(148);
-    expect(node2Pos?.[1]).toBeLessThanOrEqual(300);
+    // Tidy layout stacks group members vertically in one column: same x,
+    // node 2 below node 1.
+    expect(node1Pos?.[0]).toBe(node2Pos?.[0]);
+    expect(node2Pos?.[1]).toBeGreaterThan(node1Pos?.[1] ?? 0);
     const postCommitWorkflow = useWorkflowStore.getState().workflow as Workflow;
     const grouped = computeNodeGroupsFor(postCommitWorkflow.nodes, postCommitWorkflow.groups ?? []);
     expect(grouped.get(1)).toBe(10);

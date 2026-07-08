@@ -1,5 +1,6 @@
 import type { Workflow, WorkflowNode } from '@/api/types';
 import { computeNodeGroupsFor } from '@/utils/nodeGroups';
+import { compareNodesByPosition } from '@/utils/nodeOrdering';
 
 // --- Types ---
 
@@ -303,8 +304,10 @@ export function buildDefaultLayout(
 
   // Build subgraph contents with nested group hierarchy.
   // Inner nodes come from sg.nodes (canonical model — not from orderedNodes).
+  // Order them by on-canvas position, like root nodes, so a reposition inside a
+  // subgraph survives a save/reload round-trip.
   for (const sg of subgraphs) {
-    const sgNodes = sg.nodes ?? [];
+    const sgNodes = [...(sg.nodes ?? [])].sort(compareNodesByPosition);
     const sgGroups = sg.groups ?? [];
     const sgGroupParentMap = getGroupParentMap(sgGroups);
     const sgEmittedGroups = new Set<number>();
