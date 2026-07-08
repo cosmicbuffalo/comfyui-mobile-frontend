@@ -19,7 +19,6 @@ interface CsvStatus {
 
 interface CsvListResponse {
   danbooru?: CsvStatus;
-  e621?: CsvStatus;
 }
 
 /**
@@ -31,7 +30,7 @@ export async function isAutocompletePlusAvailable(): Promise<boolean> {
     const response = await fetch(`${BASE}/csv`);
     if (!response.ok) return false;
     const data = (await response.json()) as CsvListResponse;
-    return Boolean(data?.danbooru?.base_tags || data?.e621?.base_tags);
+    return Boolean(data?.danbooru?.base_tags);
   } catch {
     return false;
   }

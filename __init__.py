@@ -595,9 +595,11 @@ def setup_mobile_route():
             data = await request.json()
             path = data.get('path')
             source = data.get('source', 'output')
-            favorite = bool(data.get('favorite'))
+            favorite = data.get('favorite')
             if not path:
                 return web.json_response({"error": "No path provided"}, status=400)
+            if not isinstance(favorite, bool):
+                return web.json_response({"error": "favorite must be a boolean"}, status=400)
             base_dir = _source_base_dir(source)
             target_path = _safe_join(base_dir, path)
             if target_path is None:
