@@ -236,8 +236,9 @@ function layoutScope(
   function placeGroup(ref: Extract<ItemRef, { type: "group" }>, left: number, top: number): Block {
     const childRefs = layout.groups[ref.itemKey] ?? [];
     const content = layoutGroupContents(childRefs, left, top + GROUP_TITLE);
-    const width = Math.max(content.width, MIN_GROUP_W);
-    const height = Math.max(GROUP_TITLE + content.height + GROUP_PAD_BOTTOM, MIN_GROUP_H);
+    const hasContent = content.width > 0 || content.height > 0;
+    const width = hasContent ? content.width : MIN_GROUP_W;
+    const height = hasContent ? GROUP_TITLE + content.height + GROUP_PAD_BOTTOM : MIN_GROUP_H;
     const group = groupById.get(ref.id);
     if (group) {
       out.groupBounds.set(group.id, [

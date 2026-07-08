@@ -221,6 +221,21 @@ describe('computeTidyWorkflowGeometry', () => {
     expect(box[2]).toBe(n1.size[0]);
   });
 
+  it('does not inflate non-empty groups to the empty-group minimum size', () => {
+    const nodes = [node(1, [80, 20])];
+    const g = group(7, 'root/group:7');
+    const layout: MobileLayout = {
+      ...createEmptyMobileLayout(),
+      root: [{ type: 'group', id: 7, subgraphId: null, itemKey: 'root/group:7' }],
+      groups: { 'root/group:7': [{ type: 'node', id: 1 }] },
+    };
+    const out = computeTidyWorkflowGeometry(wf(nodes, [g]), layout);
+    const box = out.groups[0].bounding;
+
+    expect(box[2]).toBe(80);
+    expect(box[3]).toBe(40 + TITLE + 20 + 16);
+  });
+
   it('folds widgetless nodes and collects them into one column at first occurrence', () => {
     const def = (input: Record<string, unknown>) => ({
       input: { required: input },
