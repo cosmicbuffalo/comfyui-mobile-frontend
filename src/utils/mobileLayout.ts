@@ -307,7 +307,9 @@ export function buildDefaultLayout(
   // Order them by on-canvas position, like root nodes, so a reposition inside a
   // subgraph survives a save/reload round-trip.
   for (const sg of subgraphs) {
-    const sgNodes = [...(sg.nodes ?? [])].sort(compareNodesByPosition);
+    const sgNodes = [...(sg.nodes ?? [])].sort(
+      (a, b) => compareNodesByPosition(a, b) || a.id - b.id,
+    );
     const sgGroups = sg.groups ?? [];
     const sgGroupParentMap = getGroupParentMap(sgGroups);
     const sgEmittedGroups = new Set<number>();

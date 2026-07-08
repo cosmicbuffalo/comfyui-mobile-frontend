@@ -92,6 +92,10 @@ export async function fetchDanbooruTags(): Promise<TagEntry[]> {
     });
   }
 
+  for (const entry of entries) {
+    entry.searchKey = entry.tag.toLowerCase();
+    entry.aliasKeys = entry.aliases.map((alias) => alias.toLowerCase().replace(/ /g, '_'));
+  }
   entries.sort((a, b) => b.count - a.count);
   return entries;
 }

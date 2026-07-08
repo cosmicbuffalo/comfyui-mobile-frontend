@@ -56,7 +56,8 @@ export const useAutocompleteStore = create<AutocompleteState>((set, get) => ({
   embeddings: [],
 
   ensureInitialized: async () => {
-    if (get().initStatus !== 'idle') return;
+    const { initStatus } = get();
+    if (initStatus === 'loading' || initStatus === 'ready') return;
     set({ initStatus: 'loading' });
     try {
       const [available, prefs] = await Promise.all([

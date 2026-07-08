@@ -80,6 +80,22 @@ describe('searchTags', () => {
     expect(results[0].label).toBe('blue_eyes');
     expect(results[0].aliases).toEqual(['青い目']);
   });
+
+  it('does not mutate tag entries while searching', () => {
+    const tags: TagEntry[] = [
+      { tag: 'blue_eyes', category: 0, count: 1000, aliases: ['青い目'] },
+    ];
+
+    searchTags(tags, 'blue');
+    searchTags(tags, '青い');
+
+    expect(tags[0]).toEqual({
+      tag: 'blue_eyes',
+      category: 0,
+      count: 1000,
+      aliases: ['青い目'],
+    });
+  });
 });
 
 describe('getSuggestionWikiUrl', () => {

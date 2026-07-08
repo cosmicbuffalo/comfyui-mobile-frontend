@@ -10,11 +10,9 @@ export interface TagEntry {
   /** Post frequency — suggestions are ranked by this. */
   count: number;
   aliases: string[];
-  /** Lazily-cached lowercase search key (filled by the first search). The tag
-   * table is ~150k entries and searchTags runs per keystroke on the main
-   * thread, so re-lowercasing every tag every keystroke is pure churn. */
+  /** Precomputed lowercase search key. */
   searchKey?: string;
-  /** Lazily-cached normalized aliases, same rationale. */
+  /** Precomputed normalized aliases. */
   aliasKeys?: string[];
 }
 
@@ -131,7 +129,7 @@ export function searchTags(tags: TagEntry[], query: string, limit = 20): Suggest
   const aliasHits: Suggestion[] = [];
 
   for (const entry of tags) {
-    const nt = entry.searchKey ?? (entry.searchKey = entry.tag.toLowerCase());
+    const nt = entry.searchKey ?? entry.tag.toLowerCase();
     if (nt.startsWith(nq)) {
       prefix.push(toTagSuggestion(entry));
       if (prefix.length >= limit) break;
@@ -145,7 +143,7 @@ export function searchTags(tags: TagEntry[], query: string, limit = 20): Suggest
       continue;
     }
     if (aliasHits.length < limit && entry.aliases.length > 0) {
-      const aliasKeys = entry.aliasKeys ?? (entry.aliasKeys = entry.aliases.map(normalize));
+      const aliasKeys = entry.aliasKeys ?? entry.aliases.map(normalize);
       const aliasIndex = aliasKeys.findIndex((a) => a.includes(nq));
       if (aliasIndex >= 0) aliasHits.push(toTagSuggestion(entry, entry.aliases[aliasIndex]));
     }
@@ -184,9 +182,6 @@ export function searchNames(
 
 // --- Insertion formatting (parity with ComfyUI-Autocomplete-Plus) ---
 
-// Lookbehind avoids re-escaping an already-escaped paren.
-const REG_OPEN_PAREN = /(?<!\\)\(/g;
-const REG_CLOSE_PAREN = /(?<!\\)\)/g;
 // At least one letter/number (Latin, JP, KR, CJK-ExtA, Cyrillic, Hebrew).
 const REG_LETTER_NUMBER =
   /[a-zA-Z0-9぀-ヿ㐀-䶿一-龯가-힯Ѐ-ӿ֐-׿]/;
@@ -197,7 +192,15 @@ const LORA_DEFAULT_WEIGHT = 1.0;
  * as prompt weighting groups. */
 export function escapeParentheses(value: string): string {
   if (!value) return value;
-  return value.replace(REG_OPEN_PAREN, '\\(').replace(REG_CLOSE_PAREN, '\\)');
+  let result = '';
+  for (let i = 0; i < value.length; i++) {
+    const char = value[i];
+    if ((char === '(' || char === ')') && value[i - 1] !== '\\') {
+      result += '\\';
+    }
+    result += char;
+  }
+  return result;
 }
 
 /** Booru tags are stored underscore-delimited; prompts read better with spaces.
