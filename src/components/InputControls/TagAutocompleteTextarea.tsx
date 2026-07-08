@@ -4,11 +4,9 @@ import {
   applySuggestion,
   getActiveToken,
   getSuggestionWikiUrl,
-  parseToken,
-  MIN_TAG_QUERY_LENGTH,
   type Suggestion,
 } from '@/utils/autocompleteSearch';
-import { ExternalLinkIcon } from '@/components/icons';
+import { ExternalLinkIcon, XMarkIcon } from '@/components/icons';
 import {
   selectAutocompleteActive,
   useAutocompleteStore,
@@ -92,17 +90,8 @@ export function TagAutocompleteTextarea({
     return getSuggestions(value, caret).suggestions;
   }, [active, dataStatus, value, caret, getSuggestions]);
 
-  // Whether the current token is worth suggesting against (used to show the
-  // loading row only when the user is actually mid-tag, not on an empty field).
-  const tokenQualifies = useMemo(() => {
-    const parsed = parseToken(token.text);
-    return parsed.kind !== 'tag' || parsed.query.trim().length >= MIN_TAG_QUERY_LENGTH;
-  }, [token]);
-
   const open = active && focused && !dismissed && suggestions.length > 0;
-  const loadingVisible =
-    active && focused && !dismissed && dataStatus === 'loading' && tokenQualifies;
-  const showDropdown = open || loadingVisible;
+  const showDropdown = open;
 
   // The dropdown is rendered in a portal with fixed positioning, anchored to the
   // caret's line (not the whole textarea) so it appears right under the line
@@ -189,6 +178,11 @@ export function TagAutocompleteTextarea({
     onValueChange(result.value);
   };
 
+  const dismissDropdown = () => {
+    setDismissed(true);
+    setActiveIndex(-1);
+  };
+
   const handleKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (!showDropdown) return;
     // Escape dismisses just the dropdown; stop it from also closing the editor.
@@ -268,11 +262,10 @@ export function TagAutocompleteTextarea({
       />
       {showDropdown && pos &&
         createPortal(
-          <ul
+          <div
             // z sits above the fullscreen widget modal (z-[2190]) so the list
             // isn't painted under it, but below the global bottom bar (z-[2200]).
-            className="autocomplete-dropdown fixed z-[2195] overflow-auto rounded-md border border-white/10 bg-slate-900 py-1 shadow-xl"
-            role="listbox"
+            className="autocomplete-dropdown fixed z-[2195] rounded-md border border-white/10 bg-slate-900 shadow-xl"
             style={{
               left: pos.left,
               width: pos.width,
@@ -281,12 +274,26 @@ export function TagAutocompleteTextarea({
               maxHeight: pos.maxHeight,
             }}
           >
-            {!open && loadingVisible ? (
-              <li className="autocomplete-loading px-3 py-2 text-sm text-slate-400">
-                Loading tag suggestions…
-              </li>
-            ) : (
-              suggestions.map((suggestion, index) => {
+            <button
+              type="button"
+              aria-label="Dismiss autocomplete"
+              className="absolute -right-3 -top-3 z-10 flex h-7 w-7 items-center justify-center rounded-full border border-white/15 bg-slate-800 text-slate-300 shadow-md hover:bg-slate-700 hover:text-white"
+              onMouseDown={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+              }}
+              onClick={(e) => {
+                e.stopPropagation();
+                dismissDropdown();
+              }}
+            >
+              <XMarkIcon className="h-4 w-4" />
+            </button>
+            <ul
+              className="max-h-[inherit] overflow-auto py-1"
+              role="listbox"
+            >
+              {suggestions.map((suggestion, index) => {
                 const isActive = index === activeIndex;
                 const color =
                   suggestion.kind === 'tag'
@@ -338,6 +345,11 @@ export function TagAutocompleteTextarea({
                       </span>
                     )}
                     {!aliasText && <span className="min-w-0 flex-1" />}
+                    {suggestion.count != null && suggestion.count > 0 && (
+                      <span className="autocomplete-option-count shrink-0 text-xs text-slate-400">
+                        {formatCount(suggestion.count)}
+                      </span>
+                    )}
                     {wikiUrl && (
                       <a
                         className="autocomplete-option-wiki shrink-0 text-slate-400 hover:text-slate-100"
@@ -357,16 +369,11 @@ export function TagAutocompleteTextarea({
                         <ExternalLinkIcon className="h-3.5 w-3.5" />
                       </a>
                     )}
-                    {suggestion.count != null && suggestion.count > 0 && (
-                      <span className="autocomplete-option-count shrink-0 text-xs text-slate-400">
-                        {formatCount(suggestion.count)}
-                      </span>
-                    )}
                   </li>
                 );
-              })
-            )}
-          </ul>,
+              })}
+            </ul>
+          </div>,
           document.body,
         )}
     </div>
