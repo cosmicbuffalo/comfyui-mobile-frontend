@@ -10,6 +10,12 @@ export interface TagEntry {
   /** Post frequency — suggestions are ranked by this. */
   count: number;
   aliases: string[];
+  /** Lazily-cached lowercase search key (filled by the first search). The tag
+   * table is ~150k entries and searchTags runs per keystroke on the main
+   * thread, so re-lowercasing every tag every keystroke is pure churn. */
+  searchKey?: string;
+  /** Lazily-cached normalized aliases, same rationale. */
+  aliasKeys?: string[];
 }
 
 export type SuggestionKind = 'tag' | 'lora' | 'embedding';
@@ -125,18 +131,24 @@ export function searchTags(tags: TagEntry[], query: string, limit = 20): Suggest
   const aliasHits: Suggestion[] = [];
 
   for (const entry of tags) {
-    const nt = entry.tag.toLowerCase();
+    const nt = entry.searchKey ?? (entry.searchKey = entry.tag.toLowerCase());
     if (nt.startsWith(nq)) {
       prefix.push(toTagSuggestion(entry));
       if (prefix.length >= limit) break;
       continue;
     }
-    if (nt.includes(nq)) {
+    // Entries are sorted best-first, so once a fallback bucket is full any
+    // later match would be sliced away anyway. Keep scanning only for better
+    // prefix matches.
+    if (infix.length < limit && nt.includes(nq)) {
       infix.push(toTagSuggestion(entry));
       continue;
     }
-    const alias = entry.aliases.find((a) => normalize(a).includes(nq));
-    if (alias) aliasHits.push(toTagSuggestion(entry, alias));
+    if (aliasHits.length < limit && entry.aliases.length > 0) {
+      const aliasKeys = entry.aliasKeys ?? (entry.aliasKeys = entry.aliases.map(normalize));
+      const aliasIndex = aliasKeys.findIndex((a) => a.includes(nq));
+      if (aliasIndex >= 0) aliasHits.push(toTagSuggestion(entry, entry.aliases[aliasIndex]));
+    }
   }
 
   return [...prefix, ...infix, ...aliasHits].slice(0, limit);
