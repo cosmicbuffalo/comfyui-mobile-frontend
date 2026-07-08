@@ -12,6 +12,7 @@ import os
 import threading
 
 import folder_paths
+from json_cache_io import atomic_write_json
 
 _LOG_PREFIX = "[\033[34mMobile\033[0m]"
 
@@ -69,7 +70,5 @@ def set_prefs(updates) -> dict:
             if key in updates and isinstance(updates[key], bool):
                 current[key] = updates[key]
         _prefs = current
-        os.makedirs(_mobile_dir(), exist_ok=True)
-        with open(_prefs_path(), "w", encoding="utf-8") as f:
-            json.dump(current, f)
+        atomic_write_json(_prefs_path(), current, prefix=".preferences.")
         return dict(current)

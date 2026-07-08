@@ -90,8 +90,7 @@ export function TagAutocompleteTextarea({
     return getSuggestions(value, caret).suggestions;
   }, [active, dataStatus, value, caret, getSuggestions]);
 
-  const open = active && focused && !dismissed && suggestions.length > 0;
-  const showDropdown = open;
+  const showDropdown = active && focused && !dismissed && suggestions.length > 0;
 
   // The dropdown is rendered in a portal with fixed positioning, anchored to the
   // caret's line (not the whole textarea) so it appears right under the line
@@ -193,7 +192,6 @@ export function TagAutocompleteTextarea({
       setActiveIndex(-1);
       return;
     }
-    if (!open) return;
     switch (event.key) {
       case 'ArrowDown':
         event.preventDefault();

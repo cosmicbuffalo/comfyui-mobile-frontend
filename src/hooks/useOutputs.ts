@@ -368,21 +368,31 @@ export const useOutputsStore = create<OutputsState>()(
           const migratedFavoriteSources = state.migratedFavoriteSources ?? [];
           if (!migratedFavoriteSources.includes(source)) {
             const legacyIds = state.favorites.filter((id) => id.startsWith(sourcePrefix(source)));
+            let migrationFailed = false;
             for (const id of legacyIds) {
               const { path } = splitFileId(id, source);
               await api.setFileFavorite(path, true, source).catch((err) => {
                 console.warn('Failed to migrate file favorite:', err);
+                migrationFailed = true;
               });
             }
-            set((s) => ({
-              migratedFavoriteSources: s.migratedFavoriteSources.includes(source)
-                ? s.migratedFavoriteSources
-                : [...s.migratedFavoriteSources, source],
-            }));
+            // Only mark migrated once every legacy favorite made it to the
+            // server — otherwise a failed call (e.g. offline) would
+            // permanently suppress retrying migration for this source.
+            if (!migrationFailed) {
+              set((s) => ({
+                migratedFavoriteSources: s.migratedFavoriteSources.includes(source)
+                  ? s.migratedFavoriteSources
+                  : [...s.migratedFavoriteSources, source],
+              }));
+            }
           }
 
           const serverFavoritePaths = await api.loadFileFavoritesFromServer(source).catch((err) => {
             console.warn('Failed to load file favorites:', err);
+            // Fall back to what's already known locally rather than treating
+            // "couldn't load" as "no favorites" — a transient failure here
+            // shouldn't wipe out existing favorites for this source.
             const prefix = sourcePrefix(source);
             return state.favorites
               .filter((id) => id.startsWith(prefix))

@@ -303,57 +303,75 @@ def mark_favorites(cache_path: str, source: str, base_dir: str, files: list[dict
         entries = cache["favorites"].get(source, [])
         if not entries:
             return
-
-        by_path = {entry.get("path"): entry for entry in entries}
+        by_path = {entry.get("path"): dict(entry) for entry in entries}
         by_size: dict[int, list[dict[str, Any]]] = {}
         for entry in entries:
             if entry.get("kind") == "dir":
                 continue
             size = entry.get("size")
             if isinstance(size, int):
-                by_size.setdefault(size, []).append(entry)
+                by_size.setdefault(size, []).append(dict(entry))
 
-        changed = False
-        base = os.path.abspath(base_dir)
-        for item in files:
-            rel = _normalize_path(item.get("path"))
-            if not rel:
-                continue
-            path_entry = by_path.get(rel)
-            if item.get("type") == "dir":
-                if path_entry and path_entry.get("kind") == "dir":
-                    item["favorite"] = True
-                continue
-            full_path = os.path.abspath(os.path.join(base, rel))
-            try:
-                if os.path.commonpath([base, full_path]) != base or not os.path.isfile(full_path):
-                    continue
-                stat = os.stat(full_path)
-            except (OSError, ValueError):
-                continue
-
-            if path_entry and path_entry.get("kind") == "file" and _entry_matches_path(path_entry, full_path):
+    # Stat/hash candidate files outside the lock — hashing large media is slow
+    # and would otherwise serialize every other favorites operation behind it.
+    # Matches are keyed by the stable sha256 and re-applied against a freshly
+    # reloaded cache below, so a writer that ran while we were hashing can't
+    # be clobbered by this now-stale snapshot.
+    moves: dict[str, dict[str, Any]] = {}
+    base = os.path.abspath(base_dir)
+    for item in files:
+        rel = _normalize_path(item.get("path"))
+        if not rel:
+            continue
+        path_entry = by_path.get(rel)
+        if item.get("type") == "dir":
+            if path_entry and path_entry.get("kind") == "dir":
                 item["favorite"] = True
-                if path_entry.get("mtimeNs") != int(stat.st_mtime_ns):
-                    path_entry["mtimeNs"] = int(stat.st_mtime_ns)
-                    changed = True
+            continue
+        full_path = os.path.abspath(os.path.join(base, rel))
+        try:
+            if os.path.commonpath([base, full_path]) != base or not os.path.isfile(full_path):
                 continue
+            stat = os.stat(full_path)
+        except (OSError, ValueError):
+            continue
 
-            candidates = by_size.get(int(stat.st_size), [])
-            if not candidates:
-                continue
-            try:
-                digest = _sha256(full_path)
-            except OSError:
-                continue
-            match = next((entry for entry in candidates if entry.get("sha256") == digest), None)
-            if match is None:
-                continue
+        if path_entry and path_entry.get("kind") == "file" and _entry_matches_path(path_entry, full_path):
             item["favorite"] = True
-            if match.get("path") != rel or match.get("mtimeNs") != int(stat.st_mtime_ns):
-                match["path"] = rel
-                match["mtimeNs"] = int(stat.st_mtime_ns)
-                changed = True
+            if path_entry.get("mtimeNs") != int(stat.st_mtime_ns):
+                moves[path_entry["sha256"]] = {"path": rel, "mtimeNs": int(stat.st_mtime_ns)}
+            continue
 
+        candidates = by_size.get(int(stat.st_size), [])
+        if not candidates:
+            continue
+        try:
+            digest = _sha256(full_path)
+        except OSError:
+            continue
+        match = next((entry for entry in candidates if entry.get("sha256") == digest), None)
+        if match is None:
+            continue
+        item["favorite"] = True
+        if match.get("path") != rel or match.get("mtimeNs") != int(stat.st_mtime_ns):
+            moves[digest] = {"path": rel, "mtimeNs": int(stat.st_mtime_ns)}
+
+    if not moves:
+        return
+
+    with _LOCK:
+        cache = _load(cache_path)
+        entries = cache["favorites"].get(source, [])
+        changed = False
+        for entry in entries:
+            if entry.get("kind") != "file":
+                continue
+            move = moves.get(entry.get("sha256"))
+            if not move:
+                continue
+            if entry.get("path") != move["path"] or entry.get("mtimeNs") != move["mtimeNs"]:
+                entry["path"] = move["path"]
+                entry["mtimeNs"] = move["mtimeNs"]
+                changed = True
         if changed:
             _save(cache_path, cache)
