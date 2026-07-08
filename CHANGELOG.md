@@ -5,10 +5,15 @@
 ### Added
 
 - **Tag autocomplete:** when ComfyUI-Autocomplete-Plus is installed, prompt text fields can suggest Danbooru tags, LoRA names, and embeddings. The integration is opt-in under Preferences and includes alias matching, caret-anchored placement, an in-popup dismiss button, and wiki links for supported Danbooru tags.
+- **Server-side output favorites:** file and folder favorites now persist on the ComfyUI server so they sync across devices. File favorites are content-hash backed, survive in-app moves/renames, can be rediscovered after external filesystem moves, and no longer attach to a new generation just because it reused a favorited filename.
+
 
 ### Fixed
 
+- **Desktop repositioning:** reposition mode now keeps its content to a readable desktop width instead of stretching across the full screen.
 - **Mobile node order persistence:** reordering nodes in the mobile layout now writes tidy canvas geometry, so saving and reopening a workflow reconstructs the same mobile order instead of falling back to the default dependency order.
+- **Lost queued jobs banner:** dismissing the recovered "Lost queued jobs found" banner now discards those recovered jobs so the same banner does not reappear later.
+- **Tidy group sizing:** tidy layout no longer inflates non-empty groups to the empty-group minimum size.
 
 ## 3.0.2 - 2026-06-18
 
