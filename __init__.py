@@ -28,6 +28,8 @@ _mobile_push = _import_module('mobile_push')
 _mobile_web_push = _import_module('mobile_web_push')
 _mobile_app_push = _import_module('mobile_app_push')
 _mobile_push_prefs = _import_module('mobile_push_prefs')
+# General per-server frontend preferences (e.g. autocomplete opt-in).
+_mobile_app_prefs = _import_module('mobile_app_prefs')
 list_files = _file_utils.list_files
 entry_matches_name_or_path = _file_utils.entry_matches_name_or_path
 _is_within_dir = _file_utils.is_within_dir
@@ -1206,6 +1208,19 @@ def setup_mobile_route():
         except Exception as e:
             return web.json_response({"error": str(e)}, status=500)
 
+    async def api_app_prefs_get(request):
+        try:
+            return web.json_response(_mobile_app_prefs.get_prefs())
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=500)
+
+    async def api_app_prefs_set(request):
+        try:
+            body = await request.json()
+            return web.json_response(_mobile_app_prefs.set_prefs(body))
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=500)
+
     # Register API routes — these must register before the SPA catchall below,
     # otherwise '/api/push/*' GETs would be swallowed by the index.html fallback.
     mobile_app.router.add_get('/api/push/config', api_push_config)
@@ -1218,6 +1233,8 @@ def setup_mobile_route():
     mobile_app.router.add_post('/api/push/app-test', api_push_app_test)
     mobile_app.router.add_get('/api/push/preferences', api_push_prefs_get)
     mobile_app.router.add_post('/api/push/preferences', api_push_prefs_set)
+    mobile_app.router.add_get('/api/preferences', api_app_prefs_get)
+    mobile_app.router.add_post('/api/preferences', api_app_prefs_set)
 
     # Serve index.html for root and all non-API routes (SPA)
     mobile_app.router.add_get('/', serve_index)

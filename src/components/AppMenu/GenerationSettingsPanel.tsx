@@ -1,7 +1,8 @@
 import { MenuSubPageHeader } from './MenuSubPageHeader';
 import { useGenerationSettingsStore, type PreviewMethod } from '@/hooks/useGenerationSettings';
 import { menuMutedTextClassName, menuPanelDivideClassName, menuTextClassName } from './menuStyles';
-import type { ReactNode } from 'react';
+import { useAutocompleteStore } from '@/hooks/useAutocompleteStore';
+import { useEffect, type ReactNode } from 'react';
 
 interface GenerationSettingsPanelProps {
   onBack: () => void;
@@ -90,6 +91,16 @@ export function GenerationSettingsPanel({ onBack }: GenerationSettingsPanelProps
   const setAutoRestoreLostQueueJobs = useGenerationSettingsStore((s) => s.setAutoRestoreLostQueueJobs);
   const obfuscateSharedInputPaths = useGenerationSettingsStore((s) => s.obfuscateSharedInputPaths);
   const setObfuscateSharedInputPaths = useGenerationSettingsStore((s) => s.setObfuscateSharedInputPaths);
+
+  // Autocomplete opt-in (server-synced). Only surfaced when the
+  // ComfyUI-Autocomplete-Plus node is detected on this server.
+  const autocompleteAvailable = useAutocompleteStore((s) => s.available);
+  const autocompleteEnabled = useAutocompleteStore((s) => s.enabled);
+  const setAutocompleteEnabled = useAutocompleteStore((s) => s.setEnabled);
+  const ensureAutocompleteInit = useAutocompleteStore((s) => s.ensureInitialized);
+  useEffect(() => {
+    void ensureAutocompleteInit();
+  }, [ensureAutocompleteInit]);
   const previewEnabled = previewMethod !== 'none';
 
   return (
@@ -185,6 +196,15 @@ export function GenerationSettingsPanel({ onBack }: GenerationSettingsPanelProps
           checked={followIntoSubgraphs}
           onToggle={() => setFollowIntoSubgraphs(!followIntoSubgraphs)}
         />
+
+        {autocompleteAvailable && (
+          <PreferenceSection
+            label="Tag autocomplete"
+            description="Suggest Danbooru tags, LoRAs, and embeddings while typing prompts. Powered by the detected ComfyUI-Autocomplete-Plus node."
+            checked={autocompleteEnabled}
+            onToggle={() => void setAutocompleteEnabled(!autocompleteEnabled)}
+          />
+        )}
       </div>
     </div>
   );
