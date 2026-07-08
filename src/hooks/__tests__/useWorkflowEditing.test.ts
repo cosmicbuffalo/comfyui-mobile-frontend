@@ -7,8 +7,10 @@ import {
   makeLocationPointer
 } from '@/utils/mobileLayout';
 import { computeNodeGroupsFor } from '@/utils/nodeGroups';
+import { orderNodesForMobile } from '@/utils/nodeOrdering';
+import { getWorkflowForPersistence } from '@/utils/workflowPersistence';
 import { themeColors } from '@/theme/colors';
-import { useWorkflowStore } from '../useWorkflow';
+import { useWorkflowStore, isWorkflowModified } from '../useWorkflow';
 import { useWorkflowHiddenStore } from '../useWorkflowHidden';
 import { useBookmarksStore } from '../useBookmarks';
 import { useWorkflowErrorsStore } from '../useWorkflowErrors';
@@ -1861,6 +1863,57 @@ describe('useWorkflow editing actions', () => {
     const next = useWorkflowStore.getState().workflow;
     expect(next?.nodes.find((n) => n.id === 1)?.mode).toBe(4);
     expect(next?.nodes.find((n) => n.id === 2)?.mode).toBe(4);
+  });
+
+  // Issue #63: reordering nodes on the mobile panel — with no widget/connection
+  // edits — must mark the workflow dirty (so Save is offered) AND round-trip
+  // through save/reload so the mobile order is not lost on reopen.
+  it('commitRepositionLayout makes a reorder dirty and persists the order across a save/reload round-trip', () => {
+    const wf = makeWorkflow([
+      makeNode(1, { pos: [100, 100], mode: 0 }),
+      makeNode(2, { pos: [100, 300], mode: 0 }),
+      makeNode(3, { pos: [100, 500], mode: 0 }),
+    ], []);
+    // No group: keep the scenario to a plain node reorder.
+    wf.groups = [];
+    const original = structuredClone(wf);
+
+    useWorkflowStore.setState({
+      workflow: wf,
+      originalWorkflow: original,
+      nodeTypes: null,
+      ...rootNodeStableRegistry([1, 2, 3]),
+      mobileLayout: {
+        root: [{ type: 'node', id: 1 }, { type: 'node', id: 2 }, { type: 'node', id: 3 }],
+        groups: {},
+        subgraphs: {},
+        hiddenBlocks: {},
+      },
+    });
+
+    expect(isWorkflowModified(
+      useWorkflowStore.getState().workflow,
+      useWorkflowStore.getState().originalWorkflow,
+    )).toBe(false);
+
+    // Drag node 3 to the top: desired mobile order [3, 1, 2].
+    useWorkflowStore.getState().commitRepositionLayout({
+      root: [{ type: 'node', id: 3 }, { type: 'node', id: 1 }, { type: 'node', id: 2 }],
+      groups: {},
+      subgraphs: {},
+      hiddenBlocks: {},
+    });
+
+    const after = useWorkflowStore.getState();
+    // The reorder alone (no widget/connection change) makes the workflow dirty.
+    expect(isWorkflowModified(after.workflow, after.originalWorkflow)).toBe(true);
+
+    // Saving persists the new geometry, and a reload re-derives the mobile order
+    // from node positions — so the moved order survives the round-trip.
+    const payload = getWorkflowForPersistence(after.workflow!);
+    expect(payload).not.toBeNull();
+    const reloadedOrder = orderNodesForMobile(payload!).map((node) => node.id);
+    expect(reloadedOrder).toEqual([3, 1, 2]);
   });
 
   it('commitRepositionLayout moving node out of group removes geometry membership', () => {
