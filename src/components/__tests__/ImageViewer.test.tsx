@@ -576,4 +576,54 @@ describe('ImageViewer follow queue mode', () => {
       promptId: 'prompt-video',
     });
   });
+
+  it('does not fall back to an older image when the newer prompt\'s history syncs first', async () => {
+    // Regression: two prompts finish; the NEWER one's history record lands before
+    // the older one's. markPromptCompleted then deletes the newer prompt's live
+    // outputs, so it lives only in history while the older prompt is still live.
+    // The follow selector must not prefer the stale live item and yank back to the
+    // older image — "newest" must span live AND history via one completion order.
+    const render = async () => {
+      await act(async () => {
+        root.render(<ImageViewer onClose={() => {}} />);
+      });
+      await flushEffects();
+    };
+    const jumpFilenames = () =>
+      mocks.setViewerState.mock.calls
+        .map(([next]) => next.viewerImages as Array<Record<string, unknown>> | undefined)
+        .filter((imgs): imgs is Array<Record<string, unknown>> => Array.isArray(imgs) && imgs.length > 0)
+        .map((imgs) => imgs[0].filename);
+
+    await render();
+
+    // Both prompts complete over the websocket; p2 is newer (higher order).
+    mocks.queueState.localPromptOrder = { p1: 1, p2: 2 };
+    mocks.queueState.livePromptOutputs = {
+      p1: [{ filename: 'gen-1.png', subfolder: '', type: 'output' }],
+      p2: [{ filename: 'gen-2.png', subfolder: '', type: 'output' }],
+    };
+    await render();
+    // Followed the newest.
+    expect(jumpFilenames().at(-1)).toBe('gen-2.png');
+
+    // p2's history lands FIRST and its live outputs are dropped (handoff). p1 is
+    // still live (its history hasn't synced yet).
+    mocks.historyState.history = [
+      {
+        prompt_id: 'p2',
+        timestamp: Date.now(),
+        outputs: { images: [{ filename: 'gen-2.png', subfolder: '', type: 'output' }] },
+        prompt: {},
+      },
+    ];
+    mocks.queueState.livePromptOutputs = {
+      p1: [{ filename: 'gen-1.png', subfolder: '', type: 'output' }],
+    };
+    await render();
+
+    // Must NOT have yanked back to the older gen-1 image at any point.
+    expect(jumpFilenames()).not.toContain('gen-1.png');
+    expect(jumpFilenames().at(-1)).toBe('gen-2.png');
+  });
 });
