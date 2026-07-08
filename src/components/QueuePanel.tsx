@@ -37,8 +37,7 @@ export const QueuePanel = memo(function QueuePanel({ visible, onImageClick }: Qu
   const recoverableJobIds = useQueueStore((s) => s.recoverableJobIds);
   const isRestoringLostJobs = useQueueStore((s) => s.isRestoringLostJobs);
   const restoreLostJobs = useQueueStore((s) => s.restoreLostJobs);
-  const recoverableJobsKey = recoverableJobIds.join('\0');
-  const [dismissedRecoverableJobsKey, setDismissedRecoverableJobsKey] = useState<string | null>(null);
+  const discardRecoverableJobs = useQueueStore((s) => s.discardRecoverableJobs);
   const fetchQueueMetadata = useQueueStore((s) => s.fetchQueueMetadata);
   const previewVisibility = useQueueStore((s) => s.previewVisibility);
   const previewVisibilityDefault = useQueueStore((s) => s.previewVisibilityDefault);
@@ -469,14 +468,17 @@ export const QueuePanel = memo(function QueuePanel({ visible, onImageClick }: Qu
     >
       <div className="flex flex-col bg-slate-950/88 h-full min-h-full text-slate-100">
         <div className="flex flex-col flex-1 min-h-0 w-full max-w-3xl mx-auto">
-          {recoverableJobIds.length > 0 && dismissedRecoverableJobsKey !== recoverableJobsKey && (
+          {recoverableJobIds.length > 0 && (
             <div className="relative mx-4 mt-4 rounded-lg border border-cyan-400/30 bg-cyan-950/55 px-3 py-3 text-sm text-slate-100">
               <div className="pr-8 font-semibold text-cyan-200">Lost queued jobs found</div>
+              {/* Dismissal discards the shadow records for these jobs (not just
+                  this render's banner), so it can't come back for the same lost
+                  jobs on the next reload. */}
               <button
                 type="button"
                 aria-label="Dismiss lost jobs banner"
                 className="absolute right-2 top-2 flex h-8 w-8 items-center justify-center rounded-lg text-slate-300 transition-colors hover:bg-white/10 hover:text-slate-100"
-                onClick={() => setDismissedRecoverableJobsKey(recoverableJobsKey)}
+                onClick={discardRecoverableJobs}
               >
                 <CloseIcon className="h-4 w-4" />
               </button>

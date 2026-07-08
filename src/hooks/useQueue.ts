@@ -128,6 +128,10 @@ export interface QueueState {
   markPromptCompleted: (promptId: string) => void;
   detectRecoverableJobs: (completedPromptIds?: Iterable<string>) => string[];
   clearRecoverableJobs: () => void;
+  // Permanently discard the currently-recoverable jobs by dropping their
+  // persisted shadow records, so a dismissed "lost jobs" banner can't
+  // resurface for the same jobs after a reload/reconnect.
+  discardRecoverableJobs: () => void;
   restoreLostJobs: (
     options?: {
       auto?: boolean;
