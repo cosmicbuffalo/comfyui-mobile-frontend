@@ -1,5 +1,17 @@
 # Changelog
 
+## 3.0.4 - 2026-07-09
+
+### Fixed
+
+- **Follow queue mode:** the image viewer no longer swaps in an older generation while following the queue, and every finished generation now surfaces — previously some completed jobs never appeared in follow mode even though they showed up in the queue panel.
+- **Mobile node reordering:** moving nodes around in the workflow panel now marks the workflow as modified so it can be saved, even when no widget values or connections changed. Previously the reordered layout could not be saved and was lost on reload.
+- **iOS Safari downloads:** saving an image no longer silently does nothing on iOS Safari. Each save now issues a synchronous anchor click that preserves the browser's user-gesture activation instead of pre-fetching the file first.
+- **Seed bounds:** generated random seeds and increment/decrement results are clamped to the universal 2^32-1 ceiling, so nodes with lower declared maxima (and ComfyUI's own validation) no longer reject them.
+- **Load Image (from Outputs):** picking an output image for a LoadImageOutput node no longer fails with "Input file not found"; output/temp picks are routed into the input directory the node reads from.
+- **Workflow loading robustness:** malformed workflow payloads are rejected before the tab transition (with sane default node position/size), and root link ids are clamped to the ids actually in use to avoid id collisions.
+- **Outputs panel:** the infinite-mode skip button is now hidden on the Outputs panel, where it does not apply.
+
 ## 3.0.3 - 2026-07-08
 
 ### Added
