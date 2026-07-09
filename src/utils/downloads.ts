@@ -1,19 +1,16 @@
 export async function downloadImage(
   src: string,
   filename: string = 'image.png',
-  onDownloaded?: (src: string) => void
+  onDownloaded?: (src: string) => void,
 ) {
   try {
-    const response = await fetch(src);
-    const blob = await response.blob();
-    const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
-    link.href = url;
+    link.href = src;
     link.download = filename;
+    link.rel = 'noopener';
     document.body.appendChild(link);
     link.click();
     link.remove();
-    URL.revokeObjectURL(url);
     onDownloaded?.(src);
   } catch (err) {
     console.error('Failed to download image:', err);
@@ -52,118 +49,63 @@ interface ShareTarget {
   filename: string;
 }
 
-async function fetchAsFile(target: ShareTarget): Promise<File> {
-  const response = await fetch(target.src);
-  if (!response.ok) {
-    // Don't wrap an error body (404/500 HTML/JSON) into a "file" and hand it to
-    // the share/download flow as if it succeeded.
-    throw new Error(`Failed to fetch ${target.filename} (${response.status})`);
-  }
-  const blob = await response.blob();
-  return new File([blob], target.filename, { type: blob.type || 'application/octet-stream' });
-}
-
-function isAbortError(err: unknown): boolean {
-  return err instanceof DOMException && err.name === 'AbortError';
-}
-
 /**
- * Save a file to the user's device. On platforms that support the Web Share
- * API with files (iOS Safari, modern Chrome on Android, etc.), this opens
- * the native share sheet — letting the user save to Photos / Camera Roll,
- * Files, or send to another app. Falls back to a standard browser download
- * (anchor with the `download` attribute) when share-with-files isn't
- * available.
+ * Save a file to the user's device. Issues a synchronous anchor click
+ * against the asset's own URL so the user-gesture activation survives the
+ * call — critical on iOS Safari, where any `await` before the click
+ * destroys the activation and the older fetch-then-share path silently
+ * no-ops with no visible feedback (the bug we hit before this rewrite).
  *
- * If the user dismisses the share sheet (AbortError), we silently no-op —
- * we do NOT fall back to a download in that case, since they explicitly
- * cancelled.
+ * Same-origin `/view` URLs honor the `download` attribute even when the
+ * server's Content-Disposition is `inline`, so the file goes to Downloads
+ * with the requested filename. On browsers that don't honor it, the asset
+ * opens in a new tab — a usable manual-save fallback.
+ *
+ * The Web Share API is intentionally not used: passing a `File` requires a
+ * pre-fetch, which always blows the activation window on iOS.
+ *
+ * In the native iOS app this path is never reached — the caller routes
+ * through the `savePhoto` JS channel first and only falls through here on
+ * the open web.
  */
 export async function shareOrDownloadFile(
   src: string,
   filename: string,
 ): Promise<void> {
   try {
-    const file = await fetchAsFile({ src, filename });
-
-    if (typeof navigator !== 'undefined' && typeof navigator.canShare === 'function') {
-      const payload = { files: [file] };
-      if (navigator.canShare(payload)) {
-        try {
-          await navigator.share(payload);
-          return;
-        } catch (err) {
-          if (isAbortError(err)) return;
-          // Fall through to anchor download
-        }
-      }
-    }
-
-    const objectUrl = URL.createObjectURL(file);
     const link = document.createElement('a');
-    link.href = objectUrl;
+    link.href = src;
     link.download = filename;
+    link.rel = 'noopener';
     document.body.appendChild(link);
     link.click();
     link.remove();
-    URL.revokeObjectURL(objectUrl);
   } catch (err) {
     console.error('Failed to save file:', err);
   }
 }
 
 /**
- * Save multiple files. Tries to invoke the native share sheet once with all
- * files when supported (iOS Safari handles "Save N Images" to Photos this
- * way). Falls back to sequential per-file downloads.
+ * Save multiple files. Same sync-anchor approach as shareOrDownloadFile
+ * — each item gets its own click within the user-gesture window. Browsers
+ * may rate-limit very large batches, but for typical N-of-a-few outputs
+ * this is reliable on both desktop and iOS Safari, where the older
+ * fetch-then-share path no-ops silently.
  */
-function triggerBrowserDownload(file: File, filename: string): void {
-  const objectUrl = URL.createObjectURL(file);
-  const link = document.createElement('a');
-  link.href = objectUrl;
-  link.download = filename;
-  document.body.appendChild(link);
-  link.click();
-  link.remove();
-  URL.revokeObjectURL(objectUrl);
-}
-
 export async function shareOrDownloadBatch(
   targets: ShareTarget[],
   onCompleted?: (src: string) => void,
 ): Promise<void> {
   if (targets.length === 0) return;
-
-  const canShareFiles =
-    typeof navigator !== 'undefined' && typeof navigator.canShare === 'function';
-
   try {
-    if (canShareFiles) {
-      // The native share sheet needs every file in memory at once, so prefetch
-      // the whole batch only on this path.
-      const files = await Promise.all(targets.map(fetchAsFile));
-      if (navigator.canShare({ files })) {
-        try {
-          await navigator.share({ files });
-          for (const target of targets) onCompleted?.(target.src);
-          return;
-        } catch (err) {
-          if (isAbortError(err)) return;
-          // Fall through to per-file downloads, reusing the fetched files.
-        }
-      }
-      for (let i = 0; i < targets.length; i++) {
-        triggerBrowserDownload(files[i], targets[i].filename);
-        onCompleted?.(targets[i].src);
-      }
-      return;
-    }
-
-    // No share-with-files support (most desktop browsers): fetch and download
-    // one file at a time instead of prefetching the entire selection at once.
     for (const target of targets) {
-      const file = await fetchAsFile(target);
-      triggerBrowserDownload(file, target.filename);
+      const link = document.createElement('a');
+      link.href = target.src;
+      link.download = target.filename;
+      link.rel = 'noopener';
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
       onCompleted?.(target.src);
     }
   } catch (err) {

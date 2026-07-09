@@ -104,7 +104,9 @@ export function BottomBar(props: BottomBarProps) {
       >
         {!infiniteLoop && !isStopping && <RunCountSelector />}
 
-        <SkipButton />
+        {/* Infinite-mode "skip to next iteration" belongs with the generation
+            controls; the outputs panel is a gallery, so it hides there. */}
+        {!isOutputsPanel && <SkipButton />}
 
         <RunButton />
 

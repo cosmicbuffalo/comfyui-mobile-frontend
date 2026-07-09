@@ -137,6 +137,30 @@ describe("input path aliases", () => {
     expect((result.workflow.nodes[0].widgets_values as unknown[])[0]).toBe("missing/ghost.png");
   });
 
+  it("skips LoadImageOutput nodes whose files live in the output folder", async () => {
+    // LoadImageOutput reads from output/, so its value must never be aliased
+    // against input/ (which would raise "Input file not found" and block queue).
+    const outputWorkflow: Workflow = {
+      ...workflow,
+      nodes: [
+        { ...workflow.nodes[0], type: "LoadImageOutput", widgets_values: ["render.png [output]", "image"] },
+        workflow.nodes[1],
+      ],
+    };
+    const prompt = {
+      "1": { class_type: "LoadImageOutput", inputs: { image: "render.png [output]" } },
+      "2": { class_type: "SaveImage", inputs: { filename_prefix: "private/client/portrait" } },
+    };
+    const result = await obfuscateQueuedInputPaths(prompt, outputWorkflow, nodeTypes);
+
+    expect(createInputAliases).not.toHaveBeenCalledWith(
+      expect.arrayContaining(["render.png [output]"]),
+    );
+    expect((result.prompt["1"] as { inputs: { image: string } }).inputs.image)
+      .toBe("render.png [output]");
+    expect((result.workflow.nodes[0].widgets_values as unknown[])[0]).toBe("render.png [output]");
+  });
+
   it("leaves loaded alias values directly usable", async () => {
     const loadedAliasWorkflow: Workflow = {
       ...workflow,

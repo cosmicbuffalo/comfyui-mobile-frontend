@@ -9,6 +9,11 @@ export function normalizeWorkflowNodes(nodes: WorkflowNode[]): WorkflowNode[] {
   return nodes.map((node) => {
     const normalized = {
       ...node,
+      // pos/size can be legitimately absent in tool-generated files; a plain
+      // == null check keeps LiteGraph's object-serialized Float32Array shape
+      // ({"0": x, "1": y}) intact, which downstream [0]/[1] indexing handles.
+      pos: node.pos == null ? ([0, 0] as [number, number]) : node.pos,
+      size: node.size == null ? ([200, 100] as [number, number]) : node.size,
       inputs: node.inputs ?? [],
       outputs: node.outputs ?? [],
       flags: node.flags ?? {},
@@ -29,6 +34,53 @@ export function normalizeWorkflowNodes(nodes: WorkflowNode[]): WorkflowNode[] {
 
     return normalized;
   });
+}
+
+function nodeShapeProblem(candidate: unknown, where: string): string | null {
+  if (!candidate || typeof candidate !== "object") {
+    return `${where} contains an entry that isn't a node`;
+  }
+  const node = candidate as { id?: unknown; type?: unknown };
+  if (typeof node.id !== "number") return `${where} has a node without a numeric id`;
+  if (typeof node.type !== "string") return `${where} has a node without a type`;
+  return null;
+}
+
+/**
+ * Cheap structural gate for anything about to enter loadWorkflow. JSON that
+ * parses and even has a `nodes` array can still be junk ({"nodes":[null]});
+ * loading it used to throw midway through the tab transition, leaving the
+ * user parked on a broken blank tab. Returns a human-readable problem, or
+ * null when the shape is loadable.
+ */
+export function findWorkflowShapeProblem(workflow: unknown): string | null {
+  if (!workflow || typeof workflow !== "object" || Array.isArray(workflow)) {
+    return "not a workflow object";
+  }
+  const nodes = (workflow as { nodes?: unknown }).nodes;
+  if (!Array.isArray(nodes)) return "missing its nodes list";
+  for (const node of nodes) {
+    const problem = nodeShapeProblem(node, "the workflow");
+    if (problem) return problem;
+  }
+  const definitions = (workflow as { definitions?: unknown }).definitions;
+  if (definitions == null) return null;
+  if (typeof definitions !== "object") return "has malformed definitions";
+  const subgraphs = (definitions as { subgraphs?: unknown }).subgraphs;
+  if (subgraphs == null) return null;
+  if (!Array.isArray(subgraphs)) return "has a malformed subgraph list";
+  for (const subgraph of subgraphs) {
+    if (!subgraph || typeof subgraph !== "object") return "has a malformed subgraph";
+    const sg = subgraph as { id?: unknown; nodes?: unknown };
+    if (typeof sg.id !== "string") return "has a subgraph without an id";
+    if (sg.nodes == null) continue;
+    if (!Array.isArray(sg.nodes)) return "has a subgraph with a malformed nodes list";
+    for (const node of sg.nodes) {
+      const problem = nodeShapeProblem(node, "a subgraph");
+      if (problem) return problem;
+    }
+  }
+  return null;
 }
 
 function stripNodeClientMetadata(node: WorkflowNode): WorkflowNode {

@@ -5,8 +5,19 @@ import {
 } from "@/components/InputControls/outputPickerUtils";
 
 describe("ComboControl output picker helpers", () => {
-  it("keeps image uploads in the configured image folder", () => {
+  it("keeps image uploads in the configured custom image folder", () => {
     expect(resolveUploadFolder(false, "mask_inputs")).toBe("mask_inputs");
+  });
+
+  it("routes output/temp image picks into the input folder", () => {
+    // LoadImageOutput & friends read from input/ by default and the frontend
+    // emits no path annotation, so output/temp picks must land in input/.
+    expect(resolveUploadFolder(false, "output")).toBe("input");
+    expect(resolveUploadFolder(false, "temp")).toBe("input");
+  });
+
+  it("leaves explicit input image uploads in input", () => {
+    expect(resolveUploadFolder(false, "input")).toBe("input");
   });
 
   it("forces video uploads into the input folder", () => {

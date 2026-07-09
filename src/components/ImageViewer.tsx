@@ -70,8 +70,8 @@ export function ImageViewer({ onClose }: ImageViewerProps) {
   const [loadWorkflowProgress, setLoadWorkflowProgress] = useState<number | null>(null);
   const lastFollowKeyRef = useRef<string | null>(null);
   const followQueueWasActiveRef = useRef(false);
-  const nextFollowObservedOrderRef = useRef(1);
-  const [followObservedPromptOrder, setFollowObservedPromptOrder] = useState<Record<string, number>>({});
+  const nextFollowFinishOrderRef = useRef(1);
+  const [followFinishOrder, setFollowFinishOrder] = useState<Record<string, number>>({});
 
   const isDirty = useMemo(
     () => isWorkflowModified(workflow, originalWorkflow),
@@ -80,30 +80,58 @@ export function ImageViewer({ onClose }: ImageViewerProps) {
   const canOpenWorkflowInNewTab =
     Boolean(activeSessionId && workflow) && sessions.length < MAX_WORKFLOW_SESSIONS;
 
+  // Record a stable order for every prompt we track while follow mode is open,
+  // the single source of "newest" for both the jump target and the browse
+  // ordering. It must survive the live→history handoff (markPromptCompleted
+  // deletes a prompt's livePromptOutputs the moment its history entry lands), so
+  // it lives in component state keyed by prompt_id. Two capture sources, each
+  // covering the other's blind spot:
+  //   1. livePromptOutputs entries with a final `output` image — the websocket
+  //      `executed` frame. Race-free: a fast prompt that leaves running/pending
+  //      before an effect can observe it is still caught here.
+  //   2. prompts seen in running/pending — covers a run whose output reaches us
+  //      only via history (e.g. a fully-cached execution emits no `executed`
+  //      output frame) yet was observed in the queue on this device.
   useEffect(() => {
     if (!open || !followQueueActive) {
-      nextFollowObservedOrderRef.current = 1;
-      setFollowObservedPromptOrder({});
+      nextFollowFinishOrderRef.current = 1;
+      setFollowFinishOrder({});
       return;
     }
 
-    const promptIds = [...running, ...pending]
-      .map((item) => item.prompt_id)
-      .filter((promptId): promptId is string => Boolean(promptId));
-    if (promptIds.length === 0) return;
+    const inActiveSession = (promptId: string) => {
+      // Same session scoping as the live list: a run finishing in another tab
+      // must not be followed here. Unknown prompts fall back to the active tab.
+      const sid = promptToSession[promptId];
+      return sid == null || sid === activeSessionId;
+    };
 
-    setFollowObservedPromptOrder((prev) => {
+    // Insertion order of livePromptOutputs keys == order of `executed` frames ==
+    // completion order. Queue observations extend it for prompts with no live
+    // output frame. A prompt already stamped keeps its first-seen order.
+    const trackedPromptIds = [
+      ...Object.entries(livePromptOutputs)
+        .filter(([promptId, outputs]) =>
+          inActiveSession(promptId) && outputs.some((img) => img.type === 'output'))
+        .map(([promptId]) => promptId),
+      ...[...running, ...pending]
+        .map((item) => item.prompt_id)
+        .filter((promptId): promptId is string => Boolean(promptId) && inActiveSession(promptId)),
+    ];
+    if (trackedPromptIds.length === 0) return;
+
+    setFollowFinishOrder((prev) => {
       let changed = false;
       const next = { ...prev };
-      for (const promptId of promptIds) {
+      for (const promptId of trackedPromptIds) {
         if (next[promptId] != null) continue;
-        next[promptId] = nextFollowObservedOrderRef.current;
-        nextFollowObservedOrderRef.current += 1;
+        next[promptId] = nextFollowFinishOrderRef.current;
+        nextFollowFinishOrderRef.current += 1;
         changed = true;
       }
       return changed ? next : prev;
     });
-  }, [followQueueActive, open, pending, running]);
+  }, [followQueueActive, open, livePromptOutputs, running, pending, promptToSession, activeSessionId]);
 
   // The active session's just-finished outputs (newest first), built from the
   // queue store's live outputs. Scoped to the active session so a run finishing
@@ -133,64 +161,77 @@ export function ImageViewer({ onClose }: ImageViewerProps) {
         );
         return outputs.some((img) => !historyKeys.has(getHistoryImageFileId(img)));
       })
-      // Newest first by registration order. A still-running prompt has no
-      // `output` images yet, so it's already excluded above — no need to
-      // special-case running order.
-      .sort(([a], [b]) => (localPromptOrder[b] ?? 0) - (localPromptOrder[a] ?? 0))
+      // Newest first by completion order, falling back to submit order for a
+      // just-arrived prompt whose finish-order effect hasn't committed yet. A
+      // still-running prompt has no `output` images yet, so it's already excluded
+      // above — no need to special-case running order.
+      .sort(([a], [b]) => (
+        (followFinishOrder[b] ?? localPromptOrder[b] ?? 0)
+        - (followFinishOrder[a] ?? localPromptOrder[a] ?? 0)
+      ))
       .map(([promptId, outputs]) => ({
         prompt_id: promptId,
         outputs: { images: outputs },
         prompt: {},
       }));
-  }, [open, followQueueActive, history, livePromptOutputs, localPromptOrder, promptToSession, activeSessionId]);
+  }, [open, followQueueActive, history, livePromptOutputs, localPromptOrder, followFinishOrder, promptToSession, activeSessionId]);
 
-  const followQueueObservedHistoryItems = useMemo(() => {
+  // History entries for prompts we saw finish while following (their live
+  // outputs were handed off to history and deleted from livePromptOutputs).
+  const followQueueFinishedHistoryItems = useMemo(() => {
     if (!open || !followQueueActive) return [];
-    return history
-      .filter((item) => item.prompt_id && followObservedPromptOrder[item.prompt_id] != null)
-      .sort((a, b) => (
-        (followObservedPromptOrder[b.prompt_id] ?? 0)
-        - (followObservedPromptOrder[a.prompt_id] ?? 0)
-      ));
-  }, [followObservedPromptOrder, followQueueActive, history, open]);
+    return history.filter(
+      (item) => item.prompt_id && followFinishOrder[item.prompt_id] != null,
+    );
+  }, [followFinishOrder, followQueueActive, history, open]);
 
-  // Browsable list: the active session's live outputs first (so a fresh output
-  // is always at index 0), then global history for swiping back. History is
-  // ComfyUI-global and can't be session-scoped, but since live items lead, the
-  // auto-jump always lands on this tab's newest output.
+  // Browsable list. The followed items — live outputs plus finished-while-
+  // following history — are MERGED and sorted by a single completion-order map so
+  // index 0 is always the genuinely newest generation, regardless of whether its
+  // image currently lives in the live map or has already been handed off to
+  // history. A live item not yet assigned a finish order (its capture effect
+  // hasn't committed) is treated as freshest so a just-arrived output still wins.
+  // Global history follows for swiping back.
   const followQueueItems = useMemo(() => {
     if (!open || !followQueueActive) return [];
     const livePromptIds = new Set(followQueueLiveItems.map((item) => item.prompt_id));
-    const observedHistoryPromptIds = new Set(
-      followQueueObservedHistoryItems.map((item) => item.prompt_id),
-    );
-    return [
+    const orderOf = (promptId: string | undefined) =>
+      (promptId != null ? followFinishOrder[promptId] : undefined) ?? Number.POSITIVE_INFINITY;
+    const followed = [
       ...followQueueLiveItems,
-      ...followQueueObservedHistoryItems.filter((item) => !livePromptIds.has(item.prompt_id)),
-      ...history.filter((item) => (
-        !livePromptIds.has(item.prompt_id)
-        && !observedHistoryPromptIds.has(item.prompt_id)
-      )),
+      ...followQueueFinishedHistoryItems.filter((item) => !livePromptIds.has(item.prompt_id)),
+    ].sort((a, b) => orderOf(b.prompt_id) - orderOf(a.prompt_id));
+    const followedPromptIds = new Set(followed.map((item) => item.prompt_id));
+    return [
+      ...followed,
+      ...history.filter((item) => !followedPromptIds.has(item.prompt_id)),
     ];
-  }, [open, followQueueActive, followQueueLiveItems, followQueueObservedHistoryItems, history]);
+  }, [open, followQueueActive, followQueueLiveItems, followQueueFinishedHistoryItems, followFinishOrder, history]);
 
   const followQueueViewerImages = useMemo(
     () => buildOutputPreferredViewerImages(followQueueItems, { alt: 'Generation' }),
     [followQueueItems],
   );
 
-  // Jump trigger: newest live output, or a history output for a prompt observed
-  // in the queue while follow mode was open. Plain history refreshes still do
-  // not yank the viewer.
+  // Jump trigger: the newest followed output (index 0 of the merged list above).
+  // Only a followed prompt — one with a live output or a recorded finish order —
+  // yanks the viewer; a plain history refresh (index 0 is untracked history) does
+  // not. Keeping this in lockstep with followQueueItems[0] guarantees the jump
+  // shows the same image the key was computed from.
   const followQueueLatestKey = useMemo(() => {
-    const latest = followQueueLiveItems[0] ?? followQueueObservedHistoryItems[0];
-    const latestImages = latest?.outputs.images ?? [];
-    if (!latest || latestImages.length === 0) return null;
+    const latest = followQueueItems[0];
+    if (!latest?.prompt_id) return null;
+    const isFollowed =
+      followFinishOrder[latest.prompt_id] != null
+      || followQueueLiveItems.some((item) => item.prompt_id === latest.prompt_id);
+    if (!isFollowed) return null;
+    const latestImages = latest.outputs?.images ?? [];
+    if (latestImages.length === 0) return null;
     const outputKey = latestImages
       .map((img) => getHistoryImageFileId(img))
       .join('|');
-    return `${latest.prompt_id ?? ''}:${outputKey}`;
-  }, [followQueueLiveItems, followQueueObservedHistoryItems]);
+    return `${latest.prompt_id}:${outputKey}`;
+  }, [followQueueItems, followFinishOrder, followQueueLiveItems]);
 
   const followQueueSwitchId = followQueueItems[0]?.prompt_id ?? null;
 
