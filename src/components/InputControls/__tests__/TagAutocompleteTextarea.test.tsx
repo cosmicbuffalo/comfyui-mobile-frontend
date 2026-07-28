@@ -103,4 +103,26 @@ describe('TagAutocompleteTextarea open delay', () => {
     });
     expect(dropdown()).not.toBeNull();
   });
+
+  it('keeps the floating dismiss button — the only way to close on mobile', () => {
+    act(() => {
+      ref.current?.focus();
+    });
+    act(() => {
+      vi.advanceTimersByTime(1000);
+    });
+    expect(dropdown()).not.toBeNull();
+
+    const dismiss = document.querySelector<HTMLButtonElement>(
+      '.autocomplete-dropdown button[aria-label="Dismiss autocomplete"]',
+    );
+    expect(dismiss).not.toBeNull();
+
+    // Tapping it closes the overlay without blurring the textarea.
+    act(() => {
+      dismiss?.click();
+    });
+    expect(dropdown()).toBeNull();
+    expect(document.activeElement).toBe(ref.current);
+  });
 });

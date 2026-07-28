@@ -11,7 +11,7 @@
 
 - **Autocomplete dropdown position:** the caret-measuring mirror no longer mis-positions the suggestion dropdown on scrolled pages
 - **Autocomplete performance:** tag search keys are cached lazily instead of being recomputed every keystroke over the ~150k-entry tag table
-- **Autocomplete UX polish:** the dropdown waits a beat after a field gains focus before covering the caret, shows a loading row while tag data is still downloading, and Escape dismisses it (replacing the floating ✕ button)
+- **Autocomplete UX polish:** the dropdown waits a beat after a field gains focus before covering the caret, shows a loading row while tag data is still downloading, and Escape now also dismisses it (alongside the floating ✕ button, which stays — it is the only way to dismiss on mobile)
 
 ## 3.0.4 - 2026-07-09
 

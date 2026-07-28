@@ -8,7 +8,7 @@ import {
   MIN_TAG_QUERY_LENGTH,
   type Suggestion,
 } from '@/utils/autocompleteSearch';
-import { ExternalLinkIcon } from '@/components/icons';
+import { ExternalLinkIcon, XMarkIcon } from '@/components/icons';
 import {
   selectAutocompleteActive,
   useAutocompleteStore,
@@ -209,14 +209,20 @@ export function TagAutocompleteTextarea({
     onValueChange(result.value);
   };
 
+  // Shared by Escape (desktop) and the floating ✕ button (the only dismissal
+  // affordance on mobile, where there is no Escape key).
+  const dismissDropdown = () => {
+    setDismissed(true);
+    setActiveIndex(-1);
+  };
+
   const handleKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (!showDropdown) return;
     // Escape dismisses just the dropdown; stop it from also closing the editor.
     if (event.key === 'Escape') {
       event.preventDefault();
       event.stopPropagation();
-      setDismissed(true);
-      setActiveIndex(-1);
+      dismissDropdown();
       return;
     }
     if (!open) return;
@@ -289,11 +295,10 @@ export function TagAutocompleteTextarea({
       />
       {showDropdown && pos &&
         createPortal(
-          <ul
+          <div
             // z sits above the fullscreen widget modal (z-[2190]) so the list
             // isn't painted under it, but below the global bottom bar (z-[2200]).
-            className="autocomplete-dropdown fixed z-[2195] overflow-auto rounded-md border border-white/10 bg-slate-900 py-1 shadow-xl"
-            role="listbox"
+            className="autocomplete-dropdown fixed z-[2195] rounded-md border border-white/10 bg-slate-900 shadow-xl"
             style={{
               left: pos.left,
               width: pos.width,
@@ -302,6 +307,23 @@ export function TagAutocompleteTextarea({
               maxHeight: pos.maxHeight,
             }}
           >
+            <button
+              type="button"
+              aria-label="Dismiss autocomplete"
+              className="absolute -right-3 -top-3 z-10 flex h-7 w-7 items-center justify-center rounded-full border border-white/15 bg-slate-800 text-slate-300 shadow-md hover:bg-slate-700 hover:text-white"
+              onMouseDown={(e) => {
+                // Keep the textarea focused; the tap should only close the list.
+                e.preventDefault();
+                e.stopPropagation();
+              }}
+              onClick={(e) => {
+                e.stopPropagation();
+                dismissDropdown();
+              }}
+            >
+              <XMarkIcon className="h-4 w-4" />
+            </button>
+            <ul className="max-h-[inherit] overflow-auto py-1" role="listbox">
             {!open && loadingVisible ? (
               <li className="autocomplete-loading px-3 py-2 text-sm text-slate-400">
                 Loading tag suggestions…
@@ -387,7 +409,8 @@ export function TagAutocompleteTextarea({
                 );
               })
             )}
-          </ul>,
+            </ul>
+          </div>,
           document.body,
         )}
     </div>
