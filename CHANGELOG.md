@@ -1,5 +1,18 @@
 # Changelog
 
+## 3.0.5 - 2026-07-27
+
+### Added
+
+- **ComfyUI-Custom-Scripts as a tag autocomplete source:** prompt autocomplete no longer requires Autocomplete-Plus — a detected ComfyUI-Custom-Scripts (pysssss) install now also enables it, contributing your custom word list (every file format its desktop settings accept, including a1111-style csv) plus LoRA and embedding completion; when both nodes are installed the word list is merged into the tag table ([#67](https://github.com/cosmicbuffalo/comfyui-mobile-frontend/issues/67))
+- **e621 tag data support:** Autocomplete-Plus installs configured with e621 (instead of Danbooru) tag data are now detected as a valid autocomplete source
+
+### Fixed
+
+- **Autocomplete dropdown position:** the caret-measuring mirror no longer mis-positions the suggestion dropdown on scrolled pages
+- **Autocomplete performance:** tag search keys are cached lazily instead of being recomputed every keystroke over the ~150k-entry tag table
+- **Autocomplete UX polish:** the dropdown waits a beat after a field gains focus before covering the caret, shows a loading row while tag data is still downloading, and Escape now also dismisses it (alongside the floating ✕ button, which stays — it is the only way to dismiss on mobile)
+
 ## 3.0.4 - 2026-07-09
 
 ### Fixed

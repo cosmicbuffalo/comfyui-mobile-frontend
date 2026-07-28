@@ -6,7 +6,7 @@ describe('autocompletePlusClient', () => {
     vi.unstubAllGlobals();
   });
 
-  it('only reports available when Danbooru base tags are present', async () => {
+  it('reports available when either Danbooru or e621 base tags are present', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => ({
       ok: true,
       json: async () => ({
@@ -14,11 +14,19 @@ describe('autocompletePlusClient', () => {
         e621: { base_tags: true },
       }),
     })));
+    await expect(isAutocompletePlusAvailable()).resolves.toBe(true);
 
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      ok: true,
+      json: async () => ({
+        danbooru: { base_tags: false },
+        e621: { base_tags: false },
+      }),
+    })));
     await expect(isAutocompletePlusAvailable()).resolves.toBe(false);
   });
 
-  it('precomputes immutable tag search keys when loading tags', async () => {
+  it('parses tags without eagerly computing search keys (cached lazily by search)', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => ({
       ok: true,
       text: async () => [
@@ -33,8 +41,6 @@ describe('autocompletePlusClient', () => {
         category: 0,
         count: 1000,
         aliases: ['blue eyes', '青い目'],
-        searchKey: 'blue_eyes',
-        aliasKeys: ['blue_eyes', '青い目'],
       },
     ]);
   });

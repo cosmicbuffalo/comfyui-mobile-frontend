@@ -19,6 +19,7 @@ interface CsvStatus {
 
 interface CsvListResponse {
   danbooru?: CsvStatus;
+  e621?: CsvStatus;
 }
 
 /**
@@ -30,7 +31,7 @@ export async function isAutocompletePlusAvailable(): Promise<boolean> {
     const response = await fetch(`${BASE}/csv`);
     if (!response.ok) return false;
     const data = (await response.json()) as CsvListResponse;
-    return Boolean(data?.danbooru?.base_tags);
+    return Boolean(data?.danbooru?.base_tags || data?.e621?.base_tags);
   } catch {
     return false;
   }
@@ -91,10 +92,6 @@ export async function fetchDanbooruTags(): Promise<TagEntry[]> {
     });
   }
 
-  for (const entry of entries) {
-    entry.searchKey = entry.tag.toLowerCase();
-    entry.aliasKeys = entry.aliases.map((alias) => alias.toLowerCase().replace(/ /g, '_'));
-  }
   entries.sort((a, b) => b.count - a.count);
   return entries;
 }

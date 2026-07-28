@@ -5,6 +5,7 @@ import {
   escapeParentheses,
   getActiveToken,
   getSuggestionWikiUrl,
+  mergeTagSources,
   normalizeTagToInsert,
   parseToken,
   searchNames,
@@ -79,22 +80,6 @@ describe('searchTags', () => {
     const results = searchTags(TAGS, 'blue e');
     expect(results[0].label).toBe('blue_eyes');
     expect(results[0].aliases).toEqual(['青い目']);
-  });
-
-  it('does not mutate tag entries while searching', () => {
-    const tags: TagEntry[] = [
-      { tag: 'blue_eyes', category: 0, count: 1000, aliases: ['青い目'] },
-    ];
-
-    searchTags(tags, 'blue');
-    searchTags(tags, '青い');
-
-    expect(tags[0]).toEqual({
-      tag: 'blue_eyes',
-      category: 0,
-      count: 1000,
-      aliases: ['青い目'],
-    });
   });
 });
 
@@ -220,5 +205,59 @@ describe('applySuggestion', () => {
       insertText: '<lora:realism>',
     });
     expect(result.value).toBe('<lora:realism:1.0>, ');
+  });
+});
+
+describe('mergeTagSources', () => {
+  const primary: TagEntry[] = [
+    { tag: 'long_hair', category: 0, count: 1200, aliases: ['longhair'] },
+    { tag: 'blue_eyes', category: 0, count: 1000, aliases: [] },
+  ];
+
+  it('returns the other source untouched when one side is empty', () => {
+    expect(mergeTagSources(primary, [])).toBe(primary);
+    const extra: TagEntry[] = [{ tag: 'a', category: -1, count: 0, aliases: [] }];
+    expect(mergeTagSources([], extra)).toBe(extra);
+  });
+
+  it('interleaves extra entries into count-descending order', () => {
+    const extra: TagEntry[] = [
+      { tag: 'my_style', category: -1, count: 1100, aliases: [] },
+      { tag: 'quality boost', category: -1, count: 0, aliases: [] },
+    ];
+    const merged = mergeTagSources(primary, extra);
+    expect(merged.map((e) => e.tag)).toEqual([
+      'long_hair',
+      'my_style',
+      'blue_eyes',
+      'quality boost',
+    ]);
+  });
+
+  it('keeps the primary entry on duplicates but unions aliases', () => {
+    const extra: TagEntry[] = [
+      { tag: 'blue_eyes', category: -1, count: 5, aliases: ['blaue augen'] },
+    ];
+    const merged = mergeTagSources(primary, extra);
+    const entry = merged.find((e) => e.tag === 'blue_eyes');
+    expect(entry).toMatchObject({ category: 0, count: 1000, aliases: ['blaue augen'] });
+    expect(merged).toHaveLength(2);
+  });
+
+  it('does not mutate a primary entry whose alias cache may be filled', () => {
+    const cached: TagEntry = {
+      tag: 'blue_eyes',
+      category: 0,
+      count: 1000,
+      aliases: ['old'],
+      aliasKeys: ['old'],
+    };
+    const merged = mergeTagSources([cached], [
+      { tag: 'blue_eyes', category: -1, count: 0, aliases: ['new'] },
+    ]);
+    expect(cached.aliases).toEqual(['old']);
+    const entry = merged.find((e) => e.tag === 'blue_eyes');
+    expect(entry?.aliases).toEqual(['old', 'new']);
+    expect(entry?.aliasKeys).toBeUndefined();
   });
 });

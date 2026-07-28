@@ -52,11 +52,8 @@ export function getCaretCoordinates(
   const mirror = document.createElement('div');
   const style = mirror.style;
 
-  style.position = 'fixed';
-  style.top = '0';
-  style.left = '0';
+  style.position = 'absolute';
   style.visibility = 'hidden';
-  style.pointerEvents = 'none';
   style.whiteSpace = 'pre-wrap';
   style.wordWrap = 'break-word';
   style.overflow = 'hidden';

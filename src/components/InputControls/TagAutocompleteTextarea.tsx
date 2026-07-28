@@ -4,6 +4,8 @@ import {
   applySuggestion,
   getActiveToken,
   getSuggestionWikiUrl,
+  parseToken,
+  MIN_TAG_QUERY_LENGTH,
   type Suggestion,
 } from '@/utils/autocompleteSearch';
 import { ExternalLinkIcon, XMarkIcon } from '@/components/icons';
@@ -43,10 +45,17 @@ function formatCount(count?: number): string {
   return String(count);
 }
 
+// Grace period after a field gains focus before the autocomplete overlay is
+// allowed to appear. This gives the user a beat to see where their caret landed
+// before the dropdown covers that spot. It's armed once per focus, so typing in
+// an already-open field is not delayed per keystroke.
+const AUTOCOMPLETE_OPEN_DELAY_MS = 1000;
+
 /**
  * A multiline text editor with tag/lora/embedding autocomplete layered on top.
- * The autocomplete only activates when the Autocomplete-Plus node is installed
- * and the server opt-in is on; otherwise this behaves as a plain textarea.
+ * The autocomplete only activates when a supported source node (Autocomplete-
+ * Plus and/or Custom-Scripts) is installed and the server opt-in is on;
+ * otherwise this behaves as a plain textarea.
  *
  * `textareaRef` is owned by the caller (used for auto-grow + TextareaActions) and
  * reused here for caret tracking, so no ref merging is needed.
@@ -81,6 +90,10 @@ export function TagAutocompleteTextarea({
   // would steal that. Enter only accepts once a row is chosen via Arrow keys.
   const [activeIndex, setActiveIndex] = useState(-1);
   const [dismissed, setDismissed] = useState(false);
+  // Opens AUTOCOMPLETE_OPEN_DELAY_MS after the field gains focus; until then the
+  // overlay stays hidden even when suggestions are ready, so the caret stays
+  // visible for a beat after the user taps in. Re-armed on every focus.
+  const [openDelayPassed, setOpenDelayPassed] = useState(false);
   const pendingCaretRef = useRef<number | null>(null);
   const activeItemRef = useRef<HTMLLIElement | null>(null);
 
@@ -90,7 +103,26 @@ export function TagAutocompleteTextarea({
     return getSuggestions(value, caret).suggestions;
   }, [active, dataStatus, value, caret, getSuggestions]);
 
-  const showDropdown = active && focused && !dismissed && suggestions.length > 0;
+  // Whether the current token is worth suggesting against (used to show the
+  // loading row only when the user is actually mid-tag, not on an empty field).
+  const tokenQualifies = useMemo(() => {
+    const parsed = parseToken(token.text);
+    return parsed.kind !== 'tag' || parsed.query.trim().length >= MIN_TAG_QUERY_LENGTH;
+  }, [token]);
+
+  const open = active && focused && !dismissed && suggestions.length > 0;
+  const loadingVisible =
+    active && focused && !dismissed && dataStatus === 'loading' && tokenQualifies;
+  const showDropdown = (open || loadingVisible) && openDelayPassed;
+
+  // Arm the open-delay grace period on focus (see AUTOCOMPLETE_OPEN_DELAY_MS) and
+  // reset it on blur so the next focus gets a fresh beat. The overlay is gated on
+  // openDelayPassed above, so nothing shows until the timer fires.
+  useEffect(() => {
+    if (!focused) return;
+    const timer = setTimeout(() => setOpenDelayPassed(true), AUTOCOMPLETE_OPEN_DELAY_MS);
+    return () => clearTimeout(timer);
+  }, [focused]);
 
   // The dropdown is rendered in a portal with fixed positioning, anchored to the
   // caret's line (not the whole textarea) so it appears right under the line
@@ -125,7 +157,7 @@ export function TagAutocompleteTextarea({
     };
     update();
     // Scroll/resize can fire many times per frame, and update() lays out a
-    // full mirror div to find the caret. Coalesce bursts to one per frame.
+    // full mirror div to find the caret — coalesce bursts to one per frame.
     let rafId = 0;
     const scheduleUpdate = () => {
       if (rafId) return;
@@ -177,6 +209,8 @@ export function TagAutocompleteTextarea({
     onValueChange(result.value);
   };
 
+  // Shared by Escape (desktop) and the floating ✕ button (the only dismissal
+  // affordance on mobile, where there is no Escape key).
   const dismissDropdown = () => {
     setDismissed(true);
     setActiveIndex(-1);
@@ -188,10 +222,10 @@ export function TagAutocompleteTextarea({
     if (event.key === 'Escape') {
       event.preventDefault();
       event.stopPropagation();
-      setDismissed(true);
-      setActiveIndex(-1);
+      dismissDropdown();
       return;
     }
+    if (!open) return;
     switch (event.key) {
       case 'ArrowDown':
         event.preventDefault();
@@ -253,6 +287,7 @@ export function TagAutocompleteTextarea({
         }}
         onBlur={() => {
           setFocused(false);
+          setOpenDelayPassed(false);
           setActiveIndex(-1);
           onBlur?.();
         }}
@@ -277,6 +312,7 @@ export function TagAutocompleteTextarea({
               aria-label="Dismiss autocomplete"
               className="absolute -right-3 -top-3 z-10 flex h-7 w-7 items-center justify-center rounded-full border border-white/15 bg-slate-800 text-slate-300 shadow-md hover:bg-slate-700 hover:text-white"
               onMouseDown={(e) => {
+                // Keep the textarea focused; the tap should only close the list.
                 e.preventDefault();
                 e.stopPropagation();
               }}
@@ -287,11 +323,13 @@ export function TagAutocompleteTextarea({
             >
               <XMarkIcon className="h-4 w-4" />
             </button>
-            <ul
-              className="max-h-[inherit] overflow-auto py-1"
-              role="listbox"
-            >
-              {suggestions.map((suggestion, index) => {
+            <ul className="max-h-[inherit] overflow-auto py-1" role="listbox">
+            {!open && loadingVisible ? (
+              <li className="autocomplete-loading px-3 py-2 text-sm text-slate-400">
+                Loading tag suggestions…
+              </li>
+            ) : (
+              suggestions.map((suggestion, index) => {
                 const isActive = index === activeIndex;
                 const color =
                   suggestion.kind === 'tag'
@@ -343,11 +381,6 @@ export function TagAutocompleteTextarea({
                       </span>
                     )}
                     {!aliasText && <span className="min-w-0 flex-1" />}
-                    {suggestion.count != null && suggestion.count > 0 && (
-                      <span className="autocomplete-option-count shrink-0 text-xs text-slate-400">
-                        {formatCount(suggestion.count)}
-                      </span>
-                    )}
                     {wikiUrl && (
                       <a
                         className="autocomplete-option-wiki shrink-0 text-slate-400 hover:text-slate-100"
@@ -367,9 +400,15 @@ export function TagAutocompleteTextarea({
                         <ExternalLinkIcon className="h-3.5 w-3.5" />
                       </a>
                     )}
+                    {suggestion.count != null && suggestion.count > 0 && (
+                      <span className="autocomplete-option-count shrink-0 text-xs text-slate-400">
+                        {formatCount(suggestion.count)}
+                      </span>
+                    )}
                   </li>
                 );
-              })}
+              })
+            )}
             </ul>
           </div>,
           document.body,
