@@ -92,9 +92,12 @@ export function GenerationSettingsPanel({ onBack }: GenerationSettingsPanelProps
   const obfuscateSharedInputPaths = useGenerationSettingsStore((s) => s.obfuscateSharedInputPaths);
   const setObfuscateSharedInputPaths = useGenerationSettingsStore((s) => s.setObfuscateSharedInputPaths);
 
-  // Autocomplete opt-in (server-synced). Only surfaced when the
-  // ComfyUI-Autocomplete-Plus node is detected on this server.
+  // Autocomplete opt-in (server-synced). Only surfaced when a supported source
+  // node (ComfyUI-Autocomplete-Plus and/or ComfyUI-Custom-Scripts) is detected
+  // on this server.
   const autocompleteAvailable = useAutocompleteStore((s) => s.available);
+  const autocompletePlus = useAutocompleteStore((s) => s.plusAvailable);
+  const autocompleteCustomScripts = useAutocompleteStore((s) => s.customScriptsAvailable);
   const autocompleteEnabled = useAutocompleteStore((s) => s.enabled);
   const setAutocompleteEnabled = useAutocompleteStore((s) => s.setEnabled);
   const ensureAutocompleteInit = useAutocompleteStore((s) => s.ensureInitialized);
@@ -200,7 +203,13 @@ export function GenerationSettingsPanel({ onBack }: GenerationSettingsPanelProps
         {autocompleteAvailable && (
           <PreferenceSection
             label="Tag autocomplete"
-            description="Suggest Danbooru tags, LoRAs, and embeddings while typing prompts. Powered by the detected ComfyUI-Autocomplete-Plus node."
+            description={
+              autocompletePlus && autocompleteCustomScripts
+                ? 'Suggest Danbooru tags, your custom words, LoRAs, and embeddings while typing prompts. Powered by the detected ComfyUI-Autocomplete-Plus and ComfyUI-Custom-Scripts nodes.'
+                : autocompleteCustomScripts
+                  ? 'Suggest your custom word list, LoRAs, and embeddings while typing prompts. Powered by the detected ComfyUI-Custom-Scripts node.'
+                  : 'Suggest Danbooru tags, LoRAs, and embeddings while typing prompts. Powered by the detected ComfyUI-Autocomplete-Plus node.'
+            }
             checked={autocompleteEnabled}
             onToggle={() => void setAutocompleteEnabled(!autocompleteEnabled)}
           />

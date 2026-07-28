@@ -10,9 +10,11 @@ export interface TagEntry {
   /** Post frequency — suggestions are ranked by this. */
   count: number;
   aliases: string[];
-  /** Precomputed lowercase search key. */
+  /** Lazily-cached lowercase search key (filled by the first search). The tag
+   * table is ~150k entries and searchTags runs per keystroke on the main
+   * thread — re-lowercasing every tag every keystroke was pure GC churn. */
   searchKey?: string;
-  /** Precomputed normalized aliases. */
+  /** Lazily-cached normalized aliases, same rationale. */
   aliasKeys?: string[];
 }
 
@@ -116,6 +118,38 @@ export function getSuggestionWikiUrl(suggestion: Suggestion): string | undefined
 }
 
 /**
+ * Merge a primary tag table with extra entries (e.g. Custom-Scripts custom
+ * words layered onto the Autocomplete-Plus danbooru table). When a word exists
+ * in both, the primary entry wins (keeping its category/count for correct wiki
+ * links and ranking) and the alias sets are unioned. Result is re-sorted
+ * count-descending, which searchTags relies on.
+ */
+export function mergeTagSources(primary: TagEntry[], extra: TagEntry[]): TagEntry[] {
+  if (extra.length === 0) return primary;
+  if (primary.length === 0) return extra;
+
+  const byTag = new Map<string, TagEntry>();
+  for (const entry of primary) byTag.set(entry.tag, entry);
+  for (const entry of extra) {
+    const existing = byTag.get(entry.tag);
+    if (!existing) {
+      byTag.set(entry.tag, entry);
+    } else if (entry.aliases.length > 0) {
+      const combined = [...new Set([...existing.aliases, ...entry.aliases])];
+      if (combined.length !== existing.aliases.length) {
+        // New object: never mutate a primary entry whose aliasKeys cache may
+        // already be filled for the old alias list.
+        byTag.set(entry.tag, { ...existing, aliases: combined, aliasKeys: undefined });
+      }
+    }
+  }
+
+  const merged = [...byTag.values()];
+  merged.sort((a, b) => b.count - a.count);
+  return merged;
+}
+
+/**
  * Rank tag matches by post count. `tags` is assumed pre-sorted by count
  * descending, so prefix matches are collected in best-first order and we can
  * stop once the limit is reached. Falls back to substring, then alias matches.
@@ -129,21 +163,21 @@ export function searchTags(tags: TagEntry[], query: string, limit = 20): Suggest
   const aliasHits: Suggestion[] = [];
 
   for (const entry of tags) {
-    const nt = entry.searchKey ?? entry.tag.toLowerCase();
+    const nt = entry.searchKey ?? (entry.searchKey = entry.tag.toLowerCase());
     if (nt.startsWith(nq)) {
       prefix.push(toTagSuggestion(entry));
       if (prefix.length >= limit) break;
       continue;
     }
     // Entries are sorted best-first, so once a fallback bucket is full any
-    // later match would be sliced away anyway. Keep scanning only for better
-    // prefix matches.
+    // later match would be sliced away anyway — skip the substring/alias work
+    // and keep scanning only for better prefix matches.
     if (infix.length < limit && nt.includes(nq)) {
       infix.push(toTagSuggestion(entry));
       continue;
     }
     if (aliasHits.length < limit && entry.aliases.length > 0) {
-      const aliasKeys = entry.aliasKeys ?? entry.aliases.map(normalize);
+      const aliasKeys = entry.aliasKeys ?? (entry.aliasKeys = entry.aliases.map(normalize));
       const aliasIndex = aliasKeys.findIndex((a) => a.includes(nq));
       if (aliasIndex >= 0) aliasHits.push(toTagSuggestion(entry, entry.aliases[aliasIndex]));
     }
@@ -182,6 +216,9 @@ export function searchNames(
 
 // --- Insertion formatting (parity with ComfyUI-Autocomplete-Plus) ---
 
+// Lookbehind avoids re-escaping an already-escaped paren.
+const REG_OPEN_PAREN = /(?<!\\)\(/g;
+const REG_CLOSE_PAREN = /(?<!\\)\)/g;
 // At least one letter/number (Latin, JP, KR, CJK-ExtA, Cyrillic, Hebrew).
 const REG_LETTER_NUMBER =
   /[a-zA-Z0-9぀-ヿ㐀-䶿一-龯가-힯Ѐ-ӿ֐-׿]/;
@@ -192,15 +229,7 @@ const LORA_DEFAULT_WEIGHT = 1.0;
  * as prompt weighting groups. */
 export function escapeParentheses(value: string): string {
   if (!value) return value;
-  let result = '';
-  for (let i = 0; i < value.length; i++) {
-    const char = value[i];
-    if ((char === '(' || char === ')') && value[i - 1] !== '\\') {
-      result += '\\';
-    }
-    result += char;
-  }
-  return result;
+  return value.replace(REG_OPEN_PAREN, '\\(').replace(REG_CLOSE_PAREN, '\\)');
 }
 
 /** Booru tags are stored underscore-delimited; prompts read better with spaces.

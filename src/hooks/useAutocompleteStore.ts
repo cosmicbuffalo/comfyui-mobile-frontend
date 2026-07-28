@@ -5,9 +5,16 @@ import {
   fetchLoraNames,
   isAutocompletePlusAvailable,
 } from '@/api/autocompletePlusClient';
+import {
+  fetchCoreEmbeddingNames,
+  fetchCustomScriptsLoraNames,
+  fetchCustomWords,
+  isCustomScriptsAvailable,
+} from '@/api/customScriptsClient';
 import { getAppPreferences, setAppPreferences } from '@/api/client/preferences';
 import {
   getActiveToken,
+  mergeTagSources,
   parseToken,
   searchNames,
   searchTags,
@@ -21,8 +28,13 @@ type LoadStatus = 'idle' | 'loading' | 'ready' | 'error';
 const SUGGESTION_LIMIT = 20;
 
 interface AutocompleteState {
-  /** Whether the Autocomplete-Plus node is installed with usable data. */
+  /** Whether any supported autocomplete source is installed (union of the
+   * per-source flags below). */
   available: boolean;
+  /** Autocomplete-Plus detected with usable tag data. */
+  plusAvailable: boolean;
+  /** ComfyUI-Custom-Scripts (pysssss) detected. */
+  customScriptsAvailable: boolean;
   /** The server-side opt-in preference. */
   enabled: boolean;
   /** Status of the one-time availability + preference probe. */
@@ -48,6 +60,8 @@ interface AutocompleteState {
 
 export const useAutocompleteStore = create<AutocompleteState>((set, get) => ({
   available: false,
+  plusAvailable: false,
+  customScriptsAvailable: false,
   enabled: false,
   initStatus: 'idle',
   dataStatus: 'idle',
@@ -56,15 +70,22 @@ export const useAutocompleteStore = create<AutocompleteState>((set, get) => ({
   embeddings: [],
 
   ensureInitialized: async () => {
-    const { initStatus } = get();
-    if (initStatus === 'loading' || initStatus === 'ready') return;
+    if (get().initStatus !== 'idle') return;
     set({ initStatus: 'loading' });
     try {
-      const [available, prefs] = await Promise.all([
+      const [plusAvailable, customScriptsAvailable, prefs] = await Promise.all([
         isAutocompletePlusAvailable(),
+        isCustomScriptsAvailable(),
         getAppPreferences().catch(() => ({ autocompleteEnabled: false })),
       ]);
-      set({ available, enabled: Boolean(prefs.autocompleteEnabled), initStatus: 'ready' });
+      const available = plusAvailable || customScriptsAvailable;
+      set({
+        available,
+        plusAvailable,
+        customScriptsAvailable,
+        enabled: Boolean(prefs.autocompleteEnabled),
+        initStatus: 'ready',
+      });
       if (available && prefs.autocompleteEnabled) {
         void get().ensureData();
       }
@@ -86,15 +107,22 @@ export const useAutocompleteStore = create<AutocompleteState>((set, get) => ({
   },
 
   ensureData: async () => {
-    const { dataStatus } = get();
+    const { dataStatus, plusAvailable, customScriptsAvailable } = get();
     if (dataStatus === 'loading' || dataStatus === 'ready') return;
     set({ dataStatus: 'loading' });
     try {
-      const [tags, loras, embeddings] = await Promise.all([
-        fetchDanbooruTags(),
-        fetchLoraNames(),
-        fetchEmbeddingNames(),
+      // Autocomplete-Plus provides the danbooru tag table plus lora/embedding
+      // lists; Custom-Scripts contributes the user's custom word list. When
+      // Plus is absent, its name lists are replaced by Custom-Scripts' lora
+      // route and ComfyUI core's /embeddings (same folders, so no double-fetch
+      // when Plus is present).
+      const [danbooruTags, customWords, loras, embeddings] = await Promise.all([
+        plusAvailable ? fetchDanbooruTags() : Promise.resolve([]),
+        customScriptsAvailable ? fetchCustomWords() : Promise.resolve([]),
+        plusAvailable ? fetchLoraNames() : fetchCustomScriptsLoraNames(),
+        plusAvailable ? fetchEmbeddingNames() : fetchCoreEmbeddingNames(),
       ]);
+      const tags = mergeTagSources(danbooruTags, customWords);
       set({ tags, loras, embeddings, dataStatus: 'ready' });
     } catch {
       set({ dataStatus: 'error' });
