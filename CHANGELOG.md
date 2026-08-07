@@ -1,5 +1,11 @@
 # Changelog
 
+## 3.0.7 - 2026-08-07
+
+### Fixed
+
+- **Custom-node example templates failed to load:** the Templates tab lists template names without a `.json` extension, but the server serves the underlying files with one, so opening any custom-node example workflow failed with "Failed to load template" ([#71](https://github.com/cosmicbuffalo/comfyui-mobile-frontend/pull/71))
+
 ## 3.0.6 - 2026-08-06
 
 ### Fixed
