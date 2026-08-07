@@ -105,8 +105,10 @@ export async function getWorkflowTemplates(): Promise<WorkflowTemplates> {
 }
 
 export async function loadTemplateWorkflow(moduleName: string, templateName: string): Promise<Workflow> {
+  // Server lists template names without .json; static files are *.json.
+  const fileName = templateName.endsWith('.json') ? templateName : `${templateName}.json`;
   const response = await fetch(
-    `/api/workflow_templates/${encodeURIComponent(moduleName)}/${encodeURIComponent(templateName)}`
+    `/api/workflow_templates/${encodeURIComponent(moduleName)}/${encodeURIComponent(fileName)}`
   );
   if (!response.ok) throw new Error('Failed to load template');
   return response.json();
