@@ -59,6 +59,7 @@ import {
   generateSeedFromNode,
   clampSeedToNodeBounds,
   hasSeedControlWidget,
+  findSeedControlWidgetIndex,
   resolveSpecialSeedToUse,
 } from "@/utils/seedUtils";
 import {
@@ -68,6 +69,8 @@ import {
   resolveSubgraphPlaceholderInputWidgetDefs,
   resolveSubgraphProxyWidgetDefs,
   resolveSubgraphProxyInputWidgetDefs,
+  resolveSubgraphBoundaryWidgetDefs,
+  resolveSubgraphBoundaryInputWidgetDefs,
 } from "@/utils/widgetDefinitions";
 import { findConnectedNode, orderNodesForMobile } from "@/utils/nodeOrdering";
 import { areTypesCompatible } from "@/utils/connectionUtils";
@@ -96,6 +99,7 @@ import {
   resolveCurrentScope,
   resolveScopeForHierarchicalKey,
   resolveNodeByHierarchicalKey,
+  isSubgraphPlaceholder,
   getLinkId,
   getLinkOriginId,
   getLinkOriginSlot,
@@ -181,6 +185,9 @@ export {
   resolveSubgraphPlaceholderInputWidgetDefs,
   resolveSubgraphProxyWidgetDefs,
   resolveSubgraphProxyInputWidgetDefs,
+  resolveSubgraphBoundaryWidgetDefs,
+  resolveSubgraphBoundaryInputWidgetDefs,
+  findSeedControlWidgetIndex,
 };
 
 // Internal type alias
@@ -913,6 +920,87 @@ function updateNodeWidgetsValues(
     newWidgetValues[idx] = value;
   }
   return { ...node, widgets_values: newWidgetValues };
+}
+
+// Combined widget-descriptor list for a subgraph placeholder node, mirroring
+// what NodeCard.tsx builds for the UI — needed so findSeedWidgetIndex (and
+// findSeedControlWidgetIndex) can locate a promoted seed on a placeholder,
+// whose node.type is a subgraph UUID with no entry in nodeTypes/object_info.
+// Deliberately excludes proxy-promoted descriptors (resolveSubgraphProxy*).
+// Their widgetIndex is offset by PROXY_INDEX_OFFSET (10000) as a sentinel
+// meaning "route this through the inner node via proxyRoutes" — it is not a
+// real position in this node's own widgets_values. The UI (NodeCard.tsx)
+// knows to check proxyRoutes before falling back to a direct widgets_values
+// read/write; the queue-time code below (processSeedNode,
+// applySeedOverridesForExpansion) does not have that routing and indexes
+// widgets_values directly, so an offset index here would silently read out
+// of bounds and, on write, corrupt widgets_values into a huge sparse array.
+function buildSubgraphSeedWidgetDescriptors(
+  workflow: Workflow,
+  nodeTypes: NodeTypes | null,
+  node: WorkflowNode,
+) {
+  const slotPromotedInput = resolveSubgraphPlaceholderInputWidgetDefs(node, workflow, nodeTypes);
+  const boundaryPromotedInput = resolveSubgraphBoundaryInputWidgetDefs(node, workflow, nodeTypes);
+  const slotPromoted = resolveSubgraphPlaceholderWidgetDefs(node, workflow, nodeTypes);
+  const boundaryPromoted = resolveSubgraphBoundaryWidgetDefs(node, workflow, nodeTypes);
+  return [
+    ...slotPromotedInput,
+    ...boundaryPromotedInput,
+    ...slotPromoted,
+    ...boundaryPromoted,
+  ];
+}
+
+/**
+ * Build a throwaway workflow clone with fresh seed overrides applied to
+ * subgraph placeholder nodes' widgets_values, for use ONLY when expanding
+ * subgraphs to build the queued prompt — never assign the result back to the
+ * persisted workflow.
+ *
+ * Context: a subgraph placeholder's promoted seed with no real
+ * control_after_generate on the boundary gets its randomized value recorded
+ * in `seedOverrides` (keyed by the placeholder's own node id) rather than
+ * written into its widgets_values directly — mutating it there would bake a
+ * concrete number into the saved workflow and lose the "always randomize"
+ * mode setting, unlike a node with a real control_after_generate widget.
+ *
+ * But expandWorkflowSubgraphs treats a promoted widget's value on the
+ * placeholder as authoritative and pushes it down into the inner node it
+ * proxies to (so user edits on the placeholder card propagate). Without this
+ * patch, expansion would push the placeholder's stale saved seed right back
+ * over the freshly-randomized one, silently undoing the override every time
+ * a prompt is queued — the seed would never actually randomize.
+ */
+export function applySeedOverridesForExpansion(
+  workflow: Workflow,
+  nodeTypes: NodeTypes | null,
+  seedOverrides: Record<string, number>,
+): Workflow {
+  const patches: Array<{ nodeId: number; seedIndex: number; value: number }> = [];
+  for (const node of workflow.nodes) {
+    const override = seedOverrides[String(node.id)];
+    if (override === undefined) continue;
+    if (!isSubgraphPlaceholder(node, workflow)) continue;
+    const descriptors = buildSubgraphSeedWidgetDescriptors(workflow, nodeTypes, node);
+    const seedIndex = findSeedWidgetIndex(workflow, nodeTypes, node, {
+      widgetDescriptors: descriptors,
+    });
+    if (seedIndex === null) continue;
+    patches.push({ nodeId: node.id, seedIndex, value: override });
+  }
+  if (patches.length === 0) return workflow;
+  const patchByNodeId = new Map(patches.map((p) => [p.nodeId, p]));
+  return {
+    ...workflow,
+    nodes: workflow.nodes.map((node) => {
+      const patch = patchByNodeId.get(node.id);
+      if (!patch || !Array.isArray(node.widgets_values)) return node;
+      const newValues = [...node.widgets_values];
+      newValues[patch.seedIndex] = patch.value;
+      return { ...node, widgets_values: newValues };
+    }),
+  };
 }
 
 function inferSeedMode(
@@ -5150,18 +5238,34 @@ export const useWorkflowStore = create<WorkflowState>()(
             seedOverrides: Record<string, number>,
             scopeSubgraphId: string | null,
           ): WorkflowNode => {
-            const seedIndex = findSeedWidgetIndex(currentWorkflow, nodeTypes, node);
+            const isPlaceholder = isSubgraphPlaceholder(node, currentWorkflow);
+            // Subgraph placeholders (e.g. a promoted noise_seed on a video
+            // model's subgraph) aren't real ComfyUI node types, so nodeTypes
+            // has no schema for them — findSeedWidgetIndex needs the same
+            // resolved descriptor list the UI uses to locate a promoted seed.
+            const widgetDescriptors = isPlaceholder
+              ? buildSubgraphSeedWidgetDescriptors(currentWorkflow, nodeTypes, node)
+              : undefined;
+            const seedIndex = findSeedWidgetIndex(currentWorkflow, nodeTypes, node, {
+              widgetDescriptors,
+            });
             if (seedIndex === null) return node;
             if (!Array.isArray(node.widgets_values)) return node;
 
-            const controlWidgetIndex = seedIndex + 1;
-            const hasControlWidget = hasSeedControlWidget(
-              node,
-              node.widgets_values[controlWidgetIndex],
-            );
+            // Subgraphs never promote a stock control_after_generate widget
+            // adjacent to the seed by position — only an explicit
+            // proxyWidgets entry can surface one. Guessing seedIndex + 1 for
+            // a placeholder can land on an unrelated widget (e.g. a model
+            // combo) that also happens to hold a non-empty string.
+            const controlWidgetIndex = isPlaceholder
+              ? findSeedControlWidgetIndex(widgetDescriptors)
+              : seedIndex + 1;
+            const hasControlWidget =
+              controlWidgetIndex !== null &&
+              hasSeedControlWidget(node, node.widgets_values[controlWidgetIndex]);
             const controlWidgetMode =
-              hasControlWidget && typeof node.widgets_values[controlWidgetIndex] === "string"
-                ? (node.widgets_values[controlWidgetIndex] as SeedMode)
+              hasControlWidget && typeof node.widgets_values[controlWidgetIndex!] === "string"
+                ? (node.widgets_values[controlWidgetIndex!] as SeedMode)
                 : null;
             const mode =
               controlWidgetMode ??
@@ -5238,11 +5342,25 @@ export const useWorkflowStore = create<WorkflowState>()(
             writeSeedLastValues(nextSeedLastValues);
             writeWorkflow(currentWorkflow);
 
+            // Seed overrides recorded above for a promoted-seed placeholder (no
+            // real control_after_generate on the boundary, so processSeedNode
+            // took the ephemeral seedOverrides path rather than mutating
+            // widgets_values) never landed in currentWorkflow.nodes itself.
+            // Patch a throwaway clone, used only for this expansion pass, so
+            // the fresh value propagates into the inner node it proxies to
+            // instead of being overwritten by the stale saved one. See
+            // applySeedOverridesForExpansion's own docstring for why.
+            const workflowForExpansion = applySeedOverridesForExpansion(
+              currentWorkflow,
+              nodeTypes,
+              seedOverrides,
+            );
+
             // Expand JIT for prompt building (one-way, ephemeral — no sync-back needed).
             // promptKeyMap maps each expanded node's numeric ID to its hierarchical
             // execution ID (e.g. "50:7" for inner node 7 inside placeholder 50),
             // matching the ID scheme used by the main ComfyUI frontend.
-            const { workflow: expandedForQueue, promptKeyMap } = expandWorkflowSubgraphs(currentWorkflow, nodeTypes);
+            const { workflow: expandedForQueue, promptKeyMap } = expandWorkflowSubgraphs(workflowForExpansion, nodeTypes);
 
             // Build mapping from WS node IDs back to canonical itemKeys.
             // ComfyUI may report either expanded numeric IDs or hierarchical prompt keys,

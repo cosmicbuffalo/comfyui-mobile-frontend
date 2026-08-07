@@ -1,6 +1,6 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { WorkflowInput, WorkflowNode } from '@/api/types';
-import { useWorkflowStore, getWidgetDefinitions, getInputWidgetDefinitions, getWidgetIndexForInput, findSeedWidgetIndex, resolveSubgraphPlaceholderWidgetDefs, resolveSubgraphPlaceholderInputWidgetDefs, resolveSubgraphProxyWidgetDefs, resolveSubgraphProxyInputWidgetDefs } from '@/hooks/useWorkflow';
+import { useWorkflowStore, getWidgetDefinitions, getInputWidgetDefinitions, getWidgetIndexForInput, findSeedWidgetIndex, findSeedControlWidgetIndex, resolveSubgraphPlaceholderWidgetDefs, resolveSubgraphPlaceholderInputWidgetDefs, resolveSubgraphProxyWidgetDefs, resolveSubgraphProxyInputWidgetDefs, resolveSubgraphBoundaryWidgetDefs, resolveSubgraphBoundaryInputWidgetDefs } from '@/hooks/useWorkflow';
 import type { LinkedWidgetRoute, ProxyWidgetRoute } from '@/utils/widgetDefinitions';
 import { isSubgraphPlaceholder } from '@/utils/canonicalWorkflowOps';
 import { isLoraManagerNodeType } from '@/utils/loraManager';
@@ -217,7 +217,8 @@ export const NodeCard = memo(function NodeCard({
     if (isPlaceholder && workflow) {
       const slotPromoted = resolveSubgraphPlaceholderWidgetDefs(node, workflow, nodeTypes);
       const proxyPromoted = resolveSubgraphProxyWidgetDefs(node, workflow, nodeTypes);
-      return [...slotPromoted, ...proxyPromoted];
+      const boundaryPromoted = resolveSubgraphBoundaryWidgetDefs(node, workflow, nodeTypes);
+      return [...slotPromoted, ...proxyPromoted, ...boundaryPromoted];
     }
     return getWidgetDefinitions(nodeTypes, node);
   }, [nodeTypes, node, isPlaceholder, workflow]);
@@ -236,7 +237,8 @@ export const NodeCard = memo(function NodeCard({
     if (isPlaceholder && workflow) {
       const slotPromoted = resolveSubgraphPlaceholderInputWidgetDefs(node, workflow, nodeTypes);
       const proxyPromoted = resolveSubgraphProxyInputWidgetDefs(node, workflow, nodeTypes);
-      return [...slotPromoted, ...proxyPromoted];
+      const boundaryPromoted = resolveSubgraphBoundaryInputWidgetDefs(node, workflow, nodeTypes);
+      return [...slotPromoted, ...proxyPromoted, ...boundaryPromoted];
     }
     return getInputWidgetDefinitions(nodeTypes, node);
   }, [nodeTypes, node, isPlaceholder, workflow]);
@@ -293,6 +295,11 @@ export const NodeCard = memo(function NodeCard({
     return findSeedWidgetIndex(workflow, nodeTypes, node, {
       widgetDescriptors: [...inputWidgets, ...widgets],
     });
+  };
+
+  const handleFindSeedControlWidgetIndex = () => {
+    if (!workflow || !nodeTypes) return null;
+    return findSeedControlWidgetIndex([...inputWidgets, ...widgets]);
   };
 
   const handleUpdateNote = (value: string) => {
@@ -838,6 +845,8 @@ export const NodeCard = memo(function NodeCard({
               onUpdateNodeWidgets={handleUpdateNodeWidgets}
               getWidgetIndexForInput={handleGetWidgetIndexForInput}
               findSeedWidgetIndex={handleFindSeedWidgetIndex}
+              findSeedControlWidgetIndex={handleFindSeedControlWidgetIndex}
+              isPlaceholder={isPlaceholder}
               setSeedMode={handleSetSeedMode}
               isWidgetPinned={isWidgetPinned}
               toggleWidgetPin={toggleWidgetPin}

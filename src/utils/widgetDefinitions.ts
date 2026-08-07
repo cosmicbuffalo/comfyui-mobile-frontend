@@ -1,4 +1,4 @@
-import type { WorkflowLink, WorkflowNode, NodeTypes, NodeTypeDefinition, Workflow, WorkflowSubgraphLink } from '@/api/types';
+import type { WorkflowLink, WorkflowNode, NodeTypes, NodeTypeDefinition, NodeInputEntry, Workflow, WorkflowSubgraphLink, WorkflowSubgraphDefinition } from '@/api/types';
 import { getNodePropertyWidgetIndexMap, getWidgetValue, isWidgetInputType, skipImplicitSeedControlSlot } from '@/utils/workflowInputs';
 import { findLoraListIndex, isLoraList, isLoraManagerNodeType, isPowerLoraLoaderNodeType } from '@/utils/loraManager';
 import { modelWidgetKind } from '@/utils/modelWidgetKind';
@@ -495,6 +495,72 @@ function resolveLinkedWidgetRoute(
 }
 
 /**
+ * Resolve the actual inner node + widget name a subgraph boundary input
+ * feeds, by walking its link rather than matching the boundary's own name
+ * against inner node schemas directly.
+ *
+ * ComfyUI appends a numeric suffix to a boundary port name when two promoted
+ * widgets share the same underlying name -- e.g. two separate VAELoader
+ * nodes (an image vae and an audio vae) each expose a widget literally named
+ * `vae_name`, so the second one's boundary port becomes `vae_name_1` to stay
+ * unique. That suffixed name never matches any real object_info schema key
+ * (VAELoader's schema only ever has `vae_name`), so looking up options or
+ * type info keyed directly by the boundary name silently comes back empty --
+ * the widget renders with no choices at all, as if the model files were
+ * missing, even though they're installed.
+ */
+function resolveInnerWidgetForBoundaryName(
+  sg: WorkflowSubgraphDefinition | undefined,
+  boundaryInputName: string,
+): { innerNode: WorkflowNode; widgetName: string } | null {
+  if (!sg) return null;
+  const boundaryInput = (sg.inputs ?? []).find((i) => i.name === boundaryInputName);
+  const linkId = boundaryInput?.linkIds?.[0];
+  if (linkId === undefined) return null;
+  const link = (sg.links ?? []).find((l) => l.id === linkId);
+  if (!link) return null;
+  const innerNode = (sg.nodes ?? []).find((n) => n.id === link.target_id);
+  if (!innerNode) return null;
+  const widgetName = innerNode.inputs?.[link.target_slot]?.widget?.name;
+  if (!widgetName) return null;
+  return { innerNode, widgetName };
+}
+
+/**
+ * Look up a widget's type-info entry (options/bounds) from object_info,
+ * preferring the specific inner node + real widget name a boundary input's
+ * link resolves to, and falling back to a broad by-name search across all
+ * inner nodes only when link resolution isn't possible (e.g. no linkIds
+ * recorded). The broad search is what silently breaks on a disambiguated
+ * name like `vae_name_1` -- see resolveInnerWidgetForBoundaryName.
+ */
+function findInnerWidgetTypeEntry(
+  sg: WorkflowSubgraphDefinition | undefined,
+  boundaryInputName: string,
+  nodeTypes: NodeTypes | null,
+): NodeInputEntry | undefined {
+  if (!sg || !nodeTypes) return undefined;
+
+  const resolved = resolveInnerWidgetForBoundaryName(sg, boundaryInputName);
+  if (resolved) {
+    const typeDef = nodeTypes[resolved.innerNode.type];
+    const entry =
+      typeDef?.input?.required?.[resolved.widgetName] ??
+      typeDef?.input?.optional?.[resolved.widgetName];
+    if (entry) return entry;
+  }
+
+  for (const innerNode of sg.nodes ?? []) {
+    const typeDef = nodeTypes[innerNode.type];
+    if (!typeDef) continue;
+    const entry =
+      typeDef.input?.required?.[boundaryInputName] ?? typeDef.input?.optional?.[boundaryInputName];
+    if (entry) return entry;
+  }
+  return undefined;
+}
+
+/**
  * Resolve all promoted widget definitions (both COMBO and non-COMBO) for a
  * subgraph placeholder node in a single pass.
  *
@@ -520,7 +586,11 @@ export function resolveAllSubgraphPlaceholderWidgetDefs(
     const typeName = String(inp.type);
     const isCombo = typeName.toUpperCase() === 'COMBO';
     const widgetName = inp.widget!.name;
-    const name = inp.localized_name || inp.name;
+    // `label` is the template author's explicit display override (e.g.
+    // "audio_vae" for a second vae_name_1 input, "duration" for value_1) --
+    // it takes priority over localized_name/name, which are often just the
+    // raw internal widget identifier.
+    const name = inp.label || inp.localized_name || inp.name;
     const linkedSource = resolveLinkedWidgetRoute(placeholderNode, inp, canonical);
     const inlineValue = resolvePlaceholderInlineWidgetValue(placeholderNode, inp, widgetIndex);
     const value = inlineValue !== undefined ? inlineValue : linkedSource?.value;
@@ -528,18 +598,9 @@ export function resolveAllSubgraphPlaceholderWidgetDefs(
 
     if (isCombo) {
       let options: Record<string, unknown> | unknown[] = [];
-      if (sg && nodeTypes) {
-        for (const innerNode of sg.nodes ?? []) {
-          const typeDef = nodeTypes[innerNode.type];
-          if (!typeDef) continue;
-          const entry =
-            typeDef.input?.required?.[widgetName] ??
-            typeDef.input?.optional?.[widgetName];
-          if (entry && Array.isArray(entry[0])) {
-            options = { ...(entry[1] ?? {}), options: entry[0] as unknown[] };
-            break;
-          }
-        }
+      const entry = findInnerWidgetTypeEntry(sg, inp.name, nodeTypes);
+      if (entry && Array.isArray(entry[0])) {
+        options = { ...(entry[1] ?? {}), options: entry[0] as unknown[] };
       }
       // The promoted widget is shown under its display label (e.g. "Checkpoint"),
       // but the rich model picker is detected from the ComfyUI input name. Carry
@@ -562,18 +623,9 @@ export function resolveAllSubgraphPlaceholderWidgetDefs(
       });
     } else {
       let options: Record<string, unknown> | undefined = undefined;
-      if (sg && nodeTypes) {
-        for (const innerNode of sg.nodes ?? []) {
-          const typeDef = nodeTypes[innerNode.type];
-          if (!typeDef) continue;
-          const entry =
-            typeDef.input?.required?.[widgetName] ??
-            typeDef.input?.optional?.[widgetName];
-          if (entry && !Array.isArray(entry[0])) {
-            options = entry[1] as Record<string, unknown> | undefined;
-            break;
-          }
-        }
+      const entry = findInnerWidgetTypeEntry(sg, inp.name, nodeTypes);
+      if (entry && !Array.isArray(entry[0])) {
+        options = entry[1] as Record<string, unknown> | undefined;
       }
       widgets.push({
         name,
@@ -754,4 +806,122 @@ export function resolveSubgraphProxyInputWidgetDefs(
   nodeTypes: NodeTypes | null
 ): ReturnType<typeof getInputWidgetDefinitions> {
   return resolveAllSubgraphProxyWidgetDefs(placeholderNode, canonical, nodeTypes).inputWidgets;
+}
+
+const SUBGRAPH_BOUNDARY_WIDGET_TYPES = new Set(['INT', 'FLOAT', 'BOOLEAN', 'STRING', 'COMBO']);
+
+/**
+ * Resolve promoted widget definitions for a subgraph placeholder node that
+ * are exposed ONLY through the subgraph definition's own boundary `inputs[]`
+ * list — i.e. neither given a placeholder-level socket entry with
+ * `input.widget` set (the `resolveAllSubgraphPlaceholderWidgetDefs` slot
+ * mechanism) nor listed in `properties.proxyWidgets` (the
+ * `resolveAllSubgraphProxyWidgetDefs` mechanism).
+ *
+ * A subgraph template author can promote a widget to the boundary without
+ * exposing it as a connectable socket on the placeholder card at all — the
+ * value still lives in `placeholderNode.widgets_values[]`, positionally
+ * aligned with the subgraph definition's widget-typed boundary inputs, but
+ * the placeholder's own `inputs[]` array has no entry for it whatsoever. The
+ * two existing mechanisms only look at `placeholderNode.inputs[]` and
+ * `properties.proxyWidgets`, so they never see these — leaving widgets like a
+ * promoted seed completely unreachable (findSeedWidgetIndex returns null,
+ * and the whole seed control section silently disappears from the UI).
+ *
+ * Reads and writes both work off the resolved `widgetIndex` alone (no
+ * `__proxy`/`__linkedSource` routing is attached), because these values are
+ * genuinely stored directly on the placeholder's own `widgets_values`.
+ */
+export function resolveAllSubgraphBoundaryWidgetDefs(
+  placeholderNode: WorkflowNode,
+  canonical: Workflow,
+  nodeTypes: NodeTypes | null
+): { widgets: ReturnType<typeof getWidgetDefinitions>; inputWidgets: ReturnType<typeof getInputWidgetDefinitions> } {
+  const sg = canonical.definitions?.subgraphs?.find((s) => s.id === placeholderNode.type);
+  if (!sg) return { widgets: [], inputWidgets: [] };
+
+  const boundaryWidgetInputs = (sg.inputs ?? []).filter((input) =>
+    SUBGRAPH_BOUNDARY_WIDGET_TYPES.has(String(input.type).toUpperCase())
+  );
+  if (boundaryWidgetInputs.length === 0) return { widgets: [], inputWidgets: [] };
+
+  // Names already resolved via slot promotion — skip those to avoid duplicates.
+  const alreadyCovered = new Set<string>();
+  for (const inp of placeholderNode.inputs ?? []) {
+    if (inp.widget?.name) alreadyCovered.add(inp.widget.name);
+  }
+
+  const widgets: ReturnType<typeof getWidgetDefinitions> = [];
+  const inputWidgets: ReturnType<typeof getInputWidgetDefinitions> = [];
+
+  // Position within this filtered list matches position within
+  // placeholderNode.widgets_values[] — ComfyUI keeps widget-typed boundary
+  // inputs and widgets_values positionally aligned 1:1, regardless of which
+  // of those boundary inputs also got a placeholder-level socket entry.
+  boundaryWidgetInputs.forEach((boundaryInput, widgetIndex) => {
+    const boundaryName = boundaryInput.name;
+    if (!boundaryName || alreadyCovered.has(boundaryName)) return;
+
+    const typeName = String(boundaryInput.type);
+    const isCombo = typeName.toUpperCase() === 'COMBO';
+    const name = boundaryInput.label || boundaryInput.localized_name || boundaryName;
+    const value = Array.isArray(placeholderNode.widgets_values)
+      ? placeholderNode.widgets_values[widgetIndex]
+      : undefined;
+
+    if (isCombo) {
+      let options: Record<string, unknown> | unknown[] = [];
+      const entry = findInnerWidgetTypeEntry(sg, boundaryName, nodeTypes);
+      if (entry && Array.isArray(entry[0])) {
+        options = { ...(entry[1] ?? {}), options: entry[0] as unknown[] };
+      }
+      const modelKind = modelWidgetKind(boundaryName);
+      inputWidgets.push({
+        name,
+        type: 'COMBO',
+        value,
+        options: modelKind
+          ? { ...(Array.isArray(options) ? { options } : options), __modelKind: modelKind }
+          : options,
+        widgetIndex,
+        connected: false,
+        inputIndex: -1,
+      });
+    } else {
+      let options: Record<string, unknown> | undefined;
+      const entry = findInnerWidgetTypeEntry(sg, boundaryName, nodeTypes);
+      if (entry && !Array.isArray(entry[0])) {
+        options = entry[1] as Record<string, unknown> | undefined;
+      }
+      widgets.push({
+        name,
+        type: typeName,
+        options,
+        value,
+        widgetIndex,
+        connected: false,
+        inputIndex: -1,
+      });
+    }
+  });
+
+  return { widgets, inputWidgets };
+}
+
+/** Resolve non-COMBO boundary-only widget definitions for a subgraph placeholder node. */
+export function resolveSubgraphBoundaryWidgetDefs(
+  placeholderNode: WorkflowNode,
+  canonical: Workflow,
+  nodeTypes: NodeTypes | null
+): ReturnType<typeof getWidgetDefinitions> {
+  return resolveAllSubgraphBoundaryWidgetDefs(placeholderNode, canonical, nodeTypes).widgets;
+}
+
+/** Resolve COMBO boundary-only widget definitions for a subgraph placeholder node. */
+export function resolveSubgraphBoundaryInputWidgetDefs(
+  placeholderNode: WorkflowNode,
+  canonical: Workflow,
+  nodeTypes: NodeTypes | null
+): ReturnType<typeof getInputWidgetDefinitions> {
+  return resolveAllSubgraphBoundaryWidgetDefs(placeholderNode, canonical, nodeTypes).inputWidgets;
 }

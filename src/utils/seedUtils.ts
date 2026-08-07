@@ -71,6 +71,29 @@ export function getSpecialSeedValueForMode(mode: SeedMode): number | null {
   return null;
 }
 
+/**
+ * Find a genuinely-promoted control_after_generate widget in a resolved
+ * descriptor list. Used for subgraph placeholders, where the widget
+ * immediately after a promoted seed is NOT guaranteed to be its control
+ * companion — subgraphs never promote that pairing implicitly the way stock
+ * ComfyUI nodes do; only an explicit `proxyWidgets` entry can surface it (see
+ * resolveAllSubgraphProxyWidgetDefs's control_after_generate synthesis in
+ * widgetDefinitions.ts). Guessing via seedIndex + 1 for a placeholder can land
+ * on an unrelated widget (e.g. a model combo) that also happens to hold a
+ * non-empty string.
+ */
+export function findSeedControlWidgetIndex(
+  widgetDescriptors: SeedWidgetDescriptor[] | undefined,
+): number | null {
+  const entry = widgetDescriptors?.find((descriptor) => {
+    const base = descriptor.name.includes(': ')
+      ? descriptor.name.split(': ').pop()!
+      : descriptor.name;
+    return base === 'control_after_generate';
+  });
+  return entry ? entry.widgetIndex : null;
+}
+
 export function getWidgetIndexForInput(
   workflow: Workflow,
   nodeTypes: NodeTypes | null,
