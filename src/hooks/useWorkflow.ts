@@ -926,23 +926,28 @@ function updateNodeWidgetsValues(
 // what NodeCard.tsx builds for the UI — needed so findSeedWidgetIndex (and
 // findSeedControlWidgetIndex) can locate a promoted seed on a placeholder,
 // whose node.type is a subgraph UUID with no entry in nodeTypes/object_info.
+// Deliberately excludes proxy-promoted descriptors (resolveSubgraphProxy*).
+// Their widgetIndex is offset by PROXY_INDEX_OFFSET (10000) as a sentinel
+// meaning "route this through the inner node via proxyRoutes" — it is not a
+// real position in this node's own widgets_values. The UI (NodeCard.tsx)
+// knows to check proxyRoutes before falling back to a direct widgets_values
+// read/write; the queue-time code below (processSeedNode,
+// applySeedOverridesForExpansion) does not have that routing and indexes
+// widgets_values directly, so an offset index here would silently read out
+// of bounds and, on write, corrupt widgets_values into a huge sparse array.
 function buildSubgraphSeedWidgetDescriptors(
   workflow: Workflow,
   nodeTypes: NodeTypes | null,
   node: WorkflowNode,
 ) {
   const slotPromotedInput = resolveSubgraphPlaceholderInputWidgetDefs(node, workflow, nodeTypes);
-  const proxyPromotedInput = resolveSubgraphProxyInputWidgetDefs(node, workflow, nodeTypes);
   const boundaryPromotedInput = resolveSubgraphBoundaryInputWidgetDefs(node, workflow, nodeTypes);
   const slotPromoted = resolveSubgraphPlaceholderWidgetDefs(node, workflow, nodeTypes);
-  const proxyPromoted = resolveSubgraphProxyWidgetDefs(node, workflow, nodeTypes);
   const boundaryPromoted = resolveSubgraphBoundaryWidgetDefs(node, workflow, nodeTypes);
   return [
     ...slotPromotedInput,
-    ...proxyPromotedInput,
     ...boundaryPromotedInput,
     ...slotPromoted,
-    ...proxyPromoted,
     ...boundaryPromoted,
   ];
 }

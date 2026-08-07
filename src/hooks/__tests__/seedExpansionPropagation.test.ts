@@ -122,4 +122,76 @@ describe('applySeedOverridesForExpansion (issue #69: seed silently not randomizi
     // '999' matches no node in this workflow at all.
     expect(applySeedOverridesForExpansion(workflow, nodeTypes, { '999': 42 })).toBe(workflow);
   });
+
+  // Flagged in code review (Copilot, PR #70): a seed promoted EXCLUSIVELY via
+  // properties.proxyWidgets (no slot/boundary promotion at all -- the pattern
+  // some helper nodes like EasySeed use) resolves to a descriptor whose
+  // widgetIndex is offset by PROXY_INDEX_OFFSET (10000). That offset is a
+  // sentinel meaning "route through the inner node", not a real
+  // widgets_values position -- only the proxyRoutes-aware UI code
+  // (NodeCard.tsx) knows how to follow it. applySeedOverridesForExpansion
+  // does a raw widgets_values[seedIndex] write with no such routing, so
+  // resolving a proxy-offset seedIndex there would balloon widgets_values
+  // into a ~10001-element sparse array. Proxy-promoted seeds are deliberately
+  // excluded from this queue-time path (see buildSubgraphSeedWidgetDescriptors
+  // in useWorkflow.ts) -- verify that holds and nothing gets corrupted.
+  it('REGRESSION: a seed promoted only via proxyWidgets is not resolved here, and never corrupts widgets_values', () => {
+    const innerSeedNode: WorkflowNode = {
+      id: 15,
+      type: 'RandomNoiseLike',
+      pos: [0, 0],
+      size: [100, 100],
+      flags: {},
+      order: 0,
+      mode: 0,
+      inputs: [],
+      outputs: [{ name: 'NOISE', type: 'NOISE', links: [] }],
+      properties: {},
+      widgets_values: [777],
+    } as unknown as WorkflowNode;
+
+    const placeholder: WorkflowNode = {
+      id: 105,
+      type: 'sg-proxy-only',
+      pos: [0, 0],
+      size: [200, 100],
+      flags: {},
+      order: 0,
+      mode: 0,
+      inputs: [], // no slot/boundary entry for the seed at all
+      outputs: [{ name: 'VIDEO', type: 'VIDEO', links: [] }],
+      properties: {
+        proxyWidgets: [['15', 'noise_seed']],
+      },
+      widgets_values: ['unrelated prompt text'], // only 1 slot -- nowhere near index 10000
+    } as unknown as WorkflowNode;
+
+    const workflow: Workflow = {
+      last_node_id: 105,
+      last_link_id: 0,
+      nodes: [placeholder],
+      links: [],
+      groups: [],
+      config: {},
+      version: 0.4,
+      definitions: {
+        subgraphs: [
+          {
+            id: 'sg-proxy-only',
+            name: 'Proxy-only subgraph',
+            nodes: [innerSeedNode],
+            links: [],
+            inputs: [],
+            outputs: [],
+          },
+        ],
+      },
+    } as unknown as Workflow;
+
+    const patched = applySeedOverridesForExpansion(workflow, nodeTypes, { '105': 42 });
+
+    expect(patched).toBe(workflow); // no-op: the exact bug-corrupted case would NOT be a no-op
+    const resultPlaceholder = patched.nodes.find((n) => n.id === 105)!;
+    expect((resultPlaceholder.widgets_values as unknown[]).length).toBe(1);
+  });
 });
