@@ -1,5 +1,14 @@
 # Changelog
 
+## 3.0.6 - 2026-08-06
+
+### Fixed
+
+- **Subgraph-promoted seed controls (e.g. the MiniMax H3 video template):** when a subgraph promotes a seed widget without also promoting its `control_after_generate` companion, the seed control no longer shows and edits an unrelated promoted widget (like the model filename) — the mode dropdown now correctly falls back to per-node "Randomize each time" tracking instead of guessing by position ([#69](https://github.com/cosmicbuffalo/comfyui-mobile-frontend/issues/69))
+- **Subgraph-promoted seeds actually randomize now:** a freshly-randomized seed on a subgraph placeholder was being silently overwritten by the placeholder's stale saved value while the queued prompt was being built, so "randomize" never took effect on the executed generation
+- **Subgraph widgets promoted only through the boundary definition** (with no corresponding socket on the placeholder card itself — the shape the shipped MiniMax H3 template uses for its prompt, seed, and model widgets) are now discoverable at all; previously they were invisible to the mobile UI entirely
+- **Duplicate-named subgraph widgets** (e.g. two VAELoader widgets both promoted as `vae_name`, disambiguated by ComfyUI as `vae_name_1`): the second one now shows its intended label (e.g. "audio_vae") instead of the raw disambiguated name, and its dropdown now correctly lists the installed model files instead of appearing empty
+
 ## 3.0.5 - 2026-07-27
 
 ### Added

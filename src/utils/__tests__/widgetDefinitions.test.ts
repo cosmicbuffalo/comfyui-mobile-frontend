@@ -5,6 +5,8 @@ import {
   PROXY_INDEX_OFFSET,
   resolveSubgraphPlaceholderInputWidgetDefs,
   resolveSubgraphProxyInputWidgetDefs,
+  resolveSubgraphBoundaryWidgetDefs,
+  resolveSubgraphBoundaryInputWidgetDefs,
 } from '../widgetDefinitions';
 
 function makeNode(id: number, type: string, widgetsValues: unknown[]): WorkflowNode {
@@ -393,5 +395,228 @@ describe('widgetDefinitions lora manager support', () => {
     expect((inputDefs[0].options as Record<string, unknown>).__modelKind).toBe(
       'checkpoints',
     );
+  });
+});
+
+// Issue #69, fix 3: a subgraph template author can promote a widget to the
+// boundary (definitions.subgraphs[].inputs[]) without giving it a socket
+// entry on the placeholder's own inputs[] at all -- e.g. the shipped MiniMax
+// H3 template only puts width/height/duration/audio_vae in the placeholder's
+// inputs[], while prompt/noise_seed/unet_name/clip_name/vae_name live only in
+// widgets_values, positionally aligned with the subgraph's widget-typed
+// boundary inputs. Neither the slot-promotion mechanism (inputs[].widget) nor
+// the proxyWidgets mechanism sees these, so findSeedWidgetIndex previously
+// returned null and the whole seed section silently vanished from the UI.
+describe('resolveAllSubgraphBoundaryWidgetDefs (issue #69 fix 3)', () => {
+  const workflow = {
+    definitions: {
+      subgraphs: [
+        {
+          id: 'sg-1',
+          nodes: [
+            {
+              id: 1,
+              type: 'InnerLoader',
+              pos: [0, 0],
+              size: [100, 100],
+              flags: {},
+              order: 0,
+              mode: 0,
+              inputs: [],
+              outputs: [],
+              properties: {},
+              widgets_values: [0, 'a.safetensors'],
+            } as unknown as WorkflowNode,
+          ],
+          links: [],
+          inputs: [
+            { name: 'prompt', type: 'STRING' },
+            { name: 'width', type: 'INT' },
+            { name: 'noise_seed', type: 'INT' },
+            { name: 'unet_name', type: 'COMBO' },
+          ],
+        },
+      ],
+    },
+  } as unknown as Workflow;
+
+  const nodeTypes: NodeTypes = {
+    InnerLoader: {
+      input: {
+        required: {
+          noise_seed: ['INT', { min: 0, max: 999999999 }],
+          unet_name: [['a.safetensors', 'b.safetensors'], {}],
+        },
+      },
+      output: [],
+      output_name: [],
+      name: 'InnerLoader',
+      display_name: 'InnerLoader',
+      description: '',
+      python_module: '',
+      category: '',
+    },
+  };
+
+  function makePlaceholder(): WorkflowNode {
+    return {
+      id: 105,
+      type: 'sg-1',
+      pos: [0, 0],
+      size: [200, 100],
+      flags: {},
+      order: 0,
+      mode: 0,
+      // Only 'width' has a placeholder-level socket entry (mechanism 1) --
+      // prompt / noise_seed / unet_name are boundary-only (mechanism 3).
+      inputs: [
+        { name: 'width', type: 'INT', widget: { name: 'width' }, link: null },
+      ],
+      outputs: [],
+      properties: {},
+      widgets_values: ['a prompt', 1024, 42, 'a.safetensors'],
+    } as unknown as WorkflowNode;
+  }
+
+  it('resolves widgets exposed only through the subgraph boundary, not the placeholder inputs[]', () => {
+    const placeholder = makePlaceholder();
+    const nonCombo = resolveSubgraphBoundaryWidgetDefs(placeholder, workflow, nodeTypes);
+    const combo = resolveSubgraphBoundaryInputWidgetDefs(placeholder, workflow, nodeTypes);
+
+    // 'width' is already covered by mechanism 1 -> must not be duplicated here.
+    expect(nonCombo.some((w) => w.name === 'width')).toBe(false);
+    expect(combo.some((w) => w.name === 'width')).toBe(false);
+
+    const prompt = nonCombo.find((w) => w.name === 'prompt');
+    expect(prompt?.widgetIndex).toBe(0);
+    expect(prompt?.value).toBe('a prompt');
+
+    const seed = nonCombo.find((w) => w.name === 'noise_seed');
+    expect(seed?.widgetIndex).toBe(2);
+    expect(seed?.value).toBe(42);
+    expect(seed?.options).toMatchObject({ min: 0, max: 999999999 });
+
+    const unet = combo.find((w) => w.name === 'unet_name');
+    expect(unet?.widgetIndex).toBe(3);
+    expect(unet?.value).toBe('a.safetensors');
+    expect((unet?.options as Record<string, unknown>).options).toEqual([
+      'a.safetensors',
+      'b.safetensors',
+    ]);
+  });
+
+  it('returns nothing for a node that is not a subgraph placeholder', () => {
+    const workflowWithoutMatch = { definitions: { subgraphs: [] } } as unknown as Workflow;
+    const placeholder = makePlaceholder();
+    expect(resolveSubgraphBoundaryWidgetDefs(placeholder, workflowWithoutMatch, nodeTypes)).toEqual([]);
+    expect(resolveSubgraphBoundaryInputWidgetDefs(placeholder, workflowWithoutMatch, nodeTypes)).toEqual([]);
+  });
+});
+
+// Two promoted widgets that share the same underlying inner widget name (e.g.
+// two VAELoader nodes, one for image VAE and one for audio VAE, both of whose
+// real ComfyUI widget is literally called "vae_name") get disambiguated by
+// ComfyUI at the boundary: the second becomes "vae_name_1". The options/type
+// lookup must resolve via the actual link to the specific inner node, not by
+// matching the (possibly suffixed) boundary name against every inner node's
+// schema -- otherwise the second widget's dropdown silently comes back empty,
+// looking like the installed files are missing.
+describe('subgraph boundary widgets with a disambiguated name (e.g. vae_name_1)', () => {
+  const nodeTypes: NodeTypes = {
+    VAELoader: {
+      input: {
+        required: {
+          vae_name: [['image_vae.safetensors', 'audio_vae.safetensors'], {}],
+        },
+      },
+      output: [],
+      output_name: [],
+      name: 'VAELoader',
+      display_name: 'VAELoader',
+      description: '',
+      python_module: '',
+      category: '',
+    },
+  };
+
+  function makeVaeLoader(id: number, linkId: number): WorkflowNode {
+    return {
+      id,
+      type: 'VAELoader',
+      pos: [0, 0],
+      size: [100, 100],
+      flags: {},
+      order: 0,
+      mode: 0,
+      inputs: [
+        { name: 'vae_name', type: 'COMBO', widget: { name: 'vae_name' }, link: linkId },
+      ],
+      outputs: [],
+      properties: {},
+      widgets_values: ['image_vae.safetensors'],
+    } as unknown as WorkflowNode;
+  }
+
+  const workflow = {
+    definitions: {
+      subgraphs: [
+        {
+          id: 'sg-vae',
+          nodes: [makeVaeLoader(1, 100), makeVaeLoader(2, 101)],
+          links: [
+            { id: 100, origin_id: -10, origin_slot: 0, target_id: 1, target_slot: 0, type: 'COMBO' },
+            { id: 101, origin_id: -10, origin_slot: 1, target_id: 2, target_slot: 0, type: 'COMBO' },
+          ],
+          inputs: [
+            { name: 'vae_name', type: 'COMBO', linkIds: [100] },
+            { name: 'vae_name_1', type: 'COMBO', linkIds: [101], label: 'audio_vae' },
+          ],
+        },
+      ],
+    },
+  } as unknown as Workflow;
+
+  function makePlaceholder(): WorkflowNode {
+    return {
+      id: 105,
+      type: 'sg-vae',
+      pos: [0, 0],
+      size: [200, 100],
+      flags: {},
+      order: 0,
+      mode: 0,
+      inputs: [
+        { name: 'vae_name', type: 'COMBO', widget: { name: 'vae_name' }, link: null },
+        { name: 'vae_name_1', type: 'COMBO', widget: { name: 'vae_name_1' }, link: null, label: 'audio_vae' },
+      ],
+      outputs: [],
+      properties: {},
+      widgets_values: ['image_vae.safetensors', 'audio_vae.safetensors'],
+    } as unknown as WorkflowNode;
+  }
+
+  it('resolves options for the disambiguated widget via its link, not an empty list', () => {
+    const placeholder = makePlaceholder();
+    const inputDefs = resolveSubgraphPlaceholderInputWidgetDefs(placeholder, workflow, nodeTypes);
+
+    const first = inputDefs.find((d) => d.widgetIndex === 0);
+    const second = inputDefs.find((d) => d.widgetIndex === 1);
+
+    expect((first!.options as Record<string, unknown>).options).toEqual([
+      'image_vae.safetensors',
+      'audio_vae.safetensors',
+    ]);
+    // This is the regression: before the fix, this came back as [].
+    expect((second!.options as Record<string, unknown>).options).toEqual([
+      'image_vae.safetensors',
+      'audio_vae.safetensors',
+    ]);
+  });
+
+  it('shows the label instead of the raw disambiguated name', () => {
+    const placeholder = makePlaceholder();
+    const inputDefs = resolveSubgraphPlaceholderInputWidgetDefs(placeholder, workflow, nodeTypes);
+    const second = inputDefs.find((d) => d.widgetIndex === 1);
+    expect(second!.name).toBe('audio_vae');
   });
 });

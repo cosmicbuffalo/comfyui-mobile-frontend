@@ -63,6 +63,8 @@ interface NodeCardParametersProps {
   onUpdateNodeWidgets: (updates: Record<number, unknown>) => void;
   getWidgetIndexForInput: (name: string) => number | null;
   findSeedWidgetIndex: () => number | null;
+  findSeedControlWidgetIndex?: () => number | null;
+  isPlaceholder?: boolean;
   setSeedMode: (nodeId: number, mode: 'fixed' | 'randomize' | 'increment' | 'decrement') => void;
   isWidgetPinned: (widgetIndex: number) => boolean;
   toggleWidgetPin: (widgetIndex: number, widgetName: string, widgetType: string, options?: Record<string, unknown> | unknown[]) => void;
@@ -84,6 +86,8 @@ export function NodeCardParameters({
   onUpdateNodeWidgets,
   getWidgetIndexForInput,
   findSeedWidgetIndex,
+  findSeedControlWidgetIndex,
+  isPlaceholder,
   setSeedMode,
   isWidgetPinned,
   toggleWidgetPin,
@@ -111,7 +115,16 @@ export function NodeCardParameters({
   const seedWidgetIndex = !isKSampler && workflowExists && nodeTypesExists
     ? findSeedWidgetIndex()
     : null;
-  const seedControlIndex = seedWidgetIndex !== null ? seedWidgetIndex + 1 : null;
+  // Subgraph placeholders never promote a stock control_after_generate widget
+  // adjacent to a promoted seed by position (subgraphs don't carry that
+  // pairing across the boundary) — the widget right after the seed in
+  // widgets_values may be something unrelated (e.g. a model combo). Trust the
+  // resolved descriptor list instead of guessing seedIndex + 1.
+  const seedControlIndex = seedWidgetIndex === null
+    ? null
+    : isPlaceholder
+      ? (findSeedControlWidgetIndex ? findSeedControlWidgetIndex() : null)
+      : seedWidgetIndex + 1;
   const seedControlValue = seedControlIndex !== null
     ? (resolveWidgetValue ? resolveWidgetValue(seedControlIndex) : widgetValues[seedControlIndex])
     : undefined;
@@ -638,7 +651,7 @@ export function NodeCardParameters({
             if (seedInputEntry?.link != null) return null;
 
             if (hasSeedControl) {
-              const controlIndex = seedIndex + 1;
+              const controlIndex = seedControlIndex ?? seedIndex + 1;
               return (
                 <div className="mb-3">
                   <WidgetControl

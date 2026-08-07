@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   findSeedWidgetIndex,
+  findSeedControlWidgetIndex,
   hasSeedControlWidget,
   isSpecialSeedValue,
   getSpecialSeedMode,
@@ -226,6 +227,41 @@ describe('hasSeedControlWidget', () => {
     expect(hasSeedControlWidget(node, 0)).toBe(false);
     expect(hasSeedControlWidget(node, 42)).toBe(false);
     expect(hasSeedControlWidget(node, true)).toBe(false);
+  });
+});
+
+describe('findSeedControlWidgetIndex', () => {
+  it('returns null when no control_after_generate descriptor is present', () => {
+    // Regression for issue #69: a subgraph placeholder's widget descriptor
+    // list for [noise_seed, unet_name, clip_name, ...] has no control widget
+    // at all -- the naive "next widget" guess must not be used as a fallback.
+    const descriptors = [
+      { name: 'noise_seed', type: 'INT', widgetIndex: 4 },
+      { name: 'unet_name', type: 'COMBO', widgetIndex: 5 },
+      { name: 'clip_name', type: 'COMBO', widgetIndex: 6 },
+    ];
+    expect(findSeedControlWidgetIndex(descriptors)).toBeNull();
+  });
+
+  it('finds a genuinely promoted control_after_generate descriptor by name', () => {
+    const descriptors = [
+      { name: 'seed', type: 'INT', widgetIndex: 0 },
+      { name: 'control_after_generate', type: 'COMBO', widgetIndex: 10000 },
+    ];
+    expect(findSeedControlWidgetIndex(descriptors)).toBe(10000);
+  });
+
+  it('matches a titled proxy descriptor via its base name after ": "', () => {
+    const descriptors = [
+      { name: 'RandomNoise: noise_seed', type: 'INT', widgetIndex: 10000 },
+      { name: 'RandomNoise: control_after_generate', type: 'COMBO', widgetIndex: 10001 },
+    ];
+    expect(findSeedControlWidgetIndex(descriptors)).toBe(10001);
+  });
+
+  it('returns null for an undefined or empty descriptor list', () => {
+    expect(findSeedControlWidgetIndex(undefined)).toBeNull();
+    expect(findSeedControlWidgetIndex([])).toBeNull();
   });
 });
 
