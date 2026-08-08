@@ -5,6 +5,7 @@ beforeEach(() => {
   useWorkflowErrorsStore.setState({
     error: null,
     nodeErrors: {},
+    nodeErrorsFromRun: false,
     errorCycleIndex: 0,
     errorsDismissed: false,
   });
@@ -80,6 +81,30 @@ describe('useWorkflowErrorsStore', () => {
       expect(state.errorsDismissed).toBe(false);
       expect(state.errorCycleIndex).toBe(0);
       expect(Object.keys(state.nodeErrors)).toHaveLength(1);
+    });
+
+    it('defaults nodeErrorsFromRun to false (load-time errors)', () => {
+      useWorkflowErrorsStore.getState().setNodeErrors({
+        '1': [{ type: 'missing', message: 'err', details: '' }],
+      });
+      expect(useWorkflowErrorsStore.getState().nodeErrorsFromRun).toBe(false);
+    });
+
+    it('flags nodeErrorsFromRun when surfaced from a run/queue attempt', () => {
+      useWorkflowErrorsStore.getState().setNodeErrors(
+        { '7': [{ type: 'value_not_in_list', message: 'bad combo', details: '' }] },
+        true,
+      );
+      expect(useWorkflowErrorsStore.getState().nodeErrorsFromRun).toBe(true);
+    });
+
+    it('clearNodeErrors resets the run flag', () => {
+      useWorkflowErrorsStore.getState().setNodeErrors(
+        { '7': [{ type: 'value_not_in_list', message: 'bad combo', details: '' }] },
+        true,
+      );
+      useWorkflowErrorsStore.getState().clearNodeErrors();
+      expect(useWorkflowErrorsStore.getState().nodeErrorsFromRun).toBe(false);
     });
   });
 });

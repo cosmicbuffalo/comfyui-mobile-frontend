@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { TextareaActions } from './TextareaActions';
 import { TagAutocompleteTextarea } from './TagAutocompleteTextarea';
 import { FullscreenWidgetModal } from '../modals/FullscreenWidgetModal';
@@ -90,6 +90,7 @@ interface StringControlProps {
   isPromoted?: boolean;
   forceModalOpen?: boolean;
   onModalClose?: () => void;
+  labelAccessory?: ReactNode;
 }
 
 export function StringControl({
@@ -105,6 +106,7 @@ export function StringControl({
   onTogglePin,
   hasError = false,
   isPromoted = false,
+  labelAccessory,
   forceModalOpen = false,
   onModalClose
 }: StringControlProps) {
@@ -142,8 +144,26 @@ export function StringControl({
     if (!isMultiline) return;
     const el = textareaRef.current;
     if (!el) return;
-    el.style.height = '0px';
-    el.style.height = `${el.scrollHeight}px`;
+    const grow = () => {
+      el.style.height = '0px';
+      el.style.height = `${el.scrollHeight}px`;
+    };
+    grow();
+
+    // A textarea first measured while its panel was hidden (display:none →
+    // scrollHeight 0) would otherwise stay collapsed: the deps below don't
+    // change when the panel is shown again. Re-grow whenever the element gains
+    // width — that captures the hidden→visible transition (and real reflows)
+    // while ignoring the height changes we make ourselves, so it can't loop.
+    if (typeof ResizeObserver === 'undefined') return;
+    let lastWidth = el.clientWidth;
+    const observer = new ResizeObserver(() => {
+      if (el.clientWidth === lastWidth) return;
+      lastWidth = el.clientWidth;
+      grow();
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
   }, [valueString, showModal, isMultiline]);
 
   const handleClose = () => {
@@ -162,6 +182,7 @@ export function StringControl({
                 <label className={controlLabelClassName}>
                   <span className="inline-flex items-center gap-1">
                     <span>{name}</span>
+                    {labelAccessory}
                     {isPromoted && (
                       <PromotedWidgetIcon className="w-3.5 h-3.5 text-pink-500" />
                     )}
@@ -202,6 +223,7 @@ export function StringControl({
               <label className={`${controlLabelClassName} mb-1`}>
                 <span className="inline-flex items-center gap-1">
                   <span>{name}</span>
+                  {labelAccessory}
                   {isPromoted && (
                     <PromotedWidgetIcon className="w-3.5 h-3.5 text-pink-500" />
                   )}
@@ -281,6 +303,7 @@ export function StringControl({
             <label className={controlLabelClassName}>
               <span className="inline-flex items-center gap-1">
                 <span>{name}</span>
+                {labelAccessory}
                 {isPromoted && (
                   <PromotedWidgetIcon className="w-3.5 h-3.5 text-pink-500" />
                 )}
@@ -321,6 +344,7 @@ export function StringControl({
         <label className={`${controlLabelClassName} mb-1`}>
           <span className="inline-flex items-center gap-1">
             <span>{name}</span>
+            {labelAccessory}
             {isPromoted && (
               <PromotedWidgetIcon className="w-3.5 h-3.5 text-pink-500" />
             )}

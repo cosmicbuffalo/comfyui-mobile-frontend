@@ -30,9 +30,16 @@ import {
   type CustomNodeFilterValue,
   type CustomNodeRow,
 } from '@/utils/customNodesManager';
+import {
+  getCustomNodesManagerCache,
+  setCustomNodesManagerCache,
+  getCustomNodesManagerPrefetch,
+  MANAGER_CACHE_STALE_MS,
+} from '@/utils/customNodesManagerCache';
 import { useBodyScrollLock } from '@/hooks/useBodyScrollLock';
 import { useModalKeyboard } from '@/hooks/useModalKeyboard';
 import { FullscreenModalHeader } from './modals/FullscreenModalHeader';
+import { Dialog } from './modals/Dialog';
 import {
   CheckIcon,
   ChevronDownIcon,
@@ -54,23 +61,17 @@ interface CustomNodesManagerModalProps {
   isOpen: boolean;
   onClose: () => void;
   onRestartServer: () => void;
+  // Filter to apply once the list has loaded (e.g. 'Missing' when opened from the
+  // missing-nodes dialog). '' / undefined opens the default "All" view.
+  initialFilter?: CustomNodeFilterValue;
+  // Search keyword to pre-fill (e.g. a specific missing node type from its
+  // on-canvas popover), applied alongside initialFilter.
+  initialSearch?: string;
 }
 
 const DATA_MODE: CustomNodesDataMode = 'cache';
 const CUSTOM_NODE_PAGE_SIZE = 40;
-const MANAGER_CACHE_STALE_MS = 60_000;
 
-// Module-level cache of the (multi-MB) custom-node list + built rows, so
-// reopening the modal is instant instead of refetching and rebuilding every
-// time. Survives close/reopen within a session; refreshed in the background when
-// stale and force-refreshed after install/update/uninstall actions.
-let cachedManagerData: {
-  nodePacks: Record<string, CustomNodePackageMetadata>;
-  mappings: CustomNodeMappingsResponse;
-  channel: string;
-  rows: CustomNodeRow[];
-  fetchedAt: number;
-} | null = null;
 const SPECIAL_FILTERS = new Set<CustomNodeFilterValue>([
   'Update',
   'In Workflow',
@@ -147,6 +148,8 @@ export function CustomNodesManagerModal({
   isOpen,
   onClose,
   onRestartServer,
+  initialFilter = '',
+  initialSearch = '',
 }: CustomNodesManagerModalProps) {
   const workflow = useWorkflowStore((s) => s.workflow);
   const nodeTypes = useWorkflowStore((s) => s.nodeTypes);
@@ -169,6 +172,7 @@ export function CustomNodesManagerModal({
   const [queueStatus, setQueueStatus] = useState<ManagerQueueStatus | null>(null);
   const [needsRestart, setNeedsRestart] = useState(false);
   const [openMenuHash, setOpenMenuHash] = useState<string | null>(null);
+  const [uninstallTarget, setUninstallTarget] = useState<CustomNodeRow | null>(null);
   const loadedSpecialFiltersRef = useRef(new Set<CustomNodeFilterValue>());
   // Accumulate each special filter's derived hashmaps so switching between them
   // (e.g. In Workflow → Alternatives → In Workflow) keeps every loaded filter's
@@ -195,7 +199,14 @@ export function CustomNodesManagerModal({
 
   const loadBaseData = useCallback(async (options?: { force?: boolean }) => {
     const force = options?.force ?? false;
-    const cache = cachedManagerData;
+    // If a background prefetch (e.g. triggered by the missing-nodes dialog) is
+    // warming the cache, wait for it rather than starting a duplicate fetch.
+    const inFlightPrefetch = getCustomNodesManagerPrefetch();
+    if (!force && !getCustomNodesManagerCache() && inFlightPrefetch) {
+      setLoading(true);
+      await inFlightPrefetch;
+    }
+    const cache = getCustomNodesManagerCache();
     const hadCache = !force && cache !== null;
 
     if (!force && cache) {
@@ -223,13 +234,13 @@ export function CustomNodesManagerModal({
       setMappings(mappingResponse);
       setChannel(listResponse.channel);
       setRows(nextRows);
-      cachedManagerData = {
+      setCustomNodesManagerCache({
         nodePacks: listResponse.node_packs,
         mappings: mappingResponse,
         channel: listResponse.channel,
         rows: nextRows,
         fetchedAt: Date.now(),
-      };
+      });
       loadedSpecialFiltersRef.current = new Set();
       accumulatedSpecialMapsRef.current = {};
     } catch (err) {
@@ -256,14 +267,15 @@ export function CustomNodesManagerModal({
         // `fetchedAt`, so (a) reopening doesn't pay the slow remote update check
         // again within the staleness window, and (b) the base background refresh
         // (skipUpdate:true) sees a fresh cache and won't clobber the update flags.
-        if (cachedManagerData) {
-          cachedManagerData = {
-            ...cachedManagerData,
+        const existingCache = getCustomNodesManagerCache();
+        if (existingCache) {
+          setCustomNodesManagerCache({
+            ...existingCache,
             nodePacks: response.node_packs,
             channel: response.channel,
             rows: updatedRows,
             fetchedAt: Date.now(),
-          };
+          });
         }
       } else if (targetFilter === 'In Workflow' || targetFilter === 'Missing') {
         const activeMappings = mappings ?? await fetchCustomNodeMappings(DATA_MODE);
@@ -314,6 +326,23 @@ export function CustomNodesManagerModal({
     if (!isOpen) return;
     if (SPECIAL_FILTERS.has(filter)) void loadSpecialFilter(filter);
   }, [filter, isOpen, loadSpecialFilter]);
+
+  // Apply a requested initial filter (e.g. 'Missing') once the base list has
+  // loaded — special filters derive from nodePacks, so applying before they
+  // arrive would mark the filter "loaded" against an empty list. Applied once
+  // per open; the reset effect above clears it back to '' on close.
+  const initialFilterAppliedRef = useRef(false);
+  useEffect(() => {
+    if (!isOpen) {
+      initialFilterAppliedRef.current = false;
+      return;
+    }
+    if ((!initialFilter && !initialSearch) || initialFilterAppliedRef.current) return;
+    if (Object.keys(nodePacks).length === 0) return;
+    initialFilterAppliedRef.current = true;
+    if (initialFilter) setFilter(initialFilter);
+    if (initialSearch) setKeywords(initialSearch);
+  }, [isOpen, initialFilter, initialSearch, nodePacks]);
 
   useBodyScrollLock(isOpen);
   useModalKeyboard(isOpen, onClose, modalRef);
@@ -414,11 +443,17 @@ export function CustomNodesManagerModal({
 
   const handleAction = async (row: CustomNodeRow, mode: CustomNodeActionMode) => {
     setOpenMenuHash(null);
-    const title = rowTitle(row);
     if (mode === 'uninstall') {
-      const confirmed = window.confirm(`Uninstall ${title}?`);
-      if (!confirmed) return;
+      // In-app dialog, never window.confirm: iOS has shipped standalone-PWA
+      // builds where native JS dialogs silently return false without showing.
+      setUninstallTarget(row);
+      return;
     }
+    await runAction(row, mode);
+  };
+
+  const runAction = async (row: CustomNodeRow, mode: CustomNodeActionMode) => {
+    const title = rowTitle(row);
     setActionLoading(`${row.hash}:${mode}`);
     setError(null);
     try {
@@ -549,9 +584,10 @@ export function CustomNodesManagerModal({
           }
         }}
       >
-        {loading && rows.length === 0 ? (
-          <div className="rounded-lg border border-white/10 bg-slate-900/95 p-6 text-center text-sm text-slate-400">
-            Loading custom nodes...
+        {loading && visibleRows.length === 0 ? (
+          <div className="flex items-center justify-center gap-3 rounded-lg border border-white/10 bg-slate-900/95 p-6 text-center text-sm text-slate-400">
+            <div className="h-5 w-5 shrink-0 animate-spin rounded-full border-2 border-slate-700 border-t-cyan-300" />
+            <span>{keywords.trim() ? `Finding “${keywords.trim()}”…` : 'Loading custom nodes…'}</span>
           </div>
         ) : visibleRows.length === 0 ? (
           <div className="rounded-lg border border-white/10 bg-slate-900/95 p-6 text-center text-sm text-slate-400">
@@ -571,6 +607,28 @@ export function CustomNodesManagerModal({
           ))
         )}
       </div>
+      {uninstallTarget && (
+        <Dialog
+          onClose={() => setUninstallTarget(null)}
+          // Above this fullscreen modal (z-2600).
+          zIndex={2700}
+          fullscreen
+          title={`Uninstall ${rowTitle(uninstallTarget)}?`}
+          actions={[
+            { label: 'Cancel', onClick: () => setUninstallTarget(null) },
+            {
+              label: 'Uninstall',
+              variant: 'danger',
+              autoFocus: true,
+              onClick: () => {
+                const row = uninstallTarget;
+                setUninstallTarget(null);
+                void runAction(row, 'uninstall');
+              },
+            },
+          ]}
+        />
+      )}
     </div>,
     document.body
   );

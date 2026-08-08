@@ -3,9 +3,11 @@ interface MediaViewerHeaderProps {
   total: number;
   displayName: string;
   resolution?: { width: number; height: number } | null;
+  // Inward shift for the right-side cell so it clears the pinned widget sidebar.
+  rightInset?: string;
 }
 
-export function MediaViewerHeader({ index, total, displayName, resolution }: MediaViewerHeaderProps) {
+export function MediaViewerHeader({ index, total, displayName, resolution, rightInset }: MediaViewerHeaderProps) {
   return (
     <div
       id="media-viewer-header"
@@ -25,7 +27,12 @@ export function MediaViewerHeader({ index, total, displayName, resolution }: Med
             </div>
           )}
         </div>
-        <div />
+        {/* Right cell intentionally empty — the DownloadedBadge used to live
+            here but it overlapped the floating Close (X) button, swallowing
+            taps on the X once a file was marked downloaded. The downloaded
+            state is now surfaced on the DownloadButton in the action row;
+            tapping that button opens the same DownloadInfoModal. */}
+        <div className="justify-self-end pointer-events-auto" style={{ marginRight: rightInset }} />
       </div>
     </div>
   );

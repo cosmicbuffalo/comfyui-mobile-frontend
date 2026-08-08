@@ -7,6 +7,7 @@ import { QueuePanel } from './components/QueuePanel';
 import { ImageViewer } from './components/ImageViewer';
 import { ConnectionLostOverlay } from './components/BackendStatusOverlay';
 import { NoWorkflowImageDialog } from './components/modals/NoWorkflowImageDialog';
+import { MissingNodesDialog } from './components/modals/MissingNodesDialog';
 import { useWebSocket } from './hooks/useWebSocket';
 import { useWorkflowStore } from './hooks/useWorkflow';
 import { useNavigationStore } from './hooks/useNavigation';
@@ -15,6 +16,7 @@ import { useImageViewerStore } from './hooks/useImageViewer';
 import { useQueueStore } from './hooks/useQueue';
 import { useHistoryStore } from './hooks/useHistory';
 import { useSwipeNavigation } from './hooks/useSwipeNavigation';
+import { useTrackpadSwipeNavigation } from './hooks/useTrackpadSwipeNavigation';
 import { useAnimatedFavicon } from './hooks/useAnimatedFavicon';
 import { useHistoryBackClose } from './hooks/useHistoryBackClose';
 import { useWorkflowErrorsStore } from './hooks/useWorkflowErrors';
@@ -97,18 +99,25 @@ function App() {
   const canSwipeRight = currentPanel === 'workflow'
     || currentPanel === 'queue'
     || (currentPanel === 'outputs' && Boolean(outputsCurrentFolder));
+  const swipeNavEnabled =
+    !isInputFocused &&
+    !viewerOpen &&
+    !appMenuOpen &&
+    !outputsViewerOpen &&
+    !bookmarkRepositioningActive &&
+    !outputsSelectionMode &&
+    !outputsFilterModalOpen &&
+    !outputsSelectionActionOpen;
   const { setSwipeEnabled, resetSwipeState } = useSwipeNavigation({
     onSwipeLeft: canSwipeLeft ? handleSwipeLeft : undefined,
     onSwipeRight: canSwipeRight ? handleSwipeRight : undefined,
-    enabled:
-      !isInputFocused &&
-      !viewerOpen &&
-      !appMenuOpen &&
-      !outputsViewerOpen &&
-      !bookmarkRepositioningActive &&
-      !outputsSelectionMode &&
-      !outputsFilterModalOpen &&
-      !outputsSelectionActionOpen
+    enabled: swipeNavEnabled
+  });
+  // Desktop trackpad: a horizontal two-finger swipe drives the same navigation.
+  useTrackpadSwipeNavigation({
+    onSwipeLeft: canSwipeLeft ? handleSwipeLeft : undefined,
+    onSwipeRight: canSwipeRight ? handleSwipeRight : undefined,
+    enabled: swipeNavEnabled,
   });
   const setNodeTypes = useWorkflowStore((s) => s.setNodeTypes);
   const ensureHierarchicalKeysAndRepair = useWorkflowStore((s) => s.ensureHierarchicalKeysAndRepair);
@@ -306,6 +315,7 @@ function App() {
 
       <ConnectionLostOverlay />
       <NoWorkflowImageDialog />
+      <MissingNodesDialog />
     </div>
   );
 }

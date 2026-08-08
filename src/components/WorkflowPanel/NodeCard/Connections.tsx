@@ -28,9 +28,9 @@ export function NodeCardConnections({
   const connectionButtonsVisible = useWorkflowStore((s) => s.connectionButtonsVisible);
   const nodeTypes = useWorkflowStore((s) => s.nodeTypes);
   const expanded = useConnectionSectionFoldsStore((s) =>
-    s.expandedItemKeys.includes(nodeHierarchicalKey),
+    !s.collapsedItemKeys.includes(nodeHierarchicalKey),
   );
-  const toggleExpanded = useConnectionSectionFoldsStore((s) => s.toggleExpanded);
+  const toggleExpanded = useConnectionSectionFoldsStore((s) => s.toggleCollapsed);
 
   const requiredInputNames = useMemo(() => {
     if (!nodeType || !nodeTypes) return new Set<string>();

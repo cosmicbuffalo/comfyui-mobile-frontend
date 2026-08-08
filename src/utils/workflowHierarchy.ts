@@ -26,7 +26,7 @@ import type { ScopeFrame } from "@/utils/canonicalWorkflowOps";
 export type HierarchicalKey = string;
 export type ScopedNodeIdentity = { nodeId: number; subgraphId: string | null };
 
-export function collectLayoutObjectKeys(layout: MobileLayout): string[] {
+function collectLayoutObjectKeys(layout: MobileLayout): string[] {
   const keys: string[] = [];
   const visitedGroups = new Set<string>();
   const visitedSubgraphs = new Set<string>();
@@ -113,21 +113,21 @@ export function layoutMatchesWorkflowNodes(
   return true;
 }
 
-export function nodeStateKey(
+function nodeStateKey(
   nodeId: number,
   subgraphId: string | null = null,
 ): string {
   return makeLocationPointer({ type: "node", nodeId, subgraphId });
 }
 
-export function getNodeStateKeyForNode(node: WorkflowNode): string {
+function getNodeStateKeyForNode(node: WorkflowNode): string {
   // Under the canonical model, workflow.nodes only contains root-scope nodes.
   return nodeStateKey(node.id, null);
 }
 
 const nodeStateKeyIndexCache = new WeakMap<Workflow, Map<number, string[]>>();
 
-export function getNodeStateKeyIndex(workflow: Workflow): Map<number, string[]> {
+function getNodeStateKeyIndex(workflow: Workflow): Map<number, string[]> {
   const cached = nodeStateKeyIndexCache.get(workflow);
   if (cached) return cached;
 
@@ -252,7 +252,7 @@ export function collectGroupHierarchicalKeys(
   return [...keys];
 }
 
-export function scopedNodeIdentityKey(identity: ScopedNodeIdentity): string {
+function scopedNodeIdentityKey(identity: ScopedNodeIdentity): string {
   return `${identity.subgraphId ?? "root"}:${identity.nodeId}`;
 }
 
@@ -266,7 +266,7 @@ export function dedupeScopedNodeIdentities(
   return [...keyed.values()];
 }
 
-export function collectScopedNodeIdentitiesFromLayoutRefs(
+function collectScopedNodeIdentitiesFromLayoutRefs(
   layout: MobileLayout,
   refs: ItemRef[],
   currentSubgraphId: string | null = null,
@@ -931,10 +931,12 @@ export function collectBypassGroupTargetNodes(
 
     for (const node of subgraphNodes) {
       if (nodeToGroup.get(node.id) !== groupId) continue;
+      // The placeholder node is a target in its own right (mirrors the root
+      // branch below, where every group member — placeholders included — is
+      // pushed); its nested definition's inner nodes are collected separately.
+      directNodeOriginIds.add(node.id);
       if (subgraphIds.has(node.type)) {
         nestedSubgraphIds.add(node.type);
-      } else {
-        directNodeOriginIds.add(node.id);
       }
     }
 

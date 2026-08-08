@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="icon.png" alt="" width="128" height="128" />
+</p>
+
 # ComfyUI Mobile Frontend
 
 An experimental dedicated mobile-first frontend for [ComfyUI](https://github.com/comfyanonymous/ComfyUI).
@@ -290,6 +294,9 @@ http://<your-comfyui-ip>:8188/mobile
 > [!IMPORTANT]
 > Don't forget to add the `--listen` flag to your ComfyUI startup command to make your ComfyUI instance [accessible to other devices on your LAN](https://github.com/Comfy-Org/ComfyUI/blob/master/comfy/cli_args.py#L38)
 
+> [!TIP]
+> For noticeably faster loads — especially over Wi-Fi dead zones, cellular, or remote access through a VPN/tunnel — also add ComfyUI's `--enable-compress-response-body` flag. ComfyUI's node definitions (`/object_info`) can be several megabytes once you have a few custom node packs installed, and this flag serves them (and other large JSON responses, like queue history) gzipped, typically ~10x smaller on the wire. Images and videos are unaffected. The mobile frontend takes advantage of it automatically; no app configuration is needed.
+
 ### LoRA Manager UI Integration
 
 This mobile frontend supports LoRA Manager nodes and websocket integration. The integration will work mostly out of the box, but the "Open LoRA Manager" action assumes by default that your LoRA Manager is running at `/loras` on the same host. If this is not the case, you can override the default assumption using one of the two methods:
@@ -330,6 +337,35 @@ If you are working on a remote machine, prefix the dev server command with `COMF
 ```bash
 COMFY_HOST=<your-comfyui-ip> npm run dev
 ```
+
+### Testing
+
+```bash
+npm test          # vitest, the frontend unit suite
+npm run lint      # eslint
+npx tsc -b        # type-check (note: `tsc --noEmit` checks nothing here)
+```
+
+Backend tests are pytest, run from this directory with an interpreter that has
+ComfyUI's dependencies available:
+
+```bash
+python -m pytest tests/ -q
+```
+
+There is also an end-to-end smoke test that drives a real browser against a
+running ComfyUI — it loads a workflow, runs generations, and exercises the queue
+cards, file state, downloads, and video playback. Worth running before a
+release, since it covers what unit tests structurally cannot:
+
+```bash
+npm i -D playwright               # once; deliberately not a project dependency
+npx playwright install chromium   # once
+npm run smoke
+```
+
+See [SMOKE_TEST.md](SMOKE_TEST.md) for what it checks, what it deliberately does
+not, and what it changes on your server.
 
 ### Building for Release
 

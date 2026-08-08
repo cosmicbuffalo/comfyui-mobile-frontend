@@ -36,7 +36,7 @@ const EPSILON = Number.EPSILON;
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 
-export const LORA_PATTERN = /<lora:([^:>]+):([-\d.]+)(?::([-\d.]+))?>/g;
+const LORA_PATTERN = /<lora:([^:>]+):([-\d.]+)(?::([-\d.]+))?>/g;
 const MODEL_EXTENSION_PATTERN = /\.(safetensors|ckpt|pt|pth|bin)$/i;
 
 export function isLoraManagerNodeType(nodeType: string): boolean {
@@ -48,7 +48,7 @@ export function isLoraManagerNodeType(nodeType: string): boolean {
 }
 
 /** The rgthree "Power Lora Loader" node has dynamic lora widgets needing special handling. */
-export const POWER_LORA_LOADER_NODE_TYPE = 'Power Lora Loader (rgthree)';
+const POWER_LORA_LOADER_NODE_TYPE = 'Power Lora Loader (rgthree)';
 
 export function isPowerLoraLoaderNodeType(nodeType: string | undefined | null): boolean {
   return nodeType === POWER_LORA_LOADER_NODE_TYPE;

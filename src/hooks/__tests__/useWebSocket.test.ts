@@ -22,6 +22,9 @@ vi.mock('@/api/client', () => ({
   getHistoryCount: vi.fn().mockResolvedValue(null),
   getQueuePromptMetadata: vi.fn(async () => ({})),
   remapQueuePromptMetadata: vi.fn(async () => undefined),
+  // Genuinely-lost jobs in these tests never ran, so they have no backend
+  // history; the reconnect reconciliation keeps them flagged.
+  promptHasHistory: vi.fn().mockResolvedValue(false),
 }));
 
 type ConnectArgs = Parameters<typeof connectWebSocket>;
@@ -267,7 +270,7 @@ describe('backend reconnect notices', () => {
     expect(queueWorkflow).toHaveBeenCalledTimes(1);
   });
 
-  it('does not auto-start a freshly armed infinite loop until a run goes live', async () => {
+  it('does not auto-start or clear the arm guard from a pre-existing session run', async () => {
     const queueWorkflow = vi.fn(async () => undefined);
     useGenerationSettingsStore.setState({ infiniteModeEnabled: true });
     // infiniteLoopAwaitingRun mirrors what setInfiniteLoop(true) sets when the
@@ -292,8 +295,10 @@ describe('backend reconnect notices', () => {
     // Arming alone must not enqueue — the Run button starts generation.
     expect(queueWorkflow).not.toHaveBeenCalled();
 
-    // Once a run for the session is live, the guard clears so the idle-resume
-    // backup can act again on later iterations.
+    // A live prompt for the session does NOT clear the arm guard: it may be a
+    // pre-existing manual run that was already queued when infinite mode was
+    // armed. Only an actual loop Run (queueWorkflow) clears the guard, so the
+    // loop stays merely armed and never auto-starts off pre-existing items.
     await act(async () => {
       useWorkflowStore.setState({ promptToSession: { 'run-1': 'loop-session' } });
       useQueueStore.setState({
@@ -302,7 +307,15 @@ describe('backend reconnect notices', () => {
         completing: [],
       });
     });
-    expect(useWorkflowStore.getState().infiniteLoopAwaitingRun).toBe(false);
+    expect(useWorkflowStore.getState().infiniteLoopAwaitingRun).toBe(true);
+    expect(queueWorkflow).not.toHaveBeenCalled();
+
+    // Draining those pre-existing items must still not auto-start the loop while
+    // it's only armed — the user starts it with Run.
+    await act(async () => {
+      useQueueStore.setState({ running: [], pending: [], completing: [] });
+    });
+    expect(queueWorkflow).not.toHaveBeenCalled();
   });
 
   it('does not auto-start an armed loop owned by a parked tab', async () => {
@@ -543,6 +556,31 @@ describe('orphaned closed-tab run routing', () => {
       await Promise.resolve();
     });
   }
+
+  it('flags an execution error as a RUN error, not a load error', async () => {
+    // BottomStatusOverlay derives isWorkflowLoadError from node errors that are
+    // NOT fromRun, and suppresses the toast for those on every panel except the
+    // workflow one. Without the flag a run that died while the user watched the
+    // queue or outputs failed silently.
+    await act(async () => {
+      root.render(createElement(WebSocketHarness));
+      await Promise.resolve();
+    });
+
+    await fire({
+      type: 'execution_error',
+      data: {
+        prompt_id: 'active-prompt',
+        node: '7',
+        node_type: 'KSampler',
+        exception_message: 'CUDA out of memory',
+      },
+    });
+
+    const errors = useWorkflowErrorsStore.getState();
+    expect(Object.keys(errors.nodeErrors)).toContain('7');
+    expect(errors.nodeErrorsFromRun).toBe(true);
+  });
 
   it('keeps live outputs and re-enqueues across an infinite-loop completion', async () => {
     const queueWorkflow = vi.fn();

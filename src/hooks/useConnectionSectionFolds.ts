@@ -1,9 +1,12 @@
 import { create } from 'zustand';
 import { createJSONStorage, persist } from 'zustand/middleware';
 
+// Connections sections default to OPEN, so we track the keys the user has
+// explicitly collapsed (mirrors the parameter fold store). Persisted to
+// localStorage like other per-node UI state.
 interface ConnectionSectionFoldsState {
-  expandedItemKeys: string[];
-  toggleExpanded: (itemKey: string) => void;
+  collapsedItemKeys: string[];
+  toggleCollapsed: (itemKey: string) => void;
   /** Idempotently unfold a node's connections section (no-op if already open). */
   expand: (itemKey: string) => void;
 }
@@ -11,21 +14,21 @@ interface ConnectionSectionFoldsState {
 export const useConnectionSectionFoldsStore = create<ConnectionSectionFoldsState>()(
   persist(
     (set) => ({
-      expandedItemKeys: [],
-      toggleExpanded: (itemKey) => {
+      collapsedItemKeys: [],
+      toggleCollapsed: (itemKey) => {
         if (!itemKey) return;
         set((state) => ({
-          expandedItemKeys: state.expandedItemKeys.includes(itemKey)
-            ? state.expandedItemKeys.filter((key) => key !== itemKey)
-            : [...state.expandedItemKeys, itemKey],
+          collapsedItemKeys: state.collapsedItemKeys.includes(itemKey)
+            ? state.collapsedItemKeys.filter((key) => key !== itemKey)
+            : [...state.collapsedItemKeys, itemKey],
         }));
       },
       expand: (itemKey) => {
         if (!itemKey) return;
         set((state) =>
-          state.expandedItemKeys.includes(itemKey)
-            ? state
-            : { expandedItemKeys: [...state.expandedItemKeys, itemKey] },
+          state.collapsedItemKeys.includes(itemKey)
+            ? { collapsedItemKeys: state.collapsedItemKeys.filter((key) => key !== itemKey) }
+            : state,
         );
       },
     }),

@@ -1,6 +1,5 @@
-import { getImagePreviewUrl, getImageUrl } from '@/api/client';
+import { getQueueImagePreviewUrl, getImageUrl } from '@/api/client';
 import type { HistoryOutputImage } from '@/api/types';
-import { isVideoFilename } from '@/utils/media';
 import { getQueueImageKey } from './queueUtils';
 
 export function getQueueMediaSignature(images: readonly HistoryOutputImage[]): string {
@@ -34,37 +33,44 @@ const PRELOAD_RETRY_MS = 250;
 // this long so a stuck preload can't pin the card on stale preview media.
 const PRELOAD_TIMEOUT_MS = 6000;
 
-function preloadImage(image: HistoryOutputImage): Promise<void> {
-  const url = getImagePreviewUrl(image.filename, image.subfolder, image.type);
+export type PreloadDims = { w: number; h: number } | null;
+
+function preloadImage(image: HistoryOutputImage): Promise<PreloadDims> {
+  const url = getQueueImagePreviewUrl(image.filename, image.subfolder, image.type);
   return new Promise((resolve) => {
     let settled = false;
     let attempts = 0;
     let retryTimer: ReturnType<typeof setTimeout> | undefined;
-    const finish = () => {
+    const finish = (dims: PreloadDims) => {
       if (settled) return;
       settled = true;
       clearTimeout(retryTimer);
       clearTimeout(failOpenTimer);
-      resolve();
+      resolve(dims);
     };
-    const failOpenTimer = setTimeout(finish, PRELOAD_TIMEOUT_MS);
+    const failOpenTimer = setTimeout(() => finish(null), PRELOAD_TIMEOUT_MS);
     const attempt = () => {
       if (settled) return;
       attempts += 1;
       const preload = new Image();
+      const captureDims = (): PreloadDims =>
+        preload.naturalWidth > 0 && preload.naturalHeight > 0
+          ? { w: preload.naturalWidth, h: preload.naturalHeight }
+          : null;
       const onReady = () => {
+        const dims = captureDims();
         // Decode so the bytes are ready to paint, not just fetched, before the
         // visible <img> swaps in.
         if (typeof preload.decode === 'function') {
-          void preload.decode().catch(() => {}).then(finish);
+          void preload.decode().catch(() => {}).then(() => finish(dims));
         } else {
-          finish();
+          finish(dims);
         }
       };
       preload.onload = onReady;
       preload.onerror = () => {
         if (attempts >= PRELOAD_MAX_ATTEMPTS) {
-          finish();
+          finish(null);
           return;
         }
         retryTimer = setTimeout(attempt, PRELOAD_RETRY_MS);
@@ -78,52 +84,21 @@ function preloadImage(image: HistoryOutputImage): Promise<void> {
   });
 }
 
-function preloadVideo(video: HistoryOutputImage): Promise<void> {
-  const url = getImageUrl(video.filename, video.subfolder, video.type);
-  return new Promise((resolve) => {
-    let settled = false;
-    let attempts = 0;
-    let retryTimer: ReturnType<typeof setTimeout> | undefined;
-    const finish = () => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(retryTimer);
-      clearTimeout(failOpenTimer);
-      resolve();
-    };
-    const failOpenTimer = setTimeout(finish, PRELOAD_TIMEOUT_MS);
-    const attempt = () => {
-      if (settled) return;
-      attempts += 1;
-      const preload = document.createElement('video');
-      const cleanup = () => {
-        preload.removeEventListener('loadeddata', onReady);
-        preload.removeEventListener('error', onError);
-      };
-      const onReady = () => {
-        cleanup();
-        finish();
-      };
-      const onError = () => {
-        cleanup();
-        if (attempts >= PRELOAD_MAX_ATTEMPTS) {
-          finish();
-          return;
-        }
-        retryTimer = setTimeout(attempt, PRELOAD_RETRY_MS);
-      };
-      preload.preload = 'auto';
-      preload.addEventListener('loadeddata', onReady);
-      preload.addEventListener('error', onError);
-      preload.src = url;
-      preload.load();
-    };
-    attempt();
-  });
+export interface QueueMediaPreload {
+  image: HistoryOutputImage;
+  url: string;
+  dims: PreloadDims;
 }
 
-export async function preloadQueueMedia(images: readonly HistoryOutputImage[]): Promise<void> {
-  await Promise.all(images.map((image) => (
-    isVideoFilename(image.filename) ? preloadVideo(image) : preloadImage(image)
-  )));
+export async function preloadQueueMedia(
+  images: readonly HistoryOutputImage[],
+): Promise<QueueMediaPreload[]> {
+  return Promise.all(images.map(async (image) => {
+    const url = getImageUrl(image.filename, image.subfolder, image.type);
+    // Images only. Video targets never reach here: QueueCard stages them
+    // immediately rather than serializing a poster preload ahead of the
+    // playable-video request, so a video branch in this function would be dead.
+    const dims = await preloadImage(image);
+    return { image, url, dims };
+  }));
 }

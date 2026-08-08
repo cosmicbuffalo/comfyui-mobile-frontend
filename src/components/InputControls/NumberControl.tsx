@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, type ReactNode } from "react";
 import { MinusIcon, PlusIcon } from "../icons";
 import { PromotedWidgetIcon } from "../icons";
 import {
@@ -25,6 +25,7 @@ interface NumberControlProps {
   hideLabel?: boolean;
   hasError?: boolean;
   isPromoted?: boolean;
+  labelAccessory?: ReactNode;
   // Reserved for future seed mode UI
   seedMode?: "fixed" | "randomize" | "increment" | "decrement";
   onSeedModeChange?: (
@@ -47,6 +48,7 @@ export function NumberControl({
   hideLabel = false,
   hasError = false,
   isPromoted = false,
+  labelAccessory,
 }: NumberControlProps) {
   const [localValue, setLocalValue] = useState(String(value || 0));
   const isInt =
@@ -104,6 +106,7 @@ export function NumberControl({
         <label className={`${controlLabelClassName} mb-1`}>
           <span className="inline-flex items-center gap-1">
             <span>{name}</span>
+            {labelAccessory}
             {isPromoted && (
               <PromotedWidgetIcon className="w-3.5 h-3.5 text-pink-500" />
             )}

@@ -2,6 +2,7 @@ import type { Workflow } from '../types';
 
 const RECENT_WORKFLOWS_PATH = 'mobile/recent_workflows.json';
 const WORKFLOW_HIDDEN_PATH = 'mobile/workflow_hidden.json';
+const WORKFLOW_FAVORITES_PATH = 'mobile/workflow_favorites.json';
 
 export interface UserDataFile {
   name: string;
@@ -142,6 +143,37 @@ export async function saveWorkflowHiddenToServer(hidden: string[]): Promise<void
     },
   );
   if (!response.ok) throw new Error('Failed to save hidden workflows');
+}
+
+// Same shape as the hidden API above — server-synced bookmarked workflows
+// stored at mobile/workflow_favorites.json so they roam across devices.
+export async function loadWorkflowFavoritesFromServer(): Promise<string[] | null | undefined> {
+  try {
+    const response = await fetch(
+      `/api/userdata/${encodeUserDataPath(WORKFLOW_FAVORITES_PATH)}`,
+      { cache: 'no-store' },
+    );
+    if (response.status === 404) return null;
+    if (!response.ok) throw new Error('Failed to load favorite workflows');
+    const data = await response.json();
+    return Array.isArray(data)
+      ? data.filter((path): path is string => typeof path === 'string' && path.length > 0)
+      : [];
+  } catch {
+    return undefined;
+  }
+}
+
+export async function saveWorkflowFavoritesToServer(favorites: string[]): Promise<void> {
+  const response = await fetch(
+    `/api/userdata/${encodeUserDataPath(WORKFLOW_FAVORITES_PATH)}?overwrite=true`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(favorites),
+    },
+  );
+  if (!response.ok) throw new Error('Failed to save favorite workflows');
 }
 
 export async function loadRecentWorkflowsFromServer(): Promise<unknown[]> {

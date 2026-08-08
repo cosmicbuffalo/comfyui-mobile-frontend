@@ -1,7 +1,115 @@
 import os
 import tempfile
 import pytest
-from file_utils import entry_matches_name_or_path, is_within_dir, list_files, safe_join
+import file_utils
+from file_utils import entry_matches_name_or_path, is_within_dir, link_or_copy, list_files, safe_join
+
+
+class TestLinkOrCopy:
+    def test_hard_links_when_same_filesystem(self, tmp_path):
+        src = tmp_path / "out" / "image.png"
+        src.parent.mkdir()
+        src.write_bytes(b"image-bytes")
+        dst = tmp_path / "input" / "image.png"
+
+        result = link_or_copy(str(src), str(dst))
+
+        assert result == "link"
+        assert dst.read_bytes() == b"image-bytes"
+        # Same inode → no extra disk use, and link count went up.
+        assert os.path.samefile(str(src), str(dst))
+        assert src.stat().st_nlink == 2
+
+    def test_falls_back_to_copy_when_link_fails(self, tmp_path, monkeypatch):
+        src = tmp_path / "out" / "video.mp4"
+        src.parent.mkdir()
+        src.write_bytes(b"video-bytes")
+        dst = tmp_path / "input" / "video.mp4"
+
+        # Simulate cross-device / link-less filesystem.
+        def boom(*_a, **_k):
+            raise OSError(18, "Invalid cross-device link")
+        monkeypatch.setattr("file_utils.os.link", boom)
+
+        result = link_or_copy(str(src), str(dst))
+
+        assert result == "copy"
+        assert dst.read_bytes() == b"video-bytes"
+        # Independent copy → distinct inode.
+        assert not os.path.samefile(str(src), str(dst))
+
+    def test_overwrites_existing_destination(self, tmp_path):
+        src = tmp_path / "out" / "image.png"
+        src.parent.mkdir()
+        src.write_bytes(b"new")
+        dst = tmp_path / "input" / "image.png"
+        dst.parent.mkdir()
+        dst.write_bytes(b"stale")
+
+        result = link_or_copy(str(src), str(dst))
+
+        assert result == "link"
+        assert dst.read_bytes() == b"new"
+        assert os.path.samefile(str(src), str(dst))
+
+    def test_same_path_is_a_noop(self, tmp_path):
+        # Input dir configured to equal output dir: src and dst are literally
+        # the same file. The old remove-first implementation deleted it.
+        f = tmp_path / "image.png"
+        f.write_bytes(b"only-copy")
+
+        result = link_or_copy(str(f), str(f))
+
+        assert result == "link"
+        assert f.read_bytes() == b"only-copy"
+
+    def test_existing_hard_link_is_a_noop(self, tmp_path):
+        src = tmp_path / "out" / "image.png"
+        src.parent.mkdir()
+        src.write_bytes(b"image-bytes")
+        dst = tmp_path / "input" / "image.png"
+        dst.parent.mkdir()
+        os.link(str(src), str(dst))
+
+        result = link_or_copy(str(src), str(dst))
+
+        assert result == "link"
+        assert os.path.samefile(str(src), str(dst))
+        assert src.stat().st_nlink == 2
+
+    def test_double_failure_preserves_existing_destination(self, tmp_path, monkeypatch):
+        src = tmp_path / "out" / "image.png"
+        src.parent.mkdir()
+        src.write_bytes(b"new")
+        dst = tmp_path / "input" / "image.png"
+        dst.parent.mkdir()
+        dst.write_bytes(b"precious-old-input")
+
+        def boom(*_a, **_k):
+            raise OSError(28, "No space left on device")
+        monkeypatch.setattr("file_utils.os.link", boom)
+        monkeypatch.setattr("file_utils.shutil.copy2", boom)
+
+        with pytest.raises(OSError):
+            link_or_copy(str(src), str(dst))
+
+        # Old input untouched, no temp litter left behind.
+        assert dst.read_bytes() == b"precious-old-input"
+        assert sorted(p.name for p in dst.parent.iterdir()) == ["image.png"]
+
+    def test_symlink_destination_replaced_with_real_link(self, tmp_path):
+        src = tmp_path / "out" / "image.png"
+        src.parent.mkdir()
+        src.write_bytes(b"image-bytes")
+        dst = tmp_path / "input" / "image.png"
+        dst.parent.mkdir()
+        os.symlink(str(src), str(dst))
+
+        result = link_or_copy(str(src), str(dst))
+
+        assert result == "link"
+        assert not os.path.islink(str(dst))
+        assert os.path.samefile(str(src), str(dst))
 
 
 class TestIsWithinDir:
@@ -129,6 +237,28 @@ class TestNonRecursiveListing:
         # Should only count nested.jpg, not hidden_nested.png
         assert subdir_entry["count"] == 1
 
+    def test_dir_count_excludes_manually_hidden_files(self, tree):
+        results = list_files(
+            str(tree),
+            str(tree),
+            hidden_paths={"subdir/nested.jpg"},
+        )
+        subdir_entry = next(r for r in results if r["name"] == "subdir")
+        assert subdir_entry["count"] == 0
+
+    def test_dir_count_excludes_manually_hidden_descendant_folder(self, tree):
+        nested_dir = tree / "subdir" / "nested"
+        nested_dir.mkdir()
+        (nested_dir / "kept_out.png").write_bytes(b"hidden")
+
+        results = list_files(
+            str(tree),
+            str(tree),
+            hidden_paths={"subdir/nested"},
+        )
+        subdir_entry = next(r for r in results if r["name"] == "subdir")
+        assert subdir_entry["count"] == 1
+
     def test_dir_count_includes_hidden_when_show_hidden(self, tree):
         results = list_files(str(tree), str(tree), show_hidden=True)
         hidden_dir_entry = next(r for r in results if r["name"] == ".hidden_dir")
@@ -248,3 +378,70 @@ def test_dirs_only_applies_search_filter(tree):
     results = list_files(str(tree), str(tree), dirs_only=True, show_hidden=True, search="deep")
     names = [r["name"] for r in results]
     assert names == ["deep"]
+
+
+def test_content_disposition_names_the_original_file():
+    # The URL path ends in "playable", so without this the browser saves the
+    # video as playable.mp4 instead of the name the user knows it by.
+    assert file_utils.content_disposition('clip_00042_.mp4') == (
+        'inline; filename="clip_00042_.mp4"'
+    )
+
+
+def test_content_disposition_takes_the_basename_only():
+    assert file_utils.content_disposition('videos/2026-08-06/clip.mp4') == (
+        'inline; filename="clip.mp4"'
+    )
+
+
+def test_content_disposition_adds_utf8_form_for_non_ascii_names():
+    value = file_utils.content_disposition('caffè piñata.mp4')
+    assert value.startswith('inline; filename="caff_ pi_ata.mp4"')
+    assert value.endswith("filename*=UTF-8''caff%C3%A8%20pi%C3%B1ata.mp4")
+
+
+def test_content_disposition_strips_header_breaking_characters():
+    value = file_utils.content_disposition('bad"name\r\nX-Evil: 1.mp4')
+    assert '\r' not in value and '\n' not in value
+    assert value.count('"') == 2
+
+
+def test_content_disposition_falls_back_when_there_is_no_name():
+    assert file_utils.content_disposition('') == 'inline'
+    assert file_utils.content_disposition(None, 'attachment') == 'attachment'
+
+
+def test_hidden_check_scales_with_path_depth_not_hidden_count():
+    # This runs once per walked file and directory. A linear scan over the
+    # hidden list turned a folder listing into an O(files x hidden) walk.
+    from file_utils import _is_manually_hidden_rel_path
+
+    many_hidden = frozenset("folder{}/nested".format(i) for i in range(2000))
+    assert _is_manually_hidden_rel_path("a/b/c.png", many_hidden) is False
+    assert _is_manually_hidden_rel_path("folder7/nested", many_hidden) is True
+    assert _is_manually_hidden_rel_path("folder7/nested/deep/img.png", many_hidden) is True
+    # A prefix that isn't a path boundary must not match.
+    assert _is_manually_hidden_rel_path("folder7/nested-other/img.png", many_hidden) is False
+
+
+def test_a_failed_reflink_leaves_nothing_behind(tmp_path, monkeypatch):
+    # _reflink opens the destination for writing before it can know the
+    # filesystem refuses the clone. An abandoned empty file there would make
+    # os.link fail with EEXIST and push every caller onto a full copy.
+    import file_utils as fu
+
+    source = tmp_path / "src.png"
+    source.write_bytes(b"payload")
+    dest = tmp_path / "dst.png"
+
+    def refuse(fd, request, arg):
+        raise OSError("EOPNOTSUPP")
+
+    import fcntl
+
+    monkeypatch.setattr(fcntl, "ioctl", refuse)
+    result = fu.link_or_copy(str(source), str(dest))
+
+    assert result == "link"  # fell through to a hard link, not a copy
+    assert dest.read_bytes() == b"payload"
+    assert not any(p.name.endswith(".tmp") for p in tmp_path.iterdir())

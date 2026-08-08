@@ -193,6 +193,9 @@ export function filterCustomNodeRows(
       row.repository,
       row.reference,
       row.alternatives,
+      // The node types the pack provides, so a search by an exact node type
+      // (e.g. from a missing-node popover) finds the pack that installs it.
+      ...(row.nodesList?.map((item) => item.name) ?? []),
     ].filter(Boolean).join(' ').toLowerCase();
     return haystack.includes(query);
   });

@@ -28,6 +28,7 @@ describe('NodeCardMenu fast groups actions', () => {
         <NodeCardMenu
           nodeId={963}
           nodeHierarchicalKey="root/node:963"
+          nodeType="rgthree.FastGroupsBypasser"
           isLoraManagerNode={false}
           showFastGroupsConfigAction
           isBypassed={false}
@@ -47,6 +48,9 @@ describe('NodeCardMenu fast groups actions', () => {
           setItemHidden={() => {}}
           onDeleteNode={() => {}}
           onDuplicateNode={() => {}}
+          onCopyNode={() => {}}
+          onPasteBelow={() => {}}
+          pasteSummary={null}
           onMoveNode={() => {}}
           connectionHighlightMode="off"
           setConnectionHighlightMode={() => {}}
@@ -84,6 +88,7 @@ describe('NodeCardMenu fast groups actions', () => {
         <NodeCardMenu
           nodeId={964}
           nodeHierarchicalKey="root/node:964"
+          nodeType="SomeOtherNode"
           isLoraManagerNode={false}
           showFastGroupsConfigAction={false}
           isBypassed={false}
@@ -102,6 +107,9 @@ describe('NodeCardMenu fast groups actions', () => {
           setItemHidden={() => {}}
           onDeleteNode={() => {}}
           onDuplicateNode={() => {}}
+          onCopyNode={() => {}}
+          onPasteBelow={() => {}}
+          pasteSummary={null}
           onMoveNode={() => {}}
           connectionHighlightMode="off"
           setConnectionHighlightMode={() => {}}

@@ -55,7 +55,9 @@ export function MenuSaveSection({
               className={menuSurfaceButtonDisabledClassName}
             >
               <SaveDiskIcon className={`${menuIconClassName} shrink-0`} />
-              <span className={`${menuTextClassName} truncate`}>Save {getDisplayName(currentFilename)}</span>
+              <span className={`${menuTextClassName} flex-1 truncate`}>
+                Save {getDisplayName(currentFilename)}
+              </span>
             </button>
           )}
 
@@ -65,7 +67,7 @@ export function MenuSaveSection({
             className={menuSurfaceButtonClassName}
           >
             <SaveAsIcon className={menuIconClassName} />
-            <span className={menuTextClassName}>Save As...</span>
+            <span className={`${menuTextClassName} flex-1 truncate`}>Save As...</span>
             <span className={menuArrowClassName}>&rarr;</span>
           </button>
         </div>

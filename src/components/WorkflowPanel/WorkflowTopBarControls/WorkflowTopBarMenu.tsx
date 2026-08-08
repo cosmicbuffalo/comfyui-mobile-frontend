@@ -3,7 +3,11 @@ import { useCallback, useMemo, useState } from 'react';
 import { useWorkflowStore, getInputWidgetDefinitions, getWidgetDefinitions } from '@/hooks/useWorkflow';
 import { useBookmarksStore } from '@/hooks/useBookmarks';
 import { useHistoryStore } from '@/hooks/useHistory';
-import { CaretDownIcon, CaretRightIcon, EyeIcon, EyeOffIcon, ArrowRightIcon, ReloadIcon, SearchIcon, TrashIcon, PlusIcon, WorkflowIcon } from '@/components/icons';
+import { CaretDownIcon, CaretRightIcon, CheckIcon, ClipboardDownloadIcon, EyeIcon, EyeOffIcon, ArrowRightIcon, FunnelArrowsIcon, ReloadIcon, RedoIcon, SearchIcon, TrashIcon, PlusIcon, UndoIcon, WorkflowIcon } from '@/components/icons';
+import { workflowHasSetGetNodes } from '@/utils/collapseSetGetNodes';
+import { useWorkflowClipboardStore } from '@/hooks/useWorkflowClipboard';
+import { useWorkflowSelectionStore } from '@/hooks/useWorkflowSelection';
+import { useWorkflowUndoStore } from '@/hooks/useWorkflowUndo';
 import { ContextMenuButton } from '@/components/buttons/ContextMenuButton';
 import { ContextMenuBuilder } from '@/components/menus/ContextMenuBuilder';
 import { requireHierarchicalKey } from '@/utils/itemKeys';
@@ -58,6 +62,19 @@ export function WorkflowTopBarMenu({
   const searchOpen = useWorkflowStore((s) => s.searchOpen);
   const setSearchOpen = useWorkflowStore((s) => s.setSearchOpen);
   const setSearchQuery = useWorkflowStore((s) => s.setSearchQuery);
+  const pasteClipboard = useWorkflowStore((s) => s.pasteClipboard);
+  const collapseSetGetNodes = useWorkflowStore((s) => s.collapseSetGetNodes);
+  const enterSelectionMode = useWorkflowSelectionStore((s) => s.enterSelectionMode);
+  const activeSessionId = useWorkflowStore((s) => s.activeSessionId);
+  const undoWorkflow = useWorkflowUndoStore((s) => s.undo);
+  const redoWorkflow = useWorkflowUndoStore((s) => s.redo);
+  const canUndo = useWorkflowUndoStore(
+    (s) => Boolean(activeSessionId && (s.histories[activeSessionId]?.undo.length ?? 0) > 0),
+  );
+  const canRedo = useWorkflowUndoStore(
+    (s) => Boolean(activeSessionId && (s.histories[activeSessionId]?.redo.length ?? 0) > 0),
+  );
+  const clipboardSummary = useWorkflowClipboardStore((s) => s.payload?.summary ?? null);
   const connectionButtonsVisible = useWorkflowStore((s) => s.connectionButtonsVisible);
   const toggleConnectionButtonsVisible = useWorkflowStore(
     (s) => s.toggleConnectionButtonsVisible,
@@ -88,6 +105,9 @@ export function WorkflowTopBarMenu({
   );
 
   const hasWorkflow = Boolean(workflow);
+  // The "Collapse Set/Get nodes" action only makes sense — and only appears —
+  // when the loaded workflow actually contains KJNodes Set/Get relays.
+  const hasSetGetNodes = useMemo(() => workflowHasSetGetNodes(workflow), [workflow]);
 
   // Whole-workflow hide toggle (declutters it from the workflow lists). Keyed on
   // currentFilename (the workflows-dir-relative path) to match how isWorkflowHidden
@@ -246,6 +266,16 @@ export function WorkflowTopBarMenu({
     closeMenu();
   };
 
+  const handleUndoClick = () => {
+    undoWorkflow();
+    closeMenu();
+  };
+
+  const handleRedoClick = () => {
+    redoWorkflow();
+    closeMenu();
+  };
+
   const handleSearchClick = () => {
     setSearchQuery('');
     setSearchOpen(true);
@@ -259,6 +289,11 @@ export function WorkflowTopBarMenu({
 
   const handleAddGroupClick = () => {
     onAddGroup();
+    closeMenu();
+  };
+
+  const handlePasteHereClick = () => {
+    pasteClipboard();
     closeMenu();
   };
 
@@ -291,6 +326,11 @@ export function WorkflowTopBarMenu({
     closeMenu();
     // Parent reloads in the current tab and confirms if there are unsaved changes.
     onReloadWorkflow();
+  };
+
+  const handleCollapseSetGetClick = () => {
+    collapseSetGetNodes();
+    closeMenu();
   };
 
   return (
@@ -343,6 +383,20 @@ export function WorkflowTopBarMenu({
                 hidden: !hasWorkflow
               },
               {
+                key: 'select',
+                label: 'Select',
+                icon: <CheckIcon className="w-4 h-4" />,
+                onClick: () => { enterSelectionMode(); closeMenu(); },
+                hidden: !hasWorkflow
+              },
+              {
+                key: 'paste-here',
+                label: clipboardSummary ? `Paste ${clipboardSummary} here` : 'Paste here',
+                icon: <ClipboardDownloadIcon className="w-4 h-4" />,
+                onClick: handlePasteHereClick,
+                hidden: !hasWorkflow || !clipboardSummary
+              },
+              {
                 key: 'hide-show',
                 label: 'Hide / Show',
                 icon: <EyeIcon className="w-4 h-4" />,
@@ -384,6 +438,27 @@ export function WorkflowTopBarMenu({
                   onOpenWorkflowActions();
                   closeMenu();
                 }
+              },
+              {
+                key: 'collapse-set-get',
+                label: 'Collapse Set/Get nodes',
+                icon: <FunnelArrowsIcon className="w-4 h-4" />,
+                onClick: handleCollapseSetGetClick,
+                hidden: !hasSetGetNodes
+              },
+              {
+                key: 'undo',
+                label: 'Undo',
+                icon: <UndoIcon className="w-4 h-4" />,
+                onClick: handleUndoClick,
+                hidden: !canUndo
+              },
+              {
+                key: 'redo',
+                label: 'Redo',
+                icon: <RedoIcon className="w-4 h-4" />,
+                onClick: handleRedoClick,
+                hidden: !canRedo
               }
             ]}
           />

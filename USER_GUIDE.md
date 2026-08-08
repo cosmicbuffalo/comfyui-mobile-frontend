@@ -1,12 +1,19 @@
 # ComfyUI Mobile User Guide
 
-This guide walks through every feature in the mobile frontend as of `v3.0.0`
+This guide walks through every feature in the mobile frontend as of `v3.1.0`
 
 ## Table of Contents
 
 - [How-To](#how-to)
   - [How do I load a workflow?](#how-do-i-load-a-workflow)
   - [How do I save my workflow?](#how-do-i-save-my-workflow)
+  - [How do I undo a change?](#how-do-i-undo-a-change)
+  - [How do I select, copy, and paste several nodes at once?](#how-do-i-select-copy-and-paste-several-nodes-at-once)
+  - [How do I add a node or a group to my workflow?](#how-do-i-add-a-node-or-a-group-to-my-workflow)
+  - [How do I turn a widget into a connected input node?](#how-do-i-turn-a-widget-into-a-connected-input-node)
+  - [How do I use Set/Get nodes?](#how-do-i-use-setget-nodes)
+  - [What if a workflow uses custom nodes I don't have installed?](#what-if-a-workflow-uses-custom-nodes-i-dont-have-installed)
+  - [How do I switch a Preview Image node to Save Image?](#how-do-i-switch-a-preview-image-node-to-save-image)
   - [How do I work on more than one workflow at once?](#how-do-i-work-on-more-than-one-workflow-at-once)
   - [How do I organize my saved workflows into folders?](#how-do-i-organize-my-saved-workflows-into-folders)
   - [How do I bookmark a workflow or template I use often?](#how-do-i-bookmark-a-workflow-or-template-i-use-often)
@@ -20,6 +27,9 @@ This guide walks through every feature in the mobile frontend as of `v3.0.0`
   - [How do I watch outputs as they are generated?](#how-do-i-watch-outputs-as-they-are-generated)
   - [How do I favorite an output?](#how-do-i-favorite-an-output)
   - [How do I see my favorites?](#how-do-i-see-my-favorites)
+  - [How do I reject outputs I don't want to keep?](#how-do-i-reject-outputs-i-dont-want-to-keep)
+  - [How do I get notified when a generation finishes?](#how-do-i-get-notified-when-a-generation-finishes)
+  - [How do I compare two images full-screen?](#how-do-i-compare-two-images-full-screen)
   - [How do I find a specific node in my workflow?](#how-do-i-find-a-specific-node-in-my-workflow)
   - [How do I quickly edit a widget I change often?](#how-do-i-quickly-edit-a-widget-i-change-often)
   - [How do I use LoRA Manager with this frontend?](#how-do-i-use-lora-manager-with-this-frontend)
@@ -43,6 +53,7 @@ This guide walks through every feature in the mobile frontend as of `v3.0.0`
     - [Server](#server)
       - [Custom Nodes Manager](#custom-nodes-manager)
       - [Preferences](#preferences)
+      - [Notifications](#notifications)
       - [Restart the ComfyUI backend server](#restart-the-comfyui-backend-server)
       - [What happens when the connection to ComfyUI drops?](#what-happens-when-the-connection-to-comfyui-drops)
     - [About and Help](#about-and-help)
@@ -53,11 +64,17 @@ This guide walks through every feature in the mobile frontend as of `v3.0.0`
   - [Connection & Recovery](#connection-and-recovery)
 - [Workflow Page](#workflow-page)
   - [Workflow Options Menu](#workflow-options-menu)
+  - [Undo and Redo](#undo-and-redo)
+  - [Node Selection Mode](#node-selection-mode)
+  - [Adding Nodes and Groups](#adding-nodes-and-groups)
+  - [Missing Nodes](#missing-nodes)
   - [Containers (Groups and Subgraphs)](#containers-groups-and-subgraphs)
     - [Subgraph Navigation](#subgraph-navigation)
   - [Node Cards](#node-cards)
   - [Node Connections](#node-connections)
   - [Parameters and Widgets](#parameters-and-widgets)
+  - [Popping a Widget Out](#popping-a-widget-out)
+  - [Set/Get Nodes](#setget-nodes)
   - [Rich Model Picker](#rich-model-picker)
   - [Image Comparer Nodes](#image-comparer-nodes)
   - [LoRA Manager Nodes](#lora-manager-nodes)
@@ -79,6 +96,7 @@ This guide walks through every feature in the mobile frontend as of `v3.0.0`
   - [View Modes](#view-modes)
   - [Filtering and Sorting](#filtering-and-sorting)
   - [Favorites](#favorites)
+  - [Rejected Outputs](#rejected-outputs)
   - [Selection Mode](#select-mode)
   - [File Actions](#file-actions)
   - [Use in Workflow](#use-in-workflow)
@@ -89,6 +107,7 @@ This guide walks through every feature in the mobile frontend as of `v3.0.0`
   - [Zoom and Pan](#zoom-and-pan)
   - [Metadata Overlays](#metadata-overlays)
   - [Follow Queue Mode](#follow-queue-mode)
+  - [Full-Screen Comparer](#full-screen-comparer)
   - [Video Playback](#video-playback)
 
 <a id="how-to"></a>
@@ -103,6 +122,47 @@ Open the [Main Menu](#main-menu) from the hamburger icon in the top-left corner.
 ### How do I save my workflow?
 
 Open the [Main Menu](#main-menu) and look under **Save Workflow**. Use **Save** to overwrite the current file, **Save As** to save under a new name on the server, or **Download to Device** to save a local copy as JSON. An unsaved-changes indicator (blue asterisk) appears in the [Top Bar](#top-bar) on the workflow page when you have edits that haven't been saved yet.
+
+<a id="how-do-i-undo-a-change"></a>
+### How do I undo a change?
+
+Open the [Workflow Options Menu](#workflow-options-menu) (the `...` in the top-right of the workflow page) and tap **Undo**. **Redo** sits right below it. Both entries only appear when there's something to undo or redo, so an untouched workflow shows neither.
+
+History is kept per [tab](#workflow-tabs), so undoing in one workflow never disturbs another. Rapid edits to the same widget collapse into a single step (typing in a prompt box doesn't become fifty undo steps), and multi-part actions like [popping a widget out](#popping-a-widget-out) undo in one go rather than leaving a half-finished state. Seed changes made by a run are deliberately excluded, so queueing generations doesn't flood your history. See [Undo and Redo](#undo-and-redo).
+
+<a id="how-do-i-select-copy-and-paste-several-nodes-at-once"></a>
+### How do I select, copy, and paste several nodes at once?
+
+Open the [Workflow Options Menu](#workflow-options-menu) and tap **Select** to enter selection mode, then tap nodes and groups to select them. You can also start from a single item — open a node's (or group's) `...` menu and tap **Select**, which enters selection mode with that item already selected.
+
+With a selection made, tap the selection actions button in the [Bottom Bar](#bottom-bar) to **Copy**, **Create group** (wrap the selection in a new group), or **Delete**. **Cancel selection** leaves the mode without acting.
+
+To paste, open the [Workflow Options Menu](#workflow-options-menu) and tap **Paste _n_ nodes here** — the entry names what's on the clipboard and only appears when you've copied something. Paste targets whatever scope you're currently in, so you can copy at the root and paste inside a [subgraph](#subgraph-navigation). Copies carry whole subgraphs with them (including nested definitions), and the clipboard works **across workflow tabs**, so you can lift a chunk out of one workflow and drop it into another. See [Node Selection Mode](#node-selection-mode).
+
+<a id="how-do-i-add-a-node-or-a-group-to-my-workflow"></a>
+### How do I add a node or a group to my workflow?
+
+Open the [Workflow Options Menu](#workflow-options-menu) and tap **Add node** to search the full node catalog and drop one into the current scope, or **Add group** to create a new empty group. Containers also have an **Add node inside container** action in their own `...` menu, and an empty container shows a placeholder button to add the first node. See [Adding Nodes and Groups](#adding-nodes-and-groups).
+
+<a id="how-do-i-turn-a-widget-into-a-connected-input-node"></a>
+### How do I turn a widget into a connected input node?
+
+Any text, integer, float, or boolean widget shows a small **dotted-circle button** next to its label. Tap it, confirm, and the app creates a matching core primitive node (`PrimitiveString`, `PrimitiveInt`, and so on) directly above the node and wires it into that input, keeping the current value. This is handy when you want one prompt or seed feeding several nodes at once. See [Popping a Widget Out](#popping-a-widget-out).
+
+<a id="how-do-i-use-setget-nodes"></a>
+### How do I use Set/Get nodes?
+
+KJNodes' **SetNode** / **GetNode** wireless relays are supported directly. They render as compact relay cards showing the channel name, a GetNode lets you pick which SetNode it reads from, and you can rename a channel from a relay's `...` menu via **Edit set name**. If you'd rather not deal with relays at all, the [Workflow Options Menu](#workflow-options-menu) offers **Collapse Set/Get nodes**, which rewires every relay pair into a direct connection and removes them. See [Set/Get Nodes](#setget-nodes).
+
+<a id="what-if-a-workflow-uses-custom-nodes-i-dont-have-installed"></a>
+### What if a workflow uses custom nodes I don't have installed?
+
+Loading such a workflow pops up a **"This workflow has missing nodes"** dialog listing the node types your server doesn't have. The affected cards are outlined in red on the workflow page so you can find them, and the dialog's **Install missing nodes** button jumps straight into the [Custom Nodes Manager](#custom-nodes-manager) pre-filtered to what's missing. See [Missing Nodes](#missing-nodes).
+
+<a id="how-do-i-switch-a-preview-image-node-to-save-image"></a>
+### How do I switch a Preview Image node to Save Image?
+
+Open the image-output node's `...` menu and tap **Convert to Save Image** (or **Convert to Preview Image** to go the other way). This is the quick way to keep a result you only meant to preview. A custom filename prefix you've set is preserved through the round trip, so converting back and forth doesn't lose it.
 
 <a id="how-do-i-work-on-more-than-one-workflow-at-once"></a>
 ### How do I work on more than one workflow at once?
@@ -179,6 +239,25 @@ Open any saved output image in the [Image Viewer](#image-viewer) — from the [O
 ### How do I see my favorites?
 
 Go to the [Outputs Page](#outputs-page), open the [filter and sort](#filtering-and-sorting) modal from the `...` menu, and toggle **Favorites only**. The grid will then show only your favorited files. Toggle it off to return to all files. See [Favorites](#favorites) for more.
+
+<a id="how-do-i-reject-outputs-i-dont-want-to-keep"></a>
+### How do I reject outputs I don't want to keep?
+
+Alongside the heart, every output has an **✕** button — in the [Image Viewer](#image-viewer), on [Queue Page](#queue-page) cards, and on [Outputs Page](#outputs-page) cards. Tapping it on an ordinary output marks it **rejected** (the ✕ gains a solid red disc); tapping it on a favorited output just removes the favorite instead, since an output can't be both. In the viewer the keyboard shortcut is `x`.
+
+Rejecting is a triage mark, not a delete — nothing is removed until you say so. Once you've marked a batch, use **Delete Rejected (_n_)** in the [Queue Options Menu](#queue-options-menu) or **Delete rejected (_n_)** in the outputs `...` menu to remove them all after a confirmation. The entry is hidden when nothing is rejected. Rejected marks are stored on the server by file content, so they survive reloads and renames. See [Rejected Outputs](#rejected-outputs).
+
+<a id="how-do-i-get-notified-when-a-generation-finishes"></a>
+### How do I get notified when a generation finishes?
+
+Open the [Main Menu](#main-menu) → **Server** → **Preferences** and scroll to the **Notifications** section. Tap **Enable notifications** to subscribe this device, then use **Send test notification** to confirm it works. Toggles above control what you get: **Notify when a generation finishes**, **Notify when a generation errors**, and **Include a preview image**.
+
+Push notifications need a **secure (HTTPS) connection** — over plain HTTP the browser doesn't offer them at all, and the panel says so. On **iOS** you additionally have to add the app to your Home Screen (Share → Add to Home Screen) and open it from there before notifications can be enabled; the panel shows that instruction when it applies. See [Notifications](#notifications).
+
+<a id="how-do-i-compare-two-images-full-screen"></a>
+### How do I compare two images full-screen?
+
+Nodes that output an A/B pair (rgthree's **Image Comparer**) show a draggable wipe slider on their card — see [Image Comparer Nodes](#image-comparer-nodes). Tap that preview to open the comparison **full-screen** in the [Image Viewer](#image-viewer), where both images share one zoom and pan so they stay aligned as you inspect detail. See [Full-Screen Comparer](#full-screen-comparer).
 
 <a id="how-do-i-find-a-specific-node-in-my-workflow"></a>
 ### How do I find a specific node in my workflow?
@@ -303,7 +382,7 @@ The **My Workflows** panel is a browser for the workflows saved on your server, 
 - **Bookmarks**
   - Toggle a bookmark on any workflow or folder (also in the `...` menu as **Bookmark** / **Remove bookmark**).
   - **Show bookmarks only** at the top of the panel filters the list to your bookmarks.
-  - Bookmarks are stored per-device, follow items through rename/move, and clear automatically on delete.
+  - Bookmarks are synced to your ComfyUI user data rather than kept only in the browser, so they survive clearing your browser data and follow you to another device. They also follow items through rename/move, and clear automatically on delete.
   - Templates can be bookmarked and filtered the same way in the Templates panel.
 - **Hidden**
   - Hide a workflow or folder from its `...` menu → **Hide**; reveal hidden items with **Show hidden** in the panel's top `...` menu, then **Unhide** to restore one.
@@ -365,9 +444,34 @@ App-wide toggles, reached from **Server → Preferences**:
 - **Show latent previews** — show a live preview on sampler nodes during generation, with a choice of **Fast (latent2rgb)** or **Accurate (TAESD)**. See [How do I turn on latent previews?](#how-do-i-turn-on-latent-previews).
 - **Restore lost queue after restart** — automatically re-enqueue pending jobs this device saw if ComfyUI restarts and loses them. See [Connection & Recovery](#connection-and-recovery).
 - **Alias filepaths in embedded metadata** — hide input paths and output filename prefixes in shared workflow metadata.
+- **Credit comfyui-mobile-frontend in workflows** — **on by default.** Embeds a small hidden note crediting this project, with a link to its repository, into the workflow that gets saved alongside your outputs. The note is added only to that embedded copy at run time: it never appears in the mobile UI, is never part of the workflow you save to the server, and is stripped back out if you load one of those outputs' workflows. It does travel inside the metadata of images you generate, so turn it off if you'd rather your shared outputs carry no reference to the app.
 - **Enable infinite mode** — show the ∞ button next to Run. See [How do I enable infinite generation mode?](#how-do-i-enable-infinite-generation-mode).
 - **Hide bottom bar when viewer is idle** — fade the bottom bar along with the image-viewer controls after a few seconds without interaction.
 - **Follow into subgraphs** — when following execution, navigate into subgraph scopes so you can watch nodes running inside them.
+- **Tag autocomplete** — suggest tags, your custom word list, LoRAs, and embeddings while typing prompts. This toggle only appears when a supported source is installed on the server (ComfyUI-Autocomplete-Plus and/or ComfyUI-Custom-Scripts); the description names whichever it found.
+
+The **Notifications** section at the bottom of the page is covered separately below.
+
+<a id="notifications"></a>
+##### Notifications
+
+Push notifications tell you a run finished even when the app is closed or the screen is off. The block sits at the bottom of [Preferences](#preferences) and has two parts.
+
+**What you get notified about** — three toggles, saved on the server so they apply to every device you've subscribed:
+
+- **Notify when a generation finishes**
+- **Notify when a generation errors**
+- **Include a preview image** — shows the output thumbnail in the notification itself.
+
+**Turning it on for this device** — tap **Enable notifications** and accept the browser's permission prompt. Once subscribed, the panel shows a check mark, a **Send test notification** button for verifying delivery end to end, and **Disable notifications** to unsubscribe this device.
+
+> [!IMPORTANT]
+> Push requires a **secure (HTTPS) connection**. Reaching ComfyUI over plain `http://` means the browser won't offer notifications at all, and the panel says so rather than failing silently.
+
+> [!NOTE]
+> On **iOS**, Safari only allows push for apps installed to the Home Screen. Use Share → **Add to Home Screen**, open the app from that icon, and the enable button becomes available. The panel shows this instruction whenever it detects the situation.
+
+Delivery depends on the `pywebpush` package being installed on the server (it ships in this project's `requirements.txt`). If it's missing, the app reports notifications as unavailable and everything else keeps working normally.
 
 <a id="about-and-help"></a>
 #### About and Help
@@ -422,6 +526,7 @@ You can keep several workflows open at once (up to 10), each in its own tab. A s
 - Swipe left from the Outputs page to return to the Workflow page.
 - When inside a subfolder on the Outputs page, swiping right navigates up one folder level instead of switching panels.
 - Swipe navigation is disabled when menus, the viewer, input fields, or selection mode are active.
+- On desktop, a horizontal two-finger swipe on a trackpad drives the same page navigation.
 
 <a id="connection-and-recovery"></a>
 ### Connection & Recovery
@@ -443,8 +548,11 @@ The workflow page is the main editor view where you inspect and adjust your work
 Tap the `...` button in the top-right to access workflow-wide actions:
 
 - Go to queue / Go to outputs: quick navigation to other panels.
-- Add node: open node search and create a new node directly in the current workflow.
 - Search: opens a search bar to filter nodes by name, type, or ID with fuzzy matching.
+- **Add node**: open node search and create a new node directly in the current scope.
+- **Add group**: create a new empty group in the current scope.
+- **Select**: enter [Node Selection Mode](#node-selection-mode) to act on several nodes and groups at once.
+- **Paste _n_ nodes here**: paste whatever you last copied into the current scope. Only shown when the clipboard holds something; the label names what will be pasted.
 - Show/Hide connection buttons: toggles connection tracing buttons on node cards.
 - Fold all / Unfold all nodes.
 - Hide or show static nodes (nodes without editable inputs).
@@ -456,6 +564,55 @@ Tap the `...` button in the top-right to access workflow-wide actions:
 - Clear workflow cache.
 - Unload workflow to return to an empty state.
 - Clear all cache (local storage, session storage, caches, cookies) and reload.
+- **Collapse Set/Get nodes**: rewire KJNodes relay pairs into direct connections. Only shown when the workflow contains them — see [Set/Get Nodes](#setget-nodes).
+- **Undo** / **Redo**: step backward and forward through your edits. Each is shown only when that direction is available — see [Undo and Redo](#undo-and-redo).
+
+<a id="undo-and-redo"></a>
+### Undo and Redo
+
+**Undo** and **Redo** live at the bottom of the [Workflow Options Menu](#workflow-options-menu). Each entry appears only when there's something to step to, so a freshly loaded workflow shows neither.
+
+- **Per tab.** Each open [workflow tab](#workflow-tabs) keeps its own history, so undoing in one never reaches into another.
+- **Sensible steps.** Fast successive edits to the same widget coalesce into one entry instead of one per keystroke, and composite actions — [popping a widget out](#popping-a-widget-out), applying a batch of connection changes — record as a single step so undo can't strand you halfway through one.
+- **Runs don't pollute history.** Seed values changed by running the workflow are excluded, so queueing a few generations doesn't bury your actual edits.
+- History covers workflow structure and values; it isn't a substitute for saving, and it doesn't survive unloading the workflow.
+
+<a id="node-selection-mode"></a>
+### Node Selection Mode
+
+Selection mode lets you act on several nodes and groups together. (This is the workflow-page equivalent of the outputs page's [Selection Mode](#select-mode) — the two are independent.)
+
+- **Entering:** [Workflow Options Menu](#workflow-options-menu) → **Select**, or a node's or group's `...` menu → **Select**, which enters the mode with that item already selected.
+- **Selecting:** each card shows a selection checkbox in place of its `...` button — tap cards to add or remove them. Selecting a group selects the nodes inside it.
+- **Hidden members.** Nodes that are folded away or hidden by a declutter toggle have no card to tap, so a group containing them shows a dashed placeholder row at the bottom reporting how many there are. Tap it to select or deselect that whole hidden set, so a delete or copy doesn't silently miss them.
+- **Acting:** the [Bottom Bar](#bottom-bar) shows how many items are selected and opens the selection actions sheet:
+  - **Copy** — put the selection on the clipboard.
+  - **Create group** — wrap the selected items in a new group.
+  - **Delete** — remove the selected items.
+  - **Cancel selection** — leave the mode without acting.
+
+**Copy and paste** work across scopes and across tabs. A copied selection carries any subgraphs it references, including nested ones, so pasting reconstructs the whole structure rather than leaving dangling placeholders. Paste from the [Workflow Options Menu](#workflow-options-menu) → **Paste _n_ nodes here**, which drops the items into whichever scope you're currently viewing.
+
+<a id="adding-nodes-and-groups"></a>
+### Adding Nodes and Groups
+
+- **Add node** (workflow `...` menu) opens a searchable list of every node type your server knows about; picking one creates it in the current scope.
+- **Add group** (workflow `...` menu) creates a new empty group you can then fill.
+- Containers have their own **Add node inside container** action, and an empty container shows a placeholder button to add its first node.
+- New nodes are placed below the existing content of the current scope, so they land somewhere predictable instead of on top of what's already there.
+
+<a id="missing-nodes"></a>
+### Missing Nodes
+
+If you load a workflow that uses custom nodes your ComfyUI server doesn't have installed, the app tells you up front instead of leaving you with cards that quietly don't work:
+
+- A **"This workflow has missing nodes"** dialog lists the missing node types.
+- **Install missing nodes** opens the [Custom Nodes Manager](#custom-nodes-manager) already filtered to the packages you need. (The manager's data is prefetched as soon as the missing nodes are detected, so it opens quickly.)
+- Dismissing the dialog leaves the workflow loaded; the affected cards stay **outlined in red** on the workflow page so you can still find them.
+- Built-in nodes, Set/Get relays, reroute variants, and subgraph placeholders are never reported as missing.
+
+> [!NOTE]
+> A workflow with missing nodes will still fail to execute until those nodes are installed and ComfyUI is restarted — the dialog is there to tell you exactly what to install.
 
 <a id="containers-groups-and-subgraphs"></a>
 ### Containers (Groups and Subgraphs)
@@ -473,6 +630,7 @@ Tap the `...` button in the top-right to access workflow-wide actions:
 - Nested containers are supported, including groups inside groups and groups/subgraphs within nested structures.
 - Empty containers show a placeholder action to quickly add a node.
 
+<a id="subgraph-navigation"></a>
 #### Subgraph Navigation
 
 - Subgraph placeholder nodes show an **Enter** action in their `...` menu (or via a dedicated button on the placeholder card) to navigate into the subgraph.
@@ -495,9 +653,13 @@ Each node is displayed as a card with controls and status:
 - Bypass state: bypassed nodes are visually dimmed purple.
 - Execution status: running nodes show a pulse; collapsed nodes show a progress ring.
 - Errors: a warning icon opens a detailed error popover.
-- Node `...` menu (ellipsis): edit label, bookmark node, bypass/engage node, hide node, move node, delete node, and pin a widget.
-- On supported LoRA Manager nodes, the same menu also includes **Open LoraManager** (opens LoRA Manager web UI in a new tab).
+- Node `...` menu (ellipsis): edit label, change color, bookmark node, select, bypass/engage node, hide node, duplicate node, copy, move node, delete node, and pin a widget.
+- On image-output nodes the menu also offers **Convert to Save Image** / **Convert to Preview Image**, so you can promote a preview you want to keep (or demote a save you don't). A custom filename prefix survives the round trip.
+- On KJNodes relay nodes the menu includes **Edit set name** for renaming the channel — see [Set/Get Nodes](#setget-nodes).
+- On supported LoRA Manager nodes, the same menu also includes **Open LoRA Manager** (opens LoRA Manager web UI in a new tab).
 - Connection trace button: cycles through highlighting inputs, outputs, both, or off.
+- Cards for node types your server doesn't have installed are outlined in red — see [Missing Nodes](#missing-nodes).
+- Unfolding a card opens all of its sections, so nothing stays hidden behind a second expand.
 
 <a id="node-connections"></a>
 ### Node Connections
@@ -509,6 +671,8 @@ Each node is displayed as a card with controls and status:
   - Input connections: choose a source node (or add a compatible new node) for that input.
   - Output connections: multi-select target inputs to connect/disconnect in one submit action.
   - If a selected target already has another source connected, the modal asks for overwrite confirmation before replacing that link.
+  - The target list also includes inputs that are currently shown as **widgets**. Many optional inputs (a seed, a conditioning string) only exist as a widget until something is plugged into them; picking one here materializes the real input slot on the fly and connects it.
+  - Press `Escape` to dismiss the connection modal.
 
 <a id="parameters-and-widgets"></a>
 ### Parameters and Widgets
@@ -516,7 +680,7 @@ Each node is displayed as a card with controls and status:
 - Controls adapt to widget type (number, text, combo, toggle, etc.).
 - Textarea/textbox widgets have buttons to easily copy to clipboard or clear the contents of the box.
 - Combo widgets that take a file (e.g. **LoadImage**, VHS **LoadVideo**) add two ways to set their value without leaving your phone:
-  - **Browse files** opens a picker with **Outputs** and **Inputs** tabs, so you can pick any image (or video) already on the server. Choosing an output copies it into ComfyUI's input folder server-side — there's no download/re-upload round trip, so it's instant.
+  - **Browse files** opens a picker with **Outputs** and **Inputs** tabs, so you can pick any image (or video) already on the server. Choosing an output materializes it into ComfyUI's input folder server-side as a **hard link** — instant regardless of file size and using no extra disk space, with an automatic copy fallback when the two folders sit on different filesystems. There's no download/re-upload round trip either way.
   - **Load from camera roll** (or **Upload video from device** on video nodes) uploads a file straight from your device into the input folder.
 - A widget can be pinned to the bottom bar for quick editing from any page.
   - Pin a widget via the node card's `...` menu.
@@ -525,6 +689,31 @@ Each node is displayed as a card with controls and status:
 - KSampler nodes expose seed and seed-control widgets for fixed or randomized runs.
   - Seed controls support fixed, increment, decrement, and randomize control modes.
   - Primitive numeric nodes expose a control mode selection too.
+
+<a id="popping-a-widget-out"></a>
+### Popping a Widget Out
+
+Sometimes a value should live in its own node — so several nodes can share one prompt, or so you can wire something else into it later. Any **text, integer, float, or boolean** widget can be promoted in place:
+
+- Tap the small **dotted-circle button** beside the widget's label. (The dotted circle stands for the new connection the value is about to pop into.)
+- A confirmation explains what will happen; tap **Pop out** to go ahead.
+- The app creates the matching core primitive node — `PrimitiveString`, `PrimitiveInt`, `PrimitiveFloat`, `PrimitiveBoolean` — places it just above the source node, connects it to that input, and carries the current value over so nothing changes about how the workflow runs.
+- Popped-out text gets a multiline editor, which is easier for long prompts than the inline control was.
+
+The whole operation is a single [undo](#undo-and-redo) step. The button is hidden on bypassed nodes and on nodes whose only content is that one widget (where popping it out would leave an empty node behind).
+
+<a id="setget-nodes"></a>
+### Set/Get Nodes
+
+KJNodes' **SetNode** and **GetNode** act as wireless relays: a SetNode publishes a value on a named channel and a GetNode elsewhere reads it, without a visible link between them. The mobile UI handles them natively:
+
+- **Compact cards.** Relays render as small cards showing the channel name rather than a full node card, so they don't clutter the list.
+- **Channel picker.** A GetNode lets you choose which SetNode channel it reads from, with the available channels resolved for you.
+- **Rename a channel** from a relay's `...` menu → **Edit set name**.
+- **Correct labels.** Connections through a relay display the underlying value's name, so tracing a link doesn't dead-end at an anonymous relay.
+- **They never break a run.** Relays are stripped out of the prompt that gets submitted, so execution sees the real underlying connection.
+
+If you'd rather not keep the relays at all, the [Workflow Options Menu](#workflow-options-menu) → **Collapse Set/Get nodes** rewires every pair into a direct connection and deletes them. The entry only appears when the workflow actually contains relays, and the whole rewire is one [undo](#undo-and-redo) step.
 
 <a id="rich-model-picker"></a>
 ### Rich Model Picker
@@ -638,13 +827,17 @@ The queue page shows pending, running, and completed generations. Get to the que
 
 Tap the top-right `...` ellipsis when on the Queue page to access:
 
-- Go to workflow: quick navigation back to the workflow panel.
-- Cancel all pending items.
-- Fold all or unfold all queue cards.
-- Toggle metadata overlays (show/hide metadata).
-- Toggle preview visibility (show/hide previews).
-- Clear empty history items (items with no output images).
-- Clear all history (with confirmation).
+- **Workflow Panel**: quick navigation back to the workflow panel.
+- **Cancel All Pending** items.
+- **Fold All** / **Unfold All** queue cards.
+- **Show/Hide Prompt Preview**: show each run's prompt text and its input images on the card, including while it's still pending or running, so you can see what a queued job is going to make. Off by default.
+- **Stack Outputs** / **Tab Outputs**: choose how a run's outputs are laid out — *tabbed* shows one at a time with a thumbnail tab bar (compact), *stacked* shows every output at once.
+- **Show/Hide Metadata**: metadata overlays (model, sampler, steps, cfg).
+- **Show/Hide Timestamps**.
+- **Show/Hide Previews**: preview/temp images.
+- **Delete Rejected (_n_)**: delete every output you've marked rejected, after a confirmation. Hidden when nothing is rejected — see [Rejected Outputs](#rejected-outputs).
+- **Clear Empty Items** (runs with no output images).
+- **Clear History** (with confirmation).
 
 <a id="queue-card-details"></a>
 ### Queue Card Details
@@ -657,10 +850,16 @@ Tap the top-right `...` ellipsis when on the Queue page to access:
 ### Images, Previews, and Video
 
 - Completed items show saved outputs and, optionally, preview/temp images.
-- Video outputs autoplay when the card is expanded and can be replayed.
+- The live **latent preview** renders on the card that's actively generating, so you can watch a run take shape from the queue page (turn it on with **Show latent previews** in [Preferences](#preferences)).
+- Video outputs autoplay when the card is expanded and can be replayed. One video plays at a time across the whole queue, so a long list doesn't try to play everything at once.
+- Switching between a card's outputs keeps the previous image on screen until the next one has decoded, so tabbing through a batch doesn't flash blank or shift the layout.
+- Each output carries its **favorite** and **reject** state as a corner icon, and rejected outputs show a badge. Both can be toggled straight from the card — see [Rejected Outputs](#rejected-outputs).
 - Downloaded items display a cloud icon badge.
+- On desktop, a card's media is capped at the height between the top and bottom bars, so a tall portrait output doesn't run off the page and a whole run stays readable without scrolling.
 - Metadata overlays (model, sampler, steps, cfg) can be toggled from the Queue options menu.
 - When previews are visible, queue ordering is preserved so tapping an item opens the matching media in the Image Viewer.
+
+Completed runs and their previews are restored when you reopen or refresh the app, loading progressively so the panel stays responsive while deep history fills in behind it.
 
 <a id="queue-item-menu"></a>
 ### Queue Item Menu
@@ -704,10 +903,13 @@ The outputs page is a file browser for your generated outputs and input assets. 
 ### Filtering and Sorting
 
 - Tap the filter/sort button in the bottom bar to open the filter modal.
+- The button turns **amber** whenever the listing is narrowed — by file type, favorites only, or an active search — so it's obvious that files are being hidden rather than simply absent. A sort doesn't light it up, since sorting only reorders what's already there.
 - Filter by file type: all, images only, or videos only.
 - Filter by favorites only.
 - Sort by: date modified, name, or file size (ascending or descending).
 - Toggle show/hide hidden files (files starting with `.`) from the `...` menu.
+
+The outputs `...` menu also holds **Workflow Panel**, **Select**, **Search**, **New Folder**, the grid/list **View** toggle, and **Delete rejected (_n_)** — see [Rejected Outputs](#rejected-outputs).
 
 **Search** is a separate tool opened from the outputs `...` menu. It opens a search bar at the top of the page where you type a query and tap **Apply**. The search matches filenames **and** the generation prompt embedded in each image, so you can find outputs by something you remember typing. A banner reports the total number of matches and how many are in the current folder; clear the search to return to browsing.
 
@@ -718,19 +920,35 @@ The outputs page is a file browser for your generated outputs and input assets. 
 - Favorite files show a solid red heart indicator.
 - Favorite or unfavorite from the file's `...` context menu, from the heart button in the [Image Viewer](#image-viewer), or from the selection actions when in [Selection Mode](#select-mode).
 - Use the "favorites only" filter to view just your favorited files.
-- Favorites persist across sessions.
+- The filter keeps folders that hold favorites further down, labelled with how many are inside, so you can still navigate to nested favorites. Favorites behind hidden (dot-prefixed) folders only count while **Show hidden** is on — otherwise a folder would open onto an empty grid.
+- Favorites persist across sessions, and are stored on the server by file content — so they survive a rename, and a new file that happens to reuse an old filename doesn't inherit its state.
+
+<a id="rejected-outputs"></a>
+### Rejected Outputs
+
+Rejecting is the counterpart to favoriting: a way to mark the results of a run you don't want, so you can clear them out in one pass instead of deleting them one at a time.
+
+- The **✕** button sits next to the heart on outputs in the [Image Viewer](#image-viewer), on [Queue Page](#queue-page) cards, and on [Outputs Page](#outputs-page) cards. In the viewer, `x` does the same thing.
+- Tapping ✕ on an ordinary output marks it **rejected** — the ✕ gains a solid red disc, and the card shows a rejected badge.
+- Tapping ✕ on a **favorited** output removes the favorite instead of rejecting it. An output is never both at once.
+- Tap it again on a rejected output to clear the mark.
+- **Nothing is deleted until you ask.** Use **Delete Rejected (_n_)** in the [Queue Options Menu](#queue-options-menu) or **Delete rejected (_n_)** in the outputs `...` menu to remove them all after a confirmation. Both entries are hidden when nothing is rejected.
+- A delete acts on exactly the set that was marked when it started, so anything you reject while it's running keeps its mark for next time. Queue and outputs cards for deleted files are cleaned up automatically, and any file that couldn't be deleted stays marked rather than quietly disappearing from the list.
+- Like favorites and hidden marks, rejected state is stored on the server by file content, so it survives reloads, renames, and switching devices.
 
 <a id="select-mode"></a>
 ### Selection Mode
 
 - Enter selection mode from the `...` menu or by using the context menu on a file.
 - Tap files to select or deselect them.
-- **Range select:** with one file already selected, long-press another file's selection badge (or shift-click on desktop) to select everything in between — useful for grabbing a whole run at once.
+- **Range select:** with one file already selected, long-press another file's selection badge (or shift-click on desktop) to select everything in between — useful for grabbing a whole run at once. The range follows the direction of your last plain tap, so it still extends the selection when the file you range-click was already selected.
+- **Range deselect:** tap one selected file to turn it off, then range-click the far end of the run to deselect everything in between.
 - The bottom bar shows the number of selected items and a selection actions button.
 - Selection actions include:
   - Favorite or unfavorite selected files.
   - Move selected files to a different folder.
   - Delete selected files.
+  - **Bulk process:** run a saved workflow once per selected image. Pick a saved workflow, then pick which of its Load Image nodes to feed; each selected image is swapped into that node and queued as its own run. The workflow is never loaded into the Workflow page, so whatever you have open stays untouched.
 
 <a id="file-actions"></a>
 ### File Actions
@@ -772,6 +990,7 @@ The full-screen viewer supports images and videos while keeping access to the bo
 
 - Open by tapping any image or video.
 - Swipe left/right to move between files.
+- Swipe down to close the viewer. This only applies when the image fits the screen — while you are zoomed in, or on an image taller than the screen, a downward drag pans instead.
 - The counter in the top-left shows your position in the current list.
 
 <a id="keyboard-shortcuts"></a>
@@ -786,6 +1005,7 @@ The image viewer accepts these keys when no text input is focused:
 | `Escape` | Close the topmost open modal if any; otherwise close the viewer |
 | `Delete` / `Backspace` | Open the delete confirmation dialog (same as the trash button) |
 | `f` | Toggle favorite (same as the heart button) |
+| `x` | Reject the current output, or unfavorite it if it's favorited (same as the ✕ button) |
 | `w` | Load this image's embedded workflow (same as the workflow button) |
 | `u` | Use this image in a workflow LoadImage node (images only) |
 | `i` | Toggle the metadata overlay |
@@ -815,13 +1035,26 @@ Closing the viewer while a modal is open closes the modal too.
 
 - Tap the queue/follow button in the bottom bar to open the viewer in follow mode.
 - While follow mode is active, the viewer will jump to new queue media as runs finish (including preview/temp images when available).
+- With nothing to show yet — you opened follow mode before this tab's first output landed — the viewer shows the run's progress. If [latent previews](#how-do-i-turn-on-latent-previews) are on, the sampler's live preview paints behind the progress bar so you can watch the image take shape. An output already on screen is never covered by a preview.
 - Tap the button again to pause or resume follow mode.
+
+<a id="full-screen-comparer"></a>
+### Full-Screen Comparer
+
+Outputs from an A/B comparison node (rgthree's **Image Comparer**) can be inspected full-screen rather than in the small card-sized slider:
+
+- Tap the comparer preview on the node card — see [Image Comparer Nodes](#image-comparer-nodes) — to open it in the viewer.
+- The **A** image is revealed from the left up to a draggable divider over the **B** image, the same as on the card, but at full size.
+- Both images share a single zoom and pan transform, so they stay pixel-aligned while you pinch in on a detail and drag around.
+- The bottom bar hides entirely while the comparer is open (not just after an idle delay) to keep the full screen available.
 
 <a id="video-playback"></a>
 ### Video Playback
 
 - Video outputs play inline with native controls.
 - The viewer preserves follow mode but currently disables zoom gestures for videos.
+- Local videos stream through a seekable playback cache, and posters come from cached still frames, so playback starts quickly instead of waiting on a full download. Videos whose index sits at the end of the file no longer restart their download before they can begin playing.
+- Regenerating a video under a filename you've used before invalidates both the playback and poster caches, so you never see the previous video's thumbnail on the new one.
 
 ### Workflow Controls
 

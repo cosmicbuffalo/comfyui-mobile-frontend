@@ -11,6 +11,10 @@ vi.mock('@/api/client', () => ({
   getFileWorkflowAvailability: (...args: unknown[]) =>
     getFileWorkflowAvailabilityMock(...args),
   getImageMetadata: (...args: unknown[]) => getImageMetadataMock(...args),
+  getMediaThumbnailUrlFromAssetUrl: (url: string) =>
+    url.includes('/view?') ? '/mobile/api/thumbnail?filename=clip.mp4&subfolder=renders&source=output' : undefined,
+  getPlayableVideoUrl: (url: string) =>
+    url.includes('/view?') ? '/mobile/api/video/playable?filename=clip.mp4&subfolder=renders&type=output' : url,
 }));
 
 vi.mock('@/hooks/useTextareaFocus', () => ({
@@ -25,7 +29,7 @@ class ResizeObserverMock {
 
 function makeVideoItem(id = 'output/renders/clip.mp4'): ViewerImage {
   return {
-    src: 'http://example.local/clip.mp4',
+    src: '/view?filename=clip.mp4&subfolder=renders&type=output',
     mediaType: 'video',
     file: { id, name: 'clip.mp4', type: 'video' },
     filename: 'clip.mp4',
@@ -99,6 +103,14 @@ describe('MediaViewer workflow availability', () => {
     expect(
       document.querySelector('button[aria-label="Load workflow"]'),
     ).not.toBeNull();
+    const video = document.querySelector<HTMLVideoElement>('#media-viewer-overlay video');
+    expect(video?.getAttribute('poster')).toBe(
+      '/mobile/api/thumbnail?filename=clip.mp4&subfolder=renders&source=output',
+    );
+    expect(video?.getAttribute('preload')).toBe('auto');
+    expect(video?.getAttribute('src')).toBe(
+      '/mobile/api/video/playable?filename=clip.mp4&subfolder=renders&type=output',
+    );
   });
 
   it('keeps load workflow button hidden for video when availability endpoint reports false', async () => {

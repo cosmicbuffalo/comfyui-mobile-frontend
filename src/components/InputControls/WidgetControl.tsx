@@ -3,7 +3,7 @@ import { NumberControl } from "./NumberControl";
 import { ComboControl } from "./ComboControl";
 import { ModelComboControl } from "./ModelComboControl";
 import { FullscreenWidgetModal } from "../modals/FullscreenWidgetModal";
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { PlusIcon, WarningTriangleIcon } from "../icons";
 import { createDefaultLoraEntry, normalizeLoraEntry } from "@/utils/loraManager";
 import { normalizeTriggerWordEntry } from "@/utils/triggerWordToggle";
@@ -41,6 +41,8 @@ interface WidgetControlProps {
   onTogglePin?: () => void;
   containerClass?: string;
   isPromoted?: boolean;
+  /** Small control rendered inline right after the widget's label text. */
+  labelAccessory?: ReactNode;
   /**
    * Explicit Lora Manager catalog for this widget. Use when the widget name has
    * been renamed for display (e.g. CR LoRA Stack shows "Selected LoRA") so that
@@ -68,6 +70,7 @@ export function WidgetControl({
   onTogglePin,
   containerClass,
   isPromoted = false,
+  labelAccessory,
   modelKind,
 }: WidgetControlProps) {
   const [modalOpen, setModalOpen] = useState(false);
@@ -126,6 +129,7 @@ export function WidgetControl({
     hasPin: resolvedHasPin,
     isPinned,
     onTogglePin,
+    labelAccessory,
   };
 
   const renderControl = () => {

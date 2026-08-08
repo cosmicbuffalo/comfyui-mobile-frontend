@@ -8,6 +8,9 @@ import { connectionButtonDomId } from '@/utils/connectionFlash';
 import { findConnectedNode, findConnectedOutputNodes } from '@/utils/nodeOrdering';
 import { ConnectionModal } from '@/components/modals/ConnectionModal';
 import { resolveRerouteConnectionLabel } from '@/utils/rerouteLabels';
+import { resolveSetGetConnectionLabel } from '@/utils/setGetLabels';
+import { getSetGetName, isGetNode, isSetGetNode, isSetNode } from '@/utils/setGetNodes';
+import { useSetGetNameEditStore } from '@/hooks/useSetGetNameEdit';
 import {
   findWorkflowNodeInScope,
   resolveSubgraphPlaceholderConnectionLabel,
@@ -72,6 +75,31 @@ export const ConnectionButton = memo(function ConnectionButton({
     [workflow, currentSubgraphId],
   );
 
+  const ownNode = useMemo(
+    () => scopedWorkflow?.nodes.find((n) => n.id === nodeId) ?? null,
+    [scopedWorkflow, nodeId],
+  );
+  // A SetNode's outgoing side is jump-only: its connection is the relay name (no
+  // link to create/modify here; the name is edited via the node menu). A
+  // GetNode's incoming side, by contrast, IS modifiable — its long-press/empty
+  // tap opens the connection modal, which lists SetNodes to read from.
+  const isSetOutputRelay = useMemo(
+    () => Boolean(ownNode && isSetNode(ownNode) && direction === 'output'),
+    [ownNode, direction],
+  );
+
+  // Inline rename of a SetNode's relay name, triggered from the node menu: while
+  // active, the outgoing connection label is swapped for an input.
+  const editingItemKey = useSetGetNameEditStore((s) => s.editingItemKey);
+  const stopSetGetNameEdit = useSetGetNameEditStore((s) => s.stopEdit);
+  const renameSetGetNode = useWorkflowStore((s) => s.renameSetGetNode);
+  const isEditingSetName =
+    Boolean(ownNode) &&
+    isSetNode(ownNode!) &&
+    direction === 'output' &&
+    editingItemKey != null &&
+    ownNode!.itemKey === editingItemKey;
+
   // True when the slot is connected to a subgraph boundary sentinel (-10 input / -20 output).
   // These connections cross the subgraph boundary; clicking should exit the subgraph.
   const isBoundaryConnection = useMemo(() => {
@@ -120,12 +148,19 @@ export const ConnectionButton = memo(function ConnectionButton({
       currentSubgraphId,
     );
     if (!scopedWorkflow) return placeholderLabel;
+    if (node && isSetGetNode(node)) {
+      return resolveSetGetConnectionLabel(scopedWorkflow, nodeId, direction, placeholderLabel);
+    }
     return resolveRerouteConnectionLabel(scopedWorkflow, nodeId, direction, placeholderLabel);
   }, [workflow, currentSubgraphId, scopedWorkflow, direction, slot.label, slot.localized_name, slot.name, slotIndex, nodeId]);
 
-  // Find connected node(s) using the scope-aware workflow.
+  // Find connected node(s) using the scope-aware workflow. Set/Get relays connect
+  // "wirelessly" by a shared name (no drawn link), so a SetNode's outgoing side
+  // also reaches every GetNode reading its name, and a GetNode's incoming side is
+  // the SetNode it reads — surfaced here so the normal jump/menu behaves the same.
   const connectedNodes = useMemo(() => {
     if (!scopedWorkflow) return [];
+    const ownNode = scopedWorkflow.nodes.find((n) => n.id === nodeId);
     const nodes: Workflow['nodes'] = [];
     if (direction === 'input') {
       const input = slot as WorkflowInput;
@@ -133,10 +168,31 @@ export const ConnectionButton = memo(function ConnectionButton({
         const connected = findConnectedNode(scopedWorkflow, nodeId, slotIndex);
         if (connected) nodes.push(connected.node);
       }
+      if (ownNode && isGetNode(ownNode)) {
+        const getName = getSetGetName(ownNode);
+        const setNode = getName
+          ? scopedWorkflow.nodes.find((n) => isSetNode(n) && getSetGetName(n) === getName)
+          : undefined;
+        if (setNode && !nodes.some((n) => n.id === setNode.id)) nodes.push(setNode);
+      }
     } else {
       const connections = findConnectedOutputNodes(scopedWorkflow, nodeId, slotIndex);
       for (const conn of connections) {
         nodes.push(conn.node);
+      }
+      if (ownNode && isSetNode(ownNode)) {
+        const setName = getSetGetName(ownNode);
+        if (setName) {
+          for (const candidate of scopedWorkflow.nodes) {
+            if (
+              isGetNode(candidate) &&
+              getSetGetName(candidate) === setName &&
+              !nodes.some((n) => n.id === candidate.id)
+            ) {
+              nodes.push(candidate);
+            }
+          }
+        }
       }
     }
     return nodes;
@@ -325,17 +381,13 @@ export const ConnectionButton = memo(function ConnectionButton({
       handleBoundaryClick();
       return;
     }
-    // Empty output: open connection modal on single click.
-    if (direction === 'output' && !hasConnection) {
+    if (!hasConnection) {
+      // Wireless relays have no link to create/modify from this button.
+      if (isSetOutputRelay) return;
+      // Empty input/output: open the connection editor.
       setConnectionModalOpen(true);
       return;
     }
-    // Empty input: open connection modal
-    if (direction === 'input' && !hasConnection) {
-      setConnectionModalOpen(true);
-      return;
-    }
-    if (!hasConnection) return;
     if (connectionCount === 1 && connectedNodeId !== null) {
       const connectedNode = effectiveNodes[0];
       const itemKey = connectedNode ? getNodeHierarchicalKey(connectedNode) : null;
@@ -347,8 +399,11 @@ export const ConnectionButton = memo(function ConnectionButton({
     setMenuOpen((prev) => !prev);
   };
 
-  // Long-press opens connection editor: populated inputs, or any output
+  // Long-press opens connection editor: populated inputs, or any output. Wireless
+  // relays (Set output / Get input) have no link to edit here, so long-press is a
+  // no-op for them.
   const handlePointerDown = useCallback((event: React.PointerEvent) => {
+    if (isSetOutputRelay) return;
     const canOpenByLongPress = direction === 'input' ? hasConnection : true;
     if (!canOpenByLongPress) return;
     pointerStartRef.current = { x: event.clientX, y: event.clientY };
@@ -358,7 +413,7 @@ export const ConnectionButton = memo(function ConnectionButton({
       longPressTriggeredRef.current = true;
       setConnectionModalOpen(true);
     }, 500);
-  }, [direction, hasConnection]);
+  }, [direction, hasConnection, isSetOutputRelay]);
 
   const handlePointerMove = useCallback((event: React.PointerEvent) => {
     if (!pointerStartRef.current) return;
@@ -447,6 +502,28 @@ export const ConnectionButton = memo(function ConnectionButton({
     : null;
   const shouldWrapResolvedLabel = resolvedLabel.includes('/') || resolvedLabel.includes('\n');
 
+  const setNameEditor = isEditingSetName ? (
+    <input
+      autoFocus
+      type="text"
+      defaultValue={ownNode ? getSetGetName(ownNode) ?? '' : ''}
+      placeholder="set name"
+      onClick={(event) => event.stopPropagation()}
+      onBlur={(event) => {
+        if (ownNode?.itemKey) renameSetGetNode(ownNode.itemKey, event.target.value);
+        stopSetGetNameEdit();
+      }}
+      onKeyDown={(event) => {
+        if (event.key === 'Enter') (event.target as HTMLInputElement).blur();
+        if (event.key === 'Escape') {
+          event.preventDefault();
+          stopSetGetNameEdit();
+        }
+      }}
+      className="w-full rounded bg-slate-800 px-2 py-1 text-sm font-mono text-cyan-300 outline-none focus:ring-1 focus:ring-cyan-500"
+    />
+  ) : undefined;
+
   return (
     <div className="flex items-center gap-2">
       <ConnectionRow
@@ -456,6 +533,7 @@ export const ConnectionButton = memo(function ConnectionButton({
         isBoundaryConnection={isBoundaryConnection}
         hideLabel={hideLabel}
         resolvedLabel={resolvedLabel}
+        labelEditor={setNameEditor}
         shouldWrapResolvedLabel={shouldWrapResolvedLabel}
         sizeClass={sizeClass}
         arrowClass={arrowClass}

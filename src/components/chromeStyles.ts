@@ -14,6 +14,13 @@ export const appChromeIconButtonBareClassName =
 export const appChromeIconButtonActiveClassName =
   'bg-cyan-500 border border-cyan-500 text-slate-950 shadow-sm';
 
+// Filters-applied state for the outputs filter button. Amber rather than the
+// cyan "active/selected" treatment: this isn't a toggle the user is holding
+// down, it's a warning that the listing is narrowed and files are being hidden
+// from view.
+export const appChromeIconButtonFilteredClassName =
+  'bg-amber-500 border border-amber-500 text-slate-950 shadow-sm';
+
 export const appChromePrimaryButtonClassName =
   'bg-cyan-500 text-slate-950 active:bg-cyan-400';
 

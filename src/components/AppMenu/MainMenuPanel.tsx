@@ -75,7 +75,7 @@ export function MainMenuPanel({
   onOpenCustomNodes,
 }: MainMenuPanelProps) {
   return (
-    <>
+    <div className="pb-8">
       <MenuErrorNotice error={error} onDismiss={onDismissError} />
 
       <MenuServerSection
@@ -123,6 +123,6 @@ export function MainMenuPanel({
         onToggle={() => onToggleSection('info')}
         onOpenLegend={onOpenLegend}
       />
-    </>
+    </div>
   );
 }

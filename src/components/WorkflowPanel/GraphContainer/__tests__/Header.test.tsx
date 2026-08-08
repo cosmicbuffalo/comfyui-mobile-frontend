@@ -27,6 +27,9 @@ function buildProps(
     onDelete: vi.fn(),
     onShowHiddenNodes: vi.fn(),
     onMove: vi.fn(),
+    onCopy: vi.fn(),
+    onPaste: vi.fn(),
+    pasteSummary: null,
     onCommitTitle: vi.fn(),
     ...overrides,
   };

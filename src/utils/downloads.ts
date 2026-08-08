@@ -20,7 +20,7 @@ export async function downloadImage(
 // Derive a download filename from a ComfyUI asset URL: the `filename` query
 // param (how /view and the thumbnail/preview endpoints name files), else the
 // last path segment. Falls back to 'image.png' only if neither is present.
-function filenameFromSrc(src: string): string {
+export function filenameFromSrc(src: string): string {
   try {
     const url = new URL(src, window.location.origin);
     const fromQuery = url.searchParams.get('filename');
@@ -63,15 +63,26 @@ interface ShareTarget {
  *
  * The Web Share API is intentionally not used: passing a `File` requires a
  * pre-fetch, which always blows the activation window on iOS.
- *
- * In the native iOS app this path is never reached — the caller routes
- * through the `savePhoto` JS channel first and only falls through here on
- * the open web.
  */
+/**
+ * Per-call disposition of shareOrDownloadFile.
+ *
+ * `started` is deliberately not `ok`: handing a URL to the browser via an
+ * anchor click is fire-and-forget — `click()` does not throw when the browser
+ * refuses or silently drops the download (iOS Safari does exactly that on large
+ * files), so this layer genuinely cannot know whether a file reached the disk.
+ * The UI must not claim it did. `failed` covers the one case we can observe:
+ * the click never happened. The Photos route arrives with the native-app bridge
+ * in 3.1.1, which reports a real per-save result.
+ */
+export type DownloadOutcome =
+  | { route: 'downloads'; started: true }
+  | { route: 'downloads'; started: false };
+
 export async function shareOrDownloadFile(
   src: string,
   filename: string,
-): Promise<void> {
+): Promise<DownloadOutcome> {
   try {
     const link = document.createElement('a');
     link.href = src;
@@ -80,8 +91,10 @@ export async function shareOrDownloadFile(
     document.body.appendChild(link);
     link.click();
     link.remove();
+    return { route: 'downloads', started: true };
   } catch (err) {
     console.error('Failed to save file:', err);
+    return { route: 'downloads', started: false };
   }
 }
 

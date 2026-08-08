@@ -55,7 +55,7 @@ function nodeSize(node: WorkflowNode): [number, number] {
 
 // Preview / save / compare display nodes — matched by type name so it covers
 // SaveImage, PreviewImage, Save*/Preview* video/audio, and "Image Comparer".
-export function isPreviewSaveCompareNode(node: WorkflowNode): boolean {
+function isPreviewSaveCompareNode(node: WorkflowNode): boolean {
   const type = node.type.toLowerCase();
   return type.includes("preview") || type.includes("save") || type.includes("compar");
 }
@@ -236,9 +236,15 @@ function layoutScope(
   function placeGroup(ref: Extract<ItemRef, { type: "group" }>, left: number, top: number): Block {
     const childRefs = layout.groups[ref.itemKey] ?? [];
     const content = layoutGroupContents(childRefs, left, top + GROUP_TITLE);
+    // The minimum is for EMPTY groups, which would otherwise be an unusable
+    // sliver. Applying it to a populated group inflates its box past its
+    // contents — and since membership is geometric and these bounds are saved
+    // into the workflow, an inflated box can capture a neighbouring node.
     const hasContent = content.width > 0 || content.height > 0;
     const width = hasContent ? content.width : MIN_GROUP_W;
-    const height = hasContent ? GROUP_TITLE + content.height + GROUP_PAD_BOTTOM : MIN_GROUP_H;
+    const height = hasContent
+      ? GROUP_TITLE + content.height + GROUP_PAD_BOTTOM
+      : MIN_GROUP_H;
     const group = groupById.get(ref.id);
     if (group) {
       out.groupBounds.set(group.id, [

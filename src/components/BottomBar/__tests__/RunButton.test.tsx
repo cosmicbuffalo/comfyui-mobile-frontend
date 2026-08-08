@@ -69,5 +69,8 @@ describe('RunButton', () => {
     expect(button?.textContent).toContain('Queueing...');
     expect(button?.disabled).toBe(true);
     expect(button?.getAttribute('aria-busy')).toBe('true');
+    // The visible label is desktop-only, so on a phone this is the only
+    // accessible name the button has while it is queueing.
+    expect(button?.getAttribute('aria-label')).toBe('Queueing...');
   });
 });

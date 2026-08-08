@@ -5,14 +5,14 @@ export const menuSurfaceClassName =
   "rounded-xl border border-white/10 bg-slate-900/95";
 
 export const menuSurfaceButtonClassName =
-  "w-full flex items-center gap-3 p-4 bg-slate-900/95 border border-white/10 rounded-xl text-left hover:bg-slate-800/95 min-h-[56px]";
+  "w-full min-w-0 overflow-hidden flex items-center gap-3 p-4 bg-slate-900/95 border border-white/10 rounded-xl text-left hover:bg-slate-800/95 min-h-[56px]";
 
 export const menuSurfaceButtonDisabledClassName =
   `${menuSurfaceButtonClassName} disabled:opacity-50 disabled:cursor-not-allowed`;
 
-export const menuIconClassName = "w-6 h-6 text-slate-300";
+export const menuIconClassName = "w-6 h-6 shrink-0 text-slate-300";
 export const menuSmallIconClassName = "w-5 h-5 text-slate-300";
-export const menuTextClassName = "font-medium text-slate-100";
+export const menuTextClassName = "min-w-0 font-medium text-slate-100";
 export const menuMutedTextClassName = "text-slate-400";
 export const menuChevronClassName = "w-5 h-5 text-slate-400 transition-transform";
 export const menuArrowClassName = "ml-auto text-slate-500";

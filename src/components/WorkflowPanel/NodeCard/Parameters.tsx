@@ -1,6 +1,10 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Collapsible } from '@/components/Collapsible';
 import { FoldIcon } from '@/components/FoldIcon';
+import { ArrowToDownRightIcon } from '@/components/icons';
+import { Dialog } from '@/components/modals/Dialog';
+import { SectionFoldButton } from './SectionFoldButton';
+import { useParameterSectionFoldsStore } from '@/hooks/useParameterSectionFolds';
 import { WidgetControl } from '../../InputControls/WidgetControl';
 import { NumberControl } from '../../InputControls/NumberControl';
 import {
@@ -35,6 +39,7 @@ import {
   isTriggerWordToggleNodeType,
   normalizeTriggerWordEntry
 } from '@/utils/triggerWordToggle';
+import { resolveWorkflowNodeDisplayName } from '@/utils/subgraphPlaceholderLabels';
 import { FastGroupsBypasserControls } from './FastGroupsBypasserControls';
 
 interface WidgetDescriptor {
@@ -71,6 +76,14 @@ interface NodeCardParametersProps {
   resolveWidgetValue?: (widgetIndex: number) => unknown;
   showFastGroupConfig: boolean;
   setShowFastGroupConfig: (open: boolean) => void;
+  // Incremented by the parent each time the node card is unfolded; when it
+  // changes we reset nested in-Parameters folds (CR-LoRA groups) back to open so
+  // unfolding the node reveals every nested section.
+  unfoldNonce?: number;
+  // Whether an outputs section (comparer / output preview) renders below this
+  // section — drives the bottom margin so a trailing section doesn't leave dead
+  // space when nothing follows.
+  hasOutputsBelow?: boolean;
 }
 
 export function NodeCardParameters({
@@ -93,12 +106,53 @@ export function NodeCardParameters({
   toggleWidgetPin,
   resolveWidgetValue,
   showFastGroupConfig,
-  setShowFastGroupConfig
+  setShowFastGroupConfig,
+  unfoldNonce,
+  hasOutputsBelow = false
 }: NodeCardParametersProps) {
   const widgetValues = Array.isArray(node.widgets_values) ? node.widgets_values : [];
   const nodeTypes = useWorkflowStore((state) => state.nodeTypes);
+  const popWidgetToPrimitive = useWorkflowStore((state) => state.popWidgetToPrimitive);
+
+  // Parameters section fold (default open; persisted per node key).
+  const parametersCollapsed = useParameterSectionFoldsStore(
+    (s) => s.collapsedItemKeys.includes(node.itemKey ?? ''),
+  );
+  const toggleParametersCollapsed = useParameterSectionFoldsStore((s) => s.toggleCollapsed);
+  const parametersExpanded = !parametersCollapsed;
+
+  // A non-combo scalar widget can be "popped out" into a matching primitive node
+  // when this node type can accept it as an input — whether or not the input
+  // slot is already materialized in node.inputs (popWidgetToPrimitive creates it
+  // if absent). Checking the type definition (not just node.inputs) keeps the
+  // affordance consistent across same-type nodes saved in different formats.
+  const canPopOutWidget = (widget: WidgetDescriptor): boolean => {
+    if (widget.connected) return false;
+    const type = String(widget.type ?? '').toUpperCase();
+    if (type !== 'STRING' && type !== 'INT' && type !== 'FLOAT' && type !== 'BOOLEAN') return false;
+    const primitiveType = `Primitive${type[0]}${type.slice(1).toLowerCase()}`;
+    if (!nodeTypes?.[primitiveType]) return false;
+    const hasSlot = node.inputs?.some((inp) => inp.name === widget.name) ?? false;
+    const typeDef = nodeTypes?.[node.type];
+    const inDef = Boolean(
+      typeDef?.input?.required?.[widget.name] ?? typeDef?.input?.optional?.[widget.name],
+    );
+    return hasSlot || inDef;
+  };
+  // Pop-out is confirmed via a modal first (it edits the graph), so the button
+  // stages the target rather than acting immediately.
+  const [popOutTarget, setPopOutTarget] = useState<WidgetDescriptor | null>(null);
   const workflow = useWorkflowStore((state) => state.workflow);
   const scopeStack = useWorkflowStore((state) => state.scopeStack);
+  const confirmPopOut = () => {
+    const widget = popOutTarget;
+    setPopOutTarget(null);
+    if (!widget || !node.itemKey || !canPopOutWidget(widget)) return;
+    const nodeLabel = resolveWorkflowNodeDisplayName(workflow, node, nodeTypes);
+    popWidgetToPrimitive(node.itemKey, widget.name, widget.value, {
+      title: `${widget.name} (via ${nodeLabel})`,
+    });
+  };
   const syncTriggerWordsForNode = useLoraManagerStore((state) => state.syncTriggerWordsForNode);
   const storedSeedMode = useSeedStore((state) => state.seedModes[node.id]);
   const lastSeedValue = useSeedStore((state) => state.seedLastValues[node.id] ?? null);
@@ -110,6 +164,13 @@ export function NodeCardParameters({
   const [foldedLoras, setFoldedLoras] = useState<Record<number, boolean>>({});
   const toggleLoraFold = (index: number) =>
     setFoldedLoras((prev) => ({ ...prev, [index]: !prev[index] }));
+  // When the parent card is unfolded (nonce changes), clear per-group folds so
+  // every nested CR-LoRA group returns to its default-open state. Guarded on a
+  // truthy nonce so the initial mount (nonce 0/undefined) is a no-op.
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- reset local fold UI when the parent is explicitly unfolded
+    if (unfoldNonce) setFoldedLoras({});
+  }, [unfoldNonce]);
   const isLoraManagerNode = isLoraManagerNodeType(node.type);
   const isTriggerWordToggleNode = isTriggerWordToggleNodeType(node.type);
   const seedWidgetIndex = !isKSampler && workflowExists && nodeTypesExists
@@ -137,6 +198,12 @@ export function NodeCardParameters({
     ? visibleWidgets.filter((widget) => widget.name !== 'seed' && widget.name !== 'noise_seed')
     : visibleWidgets;
   const showParameters = visibleWidgets.length > 0 || visibleInputWidgets.length > 0;
+  // A node that is just a single widget with no other input slots (a
+  // primitive-like node) gains nothing from popping its only value out, so the
+  // pop-out button is suppressed there.
+  const isSingleWidgetOnlyNode =
+    inputWidgetsToRender.length + widgetsToRender.length === 1 &&
+    node.inputs.every((inp) => inp.widget != null);
   const inSubgraphScope = scopeStack[scopeStack.length - 1]?.type === 'subgraph';
   const promotedWidgetNames = useMemo(() => {
     const names = new Set<string>();
@@ -590,7 +657,22 @@ export function NodeCardParameters({
   if (!showParameters && !isFastGroupsBypasser && !showFastGroupConfig) return null;
 
   return (
-    <div className="node-parameters mb-2">
+    <div className={`node-parameters ${hasOutputsBelow ? 'mb-2' : ''}`}>
+      <div className="parameters-section-header grid grid-cols-[1fr_auto_1fr] items-center gap-2 mb-1.5 text-xs uppercase tracking-wide text-slate-500">
+        <div className="flex min-w-0 items-center gap-2">
+          <span className="shrink-0">Parameters</span>
+          <span className="h-px min-w-0 flex-1 bg-slate-700" aria-hidden="true" />
+        </div>
+        <SectionFoldButton
+          expanded={parametersExpanded}
+          onToggle={() => toggleParametersCollapsed(node.itemKey ?? '')}
+          label="parameters"
+        />
+        <div className="flex min-w-0 items-center gap-2">
+          <span className="h-px min-w-0 flex-1 bg-slate-700" aria-hidden="true" />
+        </div>
+      </div>
+      <Collapsible open={parametersExpanded}>
       {isFastGroupsBypasser && (
         <FastGroupsBypasserControls
           node={node}
@@ -601,9 +683,6 @@ export function NodeCardParameters({
       )}
       {showParameters && (
         <>
-          <div className="text-xs text-slate-400 mb-1.5 uppercase tracking-wide">
-            Parameters
-          </div>
           {isKSampler && workflowExists && nodeTypesExists && (() => {
             const seedIndex = getWidgetIndexForInput('seed');
             if (seedIndex === null) return null;
@@ -750,11 +829,11 @@ export function NodeCardParameters({
                         return groupMeta?.base === 'switch';
                       });
                       const bodyWidgets = widgets.filter((widget) => widget !== switchWidget);
-                      // Default the fold from the switch state so a group that loads
-                      // disabled starts collapsed (matching the toggle-driven behavior),
-                      // until the user explicitly folds/unfolds it.
+                      // Default every LoRA group to open (all foldable things default
+                      // to open). Disabling the switch still collapses the group via
+                      // the toggle handler below; this only sets the initial state.
                       const switchEnabled = switchWidget ? getCrSwitchValue(switchWidget.value) : true;
-                      const folded = foldedLoras[index] ?? !switchEnabled;
+                      const folded = foldedLoras[index] ?? false;
                       return (
                         <>
                           <button
@@ -868,22 +947,42 @@ export function NodeCardParameters({
                   />
                 </div>
               ))}
-              {widgetsToRender.map((widget) => (
-                <div key={getWidgetKey(widget, 'widget')} className={isBypassed ? 'opacity-80' : ''}>
-                  <WidgetControl
-                    name={widget.name}
-                    type={widget.type}
-                    value={widget.value}
-                    options={widget.options}
-                    onChange={handleWidgetChange(widget)}
-                    disabled={isBypassed}
-                    isPinned={canPinWidget(widget.type, widget.name) ? isWidgetPinned(widget.widgetIndex) : false}
-                    onTogglePin={canPinWidget(widget.type, widget.name) ? () => toggleWidgetPin(widget.widgetIndex, widget.name, widget.type, widget.options) : undefined}
-                    hasError={errorInputNames.has(widget.name)}
-                    isPromoted={isPromotedWidget(widget.name)}
-                  />
-                </div>
-              ))}
+              {widgetsToRender.map((widget) => {
+                const canPopOut =
+                  !isBypassed && !isSingleWidgetOnlyNode && Boolean(node.itemKey) && canPopOutWidget(widget);
+                return (
+                  <div key={getWidgetKey(widget, 'widget')} className={isBypassed ? 'opacity-80' : ''}>
+                    <WidgetControl
+                      name={widget.name}
+                      type={widget.type}
+                      value={widget.value}
+                      options={widget.options}
+                      onChange={handleWidgetChange(widget)}
+                      disabled={isBypassed}
+                      isPinned={canPinWidget(widget.type, widget.name) ? isWidgetPinned(widget.widgetIndex) : false}
+                      onTogglePin={canPinWidget(widget.type, widget.name) ? () => toggleWidgetPin(widget.widgetIndex, widget.name, widget.type, widget.options) : undefined}
+                      hasError={errorInputNames.has(widget.name)}
+                      isPromoted={isPromotedWidget(widget.name)}
+                      labelAccessory={canPopOut ? (
+                        <button
+                          type="button"
+                          onClick={(e) => { e.preventDefault(); e.stopPropagation(); setPopOutTarget(widget); }}
+                          aria-label={`Pop "${widget.name}" out into a connected input node`}
+                          title="Pop out into a connected input node"
+                          className="widget-popout-button inline-flex items-center gap-0.5 text-slate-400 hover:text-cyan-300 active:scale-95"
+                        >
+                          {/* A dotted circle (the new connection the value pops
+                              into) with the arrow pointing left at its center. */}
+                          <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" className="h-3.5 w-3.5">
+                            <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeDasharray="0.5 6.5" />
+                          </svg>
+                          <ArrowToDownRightIcon className="w-4 h-4 rotate-90" />
+                        </button>
+                      ) : undefined}
+                    />
+                  </div>
+                );
+              })}
             </>
           )}
           {node.type === 'PrimitiveNode' && (() => {
@@ -908,6 +1007,18 @@ export function NodeCardParameters({
             );
           })()}
         </>
+      )}
+      </Collapsible>
+      {popOutTarget && (
+        <Dialog
+          onClose={() => setPopOutTarget(null)}
+          title="Pop out into an input node?"
+          description={`This creates a new primitive node for "${popOutTarget.name}" directly above this node and connects it to the input. The current value is kept.`}
+          actions={[
+            { label: 'Cancel', onClick: () => setPopOutTarget(null), variant: 'secondary' },
+            { label: 'Pop out', onClick: confirmPopOut, variant: 'primary', autoFocus: true },
+          ]}
+        />
       )}
     </div>
   );

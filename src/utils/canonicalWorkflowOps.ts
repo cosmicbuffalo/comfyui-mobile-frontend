@@ -232,7 +232,7 @@ export function resolveScopeForHierarchicalKey(
 }
 
 /** Convert a subgraph object-format link to the root tuple format. */
-export function subgraphLinkToTuple(link: WorkflowSubgraphLink): WorkflowLink {
+function subgraphLinkToTuple(link: WorkflowSubgraphLink): WorkflowLink {
   return [
     link.id,
     link.origin_id,

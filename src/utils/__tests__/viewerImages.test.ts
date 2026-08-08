@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   buildOutputPreferredViewerImages,
   buildViewerImages,
+  fileIdFromAssetUrl,
   getHistoryImageFileId,
   type HistoryImageItem,
 } from '../viewerImages';
@@ -109,5 +110,39 @@ describe('getHistoryImageFileId', () => {
       subfolder: 'nested/folder',
       type: 'output',
     })).toBe('output/nested/folder/image.png');
+  });
+});
+
+describe('fileIdFromAssetUrl', () => {
+  it('derives the same id getHistoryImageFileId produces for /view URLs', () => {
+    const url = '/view?filename=image.png&subfolder=nested/folder&type=output';
+    expect(fileIdFromAssetUrl(url)).toBe('output/nested/folder/image.png');
+  });
+
+  it('handles a missing subfolder', () => {
+    const url = '/view?filename=image.png&type=output';
+    expect(fileIdFromAssetUrl(url)).toBe('output/image.png');
+  });
+
+  it('returns null for non-asset URLs', () => {
+    expect(fileIdFromAssetUrl('blob:https://example.com/abc')).toBeNull();
+    expect(fileIdFromAssetUrl('/view?type=output')).toBeNull();
+  });
+});
+
+describe('fileIdFromAssetUrl source parameter', () => {
+  it('reads the source from a thumbnail URL, which spells it `source`', () => {
+    // ComfyUI's /view uses `type`; this node's thumbnail/preview endpoints use
+    // `source`. Reading only `type` returned null for every grid thumbnail, so
+    // a download initiated from the grid was recorded against no id at all.
+    expect(fileIdFromAssetUrl('/mobile/api/thumbnail?filename=a.png&subfolder=&source=output'))
+      .toBe('output/a.png');
+    expect(fileIdFromAssetUrl('/mobile/api/thumbnail?filename=b.png&subfolder=run&source=temp'))
+      .toBe('temp/run/b.png');
+  });
+
+  it('still reads /view URLs, which spell it `type`', () => {
+    expect(fileIdFromAssetUrl('/view?filename=c.png&subfolder=&type=output'))
+      .toBe('output/c.png');
   });
 });

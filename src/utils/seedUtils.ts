@@ -256,7 +256,7 @@ export function getSeedRandomBounds(node: WorkflowNode): { min: number; max: num
  * reject that node's whole branch at validation, so the random seed must respect
  * it. Returns null when the node declares no numeric bounds.
  */
-export function getSeedInputTypeBounds(
+function getSeedInputTypeBounds(
   nodeTypes: NodeTypes,
   node: WorkflowNode,
 ): { min?: number; max?: number } | null {

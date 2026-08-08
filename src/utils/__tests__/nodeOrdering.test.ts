@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { orderNodesForMobile, findConnectedNode, findConnectedOutputNodes } from '../nodeOrdering';
+import { computeTidyWorkflowGeometry } from '../tidyLayout';
+import type { MobileLayout } from '../mobileLayout';
 import type { Workflow, WorkflowNode, WorkflowLink } from '@/api/types';
 
 function makeNode(id: number, type: string, overrides?: Partial<WorkflowNode>): WorkflowNode {
@@ -162,6 +164,54 @@ describe('orderNodesForMobile', () => {
 
     expect(result[0].id).toBe(1);
     expect(result[1].id).toBe(2);
+  });
+
+  it('orders by canvas position (left -> right) over dependency order', () => {
+    // C feeds B feeds A (so topological order is C, B, A), but they are placed
+    // left -> right as A, B, C. The list must follow geometry: A, B, C.
+    const a = makeNode(1, 'Sink', { pos: [0, 0], inputs: [{ name: 'in', type: 'X', link: 1 }] });
+    const b = makeNode(2, 'Mid', { pos: [300, 0], inputs: [{ name: 'in', type: 'X', link: 2 }], outputs: [{ name: 'o', type: 'X', links: [1] }] });
+    const c = makeNode(3, 'Src', { pos: [600, 0], outputs: [{ name: 'o', type: 'X', links: [2] }] });
+    const wf = makeWorkflow([a, b, c], [[1, 2, 0, 1, 0, 'X'], [2, 3, 0, 2, 0, 'X']]);
+    expect(orderNodesForMobile(wf).map((n) => n.id)).toEqual([1, 2, 3]);
+  });
+
+  it('breaks an x tie by y (top -> bottom)', () => {
+    const top = makeNode(1, 'A', { pos: [100, 0] });
+    const mid = makeNode(2, 'B', { pos: [100, 200] });
+    const bot = makeNode(3, 'C', { pos: [100, 400] });
+    const wf = makeWorkflow([bot, top, mid], []);
+    expect(orderNodesForMobile(wf).map((n) => n.id)).toEqual([1, 2, 3]);
+  });
+
+  it('falls back to topological order when positions coincide', () => {
+    // All at the origin (a brand-new workflow) -> dependency reading order.
+    const loader = makeNode(1, 'CheckpointLoaderSimple', { pos: [0, 0], outputs: [{ name: 'M', type: 'M', links: [1] }] });
+    const save = makeNode(2, 'SaveImage', { pos: [0, 0], inputs: [{ name: 'm', type: 'M', link: 1 }] });
+    const wf = makeWorkflow([save, loader], [[1, 1, 0, 2, 0, 'M']]);
+    expect(orderNodesForMobile(wf).map((n) => n.id)).toEqual([1, 2]);
+  });
+
+  it('round-trips a reposition: tidy writes geometry, ordering reads it back', () => {
+    // Three nodes; the user has arranged the mobile list as [3, 1, 2]. The tidy
+    // engine writes that order into node positions; reloading must reconstruct
+    // the same [3, 1, 2] order from those positions (the bug being fixed).
+    const n1 = makeNode(1, 'A', { pos: [10, 10] });
+    const n2 = makeNode(2, 'B', { pos: [20, 20] });
+    const n3 = makeNode(3, 'C', { pos: [30, 30] });
+    const wf = makeWorkflow([n1, n2, n3], []);
+    const layout: MobileLayout = {
+      root: [
+        { type: 'node', id: 3 },
+        { type: 'node', id: 1 },
+        { type: 'node', id: 2 },
+      ],
+      groups: {},
+      subgraphs: {},
+      hiddenBlocks: {},
+    };
+    const tidied = computeTidyWorkflowGeometry(wf, layout, null);
+    expect(orderNodesForMobile(tidied).map((n) => n.id)).toEqual([3, 1, 2]);
   });
 });
 

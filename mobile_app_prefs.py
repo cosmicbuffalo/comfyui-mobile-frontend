@@ -8,11 +8,12 @@ the frontend's generation-settings store.
 Stored in user/default/mobile/preferences.json.
 """
 import json
+
+from json_cache_io import atomic_write_json
 import os
 import threading
 
 import folder_paths
-from json_cache_io import atomic_write_json
 
 _LOG_PREFIX = "[\033[34mMobile\033[0m]"
 
@@ -70,5 +71,7 @@ def set_prefs(updates) -> dict:
             if key in updates and isinstance(updates[key], bool):
                 current[key] = updates[key]
         _prefs = current
+        # Atomic: a crash or full disk mid-write would otherwise leave truncated
+        # JSON that every later load rejects, bricking server-side prefs.
         atomic_write_json(_prefs_path(), current, prefix=".preferences.")
         return dict(current)

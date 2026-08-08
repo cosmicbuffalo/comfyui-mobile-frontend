@@ -14,6 +14,21 @@
   box-sizing: border-box;
 }
 
+/* Height budget for one queue item on desktop: the page between the two bars.
+   A card that fits it needs no scrolling to be read whole, so its media is
+   capped at what's left after the card's own chrome (header, thumbnail tab
+   strip, footer row) — a fixed allowance rather than a measured one, since the
+   chrome is a couple of fixed-height rows and the media is what actually
+   varies. dvh (not vh) so a mobile browser's collapsing URL bar doesn't leave
+   the cap taller than the visible page. */
+:root {
+  --queue-item-max-height: calc(
+    100dvh - var(--top-bar-offset, 69px) - var(--bottom-bar-offset, 80px)
+  );
+  --queue-card-chrome: 10rem;
+  --queue-media-max-height: calc(var(--queue-item-max-height) - var(--queue-card-chrome));
+}
+
 body {
   margin: 0;
   min-height: 100vh;
@@ -221,6 +236,16 @@ input, textarea, select {
 .type-BOOLEAN { background-color: #6366f1; color: white; }
 .type-MASK { background-color: #64748b; color: white; }
 .type-default { background-color: #9ca3af; color: white; }
+
+/* Fullscreen widget modal backdrop: span the full LAYOUT viewport so nothing
+   shows through in the strip behind the on-screen keyboard. WebKit shrinks
+   only the visual viewport when the keyboard opens; 100lvh keeps the backdrop
+   at the layout height regardless. The 100vh line is the fallback for engines
+   without lvh units (on iOS, 100vh already equals the large viewport). */
+.fullscreen-widget-modal {
+  height: 100vh;
+  height: 100lvh;
+}
 
 /* Scrollbar styling */
 ::-webkit-scrollbar {

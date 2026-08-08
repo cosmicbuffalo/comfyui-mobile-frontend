@@ -1,6 +1,7 @@
 import { memo, useCallback, useEffect, useMemo, useState, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { useOutputsStore, MAX_OUTPUTS_TABS, type OutputsTab, type FilterState, type SortState } from '@/hooks/useOutputs';
+import { useHistoryStore } from '@/hooks/useHistory';
 import { isWorkflowModified, MAX_WORKFLOW_SESSIONS, useWorkflowStore } from '@/hooks/useWorkflow';
 import { useNavigationStore } from '@/hooks/useNavigation';
 import { useHistoryWorkflowByFileId } from '@/hooks/useHistoryWorkflowByFileId';
@@ -17,7 +18,7 @@ import { getMediaType } from '@/utils/media';
 import { deleteFile, moveFiles, createFolder, getUserImages, getRecursiveFolders, renameFile, getScreenPreviewUrl } from '@/api/client';
 import {
   FolderIcon, BookmarkIconSvg, BookmarkOutlineIcon, DownloadDeviceIcon, EyeIcon, EyeOffIcon, TrashIcon,
-  PlusIcon, MinusIcon, CornerDownRightIcon, FunnelArrowsIcon
+  PlusIcon, MinusIcon, CornerDownRightIcon, FunnelArrowsIcon, QueueStackIcon
 } from '@/components/icons';
 import { shareOrDownloadFile, shareOrDownloadBatch } from '@/utils/downloads';
 import { useDismissOnOutsideClick } from '@/hooks/useDismissOnOutsideClick';
@@ -27,6 +28,7 @@ import { resolveSelectionDownloadTargets } from './OutputsPanel/selectionDownloa
 import { SearchBar } from '@/components/SearchBar';
 import { MediaViewer } from '@/components/ImageViewer/MediaViewer';
 import { UseImageModal } from '@/components/modals/UseImageModal';
+import { BulkProcessModal } from '@/components/modals/BulkProcessModal';
 import { ModalFrame } from '@/components/modals/ModalFrame';
 import { Dialog } from '@/components/modals/Dialog';
 import {
@@ -34,7 +36,7 @@ import {
   resolveFilePath,
   resolveViewerItemWorkflowLoad,
 } from '@/utils/workflowOperations';
-import { getSelectionRangeIds } from '@/utils/selectionRange';
+import { resolveSelectionToggle, type SelectionAnchor } from '@/utils/selectionRange';
 import { getStickySectionScrollTarget } from '@/utils/stickySection';
 import { OutputsFoldersSection } from './OutputsPanel/FoldersSection';
 import { OutputsFilesSection } from './OutputsPanel/FilesSection';
@@ -71,6 +73,10 @@ export const OutputsPanel = memo(function OutputsPanel({ visible }: { visible: b
   const fetchFolders = useOutputsStore((s) => s.fetchFolders);
   const fetchFiles = useOutputsStore((s) => s.fetchFiles);
   const toggleFavorite = useOutputsStore((s) => s.toggleFavorite);
+  const favoriteItem = useOutputsStore((s) => s.favoriteItem);
+  const unfavoriteItem = useOutputsStore((s) => s.unfavoriteItem);
+  const toggleRejected = useOutputsStore((s) => s.toggleRejected);
+  const rejected = useOutputsStore((s) => s.rejected);
   const toggleSelection = useOutputsStore((s) => s.toggleSelection);
   const getDisplayedFiles = useOutputsStore((s) => s.getDisplayedFiles);
   const refresh = useOutputsStore((s) => s.refresh);
@@ -122,6 +128,7 @@ export const OutputsPanel = memo(function OutputsPanel({ visible }: { visible: b
   const [renameTarget, setRenameTarget] = useState<FileItem | null>(null);
   const [renameValue, setRenameValue] = useState('');
   const [deleteSelectionOpen, setDeleteSelectionOpen] = useState(false);
+  const [bulkProcessItems, setBulkProcessItems] = useState<FileItem[] | null>(null);
   const [movePickerOpen, setMovePickerOpen] = useState(false);
   const [movePath, setMovePath] = useState<string | null>(null);
   const [moveFolders, setMoveFolders] = useState<FileItem[]>([]);
@@ -146,6 +153,7 @@ export const OutputsPanel = memo(function OutputsPanel({ visible }: { visible: b
   const [viewerOpen, setViewerOpen] = useState(false);
   const [viewerImages, setViewerImages] = useState<ViewerImage[]>([]);
   const [viewerIndex, setViewerIndex] = useState(0);
+  const pendingFolderNavigationRef = useRef<string | null>(null);
   // Incremental render budget for the file grid (grows on scroll).
   const [visibleCount, setVisibleCount] = useState(OUTPUTS_RENDER_PAGE);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -156,7 +164,7 @@ export const OutputsPanel = memo(function OutputsPanel({ visible }: { visible: b
   // Anchor for shift+click range ops. Carries the direction of the click that
   // set it (`select`) so a shift+click extends that same action across the
   // range: select-anchor → bulk select, deselect-anchor → bulk deselect.
-  const selectionAnchorRef = useRef<{ id: string; select: boolean } | null>(null);
+  const selectionAnchorRef = useRef<SelectionAnchor | null>(null);
   const [foldersCollapsed, setFoldersCollapsed] = useState(() => {
     const saved = localStorage.getItem(FOLDERS_COLLAPSED_KEY);
     return saved === 'true';
@@ -301,6 +309,16 @@ export const OutputsPanel = memo(function OutputsPanel({ visible }: { visible: b
       }
     });
   };
+
+  useEffect(() => {
+    pendingFolderNavigationRef.current = null;
+  }, [source, currentFolder, isLoading]);
+
+  const handleNavigateFolder = useCallback((folder: string) => {
+    if (pendingFolderNavigationRef.current) return;
+    pendingFolderNavigationRef.current = folder;
+    setCurrentFolder(folder);
+  }, [setCurrentFolder]);
 
   const handleOutputsViewerLoadInWorkflow = (item: ViewerImage) => {
     if (!item.file || item.file.type !== 'image') return;
@@ -501,24 +519,23 @@ export const OutputsPanel = memo(function OutputsPanel({ visible }: { visible: b
     event: React.MouseEvent,
     options?: { range?: boolean },
   ) => {
-    const anchor = selectionAnchorRef.current;
-    if ((event.shiftKey || options?.range) && anchor) {
-      const rangeIds = getSelectionRangeIds(selectableIds, anchor.id, id);
-      if (rangeIds) {
-        // Apply the anchor click's direction across the whole range: a
-        // select-anchor bulk-selects, a deselect-anchor bulk-deselects. The
-        // anchor stays put so further shift+clicks re-range from the same item.
-        if (anchor.select) selectIds(rangeIds);
-        else deselectIds(rangeIds);
-        return;
-      }
+    const result = resolveSelectionToggle({
+      selectableIds,
+      isSelected: selectedIds.includes(id),
+      id,
+      anchor: selectionAnchorRef.current,
+      rangeRequested: event.shiftKey || Boolean(options?.range),
+    });
+    if (result.type === 'range') {
+      // The anchor stays put so further range clicks re-range from the same item.
+      if (result.select) selectIds(result.ids);
+      else deselectIds(result.ids);
+      return;
     }
-
-    // Plain toggle: anchor this item AND remember whether it selected or
-    // deselected, so a following shift+click extends that same action.
-    const willSelect = !selectedIds.includes(id);
-    toggleSelection(id);
-    selectionAnchorRef.current = { id, select: willSelect };
+    // Plain toggle: re-anchor on this item AND remember whether it selected or
+    // deselected, so a following range click extends that same action.
+    toggleSelection(result.id);
+    selectionAnchorRef.current = result.nextAnchor;
   };
 
   // Stable callback identities for the (potentially thousands of) memoized
@@ -588,6 +605,14 @@ export const OutputsPanel = memo(function OutputsPanel({ visible }: { visible: b
     setMenuTarget(null);
   };
 
+  const handleBulkProcess = () => {
+    // selectionImageItems holds the eligible images (the menu entry only renders
+    // when there is at least one); each is fed into a LoadImage node.
+    if (selectionImageItems.length === 0) return;
+    setSelectionActionOpen(false);
+    setBulkProcessItems(selectionImageItems);
+  };
+
   const handleBulkDeleteRequest = () => {
     if (selectedIds.length === 0) return;
     setSelectionActionOpen(false);
@@ -654,6 +679,9 @@ export const OutputsPanel = memo(function OutputsPanel({ visible }: { visible: b
     try {
       const filePath = resolveFilePath(deleteTarget, source);
       await deleteFile(filePath, source);
+      // Drop this file from any history entry that references it, so the queue
+      // panel doesn't keep an orphaned card with a now-broken image.
+      await useHistoryStore.getState().removeOutputImages([deletedFile.id]);
       refresh();
       deleteOnCompleteRef.current?.(deletedFile);
       deleteOnCompleteRef.current = null;
@@ -674,6 +702,8 @@ export const OutputsPanel = memo(function OutputsPanel({ visible }: { visible: b
       const prefix = `${source}/`;
       const paths = selectedIds.map((id) => (id.startsWith(prefix) ? id.slice(prefix.length) : id));
       await Promise.all(paths.map((path) => deleteFile(path, source)));
+      // Reconcile history so any queue cards for these files don't go broken.
+      await useHistoryStore.getState().removeOutputImages(selectedIds);
       refresh();
       clearSelection();
     } catch (err) {
@@ -703,6 +733,13 @@ export const OutputsPanel = memo(function OutputsPanel({ visible }: { visible: b
     [displayedFiles, selectedIds]
   );
   const selectionAllHidden = selectionHideTargets.length > 0 && selectionHideTargets.every((f) => f.hiddenSelf);
+
+  // Image items in the current selection — the only ones eligible for bulk
+  // process (each is fed into a LoadImage node). Gates the menu entry.
+  const selectionImageItems = useMemo(
+    () => displayedFiles.filter((f) => selectedIds.includes(f.id) && f.type === 'image'),
+    [displayedFiles, selectedIds]
+  );
 
   // Folders vs files in the selection (folders identified from the current view)
   // so the delete confirmation states the real consequence — a selected folder
@@ -1252,7 +1289,7 @@ export const OutputsPanel = memo(function OutputsPanel({ visible }: { visible: b
             selectionMode={selectionMode}
             selectedIds={selectedIds}
             favorites={favorites}
-            setCurrentFolder={setCurrentFolder}
+            setCurrentFolder={handleNavigateFolder}
             handleOpen={handleOpen}
             handleMenu={handleMenu}
             toggleSelection={handleToggleSelection}
@@ -1265,7 +1302,8 @@ export const OutputsPanel = memo(function OutputsPanel({ visible }: { visible: b
             selectionMode={selectionMode}
             selectedIds={selectedIds}
             favorites={favorites}
-            setCurrentFolder={setCurrentFolder}
+            rejected={rejected}
+            setCurrentFolder={handleNavigateFolder}
             handleOpen={stableHandleOpen}
             handleMenu={stableHandleMenu}
             toggleSelection={stableToggleSelection}
@@ -1353,6 +1391,15 @@ export const OutputsPanel = memo(function OutputsPanel({ visible }: { visible: b
                <DownloadDeviceIcon className="w-4 h-4 text-slate-400" />
                Download
              </button>
+             {selectionImageItems.length > 0 && (
+               <button
+                 className="w-full text-left px-4 py-3 text-sm text-slate-200 hover:bg-white/10 flex items-center gap-2"
+                 onClick={handleBulkProcess}
+               >
+                 <QueueStackIcon className="w-4 h-4 text-cyan-300" />
+                 Bulk process
+               </button>
+             )}
              {selectionHideTargets.length > 0 && (
                <button
                  className="w-full text-left px-4 py-3 text-sm text-slate-200 hover:bg-white/10 flex items-center gap-2"
@@ -1694,6 +1741,11 @@ export const OutputsPanel = memo(function OutputsPanel({ visible }: { visible: b
            loadOnCompleteRef.current = null;
          }}
        />
+       <BulkProcessModal
+         open={bulkProcessItems !== null}
+         items={bulkProcessItems ?? []}
+         onClose={() => setBulkProcessItems(null)}
+       />
        <FilterModal
          open={filterModalOpen}
          onClose={() => setFilterModalOpen(false)}
@@ -1734,9 +1786,19 @@ export const OutputsPanel = memo(function OutputsPanel({ visible }: { visible: b
          onDelete={handleOutputsViewerDelete}
          onLoadInWorkflow={handleOutputsViewerLoadInWorkflow}
          onLoadWorkflow={handleOutputsViewerLoadWorkflow}
-         onToggleFavorite={(item) => item.file && toggleFavorite(item.file.id)}
+         onToggleFavorite={(item) => item.file && favoriteItem(item.file.id)}
          isFavorited={(item) => Boolean(item.file && favorites.includes(item.file.id))}
-         onDownload={(item) => item.src && void shareOrDownloadFile(item.src, item.filename || item.file?.name || 'image.png')}
+         onReject={(item) => {
+           if (!item.file) return;
+           const id = item.file.id;
+           if (favorites.includes(id)) unfavoriteItem(id);
+           else toggleRejected(id);
+         }}
+         isRejected={(item) => Boolean(item.file && rejected.includes(item.file.id))}
+         onDownload={(item) => {
+           if (!item.src) return;
+           return shareOrDownloadFile(item.src, item.filename || item.file?.name || 'image.png');
+         }}
          showMetadataToggle
         />
       </div>

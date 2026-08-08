@@ -2,28 +2,30 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { useConnectionSectionFoldsStore } from '@/hooks/useConnectionSectionFolds';
 
 beforeEach(() => {
-  useConnectionSectionFoldsStore.setState({ expandedItemKeys: [] });
+  useConnectionSectionFoldsStore.setState({ collapsedItemKeys: [] });
 });
 
 describe('useConnectionSectionFoldsStore', () => {
-  it('defaults connection sections to folded', () => {
-    expect(useConnectionSectionFoldsStore.getState().expandedItemKeys).toEqual([]);
+  it('defaults connection sections to open (nothing collapsed)', () => {
+    expect(useConnectionSectionFoldsStore.getState().collapsedItemKeys).toEqual([]);
   });
 
-  it('toggles an explicitly expanded connection section', () => {
-    const { toggleExpanded } = useConnectionSectionFoldsStore.getState();
-    toggleExpanded('node-key');
-    expect(useConnectionSectionFoldsStore.getState().expandedItemKeys).toEqual(['node-key']);
-    toggleExpanded('node-key');
-    expect(useConnectionSectionFoldsStore.getState().expandedItemKeys).toEqual([]);
+  it('toggles a section between collapsed and open', () => {
+    const { toggleCollapsed } = useConnectionSectionFoldsStore.getState();
+    toggleCollapsed('node-key');
+    expect(useConnectionSectionFoldsStore.getState().collapsedItemKeys).toEqual(['node-key']);
+    toggleCollapsed('node-key');
+    expect(useConnectionSectionFoldsStore.getState().collapsedItemKeys).toEqual([]);
   });
 
-  it('expands idempotently without folding an already-open section', () => {
-    const { expand } = useConnectionSectionFoldsStore.getState();
+  it('expands idempotently: reopens a collapsed section and is a no-op when open', () => {
+    const { toggleCollapsed, expand } = useConnectionSectionFoldsStore.getState();
+    // Collapse first, then expand should reopen it.
+    toggleCollapsed('node-key');
     expand('node-key');
-    expect(useConnectionSectionFoldsStore.getState().expandedItemKeys).toEqual(['node-key']);
-    // Calling expand again on an already-open section is a no-op (never folds).
+    expect(useConnectionSectionFoldsStore.getState().collapsedItemKeys).toEqual([]);
+    // Expanding an already-open section is a no-op (never collapses).
     expand('node-key');
-    expect(useConnectionSectionFoldsStore.getState().expandedItemKeys).toEqual(['node-key']);
+    expect(useConnectionSectionFoldsStore.getState().collapsedItemKeys).toEqual([]);
   });
 });

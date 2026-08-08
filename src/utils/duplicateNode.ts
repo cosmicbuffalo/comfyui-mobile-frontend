@@ -43,7 +43,7 @@ function generateUuid(): string {
   });
 }
 
-function generateUniqueSubgraphId(defs: WorkflowSubgraphDefinition[]): string {
+export function generateUniqueSubgraphId(defs: WorkflowSubgraphDefinition[]): string {
   const existing = new Set(defs.map((d) => d.id));
   let id = generateUuid();
   while (existing.has(id)) id = generateUuid();
@@ -128,14 +128,19 @@ function buildNodeDuplicateInScope(
  * fresh, globally-unique inner node IDs. Inner link IDs and the boundary
  * inputs/outputs `linkIds` are kept (subgraph links have their own per-definition
  * ID space); only link endpoints are remapped to the new node IDs, with the
- * -10 (input) / -20 (output) boundary sentinels left untouched. Nested subgraph
- * placeholders keep their type, so they continue to reference (share) the same
- * nested definition — standard subgraph-instance semantics.
+ * -10 (input) / -20 (output) boundary sentinels left untouched. Without a
+ * `subgraphIdMap`, nested subgraph placeholders keep their type, so they
+ * continue to reference (share) the same nested definition — standard
+ * subgraph-instance semantics for same-workflow duplication. When the caller
+ * is transplanting definitions into another workflow (clipboard paste), it
+ * must pass the old→new definition-id map so nested placeholders follow their
+ * carried definitions instead of pointing at ids that only exist in the source.
  */
-function cloneSubgraphDefinition(
+export function cloneSubgraphDefinition(
   def: WorkflowSubgraphDefinition,
   newSubgraphId: string,
   startNodeId: number,
+  subgraphIdMap?: Map<string, string>,
 ): { def: WorkflowSubgraphDefinition; nextNodeId: number } {
   let nextNodeId = startNodeId;
   const nodeIdMap = new Map<number, number>();
@@ -148,6 +153,7 @@ function cloneSubgraphDefinition(
   const nodes = (def.nodes ?? []).map((inner) => {
     const clone = structuredClone(inner) as WorkflowNode;
     clone.id = nodeIdMap.get(inner.id) ?? inner.id;
+    clone.type = subgraphIdMap?.get(inner.type) ?? inner.type;
     clone.itemKey = undefined;
     return clone;
   });

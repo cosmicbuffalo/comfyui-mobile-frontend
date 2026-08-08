@@ -1,7 +1,7 @@
 import type { StateCreator } from 'zustand';
 import * as api from '@/api/client';
 import type { QueueState, ShadowQueueJob } from '../useQueue';
-import { capWorkflowDiffs } from './queueHelpers';
+import { touchBoundedMap, WORKFLOW_DIFF_CAP } from './queueHelpers';
 
 /**
  * Shadow-queue recovery: tracks queued prompts as "shadow jobs" so that, after a
@@ -20,6 +20,7 @@ export type QueueRecoverySlice = Pick<
   | 'recordQueuedPrompt'
   | 'markPromptCompleted'
   | 'detectRecoverableJobs'
+  | 'verifyRecoverableJobsAgainstHistory'
   | 'clearRecoverableJobs'
   | 'discardRecoverableJobs'
   | 'restoreLostJobs'
@@ -40,13 +41,9 @@ export const createQueueRecoverySlice: StateCreator<
   recordWorkflowDiff: (promptId, diff) => {
     if (!promptId) return;
     set((state) => {
-      // Delete-then-set so updating an existing prompt re-inserts it at the end
-      // of enumeration order; capWorkflowDiffs trims the oldest-inserted, and we
-      // must not let a frequently-updated prompt be treated as "old".
-      const next = { ...state.workflowDiffs };
-      delete next[promptId];
-      next[promptId] = diff;
-      return { workflowDiffs: capWorkflowDiffs(next) };
+      return {
+        workflowDiffs: touchBoundedMap(state.workflowDiffs, promptId, diff, WORKFLOW_DIFF_CAP),
+      };
     });
   },
 
@@ -132,6 +129,35 @@ export const createQueueRecoverySlice: StateCreator<
     return recoverableJobIds;
   },
 
+  verifyRecoverableJobsAgainstHistory: async () => {
+    // detectRecoverableJobs only knows the currently-loaded history window (10
+    // newest by default), so jobs that completed while the UI was closed but
+    // were pushed past that window get flagged. Confirm each candidate directly
+    // against the backend's per-prompt history; anything that actually ran is
+    // cleared rather than offered for re-queue.
+    const candidates = [...get().recoverableJobIds];
+    if (candidates.length === 0) return [];
+    const stillLost: string[] = [];
+    const unverified: string[] = [];
+    for (const promptId of candidates) {
+      const ran = await api.promptHasHistory(promptId);
+      if (ran === true) {
+        // It executed (success or failure) — not lost; drop the shadow job.
+        get().markPromptCompleted(promptId);
+      } else if (ran === null) {
+        // Couldn't reach the server, so we know nothing about this job. Keep it
+        // as a candidate for the next pass, but never report it as confirmed
+        // lost: the caller may auto-resubmit, and this runs on reconnect when a
+        // failed request is the most likely outcome.
+        unverified.push(promptId);
+      } else {
+        stillLost.push(promptId);
+      }
+    }
+    set({ recoverableJobIds: [...stillLost, ...unverified] });
+    return stillLost;
+  },
+
   clearRecoverableJobs: () => {
     set({ recoverableJobIds: [] });
   },
@@ -140,7 +166,8 @@ export const createQueueRecoverySlice: StateCreator<
     // Unlike clearRecoverableJobs (which only resets the derived id list, so
     // the next detect pass re-flags the same jobs), this drops the underlying
     // shadow records: the user dismissed the banner, so these jobs must never
-    // be offered for recovery again, including after a page reload.
+    // be offered for recovery again — including after a page reload, since
+    // shadowQueueJobs is persisted.
     set((state) => {
       if (state.recoverableJobIds.length === 0) return {};
       const shadowQueueJobs = { ...state.shadowQueueJobs };
@@ -205,11 +232,17 @@ export const createQueueRecoverySlice: StateCreator<
             shadowQueueJobs,
             workflowDiffs,
             queueMetadata,
+            // Bounded like the other persisted per-prompt maps: entries are
+            // only ever removed by deleteItem, so an install that keeps hitting
+            // the lost-jobs restore path would grow this in localStorage
+            // without limit.
             autoRestoredPromptIds: auto
-              ? {
-                  ...current.autoRestoredPromptIds,
-                  [newPromptId]: job.originalPromptId,
-                }
+              ? touchBoundedMap(
+                  current.autoRestoredPromptIds,
+                  newPromptId,
+                  job.originalPromptId,
+                  WORKFLOW_DIFF_CAP,
+                )
               : current.autoRestoredPromptIds,
             recoverableJobIds: current.recoverableJobIds.filter((id) => id !== job.originalPromptId),
           };

@@ -1,8 +1,9 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ReactElement } from "react";
 import type { WorkflowNode } from "@/api/types";
 import { getScopedWorkflowView } from "@/utils/canonicalWorkflowOps";
 import { useWorkflowStore, type ScopeFrame } from "@/hooks/useWorkflow";
+import { useWorkflowSelectionStore } from "@/hooks/useWorkflowSelection";
 import { useBookmarksStore } from "@/hooks/useBookmarks";
 import { useWorkflowErrorsStore } from "@/hooks/useWorkflowErrors";
 import { useNoWorkflowImageModal } from "@/hooks/useNoWorkflowImageModal";
@@ -30,10 +31,13 @@ import {
 } from "@/utils/grouping";
 import { collectAllWorkflowGroups } from "@/utils/workflowNodes";
 import { NodeCard } from "./WorkflowPanel/NodeCard";
-import { AddNodePlaceholder } from "./WorkflowPanel/AddNodePlaceholder";
+import { AddItemControls } from "./WorkflowPanel/AddItemControls";
 import { ContainerFooter } from "./WorkflowPanel/ContainerFooter";
 import { GraphContainerHeader } from "./WorkflowPanel/GraphContainer/Header";
+import { useWorkflowClipboardStore } from "@/hooks/useWorkflowClipboard";
 import { GraphContainerPlaceholder } from "./WorkflowPanel/GraphContainer/Placeholder";
+import { GroupHiddenSelectionPlaceholder } from "./WorkflowPanel/GroupHiddenSelectionPlaceholder";
+import { computeNodeGroupsFor } from "@/utils/nodeGroups";
 import { AddNodeModal } from "@/components/modals/AddNodeModal";
 import { DeleteContainerModal } from "@/components/modals/DeleteContainerModal";
 import { SearchBar } from "@/components/SearchBar";
@@ -56,6 +60,7 @@ export const WorkflowPanel = memo(function WorkflowPanel({
   onImageClick?: (
     images: Array<{ src: string; alt?: string }>,
     index: number,
+    enableFollowQueue?: boolean,
   ) => void;
 }) {
   const workflow = useWorkflowStore((s) => s.workflow);
@@ -97,11 +102,16 @@ export const WorkflowPanel = memo(function WorkflowPanel({
   const setItemHidden = useWorkflowStore((s) => s.setItemHidden);
   const bypassAllInContainer = useWorkflowStore((s) => s.bypassAllInContainer);
   const deleteContainer = useWorkflowStore((s) => s.deleteContainer);
+  const copyContainer = useWorkflowStore((s) => s.copyContainer);
+  const pasteIntoContainer = useWorkflowStore((s) => s.pasteIntoContainer);
+  const clipboardSummary = useWorkflowClipboardStore((s) => s.payload?.summary ?? null);
   const updateContainerTitle = useWorkflowStore((s) => s.updateContainerTitle);
   const updateWorkflowItemColor = useWorkflowStore((s) => s.updateWorkflowItemColor);
   const mobileLayout = useWorkflowStore((s) => s.mobileLayout);
   const itemKeyByPointer = useWorkflowStore((s) => s.itemKeyByPointer);
   const scopeStack = useWorkflowStore((s) => s.scopeStack);
+  const activeSessionId = useWorkflowStore((s) => s.activeSessionId);
+  const addGroupNearNode = useWorkflowStore((s) => s.addGroupNearNode);
   const enterSubgraph = useWorkflowStore((s) => s.enterSubgraph);
   const exitSubgraph = useWorkflowStore((s) => s.exitSubgraph);
   const navigateToSubgraphTrail = useWorkflowStore(
@@ -113,12 +123,6 @@ export const WorkflowPanel = memo(function WorkflowPanel({
   const bookmarkBarRef = useRef<HTMLDivElement>(null);
   const parentRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
-  const loadWorkflow = useWorkflowStore((s) => s.loadWorkflow);
-  // Drag-and-drop a workflow .json or an image (workflow extracted from its
-  // embedded metadata) onto the panel to load it. dragDepthRef counters the
-  // enter/leave events from descendant elements so the overlay doesn't flicker.
-  const [isFileDragging, setIsFileDragging] = useState(false);
-  const dragDepthRef = useRef(0);
   const [bookmarkCycleIndex, setBookmarkCycleIndex] = useState(0);
   const [pendingBookmarkEntry, setPendingBookmarkEntry] =
     useState<BookmarkEntry | null>(null);
@@ -141,7 +145,14 @@ export const WorkflowPanel = memo(function WorkflowPanel({
     nodeCount: number;
   } | null>(null);
   const reposition = useRepositionMode();
+  const loadWorkflow = useWorkflowStore((s) => s.loadWorkflow);
   const [topBarHeight, setTopBarHeight] = useState(69);
+  // Drag-and-drop a workflow .json or an image (workflow extracted from its
+  // embedded metadata) onto the panel to load it. dragDepthRef counters the
+  // enter/leave events that fire for descendant elements so the overlay doesn't
+  // flicker as the cursor moves over child nodes.
+  const [isFileDragging, setIsFileDragging] = useState(false);
+  const dragDepthRef = useRef(0);
   const bookmarkLongPressRef = useRef<number | null>(null);
   const bookmarkLongPressTriggeredRef = useRef(false);
   const previousTopBarHeightRef = useRef<number | null>(null);
@@ -188,6 +199,25 @@ export const WorkflowPanel = memo(function WorkflowPanel({
   const currentScopeFrame = scopeStack[scopeStack.length - 1];
   const currentSubgraphId =
     currentScopeFrame?.type === "subgraph" ? currentScopeFrame.id : null;
+
+  // Selection is scoped to the current view: clear it whenever the scope changes
+  // (entering/exiting a subgraph) so bulk ops always act within one scope.
+  const clearWorkflowSelection = useWorkflowSelectionStore((s) => s.clearSelection);
+  const workflowSelectionMode = useWorkflowSelectionStore((s) => s.selectionMode);
+  useEffect(() => {
+    clearWorkflowSelection();
+  }, [currentSubgraphId, clearWorkflowSelection]);
+
+  // Bottom-of-list quick-add: add a node or an empty group at the bottom of the
+  // current scope (root or the subgraph we're inside).
+  const handleAddNodeInScope = useCallback(() => {
+    setAddNodeGroupId(null);
+    setAddNodeSubgraphId(currentSubgraphId);
+    setAddNodeModalOpen(true);
+  }, [currentSubgraphId]);
+  const handleAddGroupInScope = useCallback(() => {
+    addGroupNearNode(null, currentSubgraphId);
+  }, [addGroupNearNode, currentSubgraphId]);
   const currentScopePlaceholderPath = useMemo(
     () =>
       scopeStack
@@ -1195,6 +1225,41 @@ export const WorkflowPanel = memo(function WorkflowPanel({
       );
   }, []);
 
+  // Per-tab scroll memory. The node-list container is a single DOM element reused
+  // across workflow tabs, so without this every tab would share one scrollTop.
+  // We stash each session's scrollTop as it scrolls and restore it on tab switch.
+  // (Kept in a ref, not state — scrolling shouldn't trigger re-renders, and the
+  // value need not survive a full reload.)
+  const sessionScrollTopsRef = useRef<Map<string, number>>(new Map());
+  const restoredSessionRef = useRef<string | null>(null);
+  const isRestoringScrollRef = useRef(false);
+
+  const handleNodeListScroll = useCallback(() => {
+    if (isRestoringScrollRef.current) return;
+    const el = parentRef.current;
+    if (!el || !activeSessionId) return;
+    // Only record once we've restored this session's position, so a clamp-fired
+    // scroll during the switch can't overwrite the saved value with the wrong one.
+    if (restoredSessionRef.current !== activeSessionId) return;
+    sessionScrollTopsRef.current.set(activeSessionId, el.scrollTop);
+  }, [activeSessionId]);
+
+  useLayoutEffect(() => {
+    if (restoredSessionRef.current === activeSessionId) return;
+    restoredSessionRef.current = activeSessionId;
+    const el = parentRef.current;
+    if (!el) return;
+    const saved = activeSessionId
+      ? sessionScrollTopsRef.current.get(activeSessionId) ?? 0
+      : 0;
+    isRestoringScrollRef.current = true;
+    el.scrollTo({ top: saved, behavior: "auto" });
+    // Release the guard after the browser settles the clamp scroll event.
+    requestAnimationFrame(() => {
+      isRestoringScrollRef.current = false;
+    });
+  }, [activeSessionId]);
+
   useEffect(() => {
     if (!searchOpen) return;
     if (parentRef.current) {
@@ -1398,6 +1463,46 @@ export const WorkflowPanel = memo(function WorkflowPanel({
     };
   }, [enterSubgraph]);
 
+  // Select mode: all member node / subgraph-placeholder keys geometrically inside
+  // a group (or a nested subgroup of it), so selecting the group auto-selects
+  // them. Geometry-based (not the rendered children) so it INCLUDES hidden
+  // members and works even when the group is folded.
+  const collectGroupMemberSelectionKeys = useCallback(
+    (groupId: number, subgraphId: string | null): string[] => {
+      if (!workflow) return [];
+      const subgraph =
+        subgraphId == null
+          ? null
+          : workflow.definitions?.subgraphs?.find((s) => s.id === subgraphId) ?? null;
+      const scopeNodes = subgraphId == null ? workflow.nodes : subgraph?.nodes ?? [];
+      const scopeGroups = subgraphId == null ? workflow.groups ?? [] : subgraph?.groups ?? [];
+      const target = scopeGroups.find((g) => g.id === groupId);
+      if (!target) return [];
+      // The target plus any group fully nested inside it, so members of nested
+      // subgroups are included too.
+      const [tx, ty, tw, th] = target.bounding;
+      const memberGroupIds = new Set<number>([groupId]);
+      for (const g of scopeGroups) {
+        if (g.id === groupId) continue;
+        const [gx, gy, gw, gh] = g.bounding;
+        if (gx >= tx && gy >= ty && gx + gw <= tx + tw && gy + gh <= ty + th) {
+          memberGroupIds.add(g.id);
+        }
+      }
+      const nodeToGroup = computeNodeGroupsFor(scopeNodes, scopeGroups);
+      const keys: string[] = [];
+      for (const node of scopeNodes) {
+        const groupOfNode = nodeToGroup.get(node.id);
+        if (groupOfNode != null && memberGroupIds.has(groupOfNode)) {
+          const key = nodeItemKeyByScopedKey.get(scopedNodeKey(node.id, subgraphId));
+          if (key) keys.push(key);
+        }
+      }
+      return keys;
+    },
+    [workflow, nodeItemKeyByScopedKey],
+  );
+
   // Keys are identity-based (group key / placeholder id / node id) — never
   // positional. An index in the key remounts every later sibling's subtree
   // on delete/search/collapse, losing local state and re-decoding previews.
@@ -1420,6 +1525,15 @@ export const WorkflowPanel = memo(function WorkflowPanel({
           item.group.itemKey,
           `group ${item.group.id}`,
         );
+        // Member resolution is only needed in select mode; skip the geometry
+        // pass entirely otherwise. Includes hidden members so the group's
+        // checkbox + the hidden-nodes placeholder both act on them.
+        const groupSelectionMemberKeys = workflowSelectionMode
+          ? collectGroupMemberSelectionKeys(item.group.id, item.subgraphId ?? null)
+          : undefined;
+        const groupHiddenSelectionKeys = workflowSelectionMode
+          ? (groupSelectionMemberKeys ?? []).filter((key) => hiddenItems[key])
+          : [];
         const hiddenState = getHiddenStateForGroup(groupHierarchicalKey);
         const isGroupBookmarked = bookmarkedItems.includes(groupHierarchicalKey);
         const canShowGroupBookmarkAction =
@@ -1457,6 +1571,8 @@ export const WorkflowPanel = memo(function WorkflowPanel({
             <GraphContainerHeader
               containerType="group"
               containerId={group.id}
+              selectionKey={groupHierarchicalKey}
+              selectionMemberKeys={groupSelectionMemberKeys}
               title={group.title?.trim() || `Group ${group.id}`}
               nodeCount={item.nodeCount}
               isCollapsed={item.isCollapsed}
@@ -1505,6 +1621,9 @@ export const WorkflowPanel = memo(function WorkflowPanel({
                   subgraphId: item.subgraphId ?? null,
                 })
               }
+              onCopy={() => copyContainer(groupHierarchicalKey)}
+              onPaste={() => pasteIntoContainer(groupHierarchicalKey)}
+              pasteSummary={clipboardSummary}
               onCommitTitle={(nextTitle) =>
                 updateContainerTitle(groupHierarchicalKey, nextTitle)
               }
@@ -1561,6 +1680,9 @@ export const WorkflowPanel = memo(function WorkflowPanel({
                     }}
                   />
                 ) : null}
+                {workflowSelectionMode && groupHiddenSelectionKeys.length > 0 && (
+                  <GroupHiddenSelectionPlaceholder hiddenKeys={groupHiddenSelectionKeys} />
+                )}
               </div>
             </div>
             {!item.isCollapsed && (
@@ -1643,6 +1765,7 @@ export const WorkflowPanel = memo(function WorkflowPanel({
       <div
         id="node-list-no-workflow"
         className="flex items-center justify-center h-full text-slate-400"
+        style={{ paddingBottom: "var(--bottom-bar-offset, 80px)" }}
       >
         <div
           id="no-workflow-content"
@@ -1668,6 +1791,7 @@ export const WorkflowPanel = memo(function WorkflowPanel({
       <div
         id="node-list-empty"
         className="flex items-center justify-center h-full text-slate-400"
+        style={{ paddingBottom: "var(--bottom-bar-offset, 80px)" }}
       >
         <div
           id="empty-workflow-content"
@@ -1685,13 +1809,10 @@ export const WorkflowPanel = memo(function WorkflowPanel({
           <p id="empty-workflow-description" className="text-sm mt-2 text-slate-400">
             This workflow has no nodes
           </p>
-          <div className="mt-6 w-64 max-w-full mx-auto">
-            <AddNodePlaceholder
-              onClick={() => {
-                setAddNodeGroupId(null);
-                setAddNodeSubgraphId(null);
-                setAddNodeModalOpen(true);
-              }}
+          <div className="mt-6 w-80 max-w-full mx-auto">
+            <AddItemControls
+              onAddNode={handleAddNodeInScope}
+              onAddGroup={handleAddGroupInScope}
             />
           </div>
         </div>
@@ -1699,17 +1820,22 @@ export const WorkflowPanel = memo(function WorkflowPanel({
     );
   } else {
     content = (
-      <div id="node-list-shell" className="h-full flex flex-col w-full max-w-3xl mx-auto">
+      // Shell + scroll container span the full width (scrollbar at the screen
+      // edge); the content inside is capped and centered — same shape as the
+      // reposition view.
+      <div id="node-list-shell" className="h-full flex flex-col w-full">
         {searchOpen && (
           <div className="node-search-bar bg-slate-900/95 border-b border-white/10 px-4 py-2">
-            <SearchBar
-              inputRef={searchInputRef}
-              value={searchQuery}
-              onChange={setSearchQuery}
-              onClear={handleClearSearch}
-              placeholder="Search nodes..."
-              inputClassName="comfy-input border-white/10 bg-slate-950/80 text-slate-100 placeholder:text-slate-500 focus:ring-cyan-400"
-            />
+            <div className="mx-auto w-full max-w-3xl">
+              <SearchBar
+                inputRef={searchInputRef}
+                value={searchQuery}
+                onChange={setSearchQuery}
+                onClear={handleClearSearch}
+                placeholder="Search nodes..."
+                inputClassName="comfy-input border-white/10 bg-slate-950/80 text-slate-100 placeholder:text-slate-500 focus:ring-cyan-400"
+              />
+            </div>
           </div>
         )}
 
@@ -1719,6 +1845,7 @@ export const WorkflowPanel = memo(function WorkflowPanel({
           className="flex-1 overflow-auto px-4 pt-4 overscroll-contain scroll-container"
           style={{ paddingBottom: "10rem" }}
           data-node-list="true"
+          onScroll={handleNodeListScroll}
         >
           {nestedItems.length === 0 ? (
             <div className="flex items-center justify-center h-full text-slate-400">
@@ -1728,7 +1855,16 @@ export const WorkflowPanel = memo(function WorkflowPanel({
               </div>
             </div>
           ) : (
-            <div id="node-list-inner">{renderItems(nestedItems)}</div>
+            <div id="node-list-inner" className="mx-auto w-full max-w-3xl">
+              {renderItems(nestedItems)}
+              {!searchActive && (
+                <AddItemControls
+                  className="mt-1 mb-2"
+                  onAddNode={handleAddNodeInScope}
+                  onAddGroup={handleAddGroupInScope}
+                />
+              )}
+            </div>
           )}
         </div>
       </div>

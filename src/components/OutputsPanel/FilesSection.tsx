@@ -14,6 +14,7 @@ interface OutputsFilesSectionProps {
   selectionMode: boolean;
   selectedIds: string[];
   favorites: string[];
+  rejected?: string[];
   setCurrentFolder: (folder: string) => void;
   handleOpen: (file: FileItem) => void;
   handleMenu: (file: FileItem, event: MouseEvent) => void;
@@ -34,6 +35,7 @@ export function OutputsFilesSection({
   selectionMode,
   selectedIds,
   favorites,
+  rejected = [],
   setCurrentFolder,
   handleOpen,
   handleMenu,
@@ -48,6 +50,7 @@ export function OutputsFilesSection({
   // toggle was the hot path on large folders).
   const selectedIdSet = useMemo(() => new Set(selectedIds), [selectedIds]);
   const favoriteIdSet = useMemo(() => new Set(favorites), [favorites]);
+  const rejectedIdSet = useMemo(() => new Set(rejected), [rejected]);
 
   // Walk sections in order, rendering cards until the shared budget is spent.
   // Each section keeps its full `files` (for the count + select-all) but only
@@ -117,6 +120,7 @@ export function OutputsFilesSection({
                     selectionMode={selectionMode}
                     isSelected={selectedIdSet.has(file.id)}
                     isFavorited={favoriteIdSet.has(file.id)}
+                    isRejected={rejectedIdSet.has(file.id)}
                     onNavigateFolder={setCurrentFolder}
                     onOpen={handleOpen}
                     onMenu={handleMenu}
@@ -135,6 +139,7 @@ export function OutputsFilesSection({
                     selectionMode={selectionMode}
                     isSelected={selectedIdSet.has(file.id)}
                     isFavorited={favoriteIdSet.has(file.id)}
+                    isRejected={rejectedIdSet.has(file.id)}
                     onNavigateFolder={setCurrentFolder}
                     onOpen={handleOpen}
                     onMenu={handleMenu}

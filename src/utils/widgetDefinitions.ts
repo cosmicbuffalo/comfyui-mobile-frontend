@@ -1,4 +1,4 @@
-import type { WorkflowLink, WorkflowNode, NodeTypes, NodeTypeDefinition, NodeInputEntry, Workflow, WorkflowSubgraphLink, WorkflowSubgraphDefinition } from '@/api/types';
+import type { WorkflowInput, WorkflowLink, WorkflowNode, NodeTypes, NodeTypeDefinition, NodeInputEntry, Workflow, WorkflowSubgraphLink, WorkflowSubgraphDefinition } from '@/api/types';
 import { getNodePropertyWidgetIndexMap, getWidgetValue, isWidgetInputType, skipImplicitSeedControlSlot } from '@/utils/workflowInputs';
 import { findLoraListIndex, isLoraList, isLoraManagerNodeType, isPowerLoraLoaderNodeType } from '@/utils/loraManager';
 import { modelWidgetKind } from '@/utils/modelWidgetKind';
@@ -21,7 +21,7 @@ export interface WidgetDefinition {
   inputIndex: number;
 }
 
-export function getNodeTypeDefinition(
+function getNodeTypeDefinition(
   nodeTypes: NodeTypes | null,
   nodeType: string
 ): NodeTypeDefinition | null {
@@ -288,7 +288,11 @@ function collectWidgetDefinitions(
       const comboOptions: Record<string, unknown> = isCombo
         ? { ...(inputOptions ?? {}), options: typeOrOptions }
         : { ...(inputOptions ?? {}) };
-      if (isAutocompleteTextInput) {
+      // PrimitiveString holds free text (often popped out of a multiline widget
+      // like CLIP text) — render it as a multiline textarea, not a one-line box.
+      const isPrimitiveStringValue =
+        node.type === 'PrimitiveString' && String(typeOrOptions).toUpperCase() === 'STRING';
+      if (isAutocompleteTextInput || isPrimitiveStringValue) {
         comboOptions.multiline = true;
       }
       if (isWidgetType) {
@@ -569,7 +573,7 @@ function findInnerWidgetTypeEntry(
  * promoted-input order. When ComfyUI serializes the promoted input as a linked
  * primitive/control node, values live on that linked source instead.
  */
-export function resolveAllSubgraphPlaceholderWidgetDefs(
+function resolveAllSubgraphPlaceholderWidgetDefs(
   placeholderNode: WorkflowNode,
   canonical: Workflow,
   nodeTypes: NodeTypes | null
@@ -595,6 +599,11 @@ export function resolveAllSubgraphPlaceholderWidgetDefs(
     const inlineValue = resolvePlaceholderInlineWidgetValue(placeholderNode, inp, widgetIndex);
     const value = inlineValue !== undefined ? inlineValue : linkedSource?.value;
     const inputIndex = placeholderNode.inputs.indexOf(inp);
+    // A promoted widget whose value is populated by a connection (the input has
+    // a link) is not an editable widget — it must render as a connection button
+    // only, never a widget control, whether or not a value resolves through the
+    // link. Only an unlinked promoted widget is editable on the placeholder.
+    const connected = inp.link != null;
 
     if (isCombo) {
       let options: Record<string, unknown> | unknown[] = [];
@@ -618,7 +627,7 @@ export function resolveAllSubgraphPlaceholderWidgetDefs(
           ? { ...(Array.isArray(options) ? { options } : options), ...extraMeta }
           : options,
         widgetIndex,
-        connected: false,
+        connected,
         inputIndex,
       });
     } else {
@@ -635,13 +644,26 @@ export function resolveAllSubgraphPlaceholderWidgetDefs(
           : options,
         value,
         widgetIndex,
-        connected: false,
+        connected,
         inputIndex,
       });
     }
   });
 
   return { widgets, inputWidgets };
+}
+
+/**
+ * True when a placeholder's promoted widget input is populated by a connection
+ * (it has a link) rather than being an editable widget. Such inputs render as a
+ * connection button only — never a widget control — regardless of whether a
+ * value resolves through the link. Kept in sync with the `connected` flag
+ * computed in resolveAllSubgraphPlaceholderWidgetDefs.
+ */
+export function isPlaceholderPromotedConnection(
+  inp: WorkflowInput,
+): boolean {
+  return inp.widget != null && inp.link != null;
 }
 
 /** Resolve non-COMBO promoted widget definitions for a subgraph placeholder node. */

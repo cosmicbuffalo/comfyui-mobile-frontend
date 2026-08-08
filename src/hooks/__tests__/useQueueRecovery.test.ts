@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { getQueue, queuePrompt } from '@/api/client';
+import { getQueue, queuePrompt, promptHasHistory } from '@/api/client';
 import { useQueueStore } from '@/hooks/useQueue';
 
 vi.mock('@/api/client', () => ({
@@ -14,13 +14,17 @@ vi.mock('@/api/client', () => ({
   queuePrompt: vi.fn(async () => ({ prompt_id: 'restored-prompt', number: 9 })),
   getQueuePromptMetadata: vi.fn(async () => ({})),
   remapQueuePromptMetadata: vi.fn(async () => undefined),
+  promptHasHistory: vi.fn(async () => false),
 }));
 
 const mockQueuePrompt = vi.mocked(queuePrompt);
 const mockGetQueue = vi.mocked(getQueue);
+const mockPromptHasHistory = vi.mocked(promptHasHistory);
 
 beforeEach(() => {
   mockQueuePrompt.mockClear();
+  mockPromptHasHistory.mockClear();
+  mockPromptHasHistory.mockResolvedValue(false);
   mockGetQueue.mockResolvedValue({
     queue_running: [],
     queue_pending: [[9, 'restored-prompt', { node: {} }, { extra_pnginfo: {} }, ['9']]],
@@ -52,6 +56,15 @@ beforeEach(() => {
 });
 
 describe('queue recovery', () => {
+  it('reports a failed queue fetch so startup can retry it', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    mockGetQueue.mockRejectedValueOnce(new TypeError('Load failed'));
+
+    await expect(useQueueStore.getState().fetchQueue()).resolves.toBe(false);
+    expect(useQueueStore.getState().isLoading).toBe(false);
+    errorSpy.mockRestore();
+  });
+
   it('retains a running item when it leaves the backend queue before history arrives', async () => {
     const runningItem = {
       number: 1,
@@ -266,4 +279,81 @@ describe('queue recovery', () => {
     expect(state.livePromptOutputs.fresh).toBeDefined();
     expect(state.completingStartedAt.fresh).toBeDefined();
   });
+
+  it('does not flag jobs that completed while the UI was closed as lost (verify against backend history)', async () => {
+    // Two jobs were queued, then the UI closed. Both completed on the backend,
+    // but the loaded history window (the completedPromptIds passed in) doesn't
+    // include 'ran-while-closed' — it fell past the newest-N window. The other,
+    // 'truly-lost', was dropped by a restart and never ran.
+    const shadow = (id: string) => ({
+      originalPromptId: id,
+      prompt: { node: {} },
+      extraData: {},
+      outputsToExecute: ['9'],
+      number: 1,
+      status: 'pending' as const,
+      queuedAt: Date.now(),
+      sessionId: null,
+    });
+    useQueueStore.setState({
+      running: [],
+      pending: [],
+      shadowQueueJobs: {
+        'ran-while-closed': shadow('ran-while-closed'),
+        'truly-lost': shadow('truly-lost'),
+      },
+      recoverableJobIds: [],
+    });
+
+    // Limited history window doesn't include either id → both flagged initially.
+    const flagged = useQueueStore.getState().detectRecoverableJobs([]);
+    expect(flagged.sort()).toEqual(['ran-while-closed', 'truly-lost']);
+
+    // The per-prompt backend check finds 'ran-while-closed' in history.
+    mockPromptHasHistory.mockImplementation(async (id: string) => id === 'ran-while-closed');
+
+    const stillLost = await useQueueStore.getState().verifyRecoverableJobsAgainstHistory();
+
+    expect(stillLost).toEqual(['truly-lost']);
+    const state = useQueueStore.getState();
+    expect(state.recoverableJobIds).toEqual(['truly-lost']);
+    // The completed job's shadow entry is cleared; the lost one is retained.
+    expect(state.shadowQueueJobs['ran-while-closed']).toBeUndefined();
+    expect(state.shadowQueueJobs['truly-lost']).toBeDefined();
+  });
 });
+
+describe('history verification on an unreliable link', () => {
+  it('never reports a job as lost when the server could not be asked', async () => {
+    // This runs on websocket reconnect, when a failed request is the most
+    // likely outcome, and the caller may auto-resubmit anything reported lost.
+    // null = "couldn't ask", which must not read as "it never ran" — that
+    // duplicates completed work and burns GPU time with no undo.
+    mockPromptHasHistory.mockResolvedValue(null as never);
+    useQueueStore.setState({
+      recoverableJobIds: ['prompt-a', 'prompt-b'],
+      shadowQueueJobs: {
+        'prompt-a': { originalPromptId: 'prompt-a', prompt: {}, extraData: {}, outputsToExecute: [], number: 0, status: 'pending', queuedAt: 1 },
+        'prompt-b': { originalPromptId: 'prompt-b', prompt: {}, extraData: {}, outputsToExecute: [], number: 0, status: 'pending', queuedAt: 2 },
+      } as never,
+    });
+
+    const stillLost = await useQueueStore.getState().verifyRecoverableJobsAgainstHistory();
+
+    expect(stillLost).toEqual([]);
+    // Still candidates, so a later pass on a healthy link can settle them.
+    expect(useQueueStore.getState().recoverableJobIds.sort()).toEqual(['prompt-a', 'prompt-b']);
+  });
+
+  it('still confirms a genuinely absent prompt as lost', async () => {
+    mockPromptHasHistory.mockResolvedValue(false);
+    useQueueStore.setState({
+      recoverableJobIds: ['prompt-c'],
+      shadowQueueJobs: {
+        'prompt-c': { originalPromptId: 'prompt-c', prompt: {}, extraData: {}, outputsToExecute: [], number: 0, status: 'pending', queuedAt: 1 },
+      } as never,
+    });
+
+    expect(await useQueueStore.getState().verifyRecoverableJobsAgainstHistory()).toEqual(['prompt-c']);
+  });
+})

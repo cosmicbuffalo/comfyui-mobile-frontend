@@ -4,6 +4,8 @@ import type { ItemStatus, UnifiedItem, ViewerImage } from './types';
 import { QueueCard } from './QueueCard';
 import { InboxIcon } from '@/components/icons';
 import { LoadingSpinner } from '@/components/LoadingSpinner';
+import { useQueueStore } from '@/hooks/useQueue';
+import { useIsDesktop } from '@/hooks/useIsDesktop';
 import {
   captureQueueScrollAnchor,
   captureQueueScrollAnchorForItem,
@@ -49,8 +51,13 @@ interface QueueListProps {
     hasImageOutputs?: boolean;
     canReenqueue?: boolean;
   }) => void;
-  downloaded: Record<string, boolean>;
   firstDoneItemId: string | null;
+  queueVideoPlaybackEnabled: boolean;
+  activeQueueVideoOwnerId: string | null;
+  onRequestQueueVideoPlayback: (itemId: string) => void;
+  onRequestAutoQueueVideoPlayback: (itemId: string) => void;
+  onReleaseQueueVideoPlayback: (itemId: string) => void;
+  onItemMediaReady?: (itemId: string) => void;
   onScroll: () => void;
   loadingMore?: boolean;
 }
@@ -68,11 +75,21 @@ export function QueueList({
   viewerImages,
   promptOutputs,
   onOpenMenu,
-  downloaded,
   firstDoneItemId,
+  queueVideoPlaybackEnabled,
+  activeQueueVideoOwnerId,
+  onRequestQueueVideoPlayback,
+  onRequestAutoQueueVideoPlayback,
+  onReleaseQueueVideoPlayback,
+  onItemMediaReady,
   onScroll,
   loadingMore = false
 }: QueueListProps) {
+  const queueOutputLayout = useQueueStore((s) => s.queueOutputLayout);
+  const isDesktop = useIsDesktop();
+  // In the desktop stacked layout the panel is full-width, so each card shrinks
+  // to its own output row and re-centers instead of filling the screen.
+  const fitCardsToContent = isDesktop && queueOutputLayout === 'stacked';
   const scrollAnchorRef = useRef<QueueScrollAnchor | null>(null);
   const userScrollIntentRef = useRef(false);
   const userScrollIntentTimeoutRef = useRef<number | null>(null);
@@ -340,29 +357,47 @@ export function QueueList({
         </div>
       )}
 
-      {unifiedList.slice(0, visibleCount).map((item) => {
-        // Only the running card consumes the per-tick progress props; passing
-        // stable constants to every other card lets React.memo skip them so the
-        // whole list doesn't reconcile on each progress message.
-        const isRunningCard = item.id === effectiveExecutingId;
-        return (
-          <div key={item.id} data-queue-item-id={item.id} data-scroll-anchor-id={item.id}>
-            <QueueCard
-              item={item}
-              isActuallyRunning={isRunningCard}
-              progress={isRunningCard ? progress : 0}
-              overallProgress={isRunningCard ? overallProgress : null}
-              executingNodeLabel={isRunningCard ? executingNodeLabel : null}
-              onImageClick={onImageClick}
-              viewerImages={viewerImages}
-              runningImages={promptOutputs[item.id] ?? EMPTY_RUNNING_IMAGES}
-              onOpenMenu={onOpenMenu}
-              downloaded={downloaded}
-              isTopDoneItem={item.id === firstDoneItemId}
-            />
-          </div>
-        );
-      })}
+      {/* Cards are capped/centered here so the scroll container above can span
+          the full screen width (scrollbar at the edge) without the cards
+          stretching. In the wide "fit to content" layout each card self-centers,
+          so this wrapper stays full width and lets them do so. */}
+      {unifiedList.length > 0 && (
+        <div className={`w-full space-y-4 ${fitCardsToContent ? '' : 'mx-auto max-w-3xl'}`}>
+          {unifiedList.slice(0, visibleCount).map((item) => {
+            // Only the running card consumes the per-tick progress props; passing
+            // stable constants to every other card lets React.memo skip them so the
+            // whole list doesn't reconcile on each progress message.
+            const isRunningCard = item.id === effectiveExecutingId;
+            return (
+              <div
+                key={item.id}
+                data-queue-item-id={item.id}
+                data-scroll-anchor-id={item.id}
+                className={fitCardsToContent ? 'mx-auto w-fit max-w-full' : undefined}
+              >
+                <QueueCard
+                  item={item}
+                  isActuallyRunning={isRunningCard}
+                  progress={isRunningCard ? progress : 0}
+                  overallProgress={isRunningCard ? overallProgress : null}
+                  executingNodeLabel={isRunningCard ? executingNodeLabel : null}
+                  onImageClick={onImageClick}
+                  viewerImages={viewerImages}
+                  runningImages={promptOutputs[item.id] ?? EMPTY_RUNNING_IMAGES}
+                  onOpenMenu={onOpenMenu}
+                  isTopDoneItem={item.id === firstDoneItemId}
+                  queueVideoPlaybackEnabled={queueVideoPlaybackEnabled}
+                  queueVideoOwnerId={activeQueueVideoOwnerId}
+                  onRequestQueueVideoPlayback={onRequestQueueVideoPlayback}
+                  onRequestAutoQueueVideoPlayback={onRequestAutoQueueVideoPlayback}
+                  onReleaseQueueVideoPlayback={onReleaseQueueVideoPlayback}
+                  onMediaReady={onItemMediaReady}
+                />
+              </div>
+            );
+          })}
+        </div>
+      )}
       {loadingMore && (
         <div className="flex justify-center py-4">
           <LoadingSpinner size="md" color="gray" />

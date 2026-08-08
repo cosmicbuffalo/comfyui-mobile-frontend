@@ -28,6 +28,70 @@ export function getImageUrl(filename: string, subfolder: string, type: string): 
   return token ? `${url}&cb=${token}` : url;
 }
 
+// Small still image for any output/input media item. For videos, the backend
+// serves a matching sidecar image when one exists and otherwise extracts +
+// caches an early frame. Keeping this URL separate from `/view` is important:
+// a video whose metadata sits at the end of the file may otherwise require an
+// almost-complete download just to paint a tiny thumbnail.
+export function getMediaThumbnailUrl(
+  filename: string,
+  subfolder: string,
+  type: string,
+  cacheToken: string | number | undefined = getImageCacheToken(filename, subfolder, type),
+): string {
+  const url = `/mobile/api/thumbnail?filename=${encodeURIComponent(filename)}&subfolder=${encodeURIComponent(subfolder)}&source=${encodeURIComponent(type)}`;
+  return cacheToken === undefined || cacheToken === ''
+    ? url
+    : `${url}&cb=${encodeURIComponent(cacheToken)}`;
+}
+
+// Build a thumbnail URL from a `/view?...`-style asset URL. Returns undefined
+// for non-file URLs such as live blob previews and third-party media URLs.
+export function getMediaThumbnailUrlFromAssetUrl(assetUrl: string): string | undefined {
+  try {
+    const base = typeof window === 'undefined' ? 'http://localhost' : window.location.origin;
+    const parsed = new URL(assetUrl, base);
+    const filename = parsed.searchParams.get('filename');
+    const type = parsed.searchParams.get('type') ?? parsed.searchParams.get('source');
+    if (!filename || !type) return undefined;
+    return getMediaThumbnailUrl(
+      filename,
+      parsed.searchParams.get('subfolder') ?? '',
+      type,
+      parsed.searchParams.get('cb') ?? undefined,
+    );
+  } catch {
+    return undefined;
+  }
+}
+
+// Route a local ComfyUI `/view` video through the mobile playback gateway. The
+// gateway preserves the generated original for downloads and metadata, but
+// gives the native browser player a consistently seekable MP4. Unknown/blob/
+// third-party URLs remain untouched.
+export function getPlayableVideoUrl(assetUrl: string): string {
+  try {
+    const base = typeof window === 'undefined' ? 'http://localhost' : window.location.origin;
+    const parsed = new URL(assetUrl, base);
+    if (parsed.origin !== base || parsed.pathname !== '/view') return assetUrl;
+
+    const filename = parsed.searchParams.get('filename');
+    const type = parsed.searchParams.get('type') ?? parsed.searchParams.get('source');
+    if (!filename || !type) return assetUrl;
+
+    let url = `/mobile/api/video/playable?filename=${encodeURIComponent(filename)}`
+      + `&subfolder=${encodeURIComponent(parsed.searchParams.get('subfolder') ?? '')}`
+      + `&type=${encodeURIComponent(type)}`;
+    // Preserve the original URL's cache-bust identity when a deleted filename
+    // is later reused, so the browser cannot pin the older prepared response.
+    const cacheToken = parsed.searchParams.get('cb');
+    if (cacheToken) url += `&cb=${encodeURIComponent(cacheToken)}`;
+    return url;
+  } catch {
+    return assetUrl;
+  }
+}
+
 // Display-only variant of getImageUrl. Asks ComfyUI's /view endpoint to
 // re-encode the image to a small WebP on the fly — same full resolution, but a
 // fraction of the bytes of the source PNG, so inline previews/thumbnails load
@@ -39,6 +103,24 @@ export function getImageUrl(filename: string, subfolder: string, type: string): 
 // from the original file via a separate endpoint.
 export function getImagePreviewUrl(filename: string, subfolder: string, type: string): string {
   return withWebpPreview(getImageUrl(filename, subfolder, type));
+}
+
+// Queue cards can mount several previews while the rest of the application is
+// bootstrapping. Route those through the mobile preview cache at a size that is
+// sharp in the panel but substantially cheaper to transfer/decode than a full
+// output. Unlike ComfyUI's `preview=webp`, the rendered result is cached on disk.
+// Long-edge cap applied to queue card previews. Exported so consumers can tell
+// a measured-from-preview dimension apart from a real one: the endpoint only
+// downscales when max(w,h) exceeds this, so anything measuring smaller is the
+// true size and anything at the cap may have been shrunk.
+export const QUEUE_PREVIEW_MAX_EDGE = 1280;
+
+export function getQueueImagePreviewUrl(
+  filename: string,
+  subfolder: string,
+  type: string,
+): string {
+  return withMobilePreview(getImageUrl(filename, subfolder, type), QUEUE_PREVIEW_MAX_EDGE);
 }
 
 // Append the WebP preview param to an existing `/view` URL. Same effect as
@@ -71,11 +153,15 @@ function screenMaxEdge(): number {
 // `webpPreviewEnabled` preference: when opted out, returns the original URL so
 // pixel-exact originals load everywhere. Images only — never videos.
 export function getScreenPreviewUrl(viewUrl: string): string {
+  return withMobilePreview(viewUrl, screenMaxEdge());
+}
+
+function withMobilePreview(viewUrl: string, maxEdge: number): string {
   if (!useGenerationSettingsStore.getState().webpPreviewEnabled) return viewUrl;
   const queryStart = viewUrl.indexOf('?');
   if (queryStart < 0) return viewUrl;
   const query = viewUrl.slice(queryStart + 1);
-  return `/mobile/api/preview?${query}&maxedge=${screenMaxEdge()}`;
+  return `/mobile/api/preview?${query}&maxedge=${maxEdge}`;
 }
 
 export function connectWebSocket(
@@ -120,4 +206,3 @@ export function connectWebSocket(
 
   return ws;
 }
-

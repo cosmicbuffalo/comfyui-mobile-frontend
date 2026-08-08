@@ -1,6 +1,6 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { WorkflowInput, WorkflowNode } from '@/api/types';
-import { useWorkflowStore, getWidgetDefinitions, getInputWidgetDefinitions, getWidgetIndexForInput, findSeedWidgetIndex, findSeedControlWidgetIndex, resolveSubgraphPlaceholderWidgetDefs, resolveSubgraphPlaceholderInputWidgetDefs, resolveSubgraphProxyWidgetDefs, resolveSubgraphProxyInputWidgetDefs, resolveSubgraphBoundaryWidgetDefs, resolveSubgraphBoundaryInputWidgetDefs } from '@/hooks/useWorkflow';
+import { useWorkflowStore, getWidgetDefinitions, getInputWidgetDefinitions, getWidgetIndexForInput, findSeedWidgetIndex, findSeedControlWidgetIndex, resolveSubgraphPlaceholderWidgetDefs, resolveSubgraphPlaceholderInputWidgetDefs, resolveSubgraphProxyWidgetDefs, resolveSubgraphProxyInputWidgetDefs, resolveSubgraphBoundaryWidgetDefs, resolveSubgraphBoundaryInputWidgetDefs, isPlaceholderPromotedConnection } from '@/hooks/useWorkflow';
 import type { LinkedWidgetRoute, ProxyWidgetRoute } from '@/utils/widgetDefinitions';
 import { isSubgraphPlaceholder } from '@/utils/canonicalWorkflowOps';
 import { isLoraManagerNodeType } from '@/utils/loraManager';
@@ -11,13 +11,23 @@ import { useWorkflowErrorsStore } from '@/hooks/useWorkflowErrors';
 import { useOverallProgress } from '@/hooks/useOverallProgress';
 import { useQueueStore } from '@/hooks/useQueue';
 import { useNodeErrorPopover } from '@/hooks/useNodeErrorPopover';
+import { useConnectionSectionFoldsStore } from '@/hooks/useConnectionSectionFolds';
+import { useParameterSectionFoldsStore } from '@/hooks/useParameterSectionFolds';
+import { useWorkflowClipboardStore } from '@/hooks/useWorkflowClipboard';
+import { buildNodeClipboardPayload } from '@/utils/workflowClipboard';
 import { getImageUrl, getImagePreviewUrl } from '@/api/client';
 import { getMediaType } from '@/utils/media';
 import { NodeCardMenu } from './NodeCard/Menu';
+import { SelectionCheckbox } from '@/components/buttons/SelectionCheckbox';
+import { useWorkflowSelectionStore } from '@/hooks/useWorkflowSelection';
 import { NodeCardErrorPopover } from './NodeCard/ErrorPopover';
 import { NodeCardNote } from './NodeCard/Note';
 import { NodeCardOutputPreview } from './NodeCard/OutputPreview';
 import { NodeCardImageComparer } from './NodeCard/ImageComparer';
+import { isGetNode, isSetGetNode, isSetNode } from '@/utils/setGetNodes';
+import { isUninstalledNodeType } from '@/utils/missingNodes';
+import { useCustomNodesManager } from '@/hooks/useCustomNodesManager';
+import { useSetGetNameEditStore } from '@/hooks/useSetGetNameEdit';
 import { NodeCardHeader } from './NodeCard/Header';
 import { DeleteNodeModal } from '@/components/modals/DeleteNodeModal';
 import { ErrorHighlightBadge } from './NodeCard/ErrorHighlightBadge';
@@ -37,7 +47,7 @@ interface NodeCardProps {
   isExecuting?: boolean;
   isConnectionHighlighted?: boolean;
   errorBadgeLabel?: string | null;
-  onImageClick?: (images: Array<{ src: string; alt?: string }>, index: number) => void;
+  onImageClick?: (images: Array<{ src: string; alt?: string }>, index: number, enableFollowQueue?: boolean) => void;
   inGroup?: boolean;
   onMoveNode?: () => void;
   onEnterSubgraph?: () => void;
@@ -61,10 +71,17 @@ export const NodeCard = memo(function NodeCard({
   const updateNodeTitle = useWorkflowStore((s) => s.updateNodeTitle);
   const updateWorkflowItemColor = useWorkflowStore((s) => s.updateWorkflowItemColor);
   const toggleBypass = useWorkflowStore((s) => s.toggleBypass);
+  const convertImageOutputNode = useWorkflowStore((s) => s.convertImageOutputNode);
   const setItemCollapsed = useWorkflowStore((s) => s.setItemCollapsed);
   const setItemHidden = useWorkflowStore((s) => s.setItemHidden);
   const collapsedItems = useWorkflowStore((s) => s.collapsedItems);
   const nodeHierarchicalKey = requireHierarchicalKey(node.itemKey, `node ${node.id}`);
+  // Select mode: replace the kebab menu with a selection checkbox for this node.
+  const selectionMode = useWorkflowSelectionStore((s) => s.selectionMode);
+  const isNodeSelected = useWorkflowSelectionStore((s) =>
+    s.selectedKeys.includes(nodeHierarchicalKey),
+  );
+  const toggleSelectionKey = useWorkflowSelectionStore((s) => s.toggleKey);
   const setConnectionHighlightMode = useWorkflowStore((s) => s.setConnectionHighlightMode);
   const connectionHighlightMode = useWorkflowStore((s) => s.connectionHighlightModes[nodeHierarchicalKey] ?? 'off');
   const setSeedMode = useSeedStore((s) => s.setSeedMode);
@@ -124,6 +141,7 @@ export const NodeCard = memo(function NodeCard({
   const resolvedImages = nodeImages ?? EMPTY_IMAGES;
   const [previewImage, setPreviewImage] = useState<ImageLike | null>(null);
   const { errorPopoverOpen, setErrorPopoverOpen, resetErrorPopover } = useNodeErrorPopover();
+  const openCustomNodesManager = useCustomNodesManager((s) => s.open);
   const noteTextareaRef = useRef<HTMLTextAreaElement>(null);
   const [isEditingNote, setIsEditingNote] = useState(false);
   const [isEditingLabel, setIsEditingLabel] = useState(false);
@@ -136,6 +154,9 @@ export const NodeCard = memo(function NodeCard({
   const [showFastGroupConfig, setShowFastGroupConfig] = useState(false);
   const deleteNode = useWorkflowStore((s) => s.deleteNode);
   const duplicateNode = useWorkflowStore((s) => s.duplicateNode);
+  const pasteClipboard = useWorkflowStore((s) => s.pasteClipboard);
+  const setClipboardPayload = useWorkflowClipboardStore((s) => s.setPayload);
+  const clipboardSummary = useWorkflowClipboardStore((s) => s.payload?.summary ?? null);
 
   useEffect(() => {
     // A return value from an event handler is discarded, so the hide timer
@@ -199,12 +220,27 @@ export const NodeCard = memo(function NodeCard({
     return sg?.name ?? null;
   }, [isPlaceholder, workflow, node.type]);
   const displayName: string = nodeTitle || placeholderSubgraphName || typeDef?.display_name || node.type;
+  // A node whose custom-node type isn't installed on the server — outline it in
+  // red and badge it, mirroring desktop; the MissingNodesDialog lists them all.
+  const isMissingNode = useMemo(
+    () => !isPlaceholder && isUninstalledNodeType(node, nodeTypes),
+    [isPlaceholder, node, nodeTypes],
+  );
   const isKSampler = node.type === 'KSampler';
   const isLoraManagerNode = isLoraManagerNodeType(node.type);
   const isFastGroupsBypasser = /fast\s+groups/i.test(node.type) && /\(rgthree\)/i.test(node.type);
   const isImageComparer = /image\s*comparer/i.test(node.type);
+  // SetNode/GetNode (KJNodes wireless relays) render a compact relay control in
+  // place of their parameters; their real slots still use the connections section.
+  const isSetGet = isSetGetNode(node);
   const isBypassed = node.mode === 4;
   const isCollapsed = Boolean(collapsedItems[nodeHierarchicalKey]);
+  const expandConnectionsSection = useConnectionSectionFoldsStore((s) => s.expand);
+  // Bumped when the card is unfolded, to reset any nested in-Parameters folds
+  // (e.g. CR-LoRA groups) back to open so unfolding reveals everything.
+  const [unfoldNonce, setUnfoldNonce] = useState(0);
+  const startEditSetGetName = useSetGetNameEditStore((s) => s.startEdit);
+  const expandParametersSection = useParameterSectionFoldsStore((s) => s.expand);
   const isLoadImageNode = /LoadImage/i.test(node.type);
   const inputImagePreview = useMemo(() => {
     if (!isLoadImageNode || !workflow || !nodeTypes) return null;
@@ -242,6 +278,8 @@ export const NodeCard = memo(function NodeCard({
     }
     return getInputWidgetDefinitions(nodeTypes, node);
   }, [nodeTypes, node, isPlaceholder, workflow]);
+  // A widget overridden by a connection (popped out / wired up) is hidden from
+  // the parameters section — its value isn't used while the input is connected.
   const visibleInputWidgets = useMemo(
     () => inputWidgets.filter((inputWidget) => !inputWidget.connected),
     [inputWidgets]
@@ -372,9 +410,15 @@ export const NodeCard = memo(function NodeCard({
 
   // Filter inputs to only show those that are actual connections (connected or connectable without widget values)
   const isWidgetInput = useCallback((input: WorkflowInput) => {
-    // Promoted widgets on placeholder nodes have link set (to subgraph boundary),
-    // but should render as widget controls, not connection buttons.
-    if (isPlaceholder && input.widget != null) return true;
+    // Promoted widgets on placeholder nodes normally render as widget controls
+    // even though they carry a link to the subgraph boundary — EXCEPT when the
+    // input is wired to an upstream node with no resolvable value. That is a live
+    // data connection (e.g. a promoted frame_rate fed by another node), which
+    // must render as a connection button rather than an empty widget control.
+    if (isPlaceholder && input.widget != null) {
+      if (isPlaceholderPromotedConnection(input)) return false;
+      return true;
+    }
     if (input.link != null) return false;
     if (input.widget) return true;
     const inputDef = typeDef?.input?.required?.[input.name] || typeDef?.input?.optional?.[input.name];
@@ -395,13 +439,22 @@ export const NodeCard = memo(function NodeCard({
   }, [typeDef, isPlaceholder]);
 
   const connectionInputs = useMemo(() => {
-    return node.inputs.filter((input) => {
+    const real = node.inputs.filter((input) => {
       if (isWidgetInput(input)) return false;
       const isOptConnection = String(input.type).toUpperCase() === 'OPT_CONNECTION';
       if (isOptConnection && input.link == null) return false;
       return true;
     });
-  }, [node.inputs, isWidgetInput]);
+    // A GetNode reads its value wirelessly (by name) and has no real input slot —
+    // synthesize one so it renders an input connection button that jumps to the
+    // matching SetNode. Its type mirrors the Get's output so the button is typed.
+    if (isGetNode(node)) {
+      const valueType = node.outputs?.[0]?.type ?? '*';
+      const synthetic: WorkflowInput = { name: 'get', type: String(valueType), link: null };
+      return [synthetic, ...real];
+    }
+    return real;
+  }, [node, isWidgetInput]);
 
 
   // Filter outputs to exclude helper outputs like "show_help"
@@ -462,29 +515,50 @@ export const NodeCard = memo(function NodeCard({
   const hasNodeConnections = inputConnectionCount > 0 || outputConnectionCount > 0;
   const leftLineCount = Math.min(3, inputConnectionCount);
   const rightLineCount = Math.min(3, outputConnectionCount);
-  const previewList = effectivePreviewImage
-    ? (() => {
-        const { filename, subfolder, type } = effectivePreviewImage;
-        const src = getImageUrl(filename, subfolder, type);
-        const filePath = subfolder ? `${subfolder}/${filename}` : filename;
-        const mediaType = getMediaType(filename);
-        return [{
-          src,
-          displaySrc: mediaType === 'image'
-            ? getImagePreviewUrl(filename, subfolder, type)
-            : undefined,
-          alt: displayName,
-          filename,
-          mediaType,
-          file: {
-            id: `${type}/${filePath}`,
-            name: filename,
-            type: mediaType === 'video' ? 'video' : 'image',
-            fullUrl: src
-          }
-        }];
-      })()
-    : [];
+  // A node that produced more than one output is a batch: tile the whole batch
+  // instead of just the latest image. The LoadImage input preview stays single.
+  const isBatchOutput =
+    !inputImagePreview && (hasImageOutput || isImageOutputNode) && resolvedImages.length > 1;
+
+  // The viewer/click target list — the full batch when tiling, else the single
+  // gated preview image.
+  const previewList = useMemo(() => {
+    const list: ImageLike[] = isBatchOutput
+      ? resolvedImages
+      : effectivePreviewImage
+        ? [effectivePreviewImage]
+        : [];
+    return list.map((img) => {
+      const { filename, subfolder, type } = img;
+      const src = getImageUrl(filename, subfolder, type);
+      const filePath = subfolder ? `${subfolder}/${filename}` : filename;
+      const mediaType = getMediaType(filename);
+      return {
+        src,
+        displaySrc: mediaType === 'image'
+          ? getImagePreviewUrl(filename, subfolder, type)
+          : undefined,
+        alt: displayName,
+        filename,
+        mediaType,
+        file: {
+          id: `${type}/${filePath}`,
+          name: filename,
+          type: mediaType === 'video' ? 'video' : 'image',
+          fullUrl: src,
+        },
+      };
+    });
+  }, [isBatchOutput, resolvedImages, effectivePreviewImage, displayName]);
+
+  // Two-column thumbnails for the batch grid; null in the single-image case.
+  const batchTiles = useMemo(() => {
+    if (!isBatchOutput) return null;
+    return resolvedImages.map((img) => ({
+      displaySrc: getImagePreviewUrl(img.filename, img.subfolder, img.type),
+      alt: displayName,
+    }));
+  }, [isBatchOutput, resolvedImages, displayName]);
 
   useEffect(() => {
     if (!isEditingLabel) return;
@@ -702,10 +776,11 @@ export const NodeCard = memo(function NodeCard({
   const canUseNodeTint =
     !isBypassed &&
     !hasErrors &&
+    !isMissingNode &&
     !isConnectionHighlighted &&
     !isExecuting &&
     rawNodeColor.length > 0;
-  const nodeCardBorderClass = hasErrors
+  const nodeCardBorderClass = hasErrors || isMissingNode
     ? '!border !border-red-600'
     : isConnectionHighlighted
       ? 'border-cyan-400 shadow-cyan-900/20'
@@ -732,6 +807,7 @@ export const NodeCard = memo(function NodeCard({
           </div>
         </div>
       )}
+
 
       <div
         id={`node-card-${node.id}`}
@@ -764,22 +840,49 @@ export const NodeCard = memo(function NodeCard({
         isExecuting={isExecuting}
         overallProgress={overallProgress}
         hasErrors={hasErrors}
+        isMissing={isMissingNode}
         errorIconRef={errorIconRef}
         errorPopoverOpen={errorPopoverOpen}
         setErrorPopoverOpen={setErrorPopoverOpen}
         toggleNodeFold={() => {
+          const willUnfold = isCollapsed;
           setItemCollapsed(nodeHierarchicalKey, !isCollapsed);
+          if (!willUnfold) return;
+          // Unfolding a node reveals everything: open all of its nested foldable
+          // sections (expand* is idempotent, so already-open ones are untouched)
+          // and reset nested in-Parameters folds (e.g. CR-LoRA groups) to open.
+          expandParametersSection(nodeHierarchicalKey);
+          expandConnectionsSection(nodeHierarchicalKey);
+          setUnfoldNonce((n) => n + 1);
         }}
         expandedBorderColor={canUseNodeTint ? nodeHeaderBorderColor : undefined}
-        rightSlot={(
+        rightSlot={selectionMode ? (
+          <SelectionCheckbox
+            selected={isNodeSelected}
+            ariaLabel={isNodeSelected ? 'Deselect' : 'Select'}
+            onClick={(event) => {
+              event.stopPropagation();
+              toggleSelectionKey(nodeHierarchicalKey);
+            }}
+          />
+        ) : (
           <NodeCardMenu
             nodeId={node.id}
             nodeHierarchicalKey={nodeHierarchicalKey}
+            nodeType={node.type}
             isLoraManagerNode={isLoraManagerNode}
             showFastGroupsConfigAction={isFastGroupsBypasser}
             isBypassed={isBypassed}
             onEnterSubgraph={onEnterSubgraph}
             onEditLabel={handleEditLabel}
+            onEditSetName={
+              isSetNode(node)
+                ? () => {
+                    expandConnectionsSection(nodeHierarchicalKey);
+                    startEditSetGetName(nodeHierarchicalKey);
+                  }
+                : undefined
+            }
             onEditFastGroupsConfig={() => setShowFastGroupConfig(true)}
             nodeColor={nodeColor}
             onChangeColor={(color) => updateWorkflowItemColor(nodeHierarchicalKey, color)}
@@ -796,7 +899,17 @@ export const NodeCard = memo(function NodeCard({
             setItemHidden={setItemHidden}
             onDeleteNode={() => setShowDeleteModal(true)}
             onDuplicateNode={() => duplicateNode(nodeHierarchicalKey)}
+            onCopyNode={() => {
+              if (!workflow) return;
+              const payload = buildNodeClipboardPayload(workflow, nodeHierarchicalKey);
+              if (payload) setClipboardPayload(payload);
+            }}
+            onPasteBelow={() => pasteClipboard(nodeHierarchicalKey)}
+            pasteSummary={clipboardSummary}
             onMoveNode={onMoveNode ?? (() => {})}
+            onConvertImageOutputNode={(target) =>
+              convertImageOutputNode(nodeHierarchicalKey, target)
+            }
             connectionHighlightMode={connectionHighlightMode}
             setConnectionHighlightMode={setConnectionHighlightMode}
             leftLineCount={leftLineCount}
@@ -815,13 +928,15 @@ export const NodeCard = memo(function NodeCard({
             isCollapsed ? "opacity-0" : "opacity-100"
           }`}
         >
-          {nodeTitle && (
-            <div className="node-card-subtitle text-[10px] text-center font-semibold uppercase tracking-wider text-slate-500 mb-2 px-1">
-              {typeDef?.display_name || node.type}
-            </div>
-          )}
-
           <div id={`node-content-${node.id}`} className={`node-expanded-content ${isBypassed ? 'opacity-60 grayscale' : ''}`}>
+            {isMissingNode ? (
+              <div className="missing-node-body px-2 py-3 text-center">
+                <div className="text-sm font-semibold text-red-300">Missing Node</div>
+                <div className="mt-0.5 font-mono text-xs text-slate-400 [overflow-wrap:anywhere]">{node.type}</div>
+                <div className="mt-1 text-xs text-slate-500">Not installed — tap the red icon to install.</div>
+              </div>
+            ) : (
+            <>
             <NodeCardConnectionsSection
               nodeId={node.id}
               nodeHierarchicalKey={nodeHierarchicalKey}
@@ -832,7 +947,7 @@ export const NodeCard = memo(function NodeCard({
               allOutputs={node.outputs}
             />
 
-            <NodeCardParameters
+            {!isSetGet && <NodeCardParameters
               node={node}
               isBypassed={isBypassed}
               isKSampler={isKSampler}
@@ -853,7 +968,16 @@ export const NodeCard = memo(function NodeCard({
               resolveWidgetValue={resolveWidgetValue}
               showFastGroupConfig={showFastGroupConfig}
               setShowFastGroupConfig={setShowFastGroupConfig}
-            />
+              unfoldNonce={unfoldNonce}
+              hasOutputsBelow={
+                Boolean(noteText) ||
+                (showComparer && Boolean(comparerOutput)) ||
+                showImagePreview ||
+                showTextPreview ||
+                !!latentPreviewUrl ||
+                isBatchOutput
+              }
+            />}
             {noteText && (
               <NodeCardNote
                 noteText={noteText}
@@ -873,29 +997,47 @@ export const NodeCard = memo(function NodeCard({
                 aImages={comparerOutput.a}
                 bImages={comparerOutput.b}
                 displayName={displayName}
+                onOpenViewer={onImageClick}
               />
             )}
 
             <NodeCardOutputPreview
-              show={showImagePreview || showTextPreview || !!latentPreviewUrl}
+              show={showImagePreview || showTextPreview || !!latentPreviewUrl || isBatchOutput}
               previewImage={effectivePreviewImage}
+              previewImages={batchTiles}
               latentPreviewUrl={latentPreviewUrl}
               previewText={showTextPreview ? nodeTextOutput : null}
               displayName={displayName}
               onImageClick={() => onImageClick?.(previewList, 0)}
+              onPreviewImageClick={(i) => onImageClick?.(previewList, i)}
               isExecuting={Boolean(isExecuting)}
               overallProgress={overallProgress}
               displayNodeProgress={displayNodeProgress}
             />
+            </>
+            )}
           </div>
+          {nodeTitle && (
+            <div className="node-card-subtitle text-[10px] text-center font-semibold uppercase tracking-wider text-slate-500 mb-1">
+              {typeDef?.display_name || node.type}
+            </div>
+          )}
         </div>
       </div>
       </div>
 
       <NodeCardErrorPopover
         nodeId={node.id}
-        open={errorPopoverOpen && hasErrors}
+        open={errorPopoverOpen && (hasErrors || isMissingNode)}
         errors={nodeErrors ?? []}
+        isMissing={isMissingNode}
+        nodeType={node.type}
+        onInstall={() => {
+          resetErrorPopover();
+          // Open the manager filtered to Missing AND searched for this exact node
+          // type, so the pack that installs it is front and center.
+          openCustomNodesManager('Missing', node.type);
+        }}
         anchorRef={errorIconRef}
         onClose={resetErrorPopover}
       />

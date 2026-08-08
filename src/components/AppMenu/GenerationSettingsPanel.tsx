@@ -1,6 +1,15 @@
 import { MenuSubPageHeader } from './MenuSubPageHeader';
-import { useGenerationSettingsStore, type PreviewMethod } from '@/hooks/useGenerationSettings';
-import { menuMutedTextClassName, menuPanelDivideClassName, menuTextClassName } from './menuStyles';
+import {
+  useGenerationSettingsStore,
+  type PreviewMethod,
+} from '@/hooks/useGenerationSettings';
+import {
+  menuMutedTextClassName,
+  menuPanelDivideClassName,
+  menuSectionHeaderClassName,
+  menuTextClassName,
+} from './menuStyles';
+import { NotificationsSettings } from './NotificationsSettings';
 import { useAutocompleteStore } from '@/hooks/useAutocompleteStore';
 import { useEffect, type ReactNode } from 'react';
 
@@ -91,7 +100,8 @@ export function GenerationSettingsPanel({ onBack }: GenerationSettingsPanelProps
   const setAutoRestoreLostQueueJobs = useGenerationSettingsStore((s) => s.setAutoRestoreLostQueueJobs);
   const obfuscateSharedInputPaths = useGenerationSettingsStore((s) => s.obfuscateSharedInputPaths);
   const setObfuscateSharedInputPaths = useGenerationSettingsStore((s) => s.setObfuscateSharedInputPaths);
-
+  const marketingNoteEnabled = useGenerationSettingsStore((s) => s.marketingNoteEnabled);
+  const setMarketingNoteEnabled = useGenerationSettingsStore((s) => s.setMarketingNoteEnabled);
   // Autocomplete opt-in (server-synced). Only surfaced when a supported source
   // node (ComfyUI-Autocomplete-Plus and/or ComfyUI-Custom-Scripts) is detected
   // on this server.
@@ -104,6 +114,7 @@ export function GenerationSettingsPanel({ onBack }: GenerationSettingsPanelProps
   useEffect(() => {
     void ensureAutocompleteInit();
   }, [ensureAutocompleteInit]);
+
   const previewEnabled = previewMethod !== 'none';
 
   return (
@@ -181,6 +192,13 @@ export function GenerationSettingsPanel({ onBack }: GenerationSettingsPanelProps
         />
 
         <PreferenceSection
+          label="Credit comfyui-mobile-frontend in workflows"
+          description="Embed a hidden note linking this project into the workflow saved with your outputs. Never shown in the app."
+          checked={marketingNoteEnabled}
+          onToggle={() => setMarketingNoteEnabled(!marketingNoteEnabled)}
+        />
+
+        <PreferenceSection
           label="Enable infinite mode"
           checked={infiniteModeEnabled}
           onToggle={() => setInfiniteModeEnabled(!infiniteModeEnabled)}
@@ -214,6 +232,11 @@ export function GenerationSettingsPanel({ onBack }: GenerationSettingsPanelProps
             onToggle={() => void setAutocompleteEnabled(!autocompleteEnabled)}
           />
         )}
+
+        <div className="pt-2">
+          <div className={menuSectionHeaderClassName}>Notifications</div>
+          <NotificationsSettings />
+        </div>
       </div>
     </div>
   );

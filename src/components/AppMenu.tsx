@@ -2,6 +2,7 @@ import { useRef, useState, useEffect, useCallback } from 'react';
 import { BackendStatusOverlay } from './BackendStatusOverlay';
 import { useConnectionStatusStore } from '@/hooks/useConnectionStatus';
 import { SlidePanel } from './AppMenu/SlidePanel';
+import { Dialog } from './modals/Dialog';
 import { MenuLegend } from './AppMenu/MenuLegend';
 import { MainMenuPanel } from './AppMenu/MainMenuPanel';
 import { PasteJsonPanel } from './AppMenu/PasteJsonPanel';
@@ -18,6 +19,8 @@ import { useGenerationSettingsStore } from '@/hooks/useGenerationSettings';
 import { obfuscateWorkflowInputPaths } from '@/utils/inputPathAliases';
 import { readWorkflowFromFile } from '@/utils/workflowFromFile';
 import { useNoWorkflowImageModal } from '@/hooks/useNoWorkflowImageModal';
+import { useCustomNodesManager } from '@/hooks/useCustomNodesManager';
+import type { CustomNodeFilterValue } from '@/utils/customNodesManager';
 import type { Workflow } from '@/api/types';
 import {
   listUserWorkflows,
@@ -104,11 +107,16 @@ export function AppMenu({
   const [templates, setTemplates] = useState<WorkflowTemplates>({});
   const [loading, setLoading] = useState(false);
   const [restartingServer, setRestartingServer] = useState(false);
+  const [restartConfirmOpen, setRestartConfirmOpen] = useState(false);
   const [systemStats, setSystemStats] = useState<SystemStats | null>(null);
   const [cpuPercent, setCpuPercent] = useState<number | null>(null);
   const [saveFilenameInput, setSaveFilenameInput] = useState(currentFilename || ''); // Use currentFilename as initial value
   const [pastedJson, setPastedJson] = useState('');
   const [customNodesOpen, setCustomNodesOpen] = useState(false);
+  const [customNodesInitialFilter, setCustomNodesInitialFilter] = useState<CustomNodeFilterValue>('');
+  const [customNodesInitialSearch, setCustomNodesInitialSearch] = useState('');
+  const customNodesRequest = useCustomNodesManager((s) => s.request);
+  const consumeCustomNodesRequest = useCustomNodesManager((s) => s.consume);
   const [menuSectionsOpen, setMenuSectionsOpen] = useState({
     load: true,
     save: true,
@@ -213,6 +221,16 @@ export function AppMenu({
       navigator.vibrate(pattern);
     }
   };
+
+  // Open the Custom Nodes Manager in response to a global request (e.g. the
+  // missing-nodes dialog asks to open it pre-filtered to "Missing").
+  useEffect(() => {
+    if (!customNodesRequest) return;
+    setCustomNodesInitialFilter(customNodesRequest.filter);
+    setCustomNodesInitialSearch(customNodesRequest.search ?? '');
+    setCustomNodesOpen(true);
+    consumeCustomNodesRequest();
+  }, [customNodesRequest, consumeCustomNodesRequest]);
 
   const handleLoadFromFile = () => {
     fileInputRef.current?.click();
@@ -410,14 +428,16 @@ export function AppMenu({
     }
   };
 
-  const handleRestartServer = async () => {
+  // Confirmation runs through the app's own Dialog, never window.confirm:
+  // iOS has shipped standalone-PWA builds where native JS dialogs silently
+  // return false without rendering, which makes the button appear dead.
+  const handleRestartServer = () => {
     if (restartingServer) return;
+    setRestartConfirmOpen(true);
+  };
 
-    const confirmed = window.confirm(
-      'Restart ComfyUI now? This will interrupt any running jobs and briefly disconnect the mobile UI.'
-    );
-    if (!confirmed) return;
-
+  const performServerRestart = async () => {
+    setRestartConfirmOpen(false);
     try {
       setRestartingServer(true);
       // Suppress the generic connection-lost overlay: the restart deliberately
@@ -470,7 +490,7 @@ export function AppMenu({
           onOpenLegend={() => setActiveTab('aboutLegend')}
           onRestartServer={handleRestartServer}
           onOpenGenerationSettings={() => setActiveTab('generationSettings')}
-          onOpenCustomNodes={() => setCustomNodesOpen(true)}
+          onOpenCustomNodes={() => { setCustomNodesInitialFilter(''); setCustomNodesInitialSearch(''); setCustomNodesOpen(true); }}
         />
       )}
       {activeTab === 'userWorkflows' && (
@@ -532,12 +552,36 @@ export function AppMenu({
       {activeTab === 'generationSettings' && (
         <GenerationSettingsPanel onBack={() => setActiveTab('menu')} />
       )}
-      <CustomNodesManagerModal
-        isOpen={customNodesOpen}
-        onClose={() => setCustomNodesOpen(false)}
-        onRestartServer={handleRestartServer}
-      />
     </SlidePanel>
+    {/* Rendered OUTSIDE SlidePanel (which unmounts its children when the menu is
+        closed) so it can be opened directly — e.g. from a missing-node popover on
+        the canvas — without the app menu being open. It portals to document.body. */}
+    <CustomNodesManagerModal
+      isOpen={customNodesOpen}
+      initialFilter={customNodesInitialFilter}
+      initialSearch={customNodesInitialSearch}
+      onClose={() => setCustomNodesOpen(false)}
+      onRestartServer={handleRestartServer}
+    />
+    {restartConfirmOpen && (
+      <Dialog
+        onClose={() => setRestartConfirmOpen(false)}
+        // Above the menu SlidePanel (z-2300), covering the whole viewport.
+        zIndex={2700}
+        fullscreen
+        title="Restart ComfyUI?"
+        description="This will interrupt any running jobs and briefly disconnect the mobile UI."
+        actions={[
+          { label: 'Cancel', onClick: () => setRestartConfirmOpen(false) },
+          {
+            label: 'Restart',
+            variant: 'danger',
+            autoFocus: true,
+            onClick: () => { void performServerRestart(); },
+          },
+        ]}
+      />
+    )}
     {restartingServer && <ServerRestartOverlay />}
     </>
   );

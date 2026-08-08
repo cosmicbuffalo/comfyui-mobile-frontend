@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useEffect, useMemo } from "react";
 import type { Workflow, WorkflowNode } from "@/api/types";
 import { useWorkflowStore } from "@/hooks/useWorkflow";
 import { usePinnedWidgetStore } from "@/hooks/usePinnedWidget";
@@ -68,6 +68,7 @@ export function PinnedWidgetOverlayModal() {
   const pinnedWidget = usePinnedWidgetStore((s) => s.pinnedWidget);
   const pinOverlayOpen = usePinnedWidgetStore((s) => s.pinOverlayOpen);
   const togglePinOverlay = usePinnedWidgetStore((s) => s.togglePinOverlay);
+  const setPinOverlayOpen = usePinnedWidgetStore((s) => s.setPinOverlayOpen);
   const updateNodeWidget = useWorkflowStore((s) => s.updateNodeWidget);
   const updateSubgraphInnerNodeWidget = useWorkflowStore((s) => s.updateSubgraphInnerNodeWidget);
 
@@ -128,6 +129,18 @@ export function PinnedWidgetOverlayModal() {
       pinnedWidget.widgetIndex,
     );
   }, [linkedWidgetRoute, pinnedWidget, pinnedNode, proxyRoute, workflow]);
+
+  // Escape closes the pinned widget modal. When the image viewer is also open,
+  // its own Escape handler bails while this overlay is open, so Escape only
+  // closes this modal first (the viewer stays put until a second press).
+  useEffect(() => {
+    if (!pinOverlayOpen) return;
+    const handleKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setPinOverlayOpen(false);
+    };
+    document.addEventListener('keydown', handleKey);
+    return () => document.removeEventListener('keydown', handleKey);
+  }, [pinOverlayOpen, setPinOverlayOpen]);
 
   if (!pinOverlayOpen || !pinnedWidget) return null;
   const pinnedNodeHierarchicalKey = pinnedNode?.itemKey ?? null;

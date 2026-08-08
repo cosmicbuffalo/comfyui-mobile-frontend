@@ -21,6 +21,9 @@ interface UseSwipeNavigationOptions {
   deferResetDurationMs?: number;
 }
 
+const INTENT_DEAD_ZONE_PX = 28;
+const HORIZONTAL_INTENT_RATIO = 1.35;
+
 export function useSwipeNavigation({
   onSwipeLeft,
   onSwipeRight,
@@ -139,10 +142,13 @@ export function useSwipeNavigation({
       const touch = e.touches[0];
       const dx = touch.clientX - swipe.startX;
       const dy = touch.clientY - swipe.startY;
+      const absDx = Math.abs(dx);
+      const absDy = Math.abs(dy);
 
       if (swipe.isHorizontal === null) {
-        if (Math.abs(dx) > 20 || Math.abs(dy) > 20) {
-          const isHorizontal = Math.abs(dx) > Math.abs(dy);
+        if (absDx > INTENT_DEAD_ZONE_PX || absDy > INTENT_DEAD_ZONE_PX) {
+          const isHorizontal =
+            absDx > INTENT_DEAD_ZONE_PX && absDx >= absDy * HORIZONTAL_INTENT_RATIO;
           swipe.isHorizontal = isHorizontal;
 
           if (isHorizontal) {

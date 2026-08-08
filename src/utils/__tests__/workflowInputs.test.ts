@@ -227,6 +227,9 @@ describe('normalizeComboValue', () => {
   it('keeps a file-like value even when the options list looks enum-like', () => {
     // A picker whose current options happen to lack a recognizable extension
     // must not clobber a genuine file selection; the file-like value is kept.
+    // Regression: this guard (and this test) were lost in a merge, which let a
+    // real LoRA/checkpoint choice be silently swapped for options[0] at queue
+    // time — the run then "succeeds" with a different model than the UI shows.
     expect(
       normalizeComboValue('my_model.safetensors', ['baseline', 'turbo']),
     ).toBe('my_model.safetensors');

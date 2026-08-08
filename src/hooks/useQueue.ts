@@ -80,6 +80,10 @@ export interface QueueState {
   showQueueMetadata: boolean;
   showQueueTimestamps: boolean;
   showPromptPreview: boolean;
+  // How each run's outputs are laid out: 'tabbed' = one slot + a thumbnail tab
+  // bar (compact); 'stacked' = every output shown at once (vertical column on
+  // mobile, a single centered row on desktop). Global, persisted.
+  queueOutputLayout: 'tabbed' | 'stacked';
   previewVisibility: Record<string, boolean>;
   previewVisibilityDefault: boolean;
   // Per-prompt workflow diff/prompt-preview, computed at enqueue time.
@@ -91,7 +95,9 @@ export interface QueueState {
   queueMetadata: Record<string, QueuePromptMetadata>;
 
   // Actions
-  fetchQueue: () => Promise<void>;
+  // True only when the backend queue response was fetched and applied. The
+  // queue panel uses this to retry canceled startup requests.
+  fetchQueue: () => Promise<boolean>;
   clearQueue: () => Promise<void>;
   deleteItem: (promptId: string) => Promise<void>;
   interrupt: () => Promise<void>;
@@ -107,6 +113,10 @@ export interface QueueState {
   removeRunning: (promptId: string) => void;
   setQueueItemExpanded: (promptId: string, expanded: boolean) => void;
   setQueueItemUserToggled: (promptId: string, toggled: boolean) => void;
+  /** Drop persisted expand/user-toggle entries for prompt ids that no longer
+   * exist in the queue or the fully-loaded history (both maps otherwise grow
+   * without bound). Callers must pass the complete live id set. */
+  pruneQueueItemUiState: (keepIds: Iterable<string>) => void;
   setQueueItemHideImages: (promptId: string, hidden: boolean) => void;
   toggleQueueItemHideImages: (promptId: string) => void;
   setShowQueueMetadata: (show: boolean) => void;
@@ -115,6 +125,8 @@ export interface QueueState {
   toggleShowQueueTimestamps: () => void;
   setShowPromptPreview: (show: boolean) => void;
   toggleShowPromptPreview: () => void;
+  setQueueOutputLayout: (layout: 'tabbed' | 'stacked') => void;
+  toggleQueueOutputLayout: () => void;
   recordWorkflowDiff: (promptId: string, diff: QueueWorkflowDiff) => void;
   fetchQueueMetadata: (promptIds: string[]) => Promise<void>;
   setPreviewVisibility: (promptId: string, visible: boolean) => void;
@@ -127,6 +139,11 @@ export interface QueueState {
   ) => void;
   markPromptCompleted: (promptId: string) => void;
   detectRecoverableJobs: (completedPromptIds?: Iterable<string>) => string[];
+  // Confirm each currently-"recoverable" candidate against the backend's
+  // per-prompt history (the loaded history window may be too small to include
+  // jobs that completed while the UI was closed). Clears the ones that actually
+  // ran; returns the ids still genuinely lost.
+  verifyRecoverableJobsAgainstHistory: () => Promise<string[]>;
   clearRecoverableJobs: () => void;
   // Permanently discard the currently-recoverable jobs by dropping their
   // persisted shadow records, so a dismissed "lost jobs" banner can't
@@ -148,7 +165,7 @@ const COMPLETING_TTL_MS = 30_000;
 
 // In-flight fetchQueue promise, so an overlapping call (reconnect + the 2s poll)
 // awaits the same fetch instead of racing a second one.
-let fetchQueueInFlight: Promise<void> | null = null;
+let fetchQueueInFlight: Promise<boolean> | null = null;
 
 
 export const useQueueStore = create<QueueState>()(
@@ -172,8 +189,9 @@ export const useQueueStore = create<QueueState>()(
 
       fetchQueue: async () => {
         if (fetchQueueInFlight) return fetchQueueInFlight;
-        let resolveInFlight!: () => void;
-        fetchQueueInFlight = new Promise<void>((resolve) => { resolveInFlight = resolve; });
+        let resolveInFlight!: (success: boolean) => void;
+        fetchQueueInFlight = new Promise<boolean>((resolve) => { resolveInFlight = resolve; });
+        let fetchSucceeded = false;
         const { running: oldRunning } = get();
         set({ isLoading: true });
         try {
@@ -287,13 +305,15 @@ export const useQueueStore = create<QueueState>()(
             ...running.map((item) => item.prompt_id),
             ...pending.map((item) => item.prompt_id),
           ]);
+          fetchSucceeded = true;
         } catch (err) {
           console.error('Failed to fetch queue:', err);
         } finally {
           set({ isLoading: false });
           fetchQueueInFlight = null;
-          resolveInFlight();
+          resolveInFlight(fetchSucceeded);
         }
+        return fetchSucceeded;
       },
 
       clearQueue: async () => {
@@ -509,11 +529,15 @@ export const useQueueStore = create<QueueState>()(
         showQueueMetadata: state.showQueueMetadata,
         showQueueTimestamps: state.showQueueTimestamps,
         showPromptPreview: state.showPromptPreview,
+        queueOutputLayout: state.queueOutputLayout,
         previewVisibility: state.previewVisibility,
         previewVisibilityDefault: state.previewVisibilityDefault,
         workflowDiffs: state.workflowDiffs,
         shadowQueueJobs: state.shadowQueueJobs,
-        recoverableJobIds: state.recoverableJobIds,
+        // recoverableJobIds is intentionally NOT persisted: it's recomputed on
+        // every reconnect from the persisted shadowQueueJobs + live backend
+        // state, so persisting it only risks showing a stale "lost jobs" banner
+        // before reconciliation runs.
         autoRestoredPromptIds: state.autoRestoredPromptIds,
       })
     }

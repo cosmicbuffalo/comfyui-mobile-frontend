@@ -205,6 +205,42 @@ describe('findCompatibleTargetNodesForOutput', () => {
     const result = findCompatibleTargetNodesForOutput(wf, 1, 0);
     expect(result.map((r) => r.node.id)).toEqual([2, 3]);
   });
+
+  it('surfaces un-materialized scalar widget-inputs from the type def as synthetic targets', () => {
+    const source = makeNode(1, 'Source', {
+      outputs: [{ name: 'out', type: 'STRING', links: null }]
+    });
+    // CLIPTextEncode whose `text` widget was never converted to an input slot.
+    const target = makeNode(2, 'CLIPTextEncode', {
+      inputs: [{ name: 'clip', type: 'CLIP', link: null }],
+      outputs: []
+    });
+    const nodeTypes = {
+      CLIPTextEncode: {
+        input: { required: { clip: ['CLIP'], text: ['STRING', { multiline: true }] } },
+        output: ['CONDITIONING'],
+        output_name: ['CONDITIONING'],
+        name: 'CLIPTextEncode',
+        display_name: 'CLIP Text Encode',
+        description: '',
+        python_module: '',
+        category: 'conditioning'
+      }
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } as any;
+
+    const wf = makeWorkflow([source, target], []);
+    const withDefs = findCompatibleTargetNodesForOutput(wf, 1, 0, nodeTypes);
+    const synthetic = withDefs.find((r) => r.widgetInputName === 'text');
+    expect(synthetic).toBeTruthy();
+    expect(synthetic?.inputIndex).toBe(-1);
+    expect(synthetic?.widgetInputType).toBe('STRING');
+
+    // Without nodeTypes, only materialized inputs are considered (clip is CLIP,
+    // not STRING-compatible), so there are no synthetic candidates.
+    const withoutDefs = findCompatibleTargetNodesForOutput(wf, 1, 0);
+    expect(withoutDefs.some((r) => r.widgetInputName === 'text')).toBe(false);
+  });
 });
 
 describe('findCompatibleNodeTypesForInput', () => {

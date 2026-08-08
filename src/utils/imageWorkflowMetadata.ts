@@ -159,7 +159,8 @@ function readExifTagString(exif: Uint8Array, tags: number[]): string | null {
     while (end > valueOffset && exif[end - 1] === 0) end--;
     // The tag is nominally EXIF ASCII, but ComfyUI packs UTF-8 JSON into it, so
     // decode as UTF-8 (a superset of ASCII) to preserve non-Latin-1 characters
-    // such as emoji/CJK in node titles and notes.
+    // such as emoji/CJK in prompts, node titles and notes. Decoding as latin-1
+    // still parses as JSON, so the workflow loads silently corrupted.
     return new TextDecoder('utf-8').decode(exif.subarray(valueOffset, end));
   }
   return null;

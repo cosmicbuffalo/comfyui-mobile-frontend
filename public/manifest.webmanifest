@@ -1,0 +1,16 @@
+{
+  "name": "ComfyUI Mobile",
+  "short_name": "ComfyUI",
+  "description": "Mobile frontend for ComfyUI",
+  "start_url": "/mobile/",
+  "scope": "/mobile/",
+  "display": "standalone",
+  "background_color": "#000000",
+  "theme_color": "#000000",
+  "orientation": "portrait",
+  "icons": [
+    { "src": "/mobile/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/mobile/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "/mobile/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

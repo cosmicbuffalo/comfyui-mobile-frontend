@@ -18,6 +18,18 @@ export interface ViewerImage {
   success?: boolean;
   filename?: string;
   file?: FileItem;
+  // When set, the viewer renders an A/B before-after comparison (image A
+  // revealed from the left up to a draggable wipe slider, image B behind),
+  // sharing one zoom/pan transform. `src`/`displaySrc` above point at image A so
+  // non-comparer code paths still have a usable single image.
+  comparison?: ViewerComparison;
+}
+
+export interface ViewerComparison {
+  aSrc: string;
+  bSrc: string;
+  aDisplaySrc?: string;
+  bDisplaySrc?: string;
 }
 
 export interface HistoryImageSource {
@@ -31,6 +43,30 @@ export function getHistoryImageFileId(image: HistoryImageSource): string {
     ? `${image.subfolder}/${image.filename}`
     : image.filename;
   return `${image.type}/${filePath}`;
+}
+
+// Derive the same stable file id from an asset URL, so the id matches
+// getHistoryImageFileId / FileItem.id everywhere. Returns null if the URL isn't
+// a recognizable asset URL.
+//
+// The source parameter is spelled differently per endpoint: ComfyUI's `/view`
+// uses `type`, while this node's thumbnail/preview endpoints use `source`.
+// Reading only `type` silently returned null for every grid thumbnail — the
+// caller then records nothing, with no error to notice.
+//
+// No production caller on this branch: the per-device download history that
+// consumes it ships in 3.1.1.
+export function fileIdFromAssetUrl(url: string): string | null {
+  try {
+    const parsed = new URL(url, window.location.origin);
+    const filename = parsed.searchParams.get('filename');
+    const type = parsed.searchParams.get('type') ?? parsed.searchParams.get('source');
+    if (!filename || !type) return null;
+    const subfolder = parsed.searchParams.get('subfolder') || '';
+    return getHistoryImageFileId({ filename, subfolder, type });
+  } catch {
+    return null;
+  }
 }
 
 export interface HistoryImageItem {

@@ -70,10 +70,16 @@ describe('QueueCard image-slot tab swap', () => {
   const preloads: Array<{ onload: (() => void) | null; onerror: (() => void) | null; src: string }> = [];
 
   beforeEach(() => {
+    vi.useFakeTimers();
     container = document.createElement('div');
     document.body.appendChild(container);
     root = createRoot(container);
     preloads.length = 0;
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      headers: new Headers(),
+    })));
     vi.stubGlobal('Image', class {
       onload: (() => void) | null = null;
       onerror: (() => void) | null = null;
@@ -95,7 +101,23 @@ describe('QueueCard image-slot tab swap', () => {
     });
     container.remove();
     vi.unstubAllGlobals();
+    vi.useRealTimers();
   });
+
+  // Drive the two-slot swap to completion: dispatch `load` on the back slot's
+  // freshly-staged <img> (jsdom won't fire it on its own), then run the 200ms
+  // promote timer that flips it to the front.
+  const settleSwap = async (srcFragment: string) => {
+    await act(async () => {
+      const backImg = Array.from(container.querySelectorAll('img')).find((el) =>
+        (el.getAttribute('src') ?? '').includes(srcFragment),
+      );
+      backImg?.dispatchEvent(new Event('load'));
+    });
+    await act(async () => {
+      vi.advanceTimersByTime(250);
+    });
+  };
 
   it('holds the current image (with a spinner) until the selected one preloads, then swaps', async () => {
     await act(async () => {
@@ -107,7 +129,6 @@ describe('QueueCard image-slot tab swap', () => {
           viewerImages={[]}
           runningImages={[]}
           onOpenMenu={() => {}}
-          downloaded={{}}
           isTopDoneItem
         />,
       );
@@ -118,19 +139,213 @@ describe('QueueCard image-slot tab swap', () => {
     expect(tabs).toHaveLength(2);
     expect(container.querySelector('img')?.getAttribute('src')).toContain('b.png');
 
-    // Select the other image: the slot keeps showing b.png with a spinner while
-    // a.png preloads in the background — no collapse to empty.
+    // Slot images only (the tab bar has its own thumbnail <img>s).
+    const slotSrcs = () =>
+      Array.from(container.querySelectorAll('img'))
+        .filter((el) => !el.closest('.queue-media-tabs'))
+        .map((el) => el.getAttribute('src') ?? '');
+
+    // Select the other image: the front slot keeps showing b.png while a.png
+    // stages on the hidden back slot — no collapse to empty.
     await act(async () => {
       (tabs[0] as HTMLButtonElement).click();
     });
-    expect(container.querySelector('img')?.getAttribute('src')).toContain('b.png');
-    expect(container.querySelector('.animate-spin')).not.toBeNull();
-
-    // Once the preload resolves, the slot swaps to a.png and the spinner clears.
+    // The HTTP preload resolves, mounting a.png on the back slot (still hidden).
     await act(async () => {
       preloads.at(-1)?.onload?.();
     });
-    expect(container.querySelector('img')?.getAttribute('src')).toContain('a.png');
+    // Both are mounted (previous held on front, next staged on back) and the
+    // swap-in-progress spinner is showing.
+    expect(slotSrcs().some((s) => s.includes('b.png'))).toBe(true);
+    expect(slotSrcs().some((s) => s.includes('a.png'))).toBe(true);
+    expect(container.querySelector('.animate-spin')).not.toBeNull();
+
+    // The back slot's <img> finishes loading and the promote timer fires: the
+    // slot swaps to a.png (b.png unmounts) and the spinner clears.
+    await settleSwap('a.png');
+    expect(slotSrcs()).toHaveLength(1);
+    expect(slotSrcs()[0]).toContain('a.png');
     expect(container.querySelector('.animate-spin')).toBeNull();
+  });
+
+  const renderCard = async () => {
+    await act(async () => {
+      root.render(
+        <QueueCard
+          item={doneItem}
+          isActuallyRunning={false}
+          progress={0}
+          viewerImages={[]}
+          runningImages={[]}
+          onOpenMenu={() => {}}
+          isTopDoneItem
+        />,
+      );
+    });
+    return {
+      tabs: Array.from(container.querySelectorAll('.queue-media-tabs button')) as HTMLButtonElement[],
+      slotSrcs: () =>
+        Array.from(container.querySelectorAll('img'))
+          .filter((el) => !el.closest('.queue-media-tabs'))
+          .map((el) => el.getAttribute('src') ?? ''),
+      slotImg: (fragment: string) =>
+        Array.from(container.querySelectorAll('img'))
+          .filter((el) => !el.closest('.queue-media-tabs'))
+          .find((el) => (el.getAttribute('src') ?? '').includes(fragment)),
+    };
+  };
+
+  it('re-tapping the front tab during the promote grace never blanks the slot', async () => {
+    const { tabs, slotSrcs, slotImg } = await renderCard();
+
+    // Stage a.png on the back slot and fire its load, but stop INSIDE the
+    // 200ms grace window.
+    await act(async () => {
+      tabs[0].click();
+    });
+    await act(async () => {
+      preloads.at(-1)?.onload?.();
+    });
+    await act(async () => {
+      slotImg('a.png')?.dispatchEvent(new Event('load'));
+    });
+
+    // Snap back to the still-front b.png while the promote timer is pending.
+    // This clears the staged back slot; the stale timer must NOT promote it.
+    await act(async () => {
+      tabs[1].click();
+    });
+    await act(async () => {
+      vi.advanceTimersByTime(300);
+    });
+
+    const srcs = slotSrcs();
+    expect(srcs).toHaveLength(1);
+    expect(srcs[0]).toContain('b.png');
+  });
+
+  it('a second tab tap during the grace window swaps to the LAST tap, not the first', async () => {
+    const withThree: UnifiedItem = {
+      ...doneItem,
+      data: {
+        ...doneItem.data,
+        outputs: { images: [imageA, imageB, { filename: 'c.png', subfolder: 'images', type: 'output' }] },
+      },
+    };
+    await act(async () => {
+      root.render(
+        <QueueCard
+          item={withThree}
+          isActuallyRunning={false}
+          progress={0}
+          viewerImages={[]}
+          runningImages={[]}
+          onOpenMenu={() => {}}
+          isTopDoneItem
+        />,
+      );
+    });
+    const tabs = Array.from(container.querySelectorAll('.queue-media-tabs button')) as HTMLButtonElement[];
+    const slotSrcs = () =>
+      Array.from(container.querySelectorAll('img'))
+        .filter((el) => !el.closest('.queue-media-tabs'))
+        .map((el) => el.getAttribute('src') ?? '');
+    const slotImg = (fragment: string) =>
+      Array.from(container.querySelectorAll('img'))
+        .filter((el) => !el.closest('.queue-media-tabs'))
+        .find((el) => (el.getAttribute('src') ?? '').includes(fragment));
+
+    // Tap a.png, let it stage + load, timer pending.
+    await act(async () => {
+      tabs[0].click();
+    });
+    await act(async () => {
+      preloads.at(-1)?.onload?.();
+    });
+    await act(async () => {
+      slotImg('a.png')?.dispatchEvent(new Event('load'));
+    });
+
+    // Within the grace window, tap b.png instead: it replaces the back stage.
+    // a.png's stale timer must not promote b.png before it's ready.
+    await act(async () => {
+      tabs[1].click();
+    });
+    await act(async () => {
+      preloads.at(-1)?.onload?.();
+    });
+    await act(async () => {
+      vi.advanceTimersByTime(300);
+    });
+    // Front is still the original c.png — b.png hasn't fired load yet.
+    expect(slotSrcs().some((s) => s.includes('c.png'))).toBe(true);
+
+    // b.png loads and ITS timer promotes it.
+    await settleSwap('b.png');
+    expect(slotSrcs()).toHaveLength(1);
+    expect(slotSrcs()[0]).toContain('b.png');
+  });
+
+  it('retries a transient back-slot image error and completes the swap', async () => {
+    const { tabs, slotImg } = await renderCard();
+
+    await act(async () => {
+      tabs[0].click();
+    });
+    await act(async () => {
+      preloads.at(-1)?.onload?.();
+    });
+    // The staged <img> errors because its request was transiently canceled.
+    await act(async () => {
+      slotImg('a.png')?.dispatchEvent(new Event('error'));
+      await Promise.resolve();
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(300);
+    });
+    expect(slotImg('a.png')?.getAttribute('src')).toContain('mobile_retry=1');
+    expect(container.querySelector('.queue-media-unavailable')).toBeNull();
+
+    // The retry succeeds; the normal promotion path settles the swap.
+    await act(async () => {
+      slotImg('a.png')?.dispatchEvent(new Event('load'));
+      await vi.advanceTimersByTimeAsync(250);
+    });
+
+    expect(container.querySelector('.animate-spin')).toBeNull();
+    expect(container.querySelector('.queue-media-unavailable')).toBeNull();
+  });
+
+  it('shows unavailable only after preview retries and the original fallback fail', async () => {
+    const { tabs, slotImg } = await renderCard();
+
+    await act(async () => {
+      tabs[0].click();
+    });
+    await act(async () => {
+      preloads.at(-1)?.onload?.();
+    });
+
+    const failCurrentImage = async (delay: number) => {
+      await act(async () => {
+        slotImg('a.png')?.dispatchEvent(new Event('error'));
+        await Promise.resolve();
+      });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(delay);
+      });
+    };
+
+    await failCurrentImage(300);
+    expect(slotImg('a.png')?.getAttribute('src')).toContain('mobile_retry=1');
+    await failCurrentImage(900);
+    expect(slotImg('a.png')?.getAttribute('src')).toContain('mobile_retry=2');
+    await failCurrentImage(0);
+    expect(slotImg('a.png')?.getAttribute('src')).toContain('mobile_retry=original');
+
+    // The raw original also fails. Only now does the card settle as unavailable.
+    await failCurrentImage(250);
+    expect(container.querySelector('.animate-spin')).toBeNull();
+    expect(container.querySelector('.queue-media-unavailable')).not.toBeNull();
   });
 });
