@@ -7,6 +7,7 @@ export function RunButton() {
   const workflow = useWorkflowStore((s) => s.workflow);
   const runCount = useWorkflowStore((s) => s.runCount);
   const infiniteLoop = useWorkflowStore((s) => s.infiniteLoop);
+  const infiniteLoopAwaitingRun = useWorkflowStore((s) => s.infiniteLoopAwaitingRun);
   const setInfiniteLoop = useWorkflowStore((s) => s.setInfiniteLoop);
   const isStopping = useWorkflowStore((s) => s.isStopping);
   const setIsStopping = useWorkflowStore((s) => s.setIsStopping);
@@ -22,7 +23,12 @@ export function RunButton() {
   // the websocket re-queues the loop) so the Stop button doesn't flash to Run.
   const hasActiveRun =
     isExecuting || isLoading || running.length > 0 || pending.length > 0;
-  const showStop = (infiniteLoop && hasActiveRun) || isStopping;
+  // While infinite mode is merely *armed* (toggled on but the user hasn't hit
+  // Run yet), don't show Stop just because other items happen to be running —
+  // those are pre-existing queue items, not the loop. Keep showing Run so the
+  // user can start the loop after the existing queue drains.
+  const showStop =
+    (infiniteLoop && !infiniteLoopAwaitingRun && hasActiveRun) || isStopping;
 
   useEffect(() => {
     if (!hasActiveRun && isStopping) {
@@ -69,6 +75,9 @@ export function RunButton() {
       onClick={handleRun}
       disabled={!canRun || isLoading}
       aria-busy={isLoading}
+      // The visible "Queueing..." label is desktop-only (see below), so on a
+      // phone the button would otherwise have no accessible name while loading.
+      aria-label={isLoading ? 'Queueing...' : undefined}
       className={
         `flex-1 py-3 px-6 rounded-xl font-semibold text-lg min-h-[48px] transition-all `
         + (canRun && !isLoading
@@ -80,7 +89,16 @@ export function RunButton() {
         {isLoading && (
           <span className="h-4 w-4 animate-spin rounded-full border-2 border-current border-r-transparent" />
         )}
-        {isLoading ? 'Queueing...' : 'Run'}
+        {isLoading ? (
+          // On phone-sized screens the "Queueing..." label is too wide for the
+          // narrow Run button, so the spinner alone stands in for it there; the
+          // full label only appears at the desktop breakpoint (lg / 1024px, see
+          // DESKTOP_MIN_WIDTH). This avoids the jarring Run -> Queueing... text
+          // swap on small screens.
+          <span className="hidden lg:inline">Queueing...</span>
+        ) : (
+          'Run'
+        )}
       </span>
     </button>
   );

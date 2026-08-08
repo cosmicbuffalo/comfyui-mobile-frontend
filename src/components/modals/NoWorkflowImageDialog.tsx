@@ -19,8 +19,8 @@ export function NoWorkflowImageDialog() {
       title="No workflow in this image"
       description={
         filename
-          ? `“${filename}” doesn’t contain an embedded workflow.`
-          : "This image doesn’t contain an embedded workflow."
+          ? `“${filename}” doesn’t contain an embedded workflow to load. It may have been stripped, or saved by a tool that doesn’t embed one.`
+          : "This image doesn’t contain an embedded workflow to load. It may have been stripped, or saved by a tool that doesn’t embed one."
       }
       actions={[{ label: 'Dismiss', onClick: dismiss, variant: 'primary', autoFocus: true }]}
     />

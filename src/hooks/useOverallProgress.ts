@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { Workflow } from '@/api/types';
 import { getWorkflowSignature } from '@/hooks/useWorkflow';
+import { useConnectionStatusStore } from '@/hooks/useConnectionStatus';
 
 interface OverallProgressInput {
   workflow: Workflow | null;
@@ -17,6 +18,7 @@ export function useOverallProgress({
   workflowDurationStats,
   holdCompleteWhileIdle = false,
 }: OverallProgressInput): number | null {
+  const isConnected = useConnectionStatusStore((s) => s.isConnected);
   const [percent, setPercent] = useState<number | null>(null);
   const startTimeRef = useRef<number | null>(null);
   const lastRunKeyRef = useRef<string | null>(null);
@@ -31,7 +33,7 @@ export function useOverallProgress({
     let intervalId: ReturnType<typeof setInterval> | null = null;
 
     const update = () => {
-      if (!workflow) {
+      if (!workflow || !isConnected) {
         if (lastEmittedRef.current !== null) {
           lastEmittedRef.current = null;
           setPercent(null);
@@ -131,7 +133,7 @@ export function useOverallProgress({
       }
     };
 
-    if (workflow) {
+    if (workflow && isConnected) {
       timeoutId = setTimeout(update, 0);
       // Also run the ticker when a run has JUST finished (runKey is now null but
       // lastRunKeyRef is still set, i.e. the hold is about to begin). Without
@@ -148,7 +150,7 @@ export function useOverallProgress({
       if (timeoutId) clearTimeout(timeoutId);
       if (intervalId) clearInterval(intervalId);
     };
-  }, [workflow, runKey, isRunning, workflowDurationStats, holdCompleteWhileIdle]);
+  }, [workflow, runKey, isRunning, workflowDurationStats, holdCompleteWhileIdle, isConnected]);
 
   return percent;
 }

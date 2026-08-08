@@ -2,7 +2,6 @@ import { create } from 'zustand';
 import { createJSONStorage, persist } from 'zustand/middleware';
 
 export type PreviewMethod = 'none' | 'latent2rgb' | 'taesd';
-
 interface GenerationSettingsState {
   infiniteModeEnabled: boolean;
   setInfiniteModeEnabled: (value: boolean) => void;
@@ -20,6 +19,11 @@ interface GenerationSettingsState {
   setAutoRestoreLostQueueJobs: (value: boolean) => void;
   obfuscateSharedInputPaths: boolean;
   setObfuscateSharedInputPaths: (value: boolean) => void;
+  // When on (default), executing a workflow embeds a hidden markdown note
+  // crediting this frontend into the workflow saved with the outputs. Purely
+  // cosmetic provenance, never shown in the mobile UI — opt out to never add it.
+  marketingNoteEnabled: boolean;
+  setMarketingNoteEnabled: (value: boolean) => void;
 }
 
 export const useGenerationSettingsStore = create<GenerationSettingsState>()(
@@ -39,6 +43,8 @@ export const useGenerationSettingsStore = create<GenerationSettingsState>()(
       setAutoRestoreLostQueueJobs: (value) => set({ autoRestoreLostQueueJobs: value }),
       obfuscateSharedInputPaths: false,
       setObfuscateSharedInputPaths: (value) => set({ obfuscateSharedInputPaths: value }),
+      marketingNoteEnabled: true,
+      setMarketingNoteEnabled: (value) => set({ marketingNoteEnabled: value }),
     }),
     {
       name: 'generation-settings-storage',

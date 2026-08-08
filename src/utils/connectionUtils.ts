@@ -233,17 +233,29 @@ export function findCompatibleNodeTypesForOutput(
  * Find compatible target node inputs for a given source output slot.
  * Returns all compatible inputs per node.
  */
+export interface OutputTargetMatch {
+  node: WorkflowNode;
+  // Index in node.inputs, or -1 for a widget-input that isn't materialized yet
+  // (it only exists in the node type definition — see widgetInputName/Type).
+  inputIndex: number;
+  widgetInputName?: string;
+  widgetInputType?: string;
+}
+
+const SCALAR_WIDGET_TYPES = new Set(['STRING', 'INT', 'FLOAT', 'BOOLEAN']);
+
 export function findCompatibleTargetNodesForOutput(
   workflow: Workflow,
   sourceNodeId: number,
-  outputSlotIndex: number
-): Array<{ node: WorkflowNode; inputIndex: number }> {
+  outputSlotIndex: number,
+  nodeTypes?: NodeTypes | null,
+): OutputTargetMatch[] {
   const sourceNode = workflow.nodes.find((n) => n.id === sourceNodeId);
   if (!sourceNode) return [];
   const output = sourceNode.outputs?.[outputSlotIndex];
   if (!output) return [];
 
-  const results: Array<{ node: WorkflowNode; inputIndex: number }> = [];
+  const results: OutputTargetMatch[] = [];
   const adjacency = buildAdjacency(workflow);
   const reverseAdjacency = buildReverseAdjacency(adjacency);
   const nodesThatCanReachSource = collectNodesThatCanReach(
@@ -255,10 +267,29 @@ export function findCompatibleTargetNodesForOutput(
     if (node.mode === 4) continue;
     // Prevent cycle: candidate target ... -> source, then source -> candidate target.
     if (nodesThatCanReachSource.has(node.id)) continue;
+    const materializedNames = new Set<string>();
     for (let i = 0; i < (node.inputs?.length ?? 0); i += 1) {
       const input = node.inputs[i];
+      materializedNames.add(input.name);
       if (areTypesCompatible(output.type, input.type)) {
         results.push({ node, inputIndex: i });
+      }
+    }
+    // Also surface scalar widget-inputs that aren't materialized in node.inputs
+    // yet — connecting overrides the widget's current value (the slot is created
+    // on connect). Only scalar widget types qualify, so unconnected optional
+    // *connection* inputs aren't mistaken for overrideable widgets.
+    const typeDef = nodeTypes?.[node.type];
+    if (typeDef?.input) {
+      const inputDefs = { ...typeDef.input.required, ...typeDef.input.optional };
+      for (const [name, def] of Object.entries(inputDefs)) {
+        if (materializedNames.has(name) || !Array.isArray(def)) continue;
+        const [typeOrOptions] = def;
+        if (Array.isArray(typeOrOptions)) continue; // combo
+        const type = String(typeOrOptions);
+        if (!SCALAR_WIDGET_TYPES.has(type.toUpperCase())) continue;
+        if (!areTypesCompatible(output.type, type)) continue;
+        results.push({ node, inputIndex: -1, widgetInputName: name, widgetInputType: type });
       }
     }
   }

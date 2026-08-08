@@ -4,10 +4,15 @@ import { useGenerationSettingsStore } from '@/hooks/useGenerationSettings';
 interface NodeCardOutputPreviewProps {
   show: boolean;
   previewImage: { filename: string; subfolder: string; type: string } | null;
+  // When the node produced more than one output (a batch), these thumbnails are
+  // tiled into two columns so the whole batch is visible at once. null/empty
+  // falls back to the single-image preview below.
+  previewImages?: Array<{ displaySrc: string; alt: string }> | null;
   latentPreviewUrl?: string | null;
   previewText?: string | null;
   displayName: string;
   onImageClick?: () => void;
+  onPreviewImageClick?: (index: number) => void;
   isExecuting: boolean;
   overallProgress: number | null;
   displayNodeProgress: number;
@@ -16,10 +21,12 @@ interface NodeCardOutputPreviewProps {
 export function NodeCardOutputPreview({
   show,
   previewImage,
+  previewImages = null,
   latentPreviewUrl = null,
   previewText = null,
   displayName,
   onImageClick,
+  onPreviewImageClick,
   isExecuting,
   overallProgress,
   displayNodeProgress
@@ -27,7 +34,8 @@ export function NodeCardOutputPreview({
   // Subscribe so the preview refreshes immediately when the WebP preference is
   // toggled (must run before the early return to satisfy the rules of hooks).
   useGenerationSettingsStore((s) => s.webpPreviewEnabled);
-  if (!show || (!previewImage && !previewText && !latentPreviewUrl)) return null;
+  const isTiled = Boolean(previewImages && previewImages.length > 1);
+  if (!show || (!previewImage && !previewText && !latentPreviewUrl && !isTiled)) return null;
 
   const displaySrc = previewImage
     ? getImagePreviewUrl(previewImage.filename, previewImage.subfolder, previewImage.type)
@@ -38,7 +46,20 @@ export function NodeCardOutputPreview({
       <div className="text-xs text-slate-500 mb-1.5 uppercase tracking-wide">
         Output Preview
       </div>
-      {displaySrc && (
+      {isTiled ? (
+        <div className="output-batch-grid grid grid-cols-2 gap-2">
+          {previewImages!.map((img, i) => (
+            <img
+              key={img.displaySrc}
+              src={img.displaySrc}
+              alt={img.alt}
+              className="w-full h-auto rounded-lg border border-white/10"
+              loading="lazy"
+              onClick={() => onPreviewImageClick?.(i)}
+            />
+          ))}
+        </div>
+      ) : displaySrc && (
         <div className="relative">
           <img
             key={previewImage ? 'preview' : 'latent'}

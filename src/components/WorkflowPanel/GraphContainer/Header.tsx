@@ -5,6 +5,9 @@ import {
   BypassToggleIcon,
   CaretDownIcon,
   CaretRightIcon,
+  CheckIcon,
+  ClipboardIcon,
+  ClipboardDownloadIcon,
   EditIcon,
   EyeOffIcon,
   MoveUpDownIcon,
@@ -18,6 +21,8 @@ import { useDismissOnOutsideClick } from "@/hooks/useDismissOnOutsideClick";
 import { useWorkflowStore } from "@/hooks/useWorkflow";
 import { ContextMenuButton } from '@/components/buttons/ContextMenuButton';
 import { ContextMenuBuilder } from '@/components/menus/ContextMenuBuilder';
+import { SelectionCheckbox } from '@/components/buttons/SelectionCheckbox';
+import { useWorkflowSelectionStore } from '@/hooks/useWorkflowSelection';
 import { resolveWorkflowColor, themeColors, workflowColorPickerOptions } from "@/theme/colors";
 import { hexToRgba } from "@/utils/grouping";
 
@@ -43,6 +48,9 @@ interface GraphContainerHeaderProps {
   onDelete: () => void;
   onShowHiddenNodes: () => void;
   onMove: () => void;
+  onCopy: () => void;
+  onPaste: () => void;
+  pasteSummary: string | null;
   onCommitTitle: (title: string) => void;
   onChangeColor?: (color: string) => void;
   containerColor?: string;
@@ -53,6 +61,11 @@ interface GraphContainerHeaderProps {
   showUnbypassAllAction?: boolean;
   bypassState?: 'none' | 'partial' | 'all';
   bypassedNodeCount?: number;
+  // Select mode: this container's own hierarchical key and its member node keys.
+  // When in select mode the menu button is replaced with a selection checkbox;
+  // toggling a group ON also auto-selects its members (companion keys).
+  selectionKey?: string;
+  selectionMemberKeys?: string[];
 }
 
 export function GraphContainerHeader({
@@ -75,6 +88,9 @@ export function GraphContainerHeader({
   onDelete,
   onShowHiddenNodes,
   onMove,
+  onCopy,
+  onPaste,
+  pasteSummary,
   onCommitTitle,
   onChangeColor,
   containerColor = "",
@@ -85,7 +101,23 @@ export function GraphContainerHeader({
   showUnbypassAllAction = true,
   bypassState = 'none',
   bypassedNodeCount = 0,
+  selectionKey,
+  selectionMemberKeys,
 }: GraphContainerHeaderProps) {
+  const selectionMode = useWorkflowSelectionStore((s) => s.selectionMode);
+  const isContainerSelected = useWorkflowSelectionStore((s) =>
+    selectionKey ? s.selectedKeys.includes(selectionKey) : false,
+  );
+  const toggleSelectionKey = useWorkflowSelectionStore((s) => s.toggleKey);
+  const enterSelectionMode = useWorkflowSelectionStore((s) => s.enterSelectionMode);
+  const selectSelectionKeys = useWorkflowSelectionStore((s) => s.selectKeys);
+  // The per-item "Select" menu entry is only meaningful for groups (subgraphs
+  // select via their placeholder card).
+  const canSelectFromMenu = containerType === "group" && Boolean(selectionKey);
+  // Only groups participate in select mode for now; subgraphs are selected via
+  // their placeholder card.
+  const showSelectionCheckbox =
+    selectionMode && containerType === "group" && Boolean(selectionKey);
   const [menuOpen, setMenuOpen] = useState(false);
   const [colorPopoverOpen, setColorPopoverOpen] = useState(false);
   const [colorPopoverPlacement, setColorPopoverPlacement] = useState<"above" | "below">("below");
@@ -311,25 +343,36 @@ export function GraphContainerHeader({
         </span>
       </div>
 
-      <ContextMenuButton
-        onClick={(event) => {
-          event.stopPropagation();
-          resetMenuPosition();
-          setColorPopoverOpen(false);
-          setMenuOpen((prev) => !prev);
-        }}
-        ariaLabel={`${containerType} options`}
-        buttonRef={menuButtonRef}
-        buttonSize={8}
-        iconSize={5}
-        icon={isBookmarked ? (
-          <BookmarkIconSvg className="w-5 h-5 text-amber-500" />
-        ) : containerType === "subgraph" ? (
-          <WorkflowIcon className="w-5 h-5 -scale-x-100 text-cyan-300" />
-        ) : (
-          undefined
-        )}
-      />
+      {showSelectionCheckbox ? (
+        <SelectionCheckbox
+          selected={isContainerSelected}
+          ariaLabel={isContainerSelected ? 'Deselect group' : 'Select group'}
+          onClick={(event) => {
+            event.stopPropagation();
+            if (selectionKey) toggleSelectionKey(selectionKey, selectionMemberKeys ?? []);
+          }}
+        />
+      ) : (
+        <ContextMenuButton
+          onClick={(event) => {
+            event.stopPropagation();
+            resetMenuPosition();
+            setColorPopoverOpen(false);
+            setMenuOpen((prev) => !prev);
+          }}
+          ariaLabel={`${containerType} options`}
+          buttonRef={menuButtonRef}
+          buttonSize={8}
+          iconSize={5}
+          icon={isBookmarked ? (
+            <BookmarkIconSvg className="w-5 h-5 text-amber-500" />
+          ) : containerType === "subgraph" ? (
+            <WorkflowIcon className="w-5 h-5 -scale-x-100 text-cyan-300" />
+          ) : (
+            undefined
+          )}
+        />
+      )}
       {canChangeColor && colorPopoverOpen &&
         createPortal(
           <div
@@ -430,6 +473,20 @@ export function GraphContainerHeader({
                   hidden: !showBookmarkAction
                 },
                 {
+                  key: 'select-group',
+                  label: 'Select',
+                  icon: <CheckIcon className="w-4 h-4" />,
+                  onClick: (event) => {
+                    event.stopPropagation();
+                    if (selectionKey) {
+                      enterSelectionMode();
+                      selectSelectionKeys([selectionKey, ...(selectionMemberKeys ?? [])]);
+                    }
+                    closeMenu();
+                  },
+                  hidden: !canSelectFromMenu
+                },
+                {
                   key: 'add-node',
                   label: 'Add node',
                   icon: <PlusIcon className="w-4 h-4" />,
@@ -494,6 +551,27 @@ export function GraphContainerHeader({
                     onHide();
                     closeMenu();
                   }
+                },
+                {
+                  key: 'copy-container',
+                  label: `Copy ${containerType}`,
+                  icon: <ClipboardIcon className="w-4 h-4" />,
+                  onClick: (event) => {
+                    event.stopPropagation();
+                    onCopy();
+                    closeMenu();
+                  }
+                },
+                {
+                  key: 'paste-into-container',
+                  label: pasteSummary ? `Paste ${pasteSummary} here` : 'Paste here',
+                  icon: <ClipboardDownloadIcon className="w-4 h-4" />,
+                  onClick: (event) => {
+                    event.stopPropagation();
+                    onPaste();
+                    closeMenu();
+                  },
+                  hidden: !pasteSummary
                 },
                 {
                   key: 'move-container',

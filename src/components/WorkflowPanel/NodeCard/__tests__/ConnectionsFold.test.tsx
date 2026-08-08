@@ -24,7 +24,7 @@ describe('NodeCardConnections folding', () => {
 
   beforeEach(() => {
     connectionButtonsVisible = true;
-    useConnectionSectionFoldsStore.setState({ expandedItemKeys: [] });
+    useConnectionSectionFoldsStore.setState({ collapsedItemKeys: [] });
     container = document.createElement('div');
     document.body.appendChild(container);
     root = createRoot(container);
@@ -37,7 +37,7 @@ describe('NodeCardConnections folding', () => {
     container.remove();
   });
 
-  it('keeps the title row visible while defaulting buttons to folded', async () => {
+  it('keeps the title row visible while defaulting buttons to open', async () => {
     await act(async () => {
       root.render(
         <NodeCardConnections
@@ -55,9 +55,10 @@ describe('NodeCardConnections folding', () => {
     expect(container.textContent).toContain('Inputs');
     expect(container.textContent).toContain('Outputs');
     const toggle = container.querySelector<HTMLButtonElement>('button[aria-expanded]');
-    expect(toggle?.getAttribute('aria-expanded')).toBe('false');
-    expect(toggle?.getAttribute('aria-label')).toBe('Unfold connections');
-    expect(toggle?.getAttribute('data-fold-state')).toBe('collapsed');
+    // Default open now: the section starts expanded.
+    expect(toggle?.getAttribute('aria-expanded')).toBe('true');
+    expect(toggle?.getAttribute('aria-label')).toBe('Fold connections');
+    expect(toggle?.getAttribute('data-fold-state')).toBe('expanded');
     expect(toggle?.querySelectorAll('[data-connection-fold-chevron]')).toHaveLength(2);
     expect(container.querySelectorAll('.connection-section-divider')).toHaveLength(2);
     expect(container.querySelector('[aria-hidden="true"]')).toBeTruthy();
@@ -66,10 +67,11 @@ describe('NodeCardConnections folding', () => {
       toggle?.click();
     });
 
-    expect(toggle?.getAttribute('aria-expanded')).toBe('true');
-    expect(toggle?.getAttribute('aria-label')).toBe('Fold connections');
-    expect(toggle?.getAttribute('data-fold-state')).toBe('expanded');
-    expect(useConnectionSectionFoldsStore.getState().expandedItemKeys).toEqual(['node-key']);
+    // Clicking folds it, recording the node key as collapsed.
+    expect(toggle?.getAttribute('aria-expanded')).toBe('false');
+    expect(toggle?.getAttribute('aria-label')).toBe('Unfold connections');
+    expect(toggle?.getAttribute('data-fold-state')).toBe('collapsed');
+    expect(useConnectionSectionFoldsStore.getState().collapsedItemKeys).toEqual(['node-key']);
   });
 
   it('shows the number of hidden connections when connection buttons are hidden', async () => {

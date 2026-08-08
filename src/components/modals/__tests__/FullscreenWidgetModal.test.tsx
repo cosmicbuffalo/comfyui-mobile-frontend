@@ -1,6 +1,6 @@
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { FullscreenWidgetModal } from '@/components/modals/FullscreenWidgetModal';
 
 describe('FullscreenWidgetModal viewer sidebar', () => {
@@ -63,5 +63,28 @@ describe('FullscreenWidgetModal viewer sidebar', () => {
     const modal = document.body.querySelector<HTMLDivElement>('.fullscreen-widget-modal');
     expect(modal?.style.width).toBe('1600px');
     expect(modal?.style.transform).toBe('translate(0px, 0px)');
+  });
+
+  it('dismisses from the backdrop but not from modal content', async () => {
+    const onClose = vi.fn();
+    await act(async () => {
+      root.render(
+        <FullscreenWidgetModal
+          isOpen
+          title="Pinned widget"
+          onClose={onClose}
+        >
+          <button type="button" data-testid="widget-control">Widget control</button>
+        </FullscreenWidgetModal>,
+      );
+    });
+
+    const contentButton = document.body.querySelector<HTMLButtonElement>('[data-testid="widget-control"]');
+    contentButton?.click();
+    expect(onClose).not.toHaveBeenCalled();
+
+    const modal = document.body.querySelector<HTMLDivElement>('.fullscreen-widget-modal');
+    modal?.click();
+    expect(onClose).toHaveBeenCalledTimes(1);
   });
 });

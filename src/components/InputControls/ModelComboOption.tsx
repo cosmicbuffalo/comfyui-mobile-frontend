@@ -20,14 +20,29 @@ function ModelThumb({
   compact?: boolean;
 }) {
   const rawUrl = model?.preview_url || "";
-  const isVideo = /\.(mp4|webm)$/i.test(rawUrl);
+  let previewPath = rawUrl;
+  try {
+    const parsed = new URL(rawUrl, 'http://localhost');
+    previewPath = parsed.searchParams.get('path') ?? parsed.pathname;
+  } catch {
+    // Keep the raw URL extension check below as the safe fallback.
+  }
+  const isVideo = /\.(mp4|webm)$/i.test(previewPath);
+  // Both providers expose the model preview's absolute path in the query. Route
+  // Lora Manager video previews through our own validated preview endpoint so
+  // it can return a cached still frame rather than making every dropdown row a
+  // live <video>. Still previews also use this endpoint's small-width variant.
+  const thumbnailBase = rawUrl.includes('path=')
+    ? rawUrl.replace('/api/lm/previews', '/mobile/api/models/previews')
+    : rawUrl;
+  const supportsThumbnail = thumbnailBase.includes('/api/models/previews');
   // These thumbnails render at ~28–44px, so ask our standalone preview route for
-  // a small downscaled image instead of the full-res file. Videos and Lora
-  // Manager-served URLs (a different route) are used as-is.
+  // a small downscaled image instead of the full-res file. For videos the route
+  // returns a cached extracted frame.
   const url =
-    !isVideo && rawUrl.includes("/api/models/previews")
-      ? `${rawUrl}${rawUrl.includes("?") ? "&" : "?"}w=88`
-      : rawUrl;
+    supportsThumbnail
+      ? `${thumbnailBase}${thumbnailBase.includes("?") ? "&" : "?"}w=88`
+      : thumbnailBase;
   const mediaClass = "absolute inset-0 w-full h-full object-cover";
   return (
     <div
@@ -37,8 +52,16 @@ function ModelThumb({
       style={compact ? { width: 28, height: 28 } : { width: 44 }}
     >
       {url ? (
-        isVideo ? (
-          <video src={url} muted playsInline preload="metadata" className={mediaClass} />
+        isVideo && !supportsThumbnail ? (
+          // Unknown providers cannot be safely converted to a poster. Avoid a
+          // metadata request here; the neutral play mark is preferable to a
+          // menu full of background video downloads.
+          <span
+            aria-hidden="true"
+            className={`${mediaClass} flex items-center justify-center text-xs text-slate-400`}
+          >
+            ▶
+          </span>
         ) : (
           <img src={url} alt="" loading="lazy" decoding="async" className={mediaClass} />
         )

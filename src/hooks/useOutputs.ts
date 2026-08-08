@@ -52,10 +52,75 @@ function replaceSourceFavorites(
   return Array.from(next);
 }
 
-function sameFavoriteIds(a: string[], b: string[]): boolean {
-  if (a.length !== b.length) return false;
-  const seen = new Set(a);
-  return b.every((id) => seen.has(id));
+function reconcileReturnedFileState(
+  existing: string[],
+  files: FileItem[],
+  flaggedIds: string[],
+): string[] {
+  const returnedFileIds = new Set(
+    files.filter((file) => file.type !== 'folder').map((file) => file.id),
+  );
+  const next = new Set(existing.filter((id) => !returnedFileIds.has(id)));
+  flaggedIds.forEach((id) => next.add(id));
+  return Array.from(next);
+}
+
+const fileStateMutationTails = new Map<string, Promise<void>>();
+const fileStateHydrationInFlight = new Map<AssetSource, Promise<boolean>>();
+const fileStateMutationVersions = new Map<AssetSource, number>();
+
+function queueFileStateMutation(
+  source: AssetSource,
+  path: string,
+  state: 'favorite' | 'reject' | 'hidden',
+  value: boolean,
+): Promise<void> {
+  const key = `${source}/${path}`;
+  fileStateMutationVersions.set(source, (fileStateMutationVersions.get(source) ?? 0) + 1);
+  const previous = fileStateMutationTails.get(key);
+  const request = previous
+    ? previous.catch(() => undefined).then(() => api.setFileState(source, path, state, value))
+    : api.setFileState(source, path, state, value);
+  fileStateMutationTails.set(key, request);
+  const cleanup = () => {
+    if (fileStateMutationTails.get(key) === request) {
+      fileStateMutationTails.delete(key);
+    }
+  };
+  request.then(cleanup, cleanup);
+  return request;
+}
+
+// The listing waits on this drain before it renders, and setFileState is a
+// plain fetch with no timeout — on a link that drops mid-request (mobile,
+// Tailscale) the promise never settles. Without a bound, one hung write leaves
+// the Outputs panel on a spinner with no files and no error, unrecoverable
+// short of reloading the app. Waiting is only an ordering nicety, so give up
+// after a beat and render: the write is still in flight and its own retry path
+// is unaffected.
+const FILE_STATE_FLUSH_TIMEOUT_MS = 4000;
+
+export async function flushFileStateMutations(source?: AssetSource): Promise<void> {
+  const prefix = source ? sourcePrefix(source) : null;
+  const deadline = Date.now() + FILE_STATE_FLUSH_TIMEOUT_MS;
+  while (true) {
+    const pending = Array.from(fileStateMutationTails.entries())
+      .filter(([key]) => !prefix || key.startsWith(prefix))
+      .map(([, request]) => request);
+    if (pending.length === 0) return;
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) return;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const expired = new Promise<'timeout'>((resolve) => {
+      timer = setTimeout(() => resolve('timeout'), remaining);
+    });
+    const outcome = await Promise.race([
+      Promise.allSettled(pending).then(() => 'settled' as const),
+      expired,
+    ]);
+    clearTimeout(timer);
+    if (outcome === 'timeout') return;
+  }
 }
 
 export interface FilterState {
@@ -107,7 +172,12 @@ interface OutputsState {
   filter: FilterState;
   sort: SortState;
   favorites: string[];
+  // Sources whose legacy client-side favorites have been migrated to the server
+  // (3.0.3 favorites-sync). Guards fetchFiles from re-uploading legacy ids.
   migratedFavoriteSources: AssetSource[];
+  // Images explicitly marked "rejected". Mutually exclusive with favorites: an
+  // id is never in both lists at once (the mutation actions enforce this).
+  rejected: string[];
   searchOpen: boolean;
   searchDraft: string;
 
@@ -138,6 +208,7 @@ interface OutputsState {
   navigateToPath: (path: string | null) => void;
   navigateUp: () => void;
   fetchFolders: () => Promise<void>;
+  hydrateFileState: (source?: AssetSource) => Promise<boolean>;
   fetchFiles: () => Promise<void>;
   setFilter: (filter: Partial<FilterState>) => void;
   setSearchOpen: (open: boolean) => void;
@@ -146,6 +217,19 @@ interface OutputsState {
   setViewMode: (mode: 'grid' | 'list') => void;
   toggleShowHidden: () => void;
   toggleFavorite: (id: string) => void;
+  // Mark an id favorited (idempotent — never unfavorites) and clear any
+  // rejected state. Backs the `f` key and the heart button: favoriting is
+  // "sticky" so it can't be accidentally undone; unfavoriting goes through the
+  // reject/`x` affordance instead.
+  favoriteItem: (id: string) => void;
+  unfavoriteItem: (id: string) => void;
+  // Toggle rejected. Marking rejected clears any favorited state.
+  toggleRejected: (id: string) => void;
+  // Clear every rejected mark at once. Deliberately NOT what the bulk "Delete
+  // rejected" action uses: that clears only the ids whose delete actually
+  // succeeded, so a file that failed to delete keeps its mark rather than
+  // silently becoming invisible. Consumed by the 3.1.1 flows.
+  clearRejected: () => void;
   setItemHidden: (id: string, hidden: boolean) => Promise<void>;
   setItemsHidden: (ids: string[], hidden: boolean) => Promise<void>;
   markItemHiddenLocally: (id: string) => void;
@@ -195,6 +279,7 @@ export const useOutputsStore = create<OutputsState>()(
       },
       favorites: [],
       migratedFavoriteSources: [],
+      rejected: [],
       searchOpen: false,
       searchDraft: '',
       promptSearchActive: false,
@@ -359,45 +444,112 @@ export const useOutputsStore = create<OutputsState>()(
         }
       },
 
-      fetchFiles: async () => {
-        const { source, currentFolder, showHidden } = get();
-        set({ isLoading: true, error: null });
+      hydrateFileState: async (requestedSource = get().source) => {
+        // Queue cards need favorite/reject state even when the Outputs panel has
+        // never been opened. Keep this independent from the much heavier folder
+        // listing and share concurrent Queue/Outputs hydration requests.
+        const existing = fileStateHydrationInFlight.get(requestedSource);
+        if (existing) return existing;
 
-        try {
+        const request = (async (): Promise<boolean> => {
           const state = get();
           const migratedFavoriteSources = state.migratedFavoriteSources ?? [];
-          if (!migratedFavoriteSources.includes(source)) {
-            const legacyIds = state.favorites.filter((id) => id.startsWith(sourcePrefix(source)));
-            let migrationFailed = false;
+          const legacyIds = state.favorites.filter(
+            (id) => id.startsWith(sourcePrefix(requestedSource)),
+          );
+          let migrationFailed = false;
+
+          if (!migratedFavoriteSources.includes(requestedSource)) {
             for (const id of legacyIds) {
-              const { path } = splitFileId(id, source);
-              await api.setFileFavorite(path, true, source).catch((err) => {
+              const { path } = splitFileId(id, requestedSource);
+              await queueFileStateMutation(requestedSource, path, 'favorite', true).catch((err) => {
+                // 409 means the server found nothing on disk at that path — a
+                // favorite whose file was since deleted. That can never be
+                // migrated, and treating it as a failure pins the whole source
+                // as unmigrated, so the entire favorites list is re-POSTed
+                // sequentially before every listing for the rest of time.
+                if (err instanceof api.FileStateError && err.status === 409) {
+                  console.warn('Skipping favorite migration for a missing file:', path);
+                  return;
+                }
                 console.warn('Failed to migrate file favorite:', err);
                 migrationFailed = true;
               });
             }
             // Only mark migrated once every legacy favorite made it to the
-            // server — otherwise a failed call (e.g. offline) would
-            // permanently suppress retrying migration for this source.
+            // server — otherwise an offline migration must be retried later.
             if (!migrationFailed) {
               set((s) => ({
-                migratedFavoriteSources: s.migratedFavoriteSources.includes(source)
+                migratedFavoriteSources: s.migratedFavoriteSources.includes(requestedSource)
                   ? s.migratedFavoriteSources
-                  : [...s.migratedFavoriteSources, source],
+                  : [...s.migratedFavoriteSources, requestedSource],
               }));
             }
           }
 
-          const serverFavoritePaths = await api.loadFileFavoritesFromServer(source).catch((err) => {
-            console.warn('Failed to load file favorites:', err);
-            // Fall back to what's already known locally rather than treating
-            // "couldn't load" as "no favorites" — a transient failure here
-            // shouldn't wipe out existing favorites for this source.
-            const prefix = sourcePrefix(source);
-            return state.favorites
-              .filter((id) => id.startsWith(prefix))
-              .map((id) => id.slice(prefix.length));
-          });
+          try {
+            // Let optimistic writes settle before taking the authoritative
+            // snapshot. If the user taps favorite/reject while the GET is in
+            // flight, reload after that write settles rather than rolling the
+            // optimistic UI back to a stale snapshot.
+            let serverState: Awaited<ReturnType<typeof api.loadFileState>> | null = null;
+            for (let attempt = 0; attempt < 3; attempt += 1) {
+              await flushFileStateMutations(requestedSource);
+              const mutationVersion = fileStateMutationVersions.get(requestedSource) ?? 0;
+              const candidate = await api.loadFileState(requestedSource);
+              await flushFileStateMutations(requestedSource);
+              if ((fileStateMutationVersions.get(requestedSource) ?? 0) === mutationVersion) {
+                serverState = candidate;
+                break;
+              }
+            }
+            if (!serverState) {
+              // Continuous interaction kept every snapshot stale. Preserve the
+              // optimistic state and let the panel's normal retry obtain a quiet
+              // snapshot instead of applying known-old data.
+              return false;
+            }
+            const favoriteIds = favoriteIdsForSource(requestedSource, serverState.favorite);
+            // Preserve legacy favorites whose migration failed. Dropping them
+            // here would also remove the data needed to retry that migration.
+            if (migrationFailed) favoriteIds.push(...legacyIds);
+            set((s) => ({
+              favorites: replaceSourceFavorites(s.favorites, requestedSource, favoriteIds),
+              rejected: replaceSourceFavorites(
+                s.rejected,
+                requestedSource,
+                favoriteIdsForSource(requestedSource, serverState.reject),
+              ),
+            }));
+            return true;
+          } catch (err) {
+            console.warn('Failed to load file state:', err);
+            // Preserve the latest optimistic/local state. Queue startup can
+            // continue and its retry loop will call this action again.
+            return false;
+          }
+        })();
+
+        fileStateHydrationInFlight.set(requestedSource, request);
+        try {
+          return await request;
+        } finally {
+          if (fileStateHydrationInFlight.get(requestedSource) === request) {
+            fileStateHydrationInFlight.delete(requestedSource);
+          }
+        }
+      },
+
+      fetchFiles: async () => {
+        const { source, currentFolder, showHidden } = get();
+        set({ isLoading: true, error: null });
+
+        try {
+          // Hydrate the same lightweight state index Queue uses before fetching
+          // the directory contents. Reject has no client→server migration;
+          // the server is its source of truth.
+          await get().hydrateFileState(source);
+          const prefix = sourcePrefix(source);
           // The mobile backend returns the full folder listing (no server-side
           // limit/offset/sort — those positional args are ignored by
           // getUserImages); the grid sorts/filters client-side and renders
@@ -411,13 +563,19 @@ export const useOutputsStore = create<OutputsState>()(
             currentFolder,
             showHidden
           );
-          const backendFavoriteIds = new Set(favoriteIdsForSource(source, serverFavoritePaths));
+          const hydratedState = get();
+          const backendFavoriteIds = new Set(
+            hydratedState.favorites.filter((id) => id.startsWith(prefix)),
+          );
+          const backendRejectedIds = new Set(
+            hydratedState.rejected.filter((id) => id.startsWith(prefix)),
+          );
           for (const file of files) {
             if (file.favorite) backendFavoriteIds.add(file.id);
+            if (file.rejected) backendRejectedIds.add(file.id);
           }
           // Remember hidden folders we encounter so breadcrumb ancestors can be
           // italicized even once we've navigated down into them.
-          const prefix = sourcePrefix(source);
           const seenHiddenFolders = files
             .filter((f) => f.type === 'folder' && f.hidden)
             .map((f) => (f.id.startsWith(prefix) ? f.id.slice(prefix.length) : f.id));
@@ -425,6 +583,7 @@ export const useOutputsStore = create<OutputsState>()(
             files,
             isLoading: false,
             favorites: replaceSourceFavorites(s.favorites, source, Array.from(backendFavoriteIds)),
+            rejected: replaceSourceFavorites(s.rejected, source, Array.from(backendRejectedIds)),
             hiddenFolderPaths: seenHiddenFolders.length
               ? Array.from(new Set([...s.hiddenFolderPaths, ...seenHiddenFolders]))
               : s.hiddenFolderPaths,
@@ -473,6 +632,7 @@ export const useOutputsStore = create<OutputsState>()(
         const { source, currentFolder, showHidden } = get();
         set({ promptSearchLoading: true, promptSearchError: null });
         try {
+          await flushFileStateMutations(source);
           const results = await api.searchUserImagesByPrompt(
             source,
             trimmed,
@@ -482,19 +642,18 @@ export const useOutputsStore = create<OutputsState>()(
           const backendFavoriteIds = results
             .filter((file) => file.favorite)
             .map((file) => file.id);
+          const backendRejectedIds = results
+            .filter((file) => file.rejected)
+            .map((file) => file.id);
           set((s) => ({
-            filter: { ...get().filter, search: trimmed },
+            filter: { ...s.filter, search: trimmed },
             searchDraft: trimmed,
             promptSearchActive: true,
             promptSearchResults: results,
             promptSearchQuery: trimmed,
             promptSearchLoading: false,
-            favorites: backendFavoriteIds.length
-              ? replaceSourceFavorites(s.favorites, source, [
-                ...s.favorites.filter((id) => id.startsWith(sourcePrefix(source))),
-                ...backendFavoriteIds,
-              ])
-              : s.favorites,
+            favorites: reconcileReturnedFileState(s.favorites, results, backendFavoriteIds),
+            rejected: reconcileReturnedFileState(s.rejected, results, backendRejectedIds),
           }));
         } catch (err) {
           console.error('Prompt search failed:', err);
@@ -551,27 +710,64 @@ export const useOutputsStore = create<OutputsState>()(
       },
 
       toggleFavorite: (id) => {
-        const fallbackSource = get().source;
-        const { source, path } = splitFileId(id, fallbackSource);
         const exists = get().favorites.includes(id);
-        const shouldFavorite = !exists;
-
         set((s) => ({
-          favorites: exists ? s.favorites.filter((p) => p !== id) : [...s.favorites, id],
+          favorites: exists
+            ? s.favorites.filter(p => p !== id)
+            : [...s.favorites, id],
+          // Favoriting clears rejected — the two states are mutually exclusive.
+          rejected: exists ? s.rejected : s.rejected.filter(p => p !== id),
         }));
+        const { source, path } = splitFileId(id, get().source);
+        void queueFileStateMutation(source, path, 'favorite', !exists).catch((err) => {
+          console.warn('Failed to update file favorite:', err);
+        });
+      },
 
-        void api.setFileFavorite(path, shouldFavorite, source)
-          .then((paths) => {
-            const ids = favoriteIdsForSource(source, paths);
-            set((s) => {
-              const favorites = replaceSourceFavorites(s.favorites, source, ids);
-              if (sameFavoriteIds(s.favorites, favorites)) return {};
-              return { favorites };
-            });
-          })
-          .catch((err) => {
-            console.warn('Failed to update file favorite:', err);
+      favoriteItem: (id) => {
+        set((s) => ({
+          favorites: s.favorites.includes(id) ? s.favorites : [...s.favorites, id],
+          rejected: s.rejected.filter(p => p !== id),
+        }));
+        const { source, path } = splitFileId(id, get().source);
+        void queueFileStateMutation(source, path, 'favorite', true).catch((err) => {
+          console.warn('Failed to update file favorite:', err);
+        });
+      },
+
+      unfavoriteItem: (id) => {
+        set((s) => ({ favorites: s.favorites.filter(p => p !== id) }));
+        const { source, path } = splitFileId(id, get().source);
+        void queueFileStateMutation(source, path, 'favorite', false).catch((err) => {
+          console.warn('Failed to update file favorite:', err);
+        });
+      },
+
+      toggleRejected: (id) => {
+        const exists = get().rejected.includes(id);
+        set((s) => ({
+          rejected: exists
+            ? s.rejected.filter(p => p !== id)
+            : [...s.rejected, id],
+          // Rejecting clears favorited — mutually exclusive.
+          favorites: exists ? s.favorites : s.favorites.filter(p => p !== id),
+        }));
+        const { source, path } = splitFileId(id, get().source);
+        void queueFileStateMutation(source, path, 'reject', !exists).catch((err) => {
+          console.warn('Failed to update file reject state:', err);
+        });
+      },
+
+      clearRejected: () => {
+        const ids = get().rejected;
+        set({ rejected: [] });
+        const fallbackSource = get().source;
+        ids.forEach((id) => {
+          const { source, path } = splitFileId(id, fallbackSource);
+          void queueFileStateMutation(source, path, 'reject', false).catch((err) => {
+            console.warn('Failed to clear file reject state:', err);
           });
+        });
       },
 
       setItemHidden: (id, hidden) => get().setItemsHidden([id], hidden),
@@ -594,12 +790,21 @@ export const useOutputsStore = create<OutputsState>()(
         if (ids.length === 0) return;
         const { source } = get();
         const prefix = `${source}/`;
-        await Promise.all(ids.map((id) => {
+        const results = await Promise.all(ids.map((id) => {
           const path = id.startsWith(prefix) ? id.slice(prefix.length) : id;
-          return api.setFileHidden(path, hidden, source).catch((err) => {
+          return queueFileStateMutation(source, path, 'hidden', hidden).catch((err) => {
             console.error('Failed to update hidden state:', err);
+            return err as Error;
           });
         }));
+        // The refresh below re-reads the server's view, so a refused write
+        // simply reappears unhidden with no explanation. Say what happened:
+        // set_state refuses a path with nothing on disk, which is what a file
+        // deleted in another tab looks like.
+        const failure = results.find((result): result is Error => result instanceof Error);
+        if (failure) {
+          set({ error: `Could not ${hidden ? 'hide' : 'unhide'} every item: ${failure.message}` });
+        }
         get().refresh();
       },
 
@@ -666,32 +871,23 @@ export const useOutputsStore = create<OutputsState>()(
         set((s) => {
           const next = new Set(s.favorites);
           ids.forEach((id) => next.add(id));
-          return { favorites: Array.from(next) };
+          const idSet = new Set(ids);
+          return {
+            favorites: Array.from(next),
+            rejected: s.rejected.filter((id) => !idSet.has(id)),
+          };
         });
+        // Fire-and-forget: the POST no longer returns an authoritative list to
+        // reconcile against (the server enforces favorite/reject mutual
+        // exclusivity itself), so a stale optimistic update self-corrects on
+        // the next fetchFiles hydration.
         const fallbackSource = get().source;
-        void Promise.all(
-          ids.map((id) => {
-            const { source, path } = splitFileId(id, fallbackSource);
-            return api.setFileFavorite(path, true, source).then((paths) => ({ source, paths }));
-          })
-        )
-          .then((results) => {
-            set((s) => {
-              let favorites = s.favorites;
-              for (const result of results) {
-                favorites = replaceSourceFavorites(
-                  favorites,
-                  result.source,
-                  favoriteIdsForSource(result.source, result.paths),
-                );
-              }
-              if (sameFavoriteIds(s.favorites, favorites)) return {};
-              return { favorites };
-            });
-          })
-          .catch((err) => {
-            console.warn('Failed to add file favorites:', err);
+        ids.forEach((id) => {
+          const { source, path } = splitFileId(id, fallbackSource);
+          void queueFileStateMutation(source, path, 'favorite', true).catch((err) => {
+            console.warn('Failed to add file favorite:', err);
           });
+        });
       },
 
       removeFavorites: (ids) => {
@@ -699,29 +895,12 @@ export const useOutputsStore = create<OutputsState>()(
           favorites: s.favorites.filter((id) => !ids.includes(id))
         }));
         const fallbackSource = get().source;
-        void Promise.all(
-          ids.map((id) => {
-            const { source, path } = splitFileId(id, fallbackSource);
-            return api.setFileFavorite(path, false, source).then((paths) => ({ source, paths }));
-          })
-        )
-          .then((results) => {
-            set((s) => {
-              let favorites = s.favorites;
-              for (const result of results) {
-                favorites = replaceSourceFavorites(
-                  favorites,
-                  result.source,
-                  favoriteIdsForSource(result.source, result.paths),
-                );
-              }
-              if (sameFavoriteIds(s.favorites, favorites)) return {};
-              return { favorites };
-            });
-          })
-          .catch((err) => {
-            console.warn('Failed to remove file favorites:', err);
+        ids.forEach((id) => {
+          const { source, path } = splitFileId(id, fallbackSource);
+          void queueFileStateMutation(source, path, 'favorite', false).catch((err) => {
+            console.warn('Failed to remove file favorite:', err);
           });
+        });
       },
 
       refresh: () => {
@@ -816,9 +995,46 @@ export const useOutputsStore = create<OutputsState>()(
           result = result.filter(f => f.name.toLowerCase().includes(search));
         }
 
-        // Favorites filter (including folders)
+        // Favorites filter. Files must be favorited themselves, but a folder
+        // also survives when a favorite lives anywhere beneath it — the grid
+        // only ever lists one folder at a time, so dropping those folders makes
+        // every nested favorite unreachable. `favorites` holds the whole
+        // favorited set for this source (fetchFiles loads it from the server,
+        // not just the current listing), so descendants are a path walk over
+        // ids. Folders kept only for their contents carry the count, so the
+        // card can say what's inside rather than showing a total item count
+        // that has nothing to do with the filter.
         if (filter.favoritesOnly) {
-          result = result.filter(f => favorites.includes(f.id));
+          const nestedFavoriteCounts = new Map<string, number>();
+          const prefix = sourcePrefix(assetSource);
+          const folderPrefix = currentFolder ? `${currentFolder}/` : '';
+          for (const favoriteId of favorites) {
+            if (!favoriteId.startsWith(prefix)) continue;
+            const relativePath = favoriteId.slice(prefix.length);
+            if (!relativePath.startsWith(folderPrefix)) continue;
+            const sub = relativePath.slice(folderPrefix.length);
+            const slashIndex = sub.indexOf('/');
+            // No slash ⇒ a file sitting directly in this folder, not nested.
+            if (slashIndex === -1) continue;
+            // Don't count what the current view can't reach: a favorite behind a
+            // dot-folder stays invisible while hidden items are off, so counting
+            // it would surface a folder that looks empty once entered.
+            if (!showHidden && sub.split('/').some((part) => part.startsWith('.'))) continue;
+            const childId = `${prefix}${folderPrefix}${sub.slice(0, slashIndex)}`;
+            nestedFavoriteCounts.set(childId, (nestedFavoriteCounts.get(childId) ?? 0) + 1);
+          }
+
+          const favoriteIds = new Set(favorites);
+          result = result.reduce<FileItem[]>((kept, file) => {
+            if (file.type !== 'folder') {
+              if (favoriteIds.has(file.id)) kept.push(file);
+              return kept;
+            }
+            const nested = nestedFavoriteCounts.get(file.id) ?? 0;
+            if (nested > 0) kept.push({ ...file, favoriteCount: nested });
+            else if (favoriteIds.has(file.id)) kept.push(file);
+            return kept;
+          }, []);
         }
 
         // Type filter
@@ -842,7 +1058,7 @@ export const useOutputsStore = create<OutputsState>()(
     }),
     {
       name: 'outputs-storage',
-      version: 2,
+      version: 3,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       migrate: (persistedState: any, version: number) => {
         if (version === 0) {
@@ -863,16 +1079,34 @@ export const useOutputsStore = create<OutputsState>()(
         if (persistedState.filter) {
           persistedState.filter.search = '';
         }
+        // Reject state moved to the server in v3. Never hydrate the old
+        // client-only list: doing so could briefly expose destructive "delete
+        // rejected" actions for files the server does not consider rejected.
+        if (version < 3) {
+          delete persistedState.rejected;
+        }
         return persistedState;
       },
       partialize: (state) => ({
         source: state.source,
+        // Persist the browse location so a refresh lands the user back where they
+        // were instead of at the root of the output folder. currentFolder and the
+        // active tab's folder/source are kept in lockstep by every mutation, so a
+        // single snapshot restores consistently. folderBySource keeps per-source
+        // folders so switching source after a refresh also restores its location.
+        currentFolder: state.currentFolder,
+        folderBySource: state.folderBySource,
+        tabs: state.tabs,
+        activeTabId: state.activeTabId,
         viewMode: state.viewMode,
         showHidden: state.showHidden,
         sort: state.sort,
+        // Never persist the search text.
         filter: { ...state.filter, search: '' },
         favorites: state.favorites,
         migratedFavoriteSources: state.migratedFavoriteSources,
+        // `rejected` is server-backed now (see fetchFiles) — no localStorage
+        // persistence, so it never goes stale relative to the server.
       })
     }
   )

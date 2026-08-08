@@ -3,6 +3,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Workflow } from '@/api/types';
 import { useOverallProgress } from '@/hooks/useOverallProgress';
+import { useConnectionStatusStore } from '@/hooks/useConnectionStatus';
 
 function makeWorkflow(): Workflow {
   return {
@@ -37,12 +38,14 @@ describe('useOverallProgress completion hold', () => {
 
   beforeEach(() => {
     vi.useFakeTimers();
+    useConnectionStatusStore.setState({ isConnected: true, hasEverConnected: true });
     container = document.createElement('div');
     root = createRoot(container);
   });
 
   afterEach(() => {
     act(() => root.unmount());
+    useConnectionStatusStore.setState({ isConnected: false, hasEverConnected: false });
     vi.useRealTimers();
   });
 
@@ -172,6 +175,27 @@ describe('useOverallProgress completion hold', () => {
     await act(async () => {
       await vi.advanceTimersByTimeAsync(600);
     });
+    expect(getProgress()).toBeNull();
+  });
+
+  it('clears progress while disconnected instead of advancing the estimate', async () => {
+    const wf = makeWorkflow();
+
+    await act(async () => {
+      root.render(<Probe workflow={wf} runKey="p1" isRunning={true} />);
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(20);
+    });
+    expect(getProgress()).not.toBeNull();
+
+    await act(async () => {
+      useConnectionStatusStore.setState({ isConnected: false });
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(20);
+    });
+
     expect(getProgress()).toBeNull();
   });
 });

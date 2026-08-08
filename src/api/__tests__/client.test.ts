@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { searchUserImagesByPrompt } from '@/api/client';
+import { getHistory, getQueue, searchUserImagesByPrompt } from '@/api/client';
 
 describe('searchUserImagesByPrompt', () => {
   afterEach(() => {
@@ -60,5 +60,25 @@ describe('searchUserImagesByPrompt', () => {
       'output/.hidden/batch/sample scene/ComfyUI_04555_.png',
       'output/.hidden/batch/sample scene/ComfyUI_04556_.png',
     ]);
+  });
+});
+
+describe('queue bootstrap requests', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('bypasses browser caches for live queue and history state', async () => {
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({}),
+    } as Response));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await getQueue();
+    await getHistory(10);
+
+    expect(fetchMock).toHaveBeenNthCalledWith(1, '/api/queue', { cache: 'no-store' });
+    expect(fetchMock).toHaveBeenNthCalledWith(2, '/api/history?max_items=10', { cache: 'no-store' });
   });
 });

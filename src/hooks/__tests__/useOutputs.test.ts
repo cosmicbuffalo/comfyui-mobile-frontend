@@ -1,6 +1,11 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { useOutputsStore } from '../useOutputs';
-import type { FileItem } from '@/api/client';
+import { flushFileStateMutations, useOutputsStore } from '../useOutputs';
+import {
+  loadFileState,
+  searchUserImagesByPrompt,
+  setFileState,
+  type FileItem,
+} from '@/api/client';
 
 // switchToTab triggers a refetch; stub the network so the store logic runs in
 // isolation without hitting fetch.
@@ -10,10 +15,15 @@ vi.mock('@/api/client', async (importOriginal) => {
     ...actual,
     getUserImages: vi.fn(async () => []),
     getUserImageFolders: vi.fn(async () => ({ input: [], output: [] })),
-    loadFileFavoritesFromServer: vi.fn(async () => []),
-    setFileFavorite: vi.fn(async () => []),
+    loadFileState: vi.fn(async () => ({ favorite: [], reject: [], hidden: [] })),
+    searchUserImagesByPrompt: vi.fn(async () => []),
+    setFileState: vi.fn(async () => undefined),
   };
 });
+
+const mockLoadFileState = vi.mocked(loadFileState);
+const mockSearchUserImagesByPrompt = vi.mocked(searchUserImagesByPrompt);
+const mockSetFileState = vi.mocked(setFileState);
 
 function makeFile(overrides: Partial<FileItem> & { id: string }): FileItem {
   return {
@@ -24,7 +34,14 @@ function makeFile(overrides: Partial<FileItem> & { id: string }): FileItem {
 }
 
 // Reset store between tests
-beforeEach(() => {
+beforeEach(async () => {
+  await flushFileStateMutations();
+  mockLoadFileState.mockClear();
+  mockLoadFileState.mockResolvedValue({ favorite: [], reject: [], hidden: [] });
+  mockSearchUserImagesByPrompt.mockClear();
+  mockSearchUserImagesByPrompt.mockResolvedValue([]);
+  mockSetFileState.mockClear();
+  mockSetFileState.mockResolvedValue(undefined);
   useOutputsStore.setState({
     source: 'output',
     currentFolder: null,
@@ -32,6 +49,7 @@ beforeEach(() => {
     filter: { search: '', favoritesOnly: false, type: 'all' },
     sort: { mode: 'modified' },
     favorites: [],
+    rejected: [],
     migratedFavoriteSources: [],
     showHidden: false,
     promptSearchActive: false,
@@ -94,6 +112,72 @@ describe('getDisplayedFiles', () => {
     const result = useOutputsStore.getState().getDisplayedFiles();
     expect(result).toHaveLength(1);
     expect(result[0].id).toBe('a.png');
+  });
+
+  // Favorites live at every depth, but the grid lists one folder at a time — so
+  // the filter has to leave the folders that lead to them standing.
+  describe('favorites filter with nested favorites', () => {
+    const listing: FileItem[] = [
+      makeFile({ id: 'output/album', name: 'album', type: 'folder', count: 12 }),
+      makeFile({ id: 'output/empty', name: 'empty', type: 'folder', count: 4 }),
+      makeFile({ id: 'output/loose.png', name: 'loose.png' }),
+      makeFile({ id: 'output/plain.png', name: 'plain.png' }),
+    ];
+
+    it('keeps folders holding a favorite at any depth, labelled with the count', () => {
+      useOutputsStore.setState({
+        files: listing,
+        favorites: [
+          'output/loose.png',
+          'output/album/day-one/first.png',
+          'output/album/day-two/second.png',
+        ],
+        filter: { search: '', favoritesOnly: true, type: 'all' },
+      });
+      const result = useOutputsStore.getState().getDisplayedFiles();
+      expect(result.map((f) => f.id).sort()).toEqual(['output/album', 'output/loose.png']);
+      expect(result.find((f) => f.id === 'output/album')?.favoriteCount).toBe(2);
+    });
+
+    it('keeps a favorited folder with nothing favorited inside it', () => {
+      useOutputsStore.setState({
+        files: listing,
+        favorites: ['output/empty'],
+        filter: { search: '', favoritesOnly: true, type: 'all' },
+      });
+      const result = useOutputsStore.getState().getDisplayedFiles();
+      expect(result.map((f) => f.id)).toEqual(['output/empty']);
+      // Favorited in its own right, so it keeps its normal item subtitle.
+      expect(result[0].favoriteCount).toBeUndefined();
+    });
+
+    it('ignores favorites the current view cannot reach', () => {
+      // The only favorite sits behind a dot-folder, so with hidden items off the
+      // parent would open onto an empty grid.
+      useOutputsStore.setState({
+        files: listing,
+        favorites: ['output/album/.private/secret.png'],
+        filter: { search: '', favoritesOnly: true, type: 'all' },
+      });
+      expect(useOutputsStore.getState().getDisplayedFiles()).toHaveLength(0);
+
+      useOutputsStore.setState({ showHidden: true });
+      const shown = useOutputsStore.getState().getDisplayedFiles();
+      expect(shown.map((f) => f.id)).toEqual(['output/album']);
+      expect(shown[0].favoriteCount).toBe(1);
+    });
+
+    it('scopes the walk to the folder being viewed', () => {
+      useOutputsStore.setState({
+        files: [makeFile({ id: 'output/album/day-one', name: 'day-one', type: 'folder', count: 3 })],
+        currentFolder: 'album',
+        favorites: ['output/album/day-one/first.png', 'output/other/elsewhere.png'],
+        filter: { search: '', favoritesOnly: true, type: 'all' },
+      });
+      const result = useOutputsStore.getState().getDisplayedFiles();
+      expect(result.map((f) => f.id)).toEqual(['output/album/day-one']);
+      expect(result[0].favoriteCount).toBe(1);
+    });
   });
 
   it('filters by type', () => {
@@ -180,6 +264,189 @@ describe('markItemHiddenLocally', () => {
       hidden: true,
       hiddenSelf: true,
     });
+  });
+});
+
+describe('favorite/reject mutual exclusivity', () => {
+  const ID = 'output/a.png';
+
+  it('favoriteItem is idempotent and never duplicates', () => {
+    const { favoriteItem } = useOutputsStore.getState();
+    favoriteItem(ID);
+    favoriteItem(ID);
+    expect(useOutputsStore.getState().favorites).toEqual([ID]);
+  });
+
+  it('favoriteItem clears a prior rejected mark and persists the favorite server-side', () => {
+    useOutputsStore.setState({ rejected: [ID] });
+    useOutputsStore.getState().favoriteItem(ID);
+    const s = useOutputsStore.getState();
+    expect(s.favorites).toContain(ID);
+    expect(s.rejected).not.toContain(ID);
+    expect(mockSetFileState).toHaveBeenCalledWith('output', 'a.png', 'favorite', true);
+  });
+
+  it('toggleRejected clears a prior favorite and toggles off on repeat, persisting both transitions', async () => {
+    useOutputsStore.setState({ favorites: [ID] });
+    useOutputsStore.getState().toggleRejected(ID);
+    let s = useOutputsStore.getState();
+    expect(s.rejected).toContain(ID);
+    expect(s.favorites).not.toContain(ID);
+    expect(mockSetFileState).toHaveBeenCalledWith('output', 'a.png', 'reject', true);
+
+    useOutputsStore.getState().toggleRejected(ID);
+    s = useOutputsStore.getState();
+    expect(s.rejected).not.toContain(ID);
+    await vi.waitFor(() => {
+      expect(mockSetFileState).toHaveBeenCalledWith('output', 'a.png', 'reject', false);
+    });
+  });
+
+  it('serializes rapid mutations for one file so the final click reaches the server last', async () => {
+    let resolveFirst!: () => void;
+    mockSetFileState.mockImplementationOnce(() => new Promise<void>((resolve) => {
+      resolveFirst = resolve;
+    }));
+
+    useOutputsStore.getState().toggleRejected(ID);
+    useOutputsStore.getState().toggleRejected(ID);
+
+    expect(mockSetFileState).toHaveBeenCalledTimes(1);
+    expect(mockSetFileState).toHaveBeenNthCalledWith(1, 'output', 'a.png', 'reject', true);
+
+    resolveFirst();
+    await vi.waitFor(() => expect(mockSetFileState).toHaveBeenCalledTimes(2));
+    expect(mockSetFileState).toHaveBeenNthCalledWith(2, 'output', 'a.png', 'reject', false);
+  });
+
+  it('uses the same per-file queue across favorite and reject mutations', async () => {
+    let resolveFavorite!: () => void;
+    mockSetFileState.mockImplementationOnce(() => new Promise<void>((resolve) => {
+      resolveFavorite = resolve;
+    }));
+
+    useOutputsStore.getState().favoriteItem(ID);
+    useOutputsStore.getState().toggleRejected(ID);
+
+    expect(mockSetFileState).toHaveBeenCalledTimes(1);
+    expect(mockSetFileState).toHaveBeenNthCalledWith(1, 'output', 'a.png', 'favorite', true);
+
+    resolveFavorite();
+    await vi.waitFor(() => expect(mockSetFileState).toHaveBeenCalledTimes(2));
+    expect(mockSetFileState).toHaveBeenNthCalledWith(2, 'output', 'a.png', 'reject', true);
+  });
+
+  it('unfavoriteItem removes only from favorites and persists the removal server-side', () => {
+    useOutputsStore.setState({ favorites: [ID] });
+    useOutputsStore.getState().unfavoriteItem(ID);
+    expect(useOutputsStore.getState().favorites).not.toContain(ID);
+    expect(mockSetFileState).toHaveBeenCalledWith('output', 'a.png', 'favorite', false);
+  });
+
+  it('toggleFavorite clears rejected when favoriting and persists the favorite server-side', () => {
+    useOutputsStore.setState({ rejected: [ID] });
+    useOutputsStore.getState().toggleFavorite(ID);
+    const s = useOutputsStore.getState();
+    expect(s.favorites).toContain(ID);
+    expect(s.rejected).not.toContain(ID);
+    expect(mockSetFileState).toHaveBeenCalledWith('output', 'a.png', 'favorite', true);
+  });
+
+  it('clearRejected empties the rejected set and persists a reject=false for every cleared id', () => {
+    useOutputsStore.setState({ rejected: ['output/a.png', 'output/b.png'] });
+    useOutputsStore.getState().clearRejected();
+    expect(useOutputsStore.getState().rejected).toEqual([]);
+    expect(mockSetFileState).toHaveBeenCalledWith('output', 'a.png', 'reject', false);
+    expect(mockSetFileState).toHaveBeenCalledWith('output', 'b.png', 'reject', false);
+  });
+});
+
+describe('fetchFiles server-state hydration', () => {
+  it('hydrates server state without requiring a directory listing', async () => {
+    mockLoadFileState.mockResolvedValueOnce({
+      favorite: ['favorite.png'],
+      reject: ['rejected.png'],
+      hidden: [],
+    });
+    useOutputsStore.setState({ migratedFavoriteSources: ['output'] });
+
+    await expect(useOutputsStore.getState().hydrateFileState('output')).resolves.toBe(true);
+
+    expect(useOutputsStore.getState().favorites).toContain('output/favorite.png');
+    expect(useOutputsStore.getState().rejected).toContain('output/rejected.png');
+  });
+
+  it('does not roll back a file-state mutation made during hydration', async () => {
+    let resolveFirstLoad!: (state: {
+      favorite: string[];
+      reject: string[];
+      hidden: string[];
+    }) => void;
+    mockLoadFileState
+      .mockImplementationOnce(() => new Promise((resolve) => {
+        resolveFirstLoad = resolve;
+      }))
+      .mockResolvedValueOnce({ favorite: [], reject: ['during-load.png'], hidden: [] });
+    useOutputsStore.setState({ migratedFavoriteSources: ['output'] });
+
+    const hydration = useOutputsStore.getState().hydrateFileState('output');
+    await vi.waitFor(() => expect(mockLoadFileState).toHaveBeenCalledTimes(1));
+    useOutputsStore.getState().toggleRejected('output/during-load.png');
+    resolveFirstLoad({ favorite: [], reject: [], hidden: [] });
+
+    await expect(hydration).resolves.toBe(true);
+    expect(mockLoadFileState).toHaveBeenCalledTimes(2);
+    expect(useOutputsStore.getState().rejected).toContain('output/during-load.png');
+  });
+
+  it('hydrates rejected from loadFileState reject array', async () => {
+    mockLoadFileState.mockResolvedValueOnce({
+      favorite: [],
+      reject: ['a.png'],
+      hidden: [],
+    });
+    useOutputsStore.setState({ source: 'output', currentFolder: null });
+
+    await useOutputsStore.getState().fetchFiles();
+
+    expect(useOutputsStore.getState().rejected).toContain('output/a.png');
+  });
+
+  it('hydrates favorite from loadFileState favorite array', async () => {
+    mockLoadFileState.mockResolvedValueOnce({
+      favorite: ['a.png'],
+      reject: [],
+      hidden: [],
+    });
+    useOutputsStore.setState({ source: 'output', currentFolder: null });
+
+    await useOutputsStore.getState().fetchFiles();
+
+    expect(useOutputsStore.getState().favorites).toContain('output/a.png');
+  });
+
+  it('preserves the latest favorite and reject state when hydration fails', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    mockLoadFileState.mockRejectedValueOnce(new Error('temporarily offline'));
+    useOutputsStore.setState({
+      source: 'output',
+      currentFolder: null,
+      migratedFavoriteSources: ['output'],
+      favorites: ['output/favorite.png', 'input/keep-favorite.png'],
+      rejected: ['output/rejected.png', 'input/keep-rejected.png'],
+    });
+
+    await useOutputsStore.getState().fetchFiles();
+
+    expect(useOutputsStore.getState().favorites).toEqual([
+      'input/keep-favorite.png',
+      'output/favorite.png',
+    ]);
+    expect(useOutputsStore.getState().rejected).toEqual([
+      'input/keep-rejected.png',
+      'output/rejected.png',
+    ]);
+    warnSpy.mockRestore();
   });
 });
 
@@ -312,6 +579,33 @@ describe('getDisplayedFiles with promptSearchActive', () => {
   });
 });
 
+describe('runPromptSearch state reconciliation', () => {
+  it('removes stale flags for returned unflagged files while preserving unrelated ids', async () => {
+    mockSearchUserImagesByPrompt.mockResolvedValueOnce([
+      makeFile({ id: 'output/stale-favorite.png' }),
+      makeFile({ id: 'output/stale-reject.png' }),
+      makeFile({ id: 'output/server-favorite.png', favorite: true }),
+      makeFile({ id: 'output/server-reject.png', rejected: true }),
+    ]);
+    useOutputsStore.setState({
+      favorites: ['output/stale-favorite.png', 'output/not-returned.png', 'input/other.png'],
+      rejected: ['output/stale-reject.png', 'output/reject-not-returned.png'],
+    });
+
+    await useOutputsStore.getState().runPromptSearch('needle');
+
+    expect(useOutputsStore.getState().favorites).toEqual(expect.arrayContaining([
+      'output/server-favorite.png',
+      'output/not-returned.png',
+      'input/other.png',
+    ]));
+    expect(useOutputsStore.getState().favorites).not.toContain('output/stale-favorite.png');
+    expect(useOutputsStore.getState().rejected).toContain('output/server-reject.png');
+    expect(useOutputsStore.getState().rejected).toContain('output/reject-not-returned.png');
+    expect(useOutputsStore.getState().rejected).not.toContain('output/stale-reject.png');
+  });
+});
+
 describe('toggleFavorite', () => {
   it('adds a favorite', () => {
     useOutputsStore.getState().toggleFavorite('file1');
@@ -342,6 +636,32 @@ describe('persistence', () => {
       favoritesOnly: true,
       type: 'video',
     });
+  });
+
+  it('does not persist rejected across page refreshes (server-backed only)', () => {
+    localStorage.removeItem('outputs-storage');
+    useOutputsStore.getState().toggleRejected('output/a.png');
+
+    const raw = localStorage.getItem('outputs-storage');
+    expect(raw).not.toBeNull();
+    const persisted = JSON.parse(raw!);
+    expect(persisted.state.rejected).toBeUndefined();
+  });
+
+  it('discards rejected ids when rehydrating the legacy version-2 store', async () => {
+    useOutputsStore.setState({ viewMode: 'grid', rejected: [] });
+    localStorage.setItem('outputs-storage', JSON.stringify({
+      version: 2,
+      state: {
+        viewMode: 'list',
+        rejected: ['output/stale-client-only.png'],
+      },
+    }));
+
+    await useOutputsStore.persist.rehydrate();
+
+    expect(useOutputsStore.getState().viewMode).toBe('list');
+    expect(useOutputsStore.getState().rejected).toEqual([]);
   });
 });
 
@@ -446,5 +766,33 @@ describe('multi-tab selection', () => {
     expect(useOutputsStore.getState().source).toBe('input');
     expect(useOutputsStore.getState().selectionMode).toBe(false);
     expect(useOutputsStore.getState().selectedIds).toEqual([]);
+  });
+});
+
+describe('flushFileStateMutations', () => {
+  it('gives up on a write that never settles instead of wedging the listing', async () => {
+    // setFileState is a plain fetch with no timeout; on a dropped mobile link the
+    // promise hangs forever. fetchFiles awaits this drain before it renders, so an
+    // unbounded wait leaves the Outputs panel on a permanent spinner.
+    vi.useFakeTimers();
+    try {
+      mockSetFileState.mockImplementation(() => new Promise<void>(() => {}));
+      useOutputsStore.getState().toggleRejected('output/stuck.png');
+
+      let settled = false;
+      const flushed = flushFileStateMutations('output').then(() => {
+        settled = true;
+      });
+
+      await vi.advanceTimersByTimeAsync(3000);
+      expect(settled).toBe(false);
+
+      await vi.advanceTimersByTimeAsync(2000);
+      await flushed;
+      expect(settled).toBe(true);
+    } finally {
+      vi.useRealTimers();
+      mockSetFileState.mockResolvedValue(undefined);
+    }
   });
 });

@@ -87,7 +87,7 @@ describe('mobileLayout membership extraction', () => {
     expect(membership.has(6)).toBe(false);
   });
 
-  it('orders same-position subgraph nodes deterministically by id', () => {
+  it('orders same-position subgraph nodes deterministically by stable source order', () => {
     const workflow: Workflow = {
       last_node_id: 0,
       last_link_id: 0,
@@ -110,10 +110,14 @@ describe('mobileLayout membership extraction', () => {
 
     const layout = buildDefaultLayout([], workflow, {});
 
+    // v3.1.0 orders subgraph nodes by on-canvas position and, for nodes sharing
+    // a position, a stable sort preserves their source order (so an in-subgraph
+    // reposition survives a save/reload round-trip). Here all share [0,0], so the
+    // result is the source order the nodes were declared in.
     expect(layout.subgraphs['sg-a']).toEqual([
+      { type: 'node', id: 9 },
       { type: 'node', id: 3 },
       { type: 'node', id: 6 },
-      { type: 'node', id: 9 },
     ]);
   });
 });

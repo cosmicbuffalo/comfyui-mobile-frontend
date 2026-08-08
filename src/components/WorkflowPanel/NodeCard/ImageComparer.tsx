@@ -1,7 +1,8 @@
 import { useCallback, useRef, useState } from 'react';
-import { getImagePreviewUrl } from '@/api/client';
+import { getImageUrl, getImagePreviewUrl } from '@/api/client';
 import { useGenerationSettingsStore } from '@/hooks/useGenerationSettings';
 import { MenuIcon } from '@/components/icons/MenuIcon';
+import type { ViewerImage } from '@/utils/viewerImages';
 
 interface ComparerImage {
   filename: string;
@@ -14,6 +15,11 @@ interface NodeCardImageComparerProps {
   aImages: ComparerImage[];
   bImages: ComparerImage[];
   displayName: string;
+  // Opens the full-screen viewer; tapping the comparer (not the slider handle)
+  // launches it in A/B comparison mode at the current batch slice. The viewer is
+  // isolated from the live queue (no follow-queue): swiping moves only through
+  // this comparer's own batch, never into unrelated queue outputs.
+  onOpenViewer?: (images: ViewerImage[], index: number, enableFollowQueue?: boolean) => void;
 }
 
 // Handle is `w-14 h-14` (56px); half of that is how far its centre must stay
@@ -37,6 +43,7 @@ export function NodeCardImageComparer({
   aImages,
   bImages,
   displayName,
+  onOpenViewer,
 }: NodeCardImageComparerProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   // Subscribe so the preview refreshes immediately when the WebP preference is
@@ -45,9 +52,14 @@ export function NodeCardImageComparer({
   // Divider position (% from left) and the handle's position along it (% from top).
   const [position, setPosition] = useState(50);
   const [handleTop, setHandleTop] = useState(50);
+  // Which batch slice is being compared (A[i] vs B[i]). The thumbnail strip
+  // below switches it; clamp so a smaller new batch can't leave it out of range.
+  const [selectedIndex, setSelectedIndex] = useState(0);
 
-  const a = aImages[0] ?? null;
-  const b = bImages[0] ?? null;
+  const batchCount = Math.max(aImages.length, bImages.length);
+  const sel = Math.min(selectedIndex, Math.max(0, batchCount - 1));
+  const a = aImages[sel] ?? null;
+  const b = bImages[sel] ?? null;
 
   const updateFromPointer = useCallback((clientX: number, clientY: number) => {
     const el = containerRef.current;
@@ -80,7 +92,82 @@ export function NodeCardImageComparer({
     [updateFromPointer]
   );
 
+  // Build the viewer payload for every batch slice (so swiping in the viewer
+  // moves through the batch), each as an A/B comparison when both sides exist or
+  // a plain image otherwise, then open at the current slice.
+  const openInViewer = useCallback(() => {
+    if (!onOpenViewer) return;
+    const count = Math.max(aImages.length, bImages.length);
+    const items: ViewerImage[] = [];
+    for (let i = 0; i < count; i += 1) {
+      const ai = aImages[i] ?? null;
+      const bi = bImages[i] ?? null;
+      if (ai && bi) {
+        // The item's src is image B (the base the viewer sizes/loads from); A is
+        // carried in `comparison` and drawn as the clipped overlay.
+        items.push({
+          src: getImageUrl(bi.filename, bi.subfolder, bi.type),
+          displaySrc: getImagePreviewUrl(bi.filename, bi.subfolder, bi.type),
+          alt: `${displayName} comparison ${i + 1}`,
+          comparison: {
+            aSrc: getImageUrl(ai.filename, ai.subfolder, ai.type),
+            aDisplaySrc: getImagePreviewUrl(ai.filename, ai.subfolder, ai.type),
+            bSrc: getImageUrl(bi.filename, bi.subfolder, bi.type),
+            bDisplaySrc: getImagePreviewUrl(bi.filename, bi.subfolder, bi.type),
+          },
+        });
+      } else {
+        const only = ai ?? bi;
+        if (!only) continue;
+        items.push({
+          src: getImageUrl(only.filename, only.subfolder, only.type),
+          displaySrc: getImagePreviewUrl(only.filename, only.subfolder, only.type),
+          alt: `${displayName} output ${i + 1}`,
+        });
+      }
+    }
+    if (items.length === 0) return;
+    // enableFollowQueue=false: keep the comparer viewer scoped to its own batch.
+    onOpenViewer(items, Math.min(sel, items.length - 1), false);
+  }, [onOpenViewer, aImages, bImages, displayName, sel]);
+
   if (!show) return null;
+
+  // Batch switcher: one thumbnail per slice (prefer the B/result image), the
+  // current one outlined. Only shown when there's more than one slice.
+  const thumbnailStrip = batchCount > 1 ? (
+    <div
+      className="comparer-batch-thumbs mt-2 flex gap-1.5 overflow-x-auto pb-1"
+      data-swipe-nav-ignore="true"
+    >
+      {Array.from({ length: batchCount }).map((_, i) => {
+        const thumb = bImages[i] ?? aImages[i];
+        if (!thumb) return null;
+        const src = getImagePreviewUrl(thumb.filename, thumb.subfolder, thumb.type);
+        const active = i === sel;
+        return (
+          <button
+            key={`${thumb.type}/${thumb.subfolder}/${thumb.filename}`}
+            type="button"
+            aria-label={`Compare batch image ${i + 1}`}
+            aria-pressed={active}
+            onClick={() => setSelectedIndex(i)}
+            className={`shrink-0 overflow-hidden rounded-md border-2 ${
+              active ? 'border-cyan-400' : 'border-white/15'
+            }`}
+          >
+            <img
+              src={src}
+              alt=""
+              className="h-12 w-12 object-cover"
+              loading="lazy"
+              draggable={false}
+            />
+          </button>
+        );
+      })}
+    </div>
+  ) : null;
 
   // `/view` serves the original (usually a multi-MB PNG); the comparer would
   // otherwise stream two of them top-to-bottom. The preview URL re-encodes to a
@@ -100,9 +187,11 @@ export function NodeCardImageComparer({
         <img
           src={onlySrc}
           alt={`${displayName} output`}
-          className="w-full h-auto rounded-lg border border-white/10"
+          className={`w-full h-auto rounded-lg border border-white/10${onOpenViewer ? ' cursor-zoom-in' : ''}`}
           loading="lazy"
+          onClick={onOpenViewer ? openInViewer : undefined}
         />
+        {thumbnailStrip}
       </div>
     );
   }
@@ -116,7 +205,10 @@ export function NodeCardImageComparer({
         ref={containerRef}
         data-swipe-nav-ignore="true"
         data-swipe-nav-ignore-margin={SWIPE_DEAD_ZONE_PX}
-        className="relative w-full overflow-hidden rounded-lg border border-white/10 select-none"
+        className={`relative w-full overflow-hidden rounded-lg border border-white/10 select-none${
+          onOpenViewer ? ' cursor-zoom-in' : ''
+        }`}
+        onClick={onOpenViewer ? openInViewer : undefined}
       >
         {/* Base layer: image B drives the box height at its natural aspect. */}
         <img
@@ -158,11 +250,14 @@ export function NodeCardImageComparer({
             style={{ top: `${handleTop}%` }}
             onPointerDown={handlePointerDown}
             onPointerMove={handlePointerMove}
+            // Dragging/tapping the divider must not also open the full-screen viewer.
+            onClick={(e) => e.stopPropagation()}
           >
             <MenuIcon className="w-5 h-5 rotate-90" />
           </div>
         </div>
       </div>
+      {thumbnailStrip}
     </div>
   );
 }

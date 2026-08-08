@@ -1,5 +1,60 @@
 # Changelog
 
+## 3.1.0 - 2026-08-08
+
+### Added
+
+**Workflow editing**
+
+- **Undo/redo** in the workflow menu — per tab, with rapid edits to one widget coalescing into a single step and seed changes excluded
+- **Pop a widget out into a primitive node:** any STRING/INT/FLOAT/BOOLEAN widget becomes a typed core primitive wired into the input it was backing
+- **Connect to inputs that are still widgets:** the connection menu lists widget-backed optional inputs and materializes the real slot for you
+- **Select mode:** multi-select nodes and groups from the `...` menu, then Copy, Create group, or Delete. Copy/paste carries whole subgraphs and works across workflow tabs
+- **Set/Get node support (KJNodes):** compact relay cards, a connection picker for GetNode, correct labels, and an optional "collapse Set/Get nodes" that rewires relays into direct connections
+- **Missing nodes** are listed in a dialog, outlined in red on the affected cards, and one tap opens the Custom Nodes Manager filtered to what you need
+- **Add node / add group** buttons, and unfolding a node now leaves every section open
+- **One-tap PreviewImage ↔ SaveImage convert**, preserving a custom filename prefix
+
+**Outputs**
+
+- **Favorite and reject** any output from the queue, grid, or viewer — mutually exclusive, with a **Delete rejected** bulk action. Favorites, rejects, and hidden marks now live server-side against file contents, so they survive reloads and renames
+- **Navigable favorites filter:** with Show Favorites Only on, folders holding favorites stay visible and show how many are inside
+- **The filter button turns amber** while a filter is narrowing the listing, so a filtered view can't be mistaken for an empty folder
+- **Bulk process:** pick several outputs and run a saved workflow once per image, swapped into the LoadImage node you choose
+- **Use an output as an input** without duplicating it on disk
+
+**Image viewer**
+
+- **Full-screen A/B comparer** for Image Comparer (rgthree) outputs, plus batch output tiling
+- **Swipe down to close**, alongside the existing left/right swipes
+- **Live preview while Follow Queue waits**, so a run you're following shows itself taking shape instead of a bare spinner
+
+**Queue**
+
+- **Video playback that needs nothing extra:** videos are prepared once and served from a seekable cache, so they start fast and seek cleanly — including formats a browser won't play directly. Preparation uses PyAV, which ComfyUI already ships, and runs out of process so a malformed file can't take the server down
+- **True resolution on cards,** read from the file itself rather than the downscaled preview
+- **Stack Outputs / Tab Outputs** toggle for runs with several outputs
+- **Show Prompt Preview:** queued and running cards start expanded and show the input images the job will run on, so you can tell what's cooking before it finishes
+- **A card fits the page on desktop,** capped to the height between the top and bottom bars
+
+**Elsewhere**
+
+- **Web Push notifications:** enable/test buttons and notify-on-complete/error preferences for the 3.0.2 push backend
+- **Install to your home screen** — the app now ships a web manifest and service worker (also what iOS requires before it will deliver notifications)
+- **Two-finger trackpad swipe** between panels on desktop
+- **Workflow favorites sync to the server,** surviving a browser-data clear
+- An opt-out preference to **credit this frontend** in the workflows you run
+
+### Fixed
+
+- **Queue restoration after reload:** completed runs and their previews repopulate reliably, and a temporary preview failure retries instead of deleting the saved run
+- **Follow Queue with nothing in history** left the viewer stuck on a spinner for good
+- **Video posters after a regenerated file:** replacing a video under the same name now invalidates its poster, even within the same second
+
+### Notes
+
+- `requirements.txt` still declares `pywebpush>=2.0` (from 3.0.2); without it web push reports itself unavailable and everything else works
+
 ## 3.0.7 - 2026-08-07
 
 ### Fixed
@@ -39,6 +94,8 @@
 - **Load Image (from Outputs):** picking an output image for a LoadImageOutput node no longer fails with "Input file not found"; output/temp picks are routed into the input directory the node reads from.
 - **Workflow loading robustness:** malformed workflow payloads are rejected before the tab transition (with sane default node position/size), and root link ids are clamped to the ids actually in use to avoid id collisions.
 - **Outputs panel:** the infinite-mode skip button is now hidden on the Outputs panel, where it does not apply.
+- **Server freeze on saving push preferences:** 3.0.2's preferences module could deadlock the whole server on the first toggle (a non-reentrant lock re-acquired); fixed.
+- **rgthree Fast Groups Bypasser rendered as a "Missing Node":** it now renders its group toggles.
 
 ## 3.0.3 - 2026-07-08
 
@@ -46,7 +103,6 @@
 
 - **Tag autocomplete:** when ComfyUI-Autocomplete-Plus is installed, prompt text fields can suggest Danbooru tags, LoRA names, and embeddings. The integration is opt-in under Preferences and includes alias matching, caret-anchored placement, an in-popup dismiss button, and wiki links for supported Danbooru tags.
 - **Server-side output favorites:** file and folder favorites now persist on the ComfyUI server so they sync across devices. File favorites are content-hash backed, survive in-app moves/renames, can be rediscovered after external filesystem moves, and no longer attach to a new generation just because it reused a favorited filename.
-
 
 ### Fixed
 
@@ -83,6 +139,7 @@
 - **Over-max seeds rejected at validation:** randomized/queued seeds are now clamped to each node's declared seed maximum (with a universal 2^32-1 ceiling), so nodes that cap the seed below 2^64 (e.g. Qwen-VL) no longer get silently dropped from the run
 - **405 on Custom Nodes Manager install:** the queue reset/start calls now try `POST` and fall back to `GET`, so install/update works across ComfyUI-Manager versions that register those endpoints with either method
 - **Prompt-preview overflow:** long unbroken values (file paths, seeds, hex tokens) in the prompt-preview diff now wrap instead of overflowing the container
+
 
 ## 3.0.0 - 2026-06-11
 

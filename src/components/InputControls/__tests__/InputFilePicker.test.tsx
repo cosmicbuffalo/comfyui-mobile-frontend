@@ -10,8 +10,8 @@ vi.mock('@/api/client', async (importOriginal) => {
     searchUserImagesByPrompt: vi.fn(async () => []),
     copyFileToInput: vi.fn(async () => ({ name: 'foo.png', subfolder: '', type: 'input' })),
     uploadImageFile: vi.fn(async () => ({ name: 'foo.png', subfolder: '', type: 'input' })),
-    loadFileFavoritesFromServer: vi.fn(async () => []),
-    setFileFavorite: vi.fn(async (path: string) => [path]),
+    loadFileState: vi.fn(async () => ({ favorite: [], reject: [], hidden: [] })),
+    setFileState: vi.fn(async () => undefined),
   };
 });
 
@@ -195,7 +195,9 @@ describe('InputFilePicker options menu', () => {
     // Original output favorite is untouched.
     expect(useOutputsStore.getState().favorites).toContain('output/foo.png');
 
-    useOutputsStore.setState({ favorites: [] });
+    await act(async () => {
+      useOutputsStore.setState({ favorites: [] });
+    });
     getUserImagesMock.mockReset();
     if (prevGetUserImages) getUserImagesMock.mockImplementation(prevGetUserImages);
   });

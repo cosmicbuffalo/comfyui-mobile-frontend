@@ -1,6 +1,7 @@
 import { useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { BypassToggleIcon, BookmarkIconSvg, BookmarkOutlineIcon, ChevronRightIcon, CopyIcon, EyeOffIcon, MoveUpDownIcon, NodeConnectionsIcon, EditIcon, ExternalLinkIcon, PinIconSvg, PinOutlineIcon, TrashIcon, ArrowRightIcon, WorkflowIcon } from '@/components/icons';
+import { BypassToggleIcon, BookmarkIconSvg, BookmarkOutlineIcon, CheckIcon, ChevronRightIcon, ClipboardIcon, ClipboardDownloadIcon, CopyIcon, EyeIcon, EyeOffIcon, MoveUpDownIcon, NodeConnectionsIcon, EditIcon, ExternalLinkIcon, PinIconSvg, PinOutlineIcon, SaveDiskIcon, TrashIcon, ArrowRightIcon, WorkflowIcon } from '@/components/icons';
+import { useWorkflowSelectionStore } from '@/hooks/useWorkflowSelection';
 import { useAnchoredMenuPosition } from '@/hooks/useAnchoredMenuPosition';
 import { useDismissOnOutsideClick } from '@/hooks/useDismissOnOutsideClick';
 import { ContextMenuButton } from '@/components/buttons/ContextMenuButton';
@@ -18,11 +19,17 @@ interface PinnableWidget {
 interface NodeCardMenuProps {
   nodeId: number;
   nodeHierarchicalKey: string;
+  // Current ComfyUI node class name. Used to gate the PreviewImage ↔ SaveImage
+  // conversion items so they only surface on the relevant nodes.
+  nodeType: string;
   isLoraManagerNode: boolean;
   showFastGroupsConfigAction: boolean;
   isBypassed: boolean;
   onEnterSubgraph?: () => void;
   onEditLabel: () => void;
+  // Provided only for SetNodes: starts inline rename of the relay name (the
+  // outgoing connection label becomes an input).
+  onEditSetName?: () => void;
   onEditFastGroupsConfig?: () => void;
   nodeColor?: string;
   onChangeColor: (color: string) => void;
@@ -50,7 +57,14 @@ interface NodeCardMenuProps {
   setItemHidden: (itemKey: string, hidden: boolean) => void;
   onDeleteNode: () => void;
   onDuplicateNode: () => void;
+  onCopyNode: () => void;
+  onPasteBelow: () => void;
+  pasteSummary: string | null;
   onMoveNode: () => void;
+  // Fired by the conversion menu items. Receives the desired target type; the
+  // store decides whether the node is actually convertible. Optional so callers
+  // that don't care about this feature aren't forced to wire it.
+  onConvertImageOutputNode?: (target: 'PreviewImage' | 'SaveImage') => void;
   connectionHighlightMode: 'off' | 'inputs' | 'outputs' | 'both';
   setConnectionHighlightMode: (itemKey: string, mode: 'off' | 'inputs' | 'outputs' | 'both') => void;
   leftLineCount: number;
@@ -60,11 +74,13 @@ interface NodeCardMenuProps {
 export function NodeCardMenu({
   nodeId,
   nodeHierarchicalKey,
+  nodeType,
   isLoraManagerNode,
   showFastGroupsConfigAction,
   isBypassed,
   onEnterSubgraph,
   onEditLabel,
+  onEditSetName,
   onEditFastGroupsConfig,
   nodeColor = '',
   onChangeColor,
@@ -81,7 +97,11 @@ export function NodeCardMenu({
   setItemHidden,
   onDeleteNode,
   onDuplicateNode,
+  onCopyNode,
+  onPasteBelow,
+  pasteSummary,
   onMoveNode,
+  onConvertImageOutputNode,
   connectionHighlightMode,
   setConnectionHighlightMode,
   leftLineCount,
@@ -91,6 +111,8 @@ export function NodeCardMenu({
   const [menuOpen, setMenuOpen] = useState(false);
   const [colorPopoverOpen, setColorPopoverOpen] = useState(false);
   const [pinSubmenuOpen, setPinSubmenuOpen] = useState(false);
+  const enterSelectionMode = useWorkflowSelectionStore((s) => s.enterSelectionMode);
+  const selectSelectionKeys = useWorkflowSelectionStore((s) => s.selectKeys);
   const menuRef = useRef<HTMLDivElement>(null);
   const colorPopoverRef = useRef<HTMLDivElement>(null);
   const menuButtonRef = useRef<HTMLButtonElement>(null);
@@ -190,6 +212,12 @@ export function NodeCardMenu({
   const handleEditLabelClick = (event: React.MouseEvent<HTMLButtonElement>) => {
     event.stopPropagation();
     onEditLabel();
+    closeMenu();
+  };
+
+  const handleEditSetNameClick = (event: React.MouseEvent<HTMLButtonElement>) => {
+    event.stopPropagation();
+    onEditSetName?.();
     closeMenu();
   };
 
@@ -342,6 +370,13 @@ export function NodeCardMenu({
                 onClick: handleEditLabelClick
               },
               {
+                key: 'edit-set-name',
+                label: 'Edit set name',
+                icon: <EditIcon className="w-4 h-4" />,
+                onClick: handleEditSetNameClick,
+                hidden: !onEditSetName
+              },
+              {
                 key: 'change-color',
                 label: 'Change color',
                 icon: (
@@ -391,6 +426,17 @@ export function NodeCardMenu({
                 key: 'divider-node-actions'
               },
               {
+                key: 'select-node',
+                label: 'Select',
+                icon: <CheckIcon className="w-4 h-4" />,
+                onClick: (event) => {
+                  event.stopPropagation();
+                  enterSelectionMode();
+                  selectSelectionKeys([nodeHierarchicalKey]);
+                  closeMenu();
+                }
+              },
+              {
                 key: 'toggle-bypass',
                 label: isBypassed ? 'Engage node' : 'Bypass node',
                 icon: <BypassToggleIcon className="w-4 h-4" isBypassed={isBypassed} />,
@@ -414,6 +460,52 @@ export function NodeCardMenu({
                   onDuplicateNode();
                   closeMenu();
                 }
+              },
+              {
+                // PreviewImage → SaveImage. Only shown on PreviewImage nodes
+                // when the parent wired up onConvertImageOutputNode.
+                key: 'convert-to-save-image',
+                label: 'Convert to Save Image',
+                icon: <SaveDiskIcon className="w-4 h-4" />,
+                onClick: (event) => {
+                  event.stopPropagation();
+                  onConvertImageOutputNode?.('SaveImage');
+                  closeMenu();
+                },
+                hidden: !onConvertImageOutputNode || nodeType !== 'PreviewImage'
+              },
+              {
+                // SaveImage → PreviewImage. Drops the filename_prefix widget.
+                key: 'convert-to-preview-image',
+                label: 'Convert to Preview Image',
+                icon: <EyeIcon className="w-4 h-4" />,
+                onClick: (event) => {
+                  event.stopPropagation();
+                  onConvertImageOutputNode?.('PreviewImage');
+                  closeMenu();
+                },
+                hidden: !onConvertImageOutputNode || nodeType !== 'SaveImage'
+              },
+              {
+                key: 'copy-node',
+                label: 'Copy',
+                icon: <ClipboardIcon className="w-4 h-4" />,
+                onClick: (event) => {
+                  event.stopPropagation();
+                  onCopyNode();
+                  closeMenu();
+                }
+              },
+              {
+                key: 'paste-below',
+                label: pasteSummary ? `Paste ${pasteSummary} below` : 'Paste below',
+                icon: <ClipboardDownloadIcon className="w-4 h-4" />,
+                onClick: (event) => {
+                  event.stopPropagation();
+                  onPasteBelow();
+                  closeMenu();
+                },
+                hidden: !pasteSummary
               },
               {
                 key: 'move-node',

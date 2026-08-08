@@ -3,7 +3,7 @@ import os
 from typing import Any
 
 IMAGE_EXTENSIONS = ('.png', '.jpg', '.jpeg', '.webp', '.gif')
-VIDEO_EXTENSIONS = ('.mp4', '.mov', '.webm', '.mkv')
+VIDEO_EXTENSIONS = ('.mp4', '.m4v', '.mov', '.webm', '.mkv', '.avi')
 
 
 # In-memory cache for the prompt JSON text of a file, keyed by absolute path.

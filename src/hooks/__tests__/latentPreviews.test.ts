@@ -7,7 +7,7 @@ vi.stubGlobal('URL', { ...globalThis.URL, revokeObjectURL });
 
 beforeEach(() => {
   revokeObjectURL.mockClear();
-  useWorkflowStore.setState({ latentPreviews: {} });
+  useWorkflowStore.setState({ latentPreviews: {}, latentPreviewByPrompt: {} });
 });
 
 describe('setLatentPreview', () => {
@@ -66,5 +66,57 @@ describe('clearAllLatentPreviews', () => {
     useWorkflowStore.getState().clearAllLatentPreviews();
     expect(revokeObjectURL).not.toHaveBeenCalled();
     expect(useWorkflowStore.getState().latentPreviews).toEqual({});
+  });
+});
+
+describe('setQueueLatentPreview', () => {
+  it('stores a preview under the prompt id with a monotonic seq', () => {
+    useWorkflowStore.getState().setQueueLatentPreview('prompt-a', 'blob:a1');
+    useWorkflowStore.getState().setQueueLatentPreview('prompt-b', 'blob:b1');
+    const map = useWorkflowStore.getState().latentPreviewByPrompt;
+    expect(map['prompt-a'].url).toBe('blob:a1');
+    expect(map['prompt-b'].url).toBe('blob:b1');
+    // Later writes get a strictly higher recency stamp.
+    expect(map['prompt-b'].seq).toBeGreaterThan(map['prompt-a'].seq);
+  });
+
+  it('buffers one frame: revokes two generations back, keeps the displayed frame alive', () => {
+    useWorkflowStore.getState().setQueueLatentPreview('prompt-a', 'blob:frame-1');
+    useWorkflowStore.getState().setQueueLatentPreview('prompt-a', 'blob:frame-2');
+    // frame-1 is still the immediately-previous frame, so it must NOT be revoked
+    // yet (the card may still be painting it).
+    expect(revokeObjectURL).not.toHaveBeenCalledWith('blob:frame-1');
+    expect(useWorkflowStore.getState().latentPreviewByPrompt['prompt-a'].url).toBe('blob:frame-2');
+
+    // A third frame frees frame-1 (now two generations back) but keeps frame-2.
+    useWorkflowStore.getState().setQueueLatentPreview('prompt-a', 'blob:frame-3');
+    expect(revokeObjectURL).toHaveBeenCalledWith('blob:frame-1');
+    expect(revokeObjectURL).not.toHaveBeenCalledWith('blob:frame-2');
+    expect(useWorkflowStore.getState().latentPreviewByPrompt['prompt-a'].url).toBe('blob:frame-3');
+  });
+
+  it('revokes and does not store when prompt id is null', () => {
+    useWorkflowStore.getState().setQueueLatentPreview(null, 'blob:orphan');
+    expect(revokeObjectURL).toHaveBeenCalledWith('blob:orphan');
+    expect(useWorkflowStore.getState().latentPreviewByPrompt).toEqual({});
+  });
+});
+
+describe('clearQueueLatentPreviews', () => {
+  it('revokes every prompt URL and empties the map', () => {
+    useWorkflowStore.getState().setQueueLatentPreview('prompt-a', 'blob:a');
+    useWorkflowStore.getState().setQueueLatentPreview('prompt-b', 'blob:b');
+    revokeObjectURL.mockClear();
+
+    useWorkflowStore.getState().clearQueueLatentPreviews();
+
+    expect(revokeObjectURL).toHaveBeenCalledWith('blob:a');
+    expect(revokeObjectURL).toHaveBeenCalledWith('blob:b');
+    expect(useWorkflowStore.getState().latentPreviewByPrompt).toEqual({});
+  });
+
+  it('does nothing when there are no queue previews', () => {
+    useWorkflowStore.getState().clearQueueLatentPreviews();
+    expect(revokeObjectURL).not.toHaveBeenCalled();
   });
 });

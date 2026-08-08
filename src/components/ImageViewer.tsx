@@ -60,9 +60,14 @@ export function ImageViewer({ onClose }: ImageViewerProps) {
   const livePromptOutputs = useQueueStore((s) => s.livePromptOutputs);
   const localPromptOrder = useQueueStore((s) => s.localPromptOrder);
   const history = useHistoryStore((s) => s.history);
-  const deleteHistoryItem = useHistoryStore((s) => s.deleteItem);
+  const hasMoreHistory = useHistoryStore((s) => s.hasMoreHistory);
+  const loadMoreHistory = useHistoryStore((s) => s.loadMoreHistory);
+  const removeOutputImages = useHistoryStore((s) => s.removeOutputImages);
   const favorites = useOutputsStore((s) => s.favorites);
-  const toggleFavorite = useOutputsStore((s) => s.toggleFavorite);
+  const rejected = useOutputsStore((s) => s.rejected);
+  const favoriteItem = useOutputsStore((s) => s.favoriteItem);
+  const unfavoriteItem = useOutputsStore((s) => s.unfavoriteItem);
+  const toggleRejected = useOutputsStore((s) => s.toggleRejected);
   const [deleteTarget, setDeleteTarget] = useState<{ file: FileItem; promptId?: string } | null>(null);
   const [loadWorkflowTarget, setLoadWorkflowTarget] = useState<ViewerImage | null>(null);
   const [loadNodeTarget, setLoadNodeTarget] = useState<FileItem | null>(null);
@@ -236,6 +241,12 @@ export function ImageViewer({ onClose }: ImageViewerProps) {
   const followQueueSwitchId = followQueueItems[0]?.prompt_id ?? null;
 
   const runKey = executingPromptId || (running.length === 1 ? running[0].prompt_id : null);
+  // Live latent preview for the run in flight (global store, keyed by prompt_id
+  // — the same source the queue card renders). Only used for the placeholder
+  // below; an output already on screen is never covered by a preview.
+  const latentPreviewEntry = useWorkflowStore(
+    (s) => (runKey ? s.latentPreviewByPrompt?.[runKey] : undefined),
+  );
   const overallProgress = useOverallProgress({
     workflow,
     runKey,
@@ -246,6 +257,13 @@ export function ImageViewer({ onClose }: ImageViewerProps) {
   const displayProgress = Math.min(100, Math.max(0, overallProgress ?? 0));
   const current = index >= 0 ? (images[index] ?? images[0] ?? null) : null;
   const showLoadingPlaceholder = (!current && (followQueueActive || isGenerating)) || (index < 0 && isGenerating);
+  // Nothing to show yet (follow mode opened before this tab's first output
+  // landed): paint the sampler's live latent preview behind the progress bar so
+  // the wait shows the run taking shape rather than a bare spinner. Null when
+  // latent previews are off in Preferences — the bare spinner then stands.
+  const loadingPreviewSrc = showLoadingPlaceholder && isGenerating
+    ? latentPreviewEntry?.url ?? null
+    : null;
   const historyWorkflowByFileId = useHistoryWorkflowByFileId();
 
   // Clear any open modal state when the viewer closes, so reopening doesn't
@@ -261,18 +279,30 @@ export function ImageViewer({ onClose }: ImageViewerProps) {
   // Auto-jump to this tab's newest output as the queue progresses. On the
   // !active → active transition we only seed the ref (don't yank to whatever is
   // currently newest); thereafter a changed key means a fresh output arrived.
+  //
+  // Both of those rules are suspended while the viewer is displaying NOTHING
+  // (follow mode opened with an empty history, so App had no images to seed):
+  // there is no user-chosen image to preserve, and the alternative is the bare
+  // loading placeholder forever. Without this, a followed output that already
+  // existed when follow mode opened — or one whose jump was missed — could
+  // never reach the screen, because the only path out of the empty state was a
+  // *change* in the latest key.
   useEffect(() => {
     if (!open || !followQueueActive) {
       lastFollowKeyRef.current = null;
       followQueueWasActiveRef.current = false;
       return;
     }
+    const nothingDisplayed = images.length === 0;
     if (!followQueueWasActiveRef.current) {
       followQueueWasActiveRef.current = true;
-      lastFollowKeyRef.current = followQueueLatestKey;
-      return;
+      if (!nothingDisplayed) {
+        lastFollowKeyRef.current = followQueueLatestKey;
+        return;
+      }
     }
-    if (!followQueueLatestKey || followQueueLatestKey === lastFollowKeyRef.current) return;
+    if (!followQueueLatestKey) return;
+    if (followQueueLatestKey === lastFollowKeyRef.current && !nothingDisplayed) return;
     if (followQueueViewerImages.length === 0) return;
 
     lastFollowKeyRef.current = followQueueLatestKey;
@@ -282,10 +312,31 @@ export function ImageViewer({ onClose }: ImageViewerProps) {
       viewerScale: 1,
       viewerTranslate: { x: 0, y: 0 },
     });
-  }, [open, followQueueActive, followQueueLatestKey, followQueueViewerImages, setViewerState]);
+  }, [open, followQueueActive, followQueueLatestKey, followQueueViewerImages, images, setViewerState]);
+
+  // As older history pages load in (they append to the end of the follow-queue
+  // list), extend the browsable list so the user can keep arrowing past where
+  // they were. Only extend an already-populated list (App owns the initial
+  // display — never seed from empty here) and only when the front is unchanged;
+  // a changed front means a fresh output arrived, which the auto-jump effect
+  // above owns (it resets to index 0).
+  useEffect(() => {
+    if (!open || !followQueueActive) return;
+    if (images.length === 0) return;
+    if (followQueueViewerImages.length <= images.length) return;
+    if (followQueueViewerImages[0]?.src !== images[0]?.src) return;
+    setViewerState({ viewerImages: followQueueViewerImages });
+  }, [open, followQueueActive, followQueueViewerImages, images, setViewerState]);
 
   const handleIndexChange = (nextIndex: number) => {
     setViewerState({ viewerIndex: nextIndex });
+    // Mirror the queue panel's scroll-to-load: while following the live queue,
+    // navigating within 5 of the end of the loaded runs pulls the next history
+    // page so the user can keep arrowing back. loadMoreHistory self-guards
+    // against overlapping/last-page loads.
+    if (followQueueActive && hasMoreHistory && nextIndex >= images.length - 5) {
+      void loadMoreHistory();
+    }
   };
 
   const handleTransformChange = (nextScale: number, nextTranslate: { x: number; y: number }) => {
@@ -299,18 +350,17 @@ export function ImageViewer({ onClose }: ImageViewerProps) {
 
   const handleDeleteConfirm = async () => {
     if (!deleteTarget) return;
-    const { file: deletedFile, promptId } = deleteTarget;
+    const { file: deletedFile } = deleteTarget;
     try {
       const filePath = resolveFilePath(deletedFile);
       await deleteFile(filePath, resolveFileSource(deletedFile));
 
-      // If this image belongs to a history (queue) entry, remove that entry too
-      // so its card doesn't linger in the queue panel. We drop the whole card
-      // even for multi-output runs — any sibling images stay on disk (still
-      // reachable from the outputs panel) but are no longer listed in the queue.
-      if (promptId) {
-        await deleteHistoryItem(promptId);
-      }
+      // Remove just this image from any history (queue) entry that references
+      // it. The entry's card stays as long as it still has other outputs, and is
+      // deleted outright only when this was its last image — so deleting one
+      // frame of a batch no longer drops the whole card. Keyed by file id, so
+      // promptId isn't required (a browsed output still reconciles).
+      await removeOutputImages([deletedFile.id]);
 
       const nextImages = images.filter((entry) => entry.file?.id !== deletedFile.id);
       const deletedIndex = images.findIndex((entry) => entry.file?.id === deletedFile.id);
@@ -421,7 +471,18 @@ export function ImageViewer({ onClose }: ImageViewerProps) {
 
   const handleToggleFavorite = (item: ViewerImage) => {
     if (!item.file) return;
-    toggleFavorite(item.file.id);
+    favoriteItem(item.file.id);
+  };
+
+  // The `x` affordance: unfavorite a favorited item, otherwise toggle rejected.
+  const handleReject = (item: ViewerImage) => {
+    if (!item.file) return;
+    const id = item.file.id;
+    if (favorites.includes(id)) {
+      unfavoriteItem(id);
+    } else {
+      toggleRejected(id);
+    }
   };
 
   const isItemFavorited = (item: ViewerImage): boolean => {
@@ -429,10 +490,18 @@ export function ImageViewer({ onClose }: ImageViewerProps) {
     return favorites.includes(item.file.id);
   };
 
+  const isItemRejected = (item: ViewerImage): boolean => {
+    if (!item.file) return false;
+    return rejected.includes(item.file.id);
+  };
+
   const handleDownload = (item: ViewerImage) => {
-    if (!item.src) return;
+    if (!item.src) return Promise.resolve(undefined);
     const filename = item.filename || item.file?.name || 'image.png';
-    void shareOrDownloadFile(item.src, filename);
+    // Return the promise so the DownloadButton can keep its spinner up until
+    // the native save completes, AND so MediaViewer can show its in-viewer
+    // "Saving to Photos…" / "Saved to Photos." toast on the resolved outcome.
+    return shareOrDownloadFile(item.src, filename);
   };
 
   const handleLoadNodeClose = () => {
@@ -461,9 +530,12 @@ export function ImageViewer({ onClose }: ImageViewerProps) {
         onLoadInWorkflow={handleLoadInWorkflow}
         onToggleFavorite={handleToggleFavorite}
         isFavorited={isItemFavorited}
+        onReject={handleReject}
+        isRejected={isItemRejected}
         onDownload={handleDownload}
         showMetadataToggle
         showLoadingPlaceholder={showLoadingPlaceholder}
+        loadingPreviewSrc={loadingPreviewSrc}
         loadingProgress={displayProgress}
         loadingLabel={isGenerating ? `${displayProgress}%` : 'Waiting for output'}
         loadWorkflowProgress={loadWorkflowProgress}

@@ -90,11 +90,14 @@ def _count_outputs(entry):
     return count
 
 
-def _first_output_image(entry):
-    """Return a thumbnail URL for the first output image, or None.
+def find_first_output_image(entry):
+    """Return {filename, subfolder, source} for the first output image in a
+    history entry, or None.
 
-    History output images are {filename, subfolder, type}; the mobile thumbnail
-    endpoint takes filename/subfolder/source (source == the image 'type').
+    History output images are {filename, subfolder, type}; source == the
+    image 'type'. Shared by _completion_image_url (existence check) and
+    __init__.py's api_get_thumbnail (prompt_id -> file resolution), so the
+    two stay in lockstep instead of drifting.
     """
     if not isinstance(entry, dict):
         return None
@@ -110,13 +113,28 @@ def _first_output_image(entry):
             continue
         image_type = first.get("type", "output")
         source = image_type if image_type in ("output", "input", "temp") else "output"
-        query = urlencode({
+        return {
             "filename": first.get("filename"),
             "subfolder": first.get("subfolder", ""),
             "source": source,
-        })
-        return f"/mobile/api/thumbnail?{query}"
+        }
     return None
+
+
+def _completion_image_url(prompt_id, entry):
+    """Thumbnail URL for a completion notification, keyed by prompt_id.
+
+    Deliberately opaque: the push payload (which transits the relay and
+    APNs, see CUEFORGE_PRIVACY.md) must never carry a content-derived
+    string like a filename. prompt_id is already a UUID and already part
+    of the payload for the click-through deep link, so it doubles as the
+    thumbnail lookup key here — the endpoint resolves it back to a file
+    server-side instead of trusting a client-supplied filename/subfolder.
+    """
+    if find_first_output_image(entry) is None:
+        return None
+    query = urlencode({"prompt_id": prompt_id})
+    return f"/mobile/api/thumbnail?{query}"
 
 
 async def _handle_completion(prompt_id, entry):
@@ -147,7 +165,7 @@ async def _handle_completion(prompt_id, entry):
     # iOS WebView reload lands on the matching queue item.
     click_url = f"/mobile/?prompt_id={prompt_id}"
     if prefs.get("includeThumbnail", False):
-        image_url = _first_output_image(entry)
+        image_url = _completion_image_url(prompt_id, entry)
 
     loop = asyncio.get_event_loop()
 

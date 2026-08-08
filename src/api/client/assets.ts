@@ -122,6 +122,11 @@ export interface FileItem {
   // projection — counts descendant files in this folder that match the
   // active search. Lets the UI label "→ N matches" on filtered folders.
   matchCount?: number;
+  // Only populated while the favorites filter is on, for folders kept because
+  // they contain favorites rather than being favorited themselves — counts the
+  // favorites nested beneath them, so the card can say "N favorites inside"
+  // instead of a total item count the filter doesn't apply to.
+  favoriteCount?: number;
   // Only populated for folder entries during normal navigation — recursive
   // count of all descendant files (computed server-side). Drives the folder
   // subtitle and the top-bar item total for the focused location.
@@ -133,6 +138,9 @@ export interface FileItem {
   // so it can be unhidden directly. Drives the Hide/Unhide menu label.
   hiddenSelf?: boolean;
   favorite?: boolean;
+  // True when this exact item is in the reject set. File-only, exact-match (no
+  // folder inheritance) — mirrors favorite in that respect, unlike hidden.
+  rejected?: boolean;
 }
 
 export type AssetSource = 'output' | 'input' | 'temp';
@@ -150,6 +158,7 @@ interface MobileFileItem {
   hidden?: boolean; // effectively hidden (self or inherited); only present when showHidden
   hiddenSelf?: boolean; // this exact item is in the hidden set
   favorite?: boolean;
+  rejected?: boolean; // this exact item is in the reject set (file-only, exact-match)
 }
 
 interface MobileFilesResponse {
@@ -239,28 +248,9 @@ export async function searchUserImagesByPrompt(
       hidden: f.hidden,
       hiddenSelf: f.hiddenSelf,
       favorite: f.favorite,
+      rejected: f.rejected,
     };
   });
-}
-
-/**
- * Mark (or unmark) an individual output/input item as hidden. The hidden state
- * is persisted server-side per source, keyed by the item's relative path.
- */
-export async function setFileHidden(
-  path: string,
-  hidden: boolean,
-  source: AssetSource = 'output',
-): Promise<void> {
-  const response = await fetch(`/mobile/api/files/hidden`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ path, hidden, source }),
-  });
-  if (!response.ok) {
-    const error = await response.json().catch(() => ({}));
-    throw new Error(error.error || 'Failed to update hidden state');
-  }
 }
 
 export async function getUserImageFolders(showHidden?: boolean): Promise<{ input: string[]; output: string[] }> {
@@ -321,37 +311,118 @@ export async function getUserImages(
       hidden: f.hidden,
       hiddenSelf: f.hiddenSelf,
       favorite: f.favorite,
+      rejected: f.rejected,
     };
   });
 }
 
-export async function loadFileFavoritesFromServer(source: AssetSource = 'output'): Promise<string[]> {
-  const params = new URLSearchParams({ source });
-  const response = await fetch(`/mobile/api/files/favorites?${params.toString()}`);
-  if (!response.ok) {
-    const error = await response.json().catch(() => ({}));
-    throw new Error(error.error || 'Failed to load file favorites');
-  }
-  const data = await response.json() as { favorites?: string[] };
-  return Array.isArray(data.favorites) ? data.favorites : [];
+export type FileStateName = 'favorite' | 'reject' | 'hidden';
+
+export interface FileStateLists {
+  favorite: string[];
+  reject: string[];
+  hidden: string[];
 }
 
-export async function setFileFavorite(
+/**
+ * Load the full favorite/reject/hidden state for a source in one call.
+ * Replaces the old favorites-only endpoint.
+ */
+export async function loadFileState(source: AssetSource = 'output'): Promise<FileStateLists> {
+  const params = new URLSearchParams({ source });
+  const response = await fetch(`/mobile/api/files/state?${params.toString()}`);
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({}));
+    throw new Error(error.error || 'Failed to load file state');
+  }
+  const data = await response.json() as Partial<FileStateLists>;
+  return {
+    favorite: Array.isArray(data.favorite) ? data.favorite : [],
+    reject: Array.isArray(data.reject) ? data.reject : [],
+    hidden: Array.isArray(data.hidden) ? data.hidden : [],
+  };
+}
+
+/**
+ * Set one of favorite/reject/hidden for a single item. The server enforces
+ * favorite/reject mutual-exclusivity itself and does not return an updated
+ * list — callers update optimistically and rely on the next listing/hydration
+ * for ground truth. Replaces the old favorites/hidden endpoints.
+ */
+// One write should never outlive the user's patience with the panel.
+export const FILE_STATE_REQUEST_TIMEOUT_MS = 15000;
+
+/**
+ * True pixel dimensions for a batch of images, keyed by the relative path you
+ * asked for. Paths that aren't readable images are simply absent.
+ *
+ * The queue card and outputs grid render a downscaled preview, so they cannot
+ * measure a large output's real size from what they display. Batched and
+ * on-demand because the listing endpoint returns a whole folder at once —
+ * measuring every file there would add an image open per entry to a request
+ * that can carry thousands.
+ */
+export async function getFileDimensions(
+  source: AssetSource,
+  paths: string[],
+): Promise<Record<string, { width: number; height: number }>> {
+  if (paths.length === 0) return {};
+  // Never rejects: this only decorates media with a size label, so a dropped
+  // connection or a malformed body means no badge, not a broken card.
+  try {
+    const response = await fetch(`/mobile/api/file-dimensions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ source, paths }),
+    });
+    if (!response.ok) return {};
+    const data = await response.json() as {
+      dimensions?: Record<string, { width: number; height: number }>;
+    };
+    return data.dimensions ?? {};
+  } catch {
+    return {};
+  }
+}
+
+export async function setFileState(
+  source: AssetSource,
   path: string,
-  favorite: boolean,
-  source: AssetSource = 'output'
-): Promise<string[]> {
-  const response = await fetch(`/mobile/api/files/favorites`, {
+  state: FileStateName,
+  value: boolean,
+): Promise<void> {
+  // Bounded: writes for one path are chained onto each other, and the outputs
+  // listing waits on that chain before it renders. A request that never settles
+  // — routine on a dropped mobile/Tailscale link — would block every later
+  // favorite/reject/hidden write for the file and stall the listing behind it.
+  // Failing after the timeout lets the chain drain and the error surface.
+  const response = await fetch(`/mobile/api/files/state`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ path, source, favorite })
+    body: JSON.stringify({ source, path, state, value }),
+    signal: AbortSignal.timeout(FILE_STATE_REQUEST_TIMEOUT_MS),
   });
   if (!response.ok) {
     const error = await response.json().catch(() => ({}));
-    throw new Error(error.error || 'Failed to update file favorite');
+    throw new FileStateError(error.error || 'Failed to update file state', response.status);
   }
-  const data = await response.json() as { favorites?: string[] };
-  return Array.isArray(data.favorites) ? data.favorites : [];
+}
+
+/**
+ * A file-state write that the server answered.
+ *
+ * `status` matters because 409 is terminal, not transient: the server refuses a
+ * path with nothing on disk, so retrying can only fail the same way. A network
+ * error carries no status and is worth retrying.
+ */
+export class FileStateError extends Error {
+  status: number;
+
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = 'FileStateError';
+    this.status = status;
+  }
 }
 
 export async function deleteFile(path: string, source: AssetSource = 'output'): Promise<void> {
@@ -360,10 +431,18 @@ export async function deleteFile(path: string, source: AssetSource = 'output'): 
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ path, source })
   });
-  if (!response.ok) {
-    const error = await response.json();
-    throw new Error(error.error || 'Failed to delete file');
-  }
+  if (response.ok) return;
+  const error = await response.json().catch(() => ({}));
+  // "File not found" means the target is already gone, and deleting is
+  // idempotent — bulk "delete rejected" must not choke on a transient preview or
+  // an output someone removed in another tab. Any OTHER 404 (a path that no
+  // longer resolves, a source mismatch) is a real failure: swallowing it would
+  // strip the entry from the viewer and grid as though it worked while the file
+  // is still on disk, and it reappears on the next listing.
+  const alreadyGone =
+    response.status === 404 && /not found/i.test(String(error.error ?? ''));
+  if (alreadyGone) return;
+  throw new Error(error.error || 'Failed to delete file');
 }
 
 export async function getFileWorkflow(

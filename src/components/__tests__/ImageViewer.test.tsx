@@ -37,7 +37,8 @@ const mocks = vi.hoisted(() => {
       promptToSession: {} as Record<string, string>,
       workflowDurationStats: {},
       isExecuting: false,
-      executingPromptId: null,
+      executingPromptId: null as string | null,
+      latentPreviewByPrompt: {} as Record<string, { url: string; seq: number }>,
       loadWorkflow: vi.fn(),
     },
     queueState: {
@@ -49,6 +50,7 @@ const mocks = vi.hoisted(() => {
     historyState: {
       history: [] as HistoryEntry[],
       deleteItem: vi.fn(),
+      removeOutputImages: vi.fn(),
     },
     outputsState: {
       favorites: [] as string[],
@@ -152,6 +154,8 @@ describe('ImageViewer follow queue mode', () => {
     mocks.viewerState.viewerTranslate = { x: 0, y: 0 };
     mocks.workflowState.followQueue = true;
     mocks.workflowState.isExecuting = false;
+    mocks.workflowState.executingPromptId = null;
+    mocks.workflowState.latentPreviewByPrompt = {};
     mocks.workflowState.sessions = [];
     mocks.workflowState.activeSessionId = null;
     mocks.workflowState.promptToSession = {};
@@ -162,6 +166,7 @@ describe('ImageViewer follow queue mode', () => {
     mocks.historyState.history = [];
     mocks.setViewerState.mockClear();
     mocks.historyState.deleteItem.mockClear();
+    mocks.historyState.removeOutputImages.mockClear();
     mocks.outputsState.toggleFavorite.mockClear();
     mocks.navigationState.setCurrentPanel.mockClear();
     mocks.mediaViewerProps.length = 0;
@@ -199,6 +204,69 @@ describe('ImageViewer follow queue mode', () => {
       return Array.isArray(viewerImages) && viewerImages.length > 0;
     });
     expect(jumped).toBe(false);
+  });
+
+  it('displays a followed output that already existed when follow mode opened', async () => {
+    // Empty history (nothing for App to seed) + an output that landed before the
+    // viewer opened: the activation seed used to swallow this key, leaving the
+    // loading placeholder up forever with no path out of the empty state.
+    mocks.queueState.localPromptOrder = { 'prompt-1': 1 };
+    mocks.queueState.livePromptOutputs = {
+      'prompt-1': [{ filename: 'first.png', subfolder: '', type: 'output' }],
+    };
+
+    await act(async () => {
+      root.render(<ImageViewer onClose={() => {}} />);
+    });
+    await flushEffects();
+
+    const viewerUpdate = mocks.setViewerState.mock.calls.find(([next]) => {
+      const viewerImages = next.viewerImages as unknown[] | undefined;
+      return Array.isArray(viewerImages) && viewerImages.length > 0;
+    })?.[0];
+
+    expect(viewerUpdate).toBeDefined();
+    expect(viewerUpdate?.viewerIndex).toBe(0);
+    expect((viewerUpdate?.viewerImages as Array<Record<string, unknown>>)[0]).toMatchObject({
+      filename: 'first.png',
+      promptId: 'prompt-1',
+    });
+  });
+
+  it('paints the running prompt latent preview while there is nothing to display', async () => {
+    mocks.workflowState.isExecuting = true;
+    mocks.workflowState.executingPromptId = 'prompt-1';
+    mocks.workflowState.latentPreviewByPrompt = {
+      'prompt-1': { url: 'blob:latent-frame-1', seq: 7 },
+    };
+
+    await act(async () => {
+      root.render(<ImageViewer onClose={() => {}} />);
+    });
+    await flushEffects();
+
+    const props = mocks.mediaViewerProps.at(-1) as Record<string, unknown>;
+    expect(props.showLoadingPlaceholder).toBe(true);
+    expect(props.loadingPreviewSrc).toBe('blob:latent-frame-1');
+  });
+
+  it('never covers a displayed output with a latent preview', async () => {
+    mocks.workflowState.isExecuting = true;
+    mocks.workflowState.executingPromptId = 'prompt-2';
+    mocks.workflowState.latentPreviewByPrompt = {
+      'prompt-2': { url: 'blob:latent-frame-2', seq: 2 },
+    };
+    mocks.viewerState.viewerImages = [makeViewerImage('prompt-1')];
+    mocks.viewerState.viewerIndex = 0;
+
+    await act(async () => {
+      root.render(<ImageViewer onClose={() => {}} />);
+    });
+    await flushEffects();
+
+    const props = mocks.mediaViewerProps.at(-1) as Record<string, unknown>;
+    expect(props.showLoadingPlaceholder).toBe(false);
+    expect(props.loadingPreviewSrc).toBeNull();
   });
 
   it('follows a history output for a prompt observed in the queue on this device', async () => {
@@ -404,10 +472,11 @@ describe('ImageViewer follow queue mode', () => {
     await flushEffects();
   }
 
-  it('deletes the run\'s history entry when deleting an associated image', async () => {
+  it('reconciles history by file id when deleting an associated image', async () => {
     mocks.workflowState.followQueue = false;
-    // A multi-output run: the whole card should still be removed on a single
-    // image delete (we no longer keep it around for the siblings).
+    // A multi-output run: deleting one image reconciles by file id, so the card
+    // keeps its sibling and is only removed once its last image is gone. The
+    // viewer hands removeOutputImages the deleted file's id.
     mocks.historyState.history = [
       {
         prompt_id: 'prompt-del',
@@ -432,10 +501,10 @@ describe('ImageViewer follow queue mode', () => {
     await confirmDeleteFromViewer(makeViewerImage('prompt-del'));
 
     expect(vi.mocked(deleteFile)).toHaveBeenCalledWith('first.png', 'output');
-    expect(mocks.historyState.deleteItem).toHaveBeenCalledWith('prompt-del');
+    expect(mocks.historyState.removeOutputImages).toHaveBeenCalledWith(['output/first.png']);
   });
 
-  it('does not delete any history entry when the image has no associated run', async () => {
+  it('reconciles history by file id even when the image has no associated run', async () => {
     mocks.workflowState.followQueue = false;
     mocks.viewerState.viewerImages = [makeViewerImage(undefined)];
     mocks.viewerState.viewerIndex = 0;
@@ -448,7 +517,9 @@ describe('ImageViewer follow queue mode', () => {
     await confirmDeleteFromViewer(makeViewerImage(undefined));
 
     expect(vi.mocked(deleteFile)).toHaveBeenCalledWith('first.png', 'output');
-    expect(mocks.historyState.deleteItem).not.toHaveBeenCalled();
+    // Keyed by file id, so it still reconciles (a browsed output may be in
+    // history) — promptId is no longer required.
+    expect(mocks.historyState.removeOutputImages).toHaveBeenCalledWith(['output/first.png']);
   });
 
   it('follows each generation across an infinite-loop sequence', async () => {

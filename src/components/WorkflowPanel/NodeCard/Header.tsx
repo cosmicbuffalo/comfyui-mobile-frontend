@@ -15,6 +15,9 @@ interface NodeCardHeaderProps {
   isExecuting?: boolean;
   overallProgress: number | null;
   hasErrors: boolean;
+  // An uninstalled custom node — surfaces the same danger icon as an error node,
+  // which opens a popover offering to install it.
+  isMissing?: boolean;
   errorIconRef: RefObject<HTMLButtonElement | null>;
   errorPopoverOpen: boolean;
   setErrorPopoverOpen: (next: boolean) => void;
@@ -36,6 +39,7 @@ export function NodeCardHeader({
   isExecuting,
   overallProgress,
   hasErrors,
+  isMissing,
   errorIconRef,
   errorPopoverOpen,
   setErrorPopoverOpen,
@@ -97,13 +101,13 @@ export function NodeCardHeader({
           </h3>
         )}
         <span id={`node-id-badge-${nodeId}`} className="text-xs text-slate-500 min-w-[2ch] text-right">#{nodeId}</span>
-        {hasErrors && (
+        {(hasErrors || isMissing) && (
           <button
             ref={errorIconRef}
             type="button"
             onClick={handleErrorButtonClick}
             className="w-5 h-5 flex items-center justify-center text-red-500 hover:text-red-600 shrink-0"
-            aria-label="View errors"
+            aria-label={isMissing && !hasErrors ? 'Missing node' : 'View errors'}
           >
             <WarningTriangleIcon className="w-4 h-4" />
           </button>

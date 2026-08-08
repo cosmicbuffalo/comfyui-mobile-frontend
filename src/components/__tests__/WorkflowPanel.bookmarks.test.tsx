@@ -19,7 +19,6 @@ vi.mock('@/hooks/useRepositionMode', () => ({
 
 vi.mock('@/components/RepositionOverlay', () => ({ RepositionOverlay: () => null }));
 vi.mock('@/components/WorkflowPanel/NodeCard', () => ({ NodeCard: () => null }));
-vi.mock('@/components/WorkflowPanel/AddNodePlaceholder', () => ({ AddNodePlaceholder: () => null }));
 vi.mock('@/components/WorkflowPanel/ContainerFooter', () => ({ ContainerFooter: () => null }));
 vi.mock('@/components/WorkflowPanel/GraphContainer/Header', () => ({ GraphContainerHeader: () => null }));
 vi.mock('@/components/WorkflowPanel/GraphContainer/Placeholder', () => ({ GraphContainerPlaceholder: () => null }));

@@ -2,8 +2,10 @@ import { describe, expect, it } from 'vitest';
 import type { NodeTypes, Workflow, WorkflowNode } from '@/api/types';
 import {
   getWidgetDefinitions,
+  isPlaceholderPromotedConnection,
   PROXY_INDEX_OFFSET,
   resolveSubgraphPlaceholderInputWidgetDefs,
+  resolveSubgraphPlaceholderWidgetDefs,
   resolveSubgraphProxyInputWidgetDefs,
   resolveSubgraphBoundaryWidgetDefs,
   resolveSubgraphBoundaryInputWidgetDefs,
@@ -395,6 +397,106 @@ describe('widgetDefinitions lora manager support', () => {
     expect((inputDefs[0].options as Record<string, unknown>).__modelKind).toBe(
       'checkpoints',
     );
+  });
+});
+
+describe('promoted placeholder widget wired as a live connection', () => {
+  // A promoted widget wired to an upstream node output (no widget-value route,
+  // empty widgets_values) has no value to display. It used to render as a blank
+  // widget control; it must instead be marked `connected` (hidden from the
+  // parameters section) and surfaced as a connection button.
+  function wiredBlankSetup() {
+    const sourceNode = makeNode(100, 'SomeProducerNode', []);
+    sourceNode.outputs = [{ name: 'FLOAT', type: 'FLOAT', links: [55] }];
+
+    const placeholder = makeNode(200, 'subgraph-a', []); // empty widgets_values
+    placeholder.inputs = [
+      { name: 'frame_rate', type: 'FLOAT', link: 55, widget: { name: 'frame_rate' } },
+    ];
+
+    const innerNode = makeNode(300, 'InnerNode', []);
+    const workflow: Workflow = {
+      last_node_id: 300,
+      last_link_id: 55,
+      nodes: [sourceNode, placeholder],
+      links: [[55, sourceNode.id, 0, placeholder.id, 0, 'FLOAT']],
+      groups: [],
+      config: {},
+      version: 1,
+      definitions: {
+        subgraphs: [
+          { id: 'subgraph-a', nodes: [innerNode], links: [], groups: [], config: {} },
+        ],
+      },
+    } as unknown as Workflow;
+    const nodeTypes: NodeTypes = {
+      InnerNode: {
+        input: { required: { frame_rate: ['FLOAT', {}] }, optional: {} },
+        output: [],
+        output_name: [],
+        name: 'InnerNode',
+        display_name: 'InnerNode',
+        description: '',
+        python_module: '',
+        category: '',
+      },
+    } as unknown as NodeTypes;
+    return { placeholder, workflow, nodeTypes };
+  }
+
+  it('marks a wired, valueless promoted widget as connected', () => {
+    const { placeholder, workflow, nodeTypes } = wiredBlankSetup();
+    const widgets = resolveSubgraphPlaceholderWidgetDefs(placeholder, workflow, nodeTypes);
+    expect(widgets).toHaveLength(1);
+    expect(widgets[0].name).toBe('frame_rate');
+    expect(widgets[0].connected).toBe(true);
+  });
+
+  it('isPlaceholderPromotedConnection is true for the wired input', () => {
+    const { placeholder } = wiredBlankSetup();
+    expect(isPlaceholderPromotedConnection(placeholder.inputs[0])).toBe(true);
+  });
+
+  it('isPlaceholderPromotedConnection is false for an unwired widget value', () => {
+    const input = { name: 'frame_rate', type: 'FLOAT', link: null, widget: { name: 'frame_rate' } };
+    expect(isPlaceholderPromotedConnection(input)).toBe(false);
+  });
+
+  it('marks a wired promoted combo as connected even when a value resolves', () => {
+    // A promoted combo fed by a value-providing source (a primitive supplying
+    // "euler") is still populated BY A CONNECTION — it must render as a
+    // connection button, not an editable widget, so it is marked connected.
+    const sourceNode = makeNode(100, 'PrimitiveNode', ['euler']);
+    sourceNode.outputs = [{ name: 'sampler_name', type: 'COMBO', links: [55] }];
+    const placeholder = makeNode(200, 'subgraph-a', []);
+    placeholder.inputs = [
+      { name: 'sampler_name', type: 'COMBO', link: 55, widget: { name: 'sampler_name' } },
+    ];
+    const innerNode = makeNode(300, 'SamplerNode', []);
+    const workflow = {
+      last_node_id: 300, last_link_id: 55,
+      nodes: [sourceNode, placeholder],
+      links: [[55, sourceNode.id, 0, placeholder.id, 0, 'COMBO']],
+      groups: [], config: {}, version: 1,
+      definitions: {
+        subgraphs: [{ id: 'subgraph-a', nodes: [innerNode], links: [], groups: [], config: {} }],
+      },
+    } as unknown as Workflow;
+    const nodeTypes = {
+      SamplerNode: {
+        input: { required: { sampler_name: [['euler', 'dpmpp_2m'], {}] }, optional: {} },
+        output: [], output_name: [], name: 'SamplerNode', display_name: 'SamplerNode',
+        description: '', python_module: '', category: '',
+      },
+    } as unknown as NodeTypes;
+
+    const inputDefs = resolveSubgraphPlaceholderInputWidgetDefs(placeholder, workflow, nodeTypes);
+    expect(inputDefs).toHaveLength(1);
+    // The value still resolves (used for the connection label/routing) ...
+    expect(inputDefs[0].value).toBe('euler');
+    // ... but it is connected, so NodeCard hides the widget and shows a button.
+    expect(inputDefs[0].connected).toBe(true);
+    expect(isPlaceholderPromotedConnection(placeholder.inputs[0])).toBe(true);
   });
 });
 

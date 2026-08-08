@@ -5,15 +5,27 @@ import { useBodyScrollLock } from '@/hooks/useBodyScrollLock';
 import { useWorkflowStore } from '@/hooks/useWorkflow';
 import { useImageViewerStore } from '@/hooks/useImageViewer';
 import { usePinnedWidgetStore } from '@/hooks/usePinnedWidget';
+import { useIsDesktop } from '@/hooks/useIsDesktop';
 import type { ViewerImage } from '@/utils/viewerImages';
+import type { DownloadOutcome } from '@/utils/downloads';
 import { MediaViewerHeader } from './MediaViewer/Header';
+import { classifySwipe } from './swipeGesture';
+import { compareClipPath, DEFAULT_COMPARE_CLIP } from './compareClip';
 import { MediaViewerActions } from './MediaViewer/Actions';
 import { MediaViewerMetadata } from './MediaViewer/Metadata';
 import { CloseButton } from '@/components/buttons/CloseButton';
+import { HeartIcon, RejectedIcon } from '@/components/icons';
+import { MenuIcon } from '@/components/icons/MenuIcon';
 import { extractMetadata } from '@/utils/metadata';
 import { isVideoFilename } from '@/utils/media';
-import { getFileWorkflowAvailability, getImageMetadata } from '@/api/client';
+import {
+  getFileWorkflowAvailability,
+  getImageMetadata,
+  getMediaThumbnailUrlFromAssetUrl,
+  getPlayableVideoUrl,
+} from '@/api/client';
 import { resolveFilePath, resolveFileSource } from '@/utils/workflowOperations';
+import { reportVideoPlaybackIssue } from '@/utils/mediaDiagnostics';
 
 interface MediaViewerProps {
   open: boolean;
@@ -24,11 +36,23 @@ interface MediaViewerProps {
   onDelete: (item: ViewerImage) => void;
   onLoadWorkflow: (item: ViewerImage) => void;
   onLoadInWorkflow: (item: ViewerImage) => void;
+  // Favoriting is sticky: this fires for the `f` key and the heart button and
+  // should *enter* the favorited state (never unfavorite). Unfavoriting is the
+  // reject affordance's job (see onReject).
   onToggleFavorite?: (item: ViewerImage) => void;
   isFavorited?: (item: ViewerImage) => boolean;
-  onDownload?: (item: ViewerImage) => void;
+  // The `x` affordance: callers unfavorite if the item is favorited, otherwise
+  // toggle the rejected state (the two states are mutually exclusive).
+  onReject?: (item: ViewerImage) => void;
+  isRejected?: (item: ViewerImage) => boolean;
+  onDownload?: (item: ViewerImage) => Promise<DownloadOutcome | undefined> | void;
   showMetadataToggle?: boolean;
   showLoadingPlaceholder?: boolean;
+  // Live latent preview painted behind the placeholder's progress bar while a
+  // run is in flight and there is no output to show yet. Each frame is a fresh
+  // blob URL, so swapping `src` on one reused <img> keeps the previous frame
+  // painted until the next decodes.
+  loadingPreviewSrc?: string | null;
   loadingProgress?: number;
   loadingLabel?: string;
   loadWorkflowProgress?: number | null;
@@ -84,9 +108,12 @@ export function MediaViewer({
   onLoadInWorkflow,
   onToggleFavorite,
   isFavorited,
+  onReject,
+  isRejected,
   onDownload,
   showMetadataToggle = false,
   showLoadingPlaceholder = false,
+  loadingPreviewSrc = null,
   loadingProgress = 0,
   loadingLabel,
   loadWorkflowProgress,
@@ -98,6 +125,9 @@ export function MediaViewer({
   const overlayRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const imageRef = useRef<HTMLImageElement>(null);
+  // Overlay (image A) in comparison mode. Driven directly during gestures so it
+  // zooms/pans in lockstep with the base image instead of catching up on render.
+  const compareImageRef = useRef<HTMLImageElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const naturalSizeRef = useRef<{ width: number; height: number } | null>(null);
   const adjacentPreloadsRef = useRef<
@@ -128,6 +158,41 @@ export function MediaViewer({
   const [baseSize, setBaseSize] = useState<{ width: number; height: number } | null>(null);
   const [containerSize, setContainerSize] = useState<{ width: number; height: number } | null>(null);
   const [isIdle, setIsIdle] = useState(false);
+  // In-viewer download toast (Saving / Saved / failed). Lives inside the
+  // viewer so it only shows when the viewer is open and so it can be
+  // positioned right above the action-button row — the Flutter SnackBar
+  // we used to fire from the iOS app side anchored at the system bottom,
+  // far away from where the user just tapped.
+  const [downloadToast, setDownloadToast] = useState<{
+    message: string;
+    tone: 'info' | 'success' | 'error';
+  } | null>(null);
+  const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => {
+    if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+  }, []);
+  const showDownloadToast = useCallback(
+    (message: string, tone: 'info' | 'success' | 'error', autoDismissMs: number | null) => {
+      if (toastTimerRef.current) {
+        clearTimeout(toastTimerRef.current);
+        toastTimerRef.current = null;
+      }
+      setDownloadToast({ message, tone });
+      if (autoDismissMs != null) {
+        toastTimerRef.current = setTimeout(() => {
+          toastTimerRef.current = null;
+          setDownloadToast(null);
+        }, autoDismissMs);
+      }
+    },
+    [],
+  );
+  // A/B comparison wipe divider, as a 0..1 fraction of the container width (a
+  // screen-fixed divider: image A shows to its left, B to its right). The image
+  // pans/zooms beneath it and the clip is recomputed from the transform, so the
+  // two images stay in sync even when zoomed.
+  const [comparePos, setComparePos] = useState(0.5);
+  const [compareHandleTop, setCompareHandleTop] = useState(0.5);
   const [showMetadata, setShowMetadata] = useState(false);
   const idleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const targetZoomModeRef = useRef<'fit' | 'cover'>('fit');
@@ -159,6 +224,11 @@ export function MediaViewer({
   const pinnedWidget = usePinnedWidgetStore((s) => s.pinnedWidget);
   const pinOverlayOpen = usePinnedWidgetStore((s) => s.pinOverlayOpen);
   const togglePinOverlay = usePinnedWidgetStore((s) => s.togglePinOverlay);
+  const isDesktop = useIsDesktop();
+  // The pinned widget modal docks to the right 25% on desktop. Push only the
+  // right-side overlay controls inward by that much so they stay visible (the
+  // header/center and left controls don't move).
+  const rightControlsInset = pinOverlayOpen && isDesktop ? '25vw' : undefined;
 
   const currentItem = index >= 0 ? (items[index] ?? items[0] ?? null) : null;
   const isVideo = Boolean(currentItem && isViewerVideo(currentItem));
@@ -199,6 +269,13 @@ export function MediaViewer({
     return () => window.clearTimeout(timer);
   }, [isCurrentImageLoading]);
   const renderIsVideo = Boolean(renderItem && isViewerVideo(renderItem));
+  // A/B comparison mode: when the item carries a `comparison`, render both images
+  // sharing one transform with a wipe divider. The item's `src` is image B (the
+  // base that drives sizing/load), so the existing load machinery is untouched;
+  // image A is the clipped overlay. `isComparisonMode` (off currentItem) gates
+  // the overlay to just the X button.
+  const renderComparison = !renderIsVideo ? renderItem?.comparison ?? null : null;
+  const isComparisonMode = Boolean(currentItem?.comparison);
   const renderFullSrc = renderItem && !renderIsVideo ? getFullScreenImageSrc(renderItem) : null;
   const fileId = currentItem?.file?.id ?? null;
   const fetchedMetadata = fileId ? metadataById[fileId] : undefined;
@@ -253,11 +330,67 @@ export function MediaViewer({
     onToggleFavorite?.(currentItem);
   }, [currentItem, onToggleFavorite, resetIdleTimer]);
 
-  const handleDownloadClick = useCallback(() => {
+  const handleRejectClick = useCallback(() => {
     if (!currentItem) return;
     resetIdleTimer();
-    onDownload?.(currentItem);
-  }, [currentItem, onDownload, resetIdleTimer]);
+    onReject?.(currentItem);
+  }, [currentItem, onReject, resetIdleTimer]);
+
+  const handleDownloadClick = useCallback(() => {
+    if (!currentItem) return undefined;
+    resetIdleTimer();
+    const result = onDownload?.(currentItem);
+    if (!result || typeof (result as Promise<unknown>).then !== 'function') {
+      return undefined;
+    }
+    // Drive the in-viewer toast from the outcome. The "info" toast stays up for
+    // the duration; the success/error states auto-dismiss after a beat. (The
+    // Photos wording this used to describe arrives with the native bridge in
+    // 3.1.1 — this release only ever routes through the browser download.) The DownloadButton still uses the same
+    // returned Promise to hold its spinner — we just also tap it for the
+    // toast lifecycle.
+    return (result as Promise<DownloadOutcome | undefined>).then(
+      (outcome) => {
+        if (!outcome) {
+          setDownloadToast(null);
+          return;
+        }
+        // Only claim what this path can actually observe: the browser took the
+        // file. Whether it landed on disk is not knowable from an anchor click,
+        // so a definite "Downloaded." would be a guess the user may act on.
+        if (outcome.started) {
+          showDownloadToast('Download started.', 'success', 2000);
+        } else {
+          showDownloadToast('Download failed.', 'error', 3000);
+        }
+      },
+      () => showDownloadToast('Download failed.', 'error', 3000),
+    );
+  }, [currentItem, onDownload, resetIdleTimer, showDownloadToast]);
+
+  // Show an in-flight message right when loading begins (DownloadButton
+  // signals via onLoadingChange). Only the native-iOS path saves to Photos —
+  // a slow web download (large video, slow proxy) must not claim it's
+  // "Saving to Photos".
+  const handleDownloadLoadingChange = useCallback(
+    (loading: boolean) => {
+      if (loading) {
+        if (idleTimerRef.current) {
+          clearTimeout(idleTimerRef.current);
+          idleTimerRef.current = null;
+        }
+        setIsIdle(false);
+        // Keep info-toast persistent — the result handler clears or
+        // replaces it once the promise settles.
+        showDownloadToast('Downloading…', 'info', null);
+      } else {
+        // Give the user time to read the completed toast, then return to the
+        // viewer's normal chrome auto-hide behavior.
+        resetIdleTimer();
+      }
+    },
+    [resetIdleTimer, showDownloadToast],
+  );
 
   const shouldIgnoreViewerKeyboard = useCallback(() => {
     const active = document.activeElement;
@@ -272,9 +405,65 @@ export function MediaViewer({
   const currentIsFavorited = Boolean(
     currentItem && isFavorited && isFavorited(currentItem),
   );
+  const currentIsRejected = Boolean(
+    currentItem && isRejected && isRejected(currentItem),
+  );
+
+  // Bottom-corner positions of the displayed image, used to park the favorite/
+  // reject state badges on the image itself once the controls fade on idle.
+  // Mirrors getBaseOffset's centering, then offsets by the current pan/zoom, and
+  // clamps to the visible container so the badges hug the image's bottom corners.
+  const idleStateBadgePositions = useMemo(() => {
+    if (!baseSize || !containerSize) return null;
+    const scaledWidth = baseSize.width * scale;
+    const scaledHeight = baseSize.height * scale;
+    const offsetX =
+      (scaledWidth < containerSize.width ? (containerSize.width - scaledWidth) / 2 : 0) + translate.x;
+    const offsetY =
+      (scaledHeight < containerSize.height ? (containerSize.height - scaledHeight) / 2 : 0) + translate.y;
+    const PAD = 8;
+    const ICON = 28; // w-7 / h-7
+    const left = Math.max(0, offsetX);
+    const right = Math.min(containerSize.width, offsetX + scaledWidth);
+    const bottom = Math.min(containerSize.height, offsetY + scaledHeight);
+    const top = Math.max(PAD, bottom - ICON - PAD);
+    return {
+      reject: { left: left + PAD, top },
+      favorite: { left: Math.max(left + PAD, right - ICON - PAD), top },
+    };
+  }, [baseSize, containerSize, scale, translate]);
+
+  // Re-centre the comparison wipe when navigating to a different item.
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- resetting UI state on item change
+    setComparePos(0.5);
+    setCompareHandleTop(0.5);
+  }, [index]);
+
+  // Drag the comparison divider. Lives on the handle (which captures the pointer
+  // and stops propagation) so it never triggers the container's pan/zoom.
+  const handleCompareDividerDown = useCallback((e: React.PointerEvent) => {
+    e.stopPropagation();
+    e.currentTarget.setPointerCapture(e.pointerId);
+  }, []);
+  const handleCompareDividerMove = useCallback((e: React.PointerEvent) => {
+    if (!e.currentTarget.hasPointerCapture(e.pointerId)) return;
+    e.stopPropagation();
+    const container = containerRef.current;
+    if (!container) return;
+    const rect = container.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) return;
+    setComparePos(Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width)));
+    const handleHalfPx = 24;
+    const minCenter = Math.min(handleHalfPx, rect.height / 2);
+    const maxCenter = Math.max(rect.height - handleHalfPx, rect.height / 2);
+    const centerY = Math.min(maxCenter, Math.max(minCenter, e.clientY - rect.top));
+    setCompareHandleTop(centerY / rect.height);
+  }, []);
   const canFavoriteCurrent = Boolean(
     currentItem?.file && onToggleFavorite,
   );
+  const canRejectCurrent = Boolean(currentItem?.file && onReject);
   const canDownloadCurrent = Boolean(currentItem?.src && onDownload);
 
   useEffect(() => {
@@ -544,6 +733,9 @@ export function MediaViewer({
     if (!open) return;
     const handleKey = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
+        // The pinned widget modal owns Escape while it's open (it closes
+        // itself) — don't also close the viewer underneath it.
+        if (pinOverlayOpen) return;
         onClose();
         return;
       }
@@ -568,7 +760,9 @@ export function MediaViewer({
           return;
         case 'Delete':
         case 'Backspace':
-          if (currentItem) {
+          // Favorited items are protected from deletion (mirrors the disabled
+          // delete button).
+          if (currentItem && !currentIsFavorited) {
             event.preventDefault();
             handleDeleteClick();
           }
@@ -578,6 +772,15 @@ export function MediaViewer({
           if (canFavoriteCurrent) {
             event.preventDefault();
             handleToggleFavoriteClick();
+          }
+          return;
+        case 'x':
+        case 'X':
+          // Unfavorite if favorited, otherwise toggle rejected — the caller
+          // resolves which (the two states are mutually exclusive).
+          if (canRejectCurrent) {
+            event.preventDefault();
+            handleRejectClick();
           }
           return;
         case 'w':
@@ -653,14 +856,17 @@ export function MediaViewer({
     items.length,
     onIndexChange,
     currentItem,
+    currentIsFavorited,
     isVideo,
     canFavoriteCurrent,
+    canRejectCurrent,
     canLoadWorkflow,
     showMetadataToggle,
     canToggleMetadata,
     resetIdleTimer,
     handleDeleteClick,
     handleToggleFavoriteClick,
+    handleRejectClick,
     handleLoadWorkflowClick,
     handleLoadInWorkflowClick,
     handleToggleMetadata,
@@ -854,7 +1060,22 @@ export function MediaViewer({
     const s = scaleRef.current;
     const t = translateRef.current;
     const offset = getBaseOffset(s);
-    img.style.transform = `translate3d(${offset.x + t.x}px, ${offset.y + t.y}px, 0) scale(${s})`;
+    const transform = `translate3d(${offset.x + t.x}px, ${offset.y + t.y}px, 0) scale(${s})`;
+    img.style.transform = transform;
+    // In comparison mode, drive the A overlay with the same transform so both
+    // images zoom/pan together. Its clip tracks the screen-fixed divider, so it
+    // must be recomputed here too — otherwise the wipe boundary drifts off the
+    // divider as the image scales mid-gesture (the clip is a fraction of the
+    // image's own, now-larger, width).
+    const overlay = compareImageRef.current;
+    if (overlay && baseSize && containerSize) {
+      overlay.style.transform = transform;
+      overlay.style.clipPath = compareClipPath({
+        dividerX: comparePos * containerSize.width,
+        imageLeft: offset.x + t.x,
+        scaledWidth: baseSize.width * s,
+      });
+    }
   };
 
   const handlePointerDown = (event: React.PointerEvent) => {
@@ -879,6 +1100,7 @@ export function MediaViewer({
 
         const img = imageRef.current;
         if (img) img.style.transition = 'none';
+        if (compareImageRef.current) compareImageRef.current.style.transition = 'none';
       }
     } else if (pointers.size === 2 && !isVideo) {
       const [a, b] = Array.from(pointers.values());
@@ -956,6 +1178,7 @@ export function MediaViewer({
 
       const img = imageRef.current;
       if (img) img.style.transition = 'transform 0.05s linear';
+      if (compareImageRef.current) compareImageRef.current.style.transition = 'transform 0.05s linear';
 
       const now = Date.now();
       const lastTap = lastTapRef.current;
@@ -976,23 +1199,24 @@ export function MediaViewer({
         lastTapRef.current = { time: now, x: event.clientX, y: event.clientY };
         const swipe = swipeRef.current;
         if (!isInputFocused && swipe) {
-          const dx = event.clientX - swipe.x;
-          const dy = event.clientY - swipe.y;
-          const durationMs = Date.now() - swipe.time;
-          const absX = Math.abs(dx);
-          const absY = Math.abs(dy);
           const s = scaleRef.current;
-          const isFitOrCover = Math.abs(s - fitScale) < 0.05 || Math.abs(s - coverScale) < 0.05;
-          const isTap = durationMs < 250 && absX < 10 && absY < 10;
-          if (durationMs <= 350 && absX > 60 && absX > absY && isFitOrCover) {
-            if (dx < 0) {
-              if (index < items.length - 1) {
-                onIndexChange(index + 1);
-              }
-            } else if (dx > 0 && index > 0) {
-              onIndexChange(index - 1);
-            }
-          } else if (isTap) {
+          const gesture = classifySwipe({
+            dx: event.clientX - swipe.x,
+            dy: event.clientY - swipe.y,
+            durationMs: Date.now() - swipe.time,
+            isFitOrCover:
+              Math.abs(s - fitScale) < 0.05 || Math.abs(s - coverScale) < 0.05,
+            canPanVertically: Boolean(
+              baseSize && containerSize && baseSize.height * s > containerSize.height + 1,
+            ),
+          });
+          if (gesture === 'next') {
+            if (index < items.length - 1) onIndexChange(index + 1);
+          } else if (gesture === 'previous') {
+            if (index > 0) onIndexChange(index - 1);
+          } else if (gesture === 'close') {
+            onClose();
+          } else if (gesture === 'tap') {
             resetIdleTimer();
           }
         }
@@ -1035,6 +1259,11 @@ export function MediaViewer({
     const nextScale = Math.max(fitScale, Math.min(5, prevScale + delta));
     if (nextScale === prevScale) return;
 
+    // Anchor the zoom at the cursor: keep the image point currently under the
+    // pointer fixed on screen. The rendered transform is
+    //   screen = baseOffset(scale) + translate + localPx * scale   (origin top-left)
+    // so invert it at the old scale to get the local point, then solve for the
+    // translate that keeps it under the cursor at the new scale.
     const container = containerRef.current;
     const prevTranslate = translateRef.current;
     let nextTranslate = prevTranslate;
@@ -1099,6 +1328,23 @@ export function MediaViewer({
     );
   }
 
+  // Shared zoom/pan transform — applied identically to both comparison images so
+  // they stay in sync, and to the single image otherwise.
+  const baseOffsetNow = getBaseOffset(scale);
+  const imageTransform = `translate3d(${baseOffsetNow.x + translate.x}px, ${baseOffsetNow.y + translate.y}px, 0) scale(${scale})`;
+  // Comparison divider geometry: a screen-fixed vertical line at `comparePos` of
+  // the container; image A is clipped to everything left of it. Converting the
+  // divider's screen X into a fraction of the (transformed) image width keeps the
+  // wipe consistent on the image content as it zooms/pans.
+  const compareDividerX = containerSize ? comparePos * containerSize.width : 0;
+  const compareClip = baseSize && containerSize
+    ? compareClipPath({
+        dividerX: compareDividerX,
+        imageLeft: baseOffsetNow.x + translate.x,
+        scaledWidth: baseSize.width * scale,
+      })
+    : DEFAULT_COMPARE_CLIP;
+
   return createPortal(
     <div
       ref={overlayRef}
@@ -1117,15 +1363,33 @@ export function MediaViewer({
       >
         {showLoadingPlaceholder ? (
           <div className="absolute inset-0 flex flex-col items-center justify-center text-white">
-            <div className="w-12 h-12 border-4 border-slate-700 border-t-cyan-300 rounded-full animate-spin" />
-            <div className="mt-4 w-48 h-2 rounded-full bg-slate-800 overflow-hidden">
-              <div
-                className="h-full bg-cyan-400 transition-all duration-300"
-                style={{ width: `${Math.min(100, Math.max(0, loadingProgress))}%` }}
+            {loadingPreviewSrc && (
+              <img
+                src={loadingPreviewSrc}
+                alt="Live preview"
+                draggable={false}
+                className="latent-preview-image absolute inset-0 w-full h-full object-contain select-none"
               />
-            </div>
-            <div className="mt-2 text-sm text-slate-300">
-              {loadingLabel ?? `${Math.min(100, Math.max(0, loadingProgress))}%`}
+            )}
+            {/* With a preview behind it the spinner would just obscure the image,
+                so the progress bar alone sits in a legible chip near the bottom. */}
+            <div
+              className={loadingPreviewSrc
+                ? 'absolute bottom-24 flex flex-col items-center rounded-xl bg-slate-950/70 px-4 py-3 backdrop-blur-sm'
+                : 'flex flex-col items-center'}
+            >
+              {!loadingPreviewSrc && (
+                <div className="w-12 h-12 mb-4 border-4 border-slate-700 border-t-cyan-300 rounded-full animate-spin" />
+              )}
+              <div className="w-48 h-2 rounded-full bg-slate-800 overflow-hidden">
+                <div
+                  className="h-full bg-cyan-400 transition-all duration-300"
+                  style={{ width: `${Math.min(100, Math.max(0, loadingProgress))}%` }}
+                />
+              </div>
+              <div className="mt-2 text-sm text-slate-300">
+                {loadingLabel ?? `${Math.min(100, Math.max(0, loadingProgress))}%`}
+              </div>
             </div>
           </div>
         ) : renderItem && (
@@ -1138,15 +1402,23 @@ export function MediaViewer({
                   // element whose old (looping, autoplaying) stream keeps decoding.
                   key={renderItem.src}
                   ref={videoRef}
-                  src={renderItem.src}
+                  src={getPlayableVideoUrl(renderItem.src)}
+                  poster={getMediaThumbnailUrlFromAssetUrl(renderItem.src)}
                   controls
                   autoPlay
                   loop
                   muted
                   playsInline
+                  preload="auto"
                   className="w-full h-full object-contain select-none"
                   onDragStart={(event) => event.preventDefault()}
-                  onError={() => setVideoError(true)}
+                  onError={(event) => {
+                    reportVideoPlaybackIssue('media viewer', 'error', event.currentTarget);
+                    setVideoError(true);
+                  }}
+                  onStalled={(event) => {
+                    reportVideoPlaybackIssue('media viewer', 'stalled', event.currentTarget);
+                  }}
                   onLoadedMetadata={(event) => {
                     const { videoWidth, videoHeight } = event.currentTarget;
                     if (videoWidth > 0 && videoHeight > 0) {
@@ -1160,6 +1432,41 @@ export function MediaViewer({
                   </div>
                 )}
               </>
+            ) : renderComparison ? (
+              <>
+                {/* Base (image B) — drives sizing/load and the shared transform. */}
+                <img
+                  ref={imageRef}
+                  src={getFullScreenImageSrc(renderItem)}
+                  alt={renderItem.alt || 'Comparison'}
+                  className="w-full h-auto block select-none relative"
+                  draggable={false}
+                  onLoad={handleImageLoad}
+                  style={{
+                    transform: imageTransform,
+                    transformOrigin: 'top left',
+                    willChange: 'transform',
+                    backfaceVisibility: 'hidden',
+                    WebkitBackfaceVisibility: 'hidden',
+                  }}
+                />
+                {/* Overlay (image A) — same transform, clipped to the wipe. */}
+                <img
+                  ref={compareImageRef}
+                  src={renderComparison.aDisplaySrc ?? renderComparison.aSrc}
+                  alt="Comparison A"
+                  className="absolute top-0 left-0 w-full h-auto block select-none pointer-events-none"
+                  draggable={false}
+                  style={{
+                    transform: imageTransform,
+                    transformOrigin: 'top left',
+                    clipPath: compareClip,
+                    willChange: 'transform',
+                    backfaceVisibility: 'hidden',
+                    WebkitBackfaceVisibility: 'hidden',
+                  }}
+                />
+              </>
             ) : (
               <img
                 ref={imageRef}
@@ -1169,7 +1476,7 @@ export function MediaViewer({
                 draggable={false}
                 onLoad={handleImageLoad}
                 style={{
-                  transform: `translate3d(${getBaseOffset(scale).x + translate.x}px, ${getBaseOffset(scale).y + translate.y}px, 0) scale(${scale})`,
+                  transform: imageTransform,
                   transformOrigin: 'top left',
                   willChange: 'transform',
                   backfaceVisibility: 'hidden',
@@ -1178,6 +1485,24 @@ export function MediaViewer({
               />
             )}
           </>
+        )}
+        {/* Comparison wipe divider + draggable handle (screen-fixed; the image
+            zooms/pans beneath it). The handle captures the pointer so dragging it
+            never pans the image. */}
+        {renderComparison && containerSize && (
+          <div
+            className="pointer-events-none absolute top-0 bottom-0 z-[3] w-0.5 -translate-x-1/2 bg-white/90"
+            style={{ left: compareDividerX }}
+          >
+            <div
+              className="pointer-events-auto absolute left-1/2 flex h-12 w-12 -translate-x-1/2 -translate-y-1/2 cursor-ew-resize touch-none items-center justify-center rounded-full bg-[#fff] text-slate-600 shadow-md"
+              style={{ top: `${compareHandleTop * 100}%` }}
+              onPointerDown={handleCompareDividerDown}
+              onPointerMove={handleCompareDividerMove}
+            >
+              <MenuIcon className="h-5 w-5 rotate-90" />
+            </div>
+          </div>
         )}
 
         {/* Loading spinner over the image while the current one decodes — mirrors
@@ -1204,19 +1529,55 @@ export function MediaViewer({
         zIndex={MEDIA_VIEWER_OVERLAY_Z_INDEX}
       />
 
+      {/* Idle state badges: when the controls fade out, keep the favorite/reject
+          state visible by parking a bare icon in the image's bottom corners —
+          reject bottom-left, favorite bottom-right. Cross-fades with the action
+          bar (which shows the same state as buttons while active). */}
+      {idleStateBadgePositions && (currentIsRejected || currentIsFavorited) && (
+        <div
+          className={`absolute inset-x-0 top-0 pointer-events-none transition-opacity duration-300 ${
+            isIdle ? 'opacity-100' : 'opacity-0'
+          }`}
+          style={{
+            height: 'calc(100vh - var(--bottom-bar-offset, 0px))',
+            zIndex: MEDIA_VIEWER_OVERLAY_Z_INDEX,
+          }}
+        >
+          {currentIsRejected && (
+            <div
+              className="absolute"
+              style={idleStateBadgePositions.reject}
+            >
+              <RejectedIcon className="w-7 h-7 drop-shadow-lg" />
+            </div>
+          )}
+          {currentIsFavorited && (
+            <div
+              className="absolute"
+              style={idleStateBadgePositions.favorite}
+            >
+              <HeartIcon className="w-7 h-7 text-red-500 drop-shadow-lg" />
+            </div>
+          )}
+        </div>
+      )}
+
       <div
         className={`absolute inset-0 pointer-events-none transition-opacity duration-300 ${
           isIdle ? 'opacity-0' : 'opacity-100'
         }`}
         style={{ zIndex: MEDIA_VIEWER_OVERLAY_Z_INDEX }}
       >
-        {currentItem && (
+        {/* In comparison mode the only chrome is the close button (rendered
+            separately above) — no header/actions/metadata. */}
+        {currentItem && !isComparisonMode && (
           <>
             <MediaViewerHeader
               index={index}
               total={items.length}
               displayName={displayName}
               resolution={naturalSize}
+              rightInset={rightControlsInset}
             />
             <MediaViewerActions
               isVideo={isVideo}
@@ -1225,14 +1586,23 @@ export function MediaViewer({
               canToggleMetadata={canToggleMetadata}
               canFavorite={canFavoriteCurrent}
               isFavorited={currentIsFavorited}
+              canReject={canRejectCurrent}
+              isRejected={currentIsRejected}
               canDownload={canDownloadCurrent}
+              // Favorited items can't be deleted — keep the button visible but
+              // disabled so the protection is discoverable.
+              deleteDisabled={currentIsFavorited}
               loadWorkflowProgress={loadWorkflowProgress}
               onDelete={handleDeleteClick}
               onLoadWorkflow={handleLoadWorkflowClick}
               onUseInWorkflow={handleLoadInWorkflowClick}
               onToggleMetadata={handleToggleMetadata}
               onToggleFavorite={handleToggleFavoriteClick}
+              onReject={handleRejectClick}
               onDownload={handleDownloadClick}
+              downloadFileId={fileId}
+              onDownloadLoadingChange={handleDownloadLoadingChange}
+              rightInset={rightControlsInset}
             />
             <MediaViewerMetadata
               isVideo={isVideo}
@@ -1245,6 +1615,28 @@ export function MediaViewer({
           </>
         )}
       </div>
+      {/* Download toast — anchored just above the action-button row so a tap
+          on Download sees its feedback right where the eye is. Created
+          inside the viewer's overlay portal so it auto-unmounts when the
+          viewer closes (the user can't end up watching a "Saving…" toast
+          for a viewer they already dismissed). */}
+      {downloadToast && (
+        <div
+          className={`absolute left-1/2 -translate-x-1/2 pointer-events-none px-4 py-2 rounded-lg text-sm font-medium shadow-lg backdrop-blur-md border border-white/10 ${
+            downloadToast.tone === 'success'
+              ? 'bg-emerald-900/85 text-emerald-50'
+              : downloadToast.tone === 'error'
+                ? 'bg-red-900/85 text-red-50'
+                : 'bg-slate-900/85 text-slate-100'
+          }`}
+          style={{
+            bottom: 'calc(var(--bottom-bar-offset, 0px) + 64px)',
+            zIndex: MEDIA_VIEWER_OVERLAY_Z_INDEX + 1,
+          }}
+        >
+          {downloadToast.message}
+        </div>
+      )}
     </div>,
     document.body
   );

@@ -127,16 +127,18 @@ describe('extractWorkflowFromImageBytes', () => {
 
   it('decodes EXIF as UTF-8 so non-Latin-1 characters survive', () => {
     // ComfyUI packs UTF-8 JSON into the (nominally ASCII) EXIF tag; a Latin-1
-    // decode would mojibake emoji/CJK in node titles.
+    // decode would mojibake emoji/CJK in prompts and node titles. It still
+    // parses as JSON, so the workflow loads looking fine but corrupted, and a
+    // re-run generates from the mangled prompt.
     const wfWithEmoji = JSON.stringify({
-      nodes: [{ id: 1, type: 'KSampler', title: 'Sampler 🟢 日本語' }],
+      nodes: [{ id: 1, type: 'KSampler', title: 'Sampler \u{1F7E2} \u65E5\u672C\u8A9E' }],
       links: [],
     });
     const bytes = Array.from(new TextEncoder().encode(`workflow:${wfWithEmoji}`));
     const webp = makeWebp(makeExifWithMakeBytes(bytes));
     const wf = extractWorkflowFromImageBytes(webp);
     expect(wf).not.toBeNull();
-    expect((wf!.nodes[0] as { title?: string }).title).toBe('Sampler 🟢 日本語');
+    expect((wf!.nodes[0] as { title?: string }).title).toBe('Sampler \u{1F7E2} \u65E5\u672C\u8A9E');
   });
 
   it('ignores EXIF that holds only a prompt (no workflow tag)', () => {

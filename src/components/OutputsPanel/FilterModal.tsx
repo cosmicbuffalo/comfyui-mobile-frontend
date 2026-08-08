@@ -17,7 +17,8 @@ interface FilterModalProps {
 }
 
 export function FilterModal({
-  open, onClose, filter, sort, onChangeFilter, onChangeSort, zIndex = 1600, hideTypeFilter = false
+  open, onClose, filter, sort, onChangeFilter, onChangeSort, zIndex = 1600,
+  hideTypeFilter = false
 }: FilterModalProps) {
   if (!open) return null;
 

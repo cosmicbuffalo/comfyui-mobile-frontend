@@ -1,17 +1,31 @@
 import { useMemo, useState } from 'react';
 import type { KeyboardEvent, MouseEvent, PointerEvent } from 'react';
-import { XMarkIcon } from '@/components/icons';
+import { CheckIcon, ClipboardIcon, XMarkIcon } from '@/components/icons';
+import { copyTextToClipboard } from '@/utils/clipboard';
 import { useWorkflowStore } from '@/hooks/useWorkflow';
 import { useNavigationStore } from '@/hooks/useNavigation';
 import { useWorkflowErrorsStore } from '@/hooks/useWorkflowErrors';
 import { useImageViewerStore } from '@/hooks/useImageViewer';
+import { useWidgetModalOpenStore } from '@/hooks/useWidgetModalOpen';
 import { useQueueStore } from '@/hooks/useQueue';
 import { useOverallProgress } from '@/hooks/useOverallProgress';
 import { resolveExecutingNodeLabel } from '@/utils/executionLabels';
 
+// Clamp the inline error message so a long backend traceback can't grow the toast
+// off-screen (which would carry the Dismiss button out of reach); the full text is
+// available via the Copy button.
+const ERROR_MESSAGE_CLAMP_LINES = 5;
+const clampLinesStyle = {
+  display: '-webkit-box',
+  WebkitBoxOrient: 'vertical' as const,
+  WebkitLineClamp: ERROR_MESSAGE_CLAMP_LINES,
+  overflow: 'hidden',
+};
+
 export function BottomStatusOverlay() {
   const currentPanel = useNavigationStore((s) => s.currentPanel);
   const viewerOpen = useImageViewerStore((s) => s.viewerOpen);
+  const widgetModalOpen = useWidgetModalOpenStore((s) => s.openCount > 0);
   const workflow = useWorkflowStore((s) => s.workflow);
   const isExecuting = useWorkflowStore((s) => s.isExecuting);
   const progress = useWorkflowStore((s) => s.progress);
@@ -21,6 +35,7 @@ export function BottomStatusOverlay() {
   const workflowDurationStats = useWorkflowStore((s) => s.workflowDurationStats);
   const error = useWorkflowErrorsStore((s) => s.error);
   const nodeErrors = useWorkflowErrorsStore((s) => s.nodeErrors);
+  const nodeErrorsFromRun = useWorkflowErrorsStore((s) => s.nodeErrorsFromRun);
   const errorsDismissed = useWorkflowErrorsStore((s) => s.errorsDismissed);
   const setErrorsDismissed = useWorkflowErrorsStore((s) => s.setErrorsDismissed);
   const scrollToNode = useWorkflowStore((s) => s.scrollToNode);
@@ -30,6 +45,7 @@ export function BottomStatusOverlay() {
   const nodeTypes = useWorkflowStore((s) => s.nodeTypes);
   const running = useQueueStore((s) => s.running);
   const [dismissedRunKey, setDismissedRunKey] = useState<string | null>(null);
+  const [errorCopied, setErrorCopied] = useState(false);
 
   const isQueuePanel = currentPanel === 'queue';
   const isOutputsPanel = currentPanel === 'outputs';
@@ -40,18 +56,29 @@ export function BottomStatusOverlay() {
     0,
   );
   const hasNodeErrors = nodeErrorCount > 0;
+  // Run/queue node errors (ComfyUI excluded a branch from the run) are surfaced
+  // loudly on every panel — the user has just hit Run and is usually watching
+  // the queue. Load-time node errors only matter on the workflow panel.
+  const isRunNodeError = hasNodeErrors && nodeErrorsFromRun;
   const isWorkflowLoadError =
-    Boolean(error?.startsWith("Workflow load error")) || hasNodeErrors;
+    Boolean(error?.startsWith("Workflow load error")) || (hasNodeErrors && !nodeErrorsFromRun);
   const isBackendConnectionError =
     Boolean(error?.startsWith("Backend connection"));
+  const skippedNodeCount = Object.keys(nodeErrors).length;
   const errorTitle = isWorkflowLoadError
     ? "Workflow load error"
     : isBackendConnectionError
       ? "Backend connection"
+    : isRunNodeError && !error
+      ? "Nodes skipped"
     : "Prompt error";
   const errorMessage = isWorkflowLoadError && error
     ? error.replace(/^Workflow load error:\s*/i, '')
-    : error ?? (hasNodeErrors ? `${nodeErrorCount} inputs reference missing options.` : null);
+    : error ?? (
+        isRunNodeError
+          ? `${skippedNodeCount} node${skippedNodeCount === 1 ? '' : 's'} had invalid inputs and ${skippedNodeCount === 1 ? 'was' : 'were'} skipped — tap to view.`
+          : hasNodeErrors ? `${nodeErrorCount} inputs reference missing options.` : null
+      );
 
   const executingNodeLabel = useMemo(() => {
     return resolveExecutingNodeLabel(
@@ -75,10 +102,14 @@ export function BottomStatusOverlay() {
   const hasErrorToast = (Boolean(error) || hasNodeErrors) && !errorsDismissed
     && (!isWorkflowLoadError || isWorkflowPanel);
   const progressDismissed = dismissedRunKey !== null && dismissedRunKey === runKey;
+  // A fullscreen widget editor suppresses the progress card entirely — it
+  // would otherwise poke through the translucent backdrop and update behind
+  // the editor. It re-appears (per the rules above) as soon as the modal closes.
   const showProgress =
     overallProgress !== null &&
     !isQueuePanel &&
     !isOutputsPanel &&
+    !widgetModalOpen &&
     !progressDismissed;
   const visible = !viewerOpen && (hasErrorToast || showProgress);
   const shouldShowError = hasErrorToast;
@@ -108,6 +139,34 @@ export function BottomStatusOverlay() {
     if (event.key === "Enter" || event.key === " ") {
       event.preventDefault();
       handleErrorClick();
+    }
+  };
+
+  const buildErrorClipboardText = () => {
+    const parts: string[] = [errorTitle];
+    if (errorMessage) parts.push(errorMessage);
+    if (hasNodeErrors) {
+      for (const [id, errs] of Object.entries(nodeErrors)) {
+        for (const e of errs) {
+          const detail =
+            e.details && e.details !== e.message ? ` — ${e.details}` : '';
+          parts.push(`[node ${id}] ${e.inputName ? `${e.inputName}: ` : ''}${e.message}${detail}`);
+        }
+      }
+    }
+    return parts.join('\n');
+  };
+
+  const handleErrorCopyPointerDown = (event: PointerEvent<HTMLButtonElement>) => {
+    event.stopPropagation();
+  };
+
+  const handleErrorCopyClick = async (event: MouseEvent<HTMLButtonElement>) => {
+    event.stopPropagation();
+    const ok = await copyTextToClipboard(buildErrorClipboardText());
+    if (ok) {
+      setErrorCopied(true);
+      window.setTimeout(() => setErrorCopied(false), 1500);
     }
   };
 
@@ -174,27 +233,38 @@ export function BottomStatusOverlay() {
             onClick={handleErrorClick}
             onKeyDown={handleErrorKeyDown}
           >
-            <div className="error-toast-content flex items-start justify-between gap-3">
-              <div className="error-text-container pr-16">
-                <div className="error-title text-sm font-semibold text-red-200">
-                  {errorTitle}
-                </div>
-                <div className="error-message mt-1 text-xs text-slate-200 break-words">
-                  {errorMessage}
-                </div>
-              </div>
+            <div className="error-title text-sm font-semibold text-red-200">
+              {errorTitle}
+            </div>
+            <div className="error-message mt-1 text-xs text-slate-200 break-words" style={clampLinesStyle}>
+              {errorMessage}
+            </div>
+            {/* Action row at the bottom — stays put because the message above is
+                clamped, so the toast can never grow these buttons off-screen. */}
+            <div className="error-actions mt-2 flex items-center justify-end gap-1.5">
+              <button
+                id="error-copy-button"
+                type="button"
+                aria-label="Copy error to clipboard"
+                className="flex items-center gap-1 shrink-0 px-2.5 py-1 text-xs font-semibold bg-red-600/80 hover:bg-red-600 text-white rounded-full"
+                onPointerDown={handleErrorCopyPointerDown}
+                onClick={handleErrorCopyClick}
+              >
+                {errorCopied ? <CheckIcon className="w-3 h-3" /> : <ClipboardIcon className="w-3 h-3" />}
+                {errorCopied ? 'Copied' : 'Copy'}
+              </button>
+              <button
+                id="error-dismiss-button"
+                type="button"
+                aria-label="Dismiss error"
+                className="shrink-0 px-3 py-1 text-xs font-semibold bg-red-600 text-white rounded-full"
+                onPointerDown={handleErrorDismissPointerDown}
+                onClick={handleErrorDismissClick}
+              >
+                Dismiss
+              </button>
             </div>
           </div>
-          <button
-            id="error-dismiss-button"
-            type="button"
-            aria-label="Dismiss error"
-            className="absolute top-3 right-3 shrink-0 px-3 py-1 text-xs font-semibold bg-red-600 text-white rounded-full z-10"
-            onPointerDown={handleErrorDismissPointerDown}
-            onClick={handleErrorDismissClick}
-          >
-            Dismiss
-          </button>
         </div>
       )}
       {showProgress && (

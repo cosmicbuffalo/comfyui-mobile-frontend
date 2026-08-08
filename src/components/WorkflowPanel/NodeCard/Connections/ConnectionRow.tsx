@@ -1,4 +1,4 @@
-import type { PointerEvent as ReactPointerEvent, RefObject } from 'react';
+import type { PointerEvent as ReactPointerEvent, ReactNode, RefObject } from 'react';
 import { PlusIcon } from '@/components/icons';
 
 interface ConnectionRowProps {
@@ -9,6 +9,8 @@ interface ConnectionRowProps {
   isBoundaryConnection?: boolean;
   hideLabel: boolean;
   resolvedLabel: string;
+  /** When set, replaces the label text with this node (e.g. an inline name editor). */
+  labelEditor?: ReactNode;
   shouldWrapResolvedLabel: boolean;
   sizeClass: string;
   arrowClass: string;
@@ -30,6 +32,7 @@ export function ConnectionRow({
   isBoundaryConnection = false,
   hideLabel,
   resolvedLabel,
+  labelEditor,
   shouldWrapResolvedLabel,
   sizeClass,
   arrowClass,
@@ -50,13 +53,17 @@ export function ConnectionRow({
   return (
     <>
       {isInput ? null : !hideLabel && (
-        <span
-          className={`text-sm text-slate-300 flex-1 min-w-0 ${
-            shouldWrapResolvedLabel ? 'whitespace-pre-line break-words leading-tight text-right' : 'truncate'
-          }`}
-        >
-          {resolvedLabel}
-        </span>
+        labelEditor ? (
+          <span className="flex-1 min-w-0">{labelEditor}</span>
+        ) : (
+          <span
+            className={`text-sm text-slate-300 flex-1 min-w-0 ${
+              shouldWrapResolvedLabel ? 'whitespace-pre-line break-words leading-tight text-right' : 'truncate'
+            }`}
+          >
+            {resolvedLabel}
+          </span>
+        )
       )}
 
       {!isInput && connectionCount > 1 && (
@@ -80,9 +87,10 @@ export function ConnectionRow({
           ${sizeClass} flex-shrink-0
           transition-opacity
           ${typeClass}
-          ${isInput && isEmptyRequiredInput ? 'opacity-100 cursor-pointer border-red-500' : (isBoundaryConnection ? 'border-cyan-400' : 'border-transparent')}
+          ${isInput && isEmptyRequiredInput ? 'opacity-100 cursor-pointer border-red-500'
+            : (isBoundaryConnection ? 'border-cyan-400' : 'border-transparent')}
           ${!isInput && isInactiveOutput ? 'border-dashed border-slate-500/70' : ''}
-          ${isVisuallyDisabled ? 'opacity-40 cursor-not-allowed' : ''}
+          ${isVisuallyDisabled ? 'opacity-40 cursor-pointer active:scale-95' : ''}
           ${!isVisuallyDisabled && isInactiveOutput ? 'opacity-50 cursor-pointer active:scale-95' : ''}
           ${!isVisuallyDisabled && !isInactiveOutput ? 'opacity-100 cursor-pointer active:scale-95' : ''}
         `}

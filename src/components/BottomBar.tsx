@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 import { useWorkflowStore } from "@/hooks/useWorkflow";
 import { useImageViewerStore } from "@/hooks/useImageViewer";
+import { useWorkflowSelectionStore } from "@/hooks/useWorkflowSelection";
 import { useOverallProgress } from "@/hooks/useOverallProgress";
 import { useQueueStore } from "@/hooks/useQueue";
 import { useGenerationSettingsStore } from "@/hooks/useGenerationSettings";
@@ -13,6 +14,7 @@ import { PinnedWidgetButton } from "./BottomBar/PinnedWidgetButton";
 import { RunButton } from "./BottomBar/RunButton";
 import { RunCountSelector } from "./BottomBar/RunCountSelector";
 import { SkipButton } from "./BottomBar/SkipButton";
+import { WorkflowSelectionButton } from "./BottomBar/WorkflowSelectionButton";
 
 export type BottomBarProps = {
   currentPanel: 'workflow' | 'queue' | 'outputs';
@@ -31,12 +33,22 @@ export function BottomBar(props: BottomBarProps) {
     onOpenFollowQueue,
   } = props;
   const isOutputsPanel = currentPanel === 'outputs';
+  // Workflow select mode swaps the queue button for the selection button, but
+  // only while the workflow panel is the one showing.
+  const workflowSelectionMode = useWorkflowSelectionStore((s) => s.selectionMode);
+  const workflowSelectionActive = workflowSelectionMode && currentPanel === 'workflow';
   // Optionally fade the bar out together with the viewer overlays once they go idle.
   // `viewerIdle` is only true while a MediaViewer is open and idle (it's reset
   // on close/unmount), so it already implies a viewer is showing — this covers
   // both the app-level viewer and the outputs panel's own MediaViewer instance,
   // which uses a separate open flag (useOutputsStore.outputsViewerOpen).
   const viewerIdle = useImageViewerStore((s) => s.viewerIdle);
+  // The full-screen image comparer hides the bar entirely (not just on idle) so
+  // the A/B view owns the whole screen. Derived as a boolean so the selector
+  // stays referentially stable.
+  const inComparisonView = useImageViewerStore(
+    (s) => s.viewerOpen && Boolean(s.viewerImages[s.viewerIndex]?.comparison),
+  );
   const workflow = useWorkflowStore((s) => s.workflow);
   const infiniteLoop = useWorkflowStore((s) => s.infiniteLoop);
   const setInfiniteLoop = useWorkflowStore((s) => s.setInfiniteLoop);
@@ -76,13 +88,30 @@ export function BottomBar(props: BottomBarProps) {
       const rect = el.getBoundingClientRect();
       document.documentElement.style.setProperty(
         "--bottom-bar-offset",
-        `${rect.height}px`,
+        // In comparison view the bar is hidden, so report 0 and let the viewer
+        // claim the full height. Re-runs (and restores the real height) when
+        // inComparisonView flips, via the effect dependency below.
+        inComparisonView ? "0px" : `${rect.height}px`,
       );
     };
     update();
     window.addEventListener("resize", update);
-    return () => window.removeEventListener("resize", update);
-  }, []);
+    // The bar's height changes when its content does (infinite-loop toggle,
+    // follow-queue progress, pinned-widget button, run-count selector appearing/
+    // disappearing) — none of which fire a window resize. Observe the element so
+    // consumers of --bottom-bar-offset (e.g. the image viewer's action buttons,
+    // which sit just above the bar) never use a stale, too-small height and end
+    // up hidden behind it.
+    let observer: ResizeObserver | null = null;
+    if (typeof ResizeObserver !== "undefined") {
+      observer = new ResizeObserver(update);
+      observer.observe(el);
+    }
+    return () => {
+      window.removeEventListener("resize", update);
+      observer?.disconnect();
+    };
+  }, [inComparisonView]);
 
   useEffect(() => {
     if (!infiniteModeEnabled && infiniteLoop) {
@@ -95,7 +124,7 @@ export function BottomBar(props: BottomBarProps) {
       id="bottom-bar-root"
       ref={barRef}
       className={`fixed bottom-0 left-0 right-0 bg-slate-950/88 border-t border-white/10 shadow-lg safe-area-bottom z-[2200] transition-opacity duration-300 ${
-        fadeWithViewer ? "opacity-0 pointer-events-none" : "opacity-100"
+        fadeWithViewer || inComparisonView ? "opacity-0 pointer-events-none" : "opacity-100"
       }`}
     >
       <div
@@ -116,15 +145,19 @@ export function BottomBar(props: BottomBarProps) {
 
         {!isOutputsPanel && <PinnedWidgetButton />}
 
-        <FollowQueueButton
-          viewerOpen={viewerOpen}
-          followQueue={followQueue}
-          queueSize={queueSize}
-          overallProgress={overallProgress}
-          showIdleProgress={infiniteLoop}
-          onToggleFollowQueue={onToggleFollowQueue}
-          onOpenFollowQueue={onOpenFollowQueue}
-        />
+        {workflowSelectionActive ? (
+          <WorkflowSelectionButton />
+        ) : (
+          <FollowQueueButton
+            viewerOpen={viewerOpen}
+            followQueue={followQueue}
+            queueSize={queueSize}
+            overallProgress={overallProgress}
+            showIdleProgress={infiniteLoop}
+            onToggleFollowQueue={onToggleFollowQueue}
+            onOpenFollowQueue={onOpenFollowQueue}
+          />
+        )}
       </div>
 
       <PinnedWidgetOverlayModal />

@@ -305,11 +305,10 @@ export function buildDefaultLayout(
   // Build subgraph contents with nested group hierarchy.
   // Inner nodes come from sg.nodes (canonical model — not from orderedNodes).
   // Order them by on-canvas position, like root nodes, so a reposition inside a
-  // subgraph survives a save/reload round-trip.
+  // subgraph survives a save/reload round-trip (a stable sort keeps the source
+  // order for nodes sharing a position).
   for (const sg of subgraphs) {
-    const sgNodes = [...(sg.nodes ?? [])].sort(
-      (a, b) => compareNodesByPosition(a, b) || a.id - b.id,
-    );
+    const sgNodes = [...(sg.nodes ?? [])].sort(compareNodesByPosition);
     const sgGroups = sg.groups ?? [];
     const sgGroupParentMap = getGroupParentMap(sgGroups);
     const sgEmittedGroups = new Set<number>();
@@ -450,10 +449,11 @@ function layoutItemMatchesNodeId(ref: ItemRef, nodeId: number): boolean {
  * positional rebuild placed it. No-op (returns the input) if either item is
  * missing.
  */
-export function placeLayoutItemAfter(
+function placeLayoutItemRelative(
   layout: MobileLayout,
   movingNodeId: number,
   anchorNodeId: number,
+  position: 'before' | 'after',
 ): MobileLayout {
   let movingRef: ItemRef | null = null;
   const strip = (refs: ItemRef[]): ItemRef[] => {
@@ -470,21 +470,38 @@ export function placeLayoutItemAfter(
   if (!movingRef) return layout;
 
   let inserted = false;
-  const insertAfter = (refs: ItemRef[]): ItemRef[] => {
+  const insert = (refs: ItemRef[]): ItemRef[] => {
     if (inserted) return refs;
     const idx = refs.findIndex((ref) => layoutItemMatchesNodeId(ref, anchorNodeId));
     if (idx < 0) return refs;
     inserted = true;
-    return [...refs.slice(0, idx + 1), movingRef as ItemRef, ...refs.slice(idx + 1)];
+    const at = position === 'after' ? idx + 1 : idx;
+    return [...refs.slice(0, at), movingRef as ItemRef, ...refs.slice(at)];
   };
-  const nextRoot = insertAfter(strippedRoot);
+  const nextRoot = insert(strippedRoot);
   const nextGroups: Record<string, ItemRef[]> = {};
-  for (const [key, refs] of Object.entries(strippedGroups)) nextGroups[key] = insertAfter(refs);
+  for (const [key, refs] of Object.entries(strippedGroups)) nextGroups[key] = insert(refs);
   const nextSubgraphs: Record<string, ItemRef[]> = {};
-  for (const [key, refs] of Object.entries(strippedSubgraphs)) nextSubgraphs[key] = insertAfter(refs);
+  for (const [key, refs] of Object.entries(strippedSubgraphs)) nextSubgraphs[key] = insert(refs);
   if (!inserted) return layout;
 
   return { ...layout, root: nextRoot, groups: nextGroups, subgraphs: nextSubgraphs };
+}
+
+export function placeLayoutItemAfter(
+  layout: MobileLayout,
+  movingNodeId: number,
+  anchorNodeId: number,
+): MobileLayout {
+  return placeLayoutItemRelative(layout, movingNodeId, anchorNodeId, 'after');
+}
+
+export function placeLayoutItemBefore(
+  layout: MobileLayout,
+  movingNodeId: number,
+  anchorNodeId: number,
+): MobileLayout {
+  return placeLayoutItemRelative(layout, movingNodeId, anchorNodeId, 'before');
 }
 
 export function removeNodeFromLayout(

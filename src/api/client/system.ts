@@ -1,9 +1,24 @@
 export async function restartServer(): Promise<void> {
-  const response = await fetch(`/mobile/api/restart`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ confirm: true })
-  });
+  // Abort rather than hang: on a flaky link a lost response would otherwise
+  // leave the caller's "restarting" state stuck until a full app reload.
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), 15000);
+  let response: Response;
+  try {
+    response = await fetch(`/mobile/api/restart`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ confirm: true }),
+      signal: controller.signal,
+    });
+  } catch (err) {
+    if (err instanceof DOMException && err.name === 'AbortError') {
+      throw new Error('Restart request timed out. The server may still restart; wait a moment before retrying.');
+    }
+    throw err;
+  } finally {
+    window.clearTimeout(timeout);
+  }
 
   if (!response.ok) {
     const error = await response.json().catch(() => ({}));

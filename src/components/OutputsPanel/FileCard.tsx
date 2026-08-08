@@ -2,7 +2,7 @@ import { memo, useEffect, useState, type MouseEvent } from 'react';
 import type { FileItem } from '@/api/client';
 import {
   FolderIcon, CheckIcon,
-  HeartIcon, VideoCameraIcon, EyeOffIcon
+  HeartIcon, RejectedIcon, VideoCameraIcon, EyeOffIcon
 } from '@/components/icons';
 import { ContextMenuButton } from '@/components/buttons/ContextMenuButton';
 import { formatBytes } from '@/utils/formatBytes';
@@ -17,6 +17,7 @@ interface FileCardProps {
   selectionMode: boolean;
   isSelected: boolean;
   isFavorited: boolean;
+  isRejected?: boolean;
   onNavigateFolder: (folder: string) => void;
   onOpen: (file: FileItem) => void;
   onMenu: (file: FileItem, e: MouseEvent) => void;
@@ -34,10 +35,17 @@ function SelectionBadge({
   onRangeSelect: (event: MouseEvent) => void;
 }) {
   if (isSelected) {
+    // Clickable so the badge can drive range *deselect* the same way the
+    // unselected badge drives range select — see handleToggleSelection.
     return (
-      <div className="selection-badge w-6 h-6 rounded-full border-2 flex items-center justify-center shadow-sm bg-cyan-500 border-cyan-500 text-slate-950">
+      <button
+        type="button"
+        className="selection-badge w-6 h-6 rounded-full border-2 flex items-center justify-center shadow-sm bg-cyan-500 border-cyan-500 text-slate-950"
+        aria-label={`Range deselect to ${fileName}`}
+        onClick={onRangeSelect}
+      >
         <CheckIcon className="w-4 h-4" />
-      </div>
+      </button>
     );
   }
   return (
@@ -56,6 +64,7 @@ function FileCardComponent({
   selectionMode,
   isSelected,
   isFavorited,
+  isRejected = false,
   onNavigateFolder,
   onOpen,
   onMenu,
@@ -129,6 +138,10 @@ function FileCardComponent({
             <div className="text-xs text-cyan-300">
               {file.matchCount} {file.matchCount === 1 ? 'match' : 'matches'}
             </div>
+          ) : isFolder && typeof file.favoriteCount === 'number' ? (
+            <div className="folder-favorite-count text-xs text-red-400">
+              {file.favoriteCount} {file.favoriteCount === 1 ? 'favorite' : 'favorites'} inside
+            </div>
           ) : isFolder && typeof file.count === 'number' ? (
             <div className="text-xs text-slate-400">
               {file.count} {file.count === 1 ? 'item' : 'items'}
@@ -141,6 +154,9 @@ function FileCardComponent({
         <div className="file-actions-container flex items-center gap-2 text-slate-300">
           {isFavorited && (
             <HeartIcon className="w-4 h-4 text-red-500" />
+          )}
+          {isRejected && (
+            <RejectedIcon className="w-4 h-4" />
           )}
           {selectionMode ? (
             <SelectionBadge
@@ -174,6 +190,10 @@ function FileCardComponent({
             {typeof file.matchCount === 'number' ? (
               <span className="text-xs text-cyan-300">
                 {file.matchCount} {file.matchCount === 1 ? 'match' : 'matches'}
+              </span>
+            ) : typeof file.favoriteCount === 'number' ? (
+              <span className="folder-favorite-count text-xs text-red-400">
+                {file.favoriteCount} {file.favoriteCount === 1 ? 'favorite' : 'favorites'}
               </span>
             ) : typeof file.count === 'number' ? (
               <span className="text-xs text-slate-400">
@@ -227,6 +247,11 @@ function FileCardComponent({
         {isFavorited && (
           <div className="favorite-badge-container absolute bottom-2 right-2 pointer-events-none">
             <HeartIcon className="w-6 h-6 text-red-500 drop-shadow" />
+          </div>
+        )}
+        {isRejected && (
+          <div className="rejected-badge-container absolute bottom-2 right-2 pointer-events-none">
+            <RejectedIcon className="w-6 h-6 drop-shadow" />
           </div>
         )}
 

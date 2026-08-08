@@ -1,8 +1,11 @@
 import type { RefObject } from 'react';
+import { useState } from 'react';
 import { useOutputsStore } from '@/hooks/useOutputs';
-import { CheckIcon, DiceIcon, DocumentLinesIcon, EyeIcon, EyeOffIcon, FolderIcon, ArrowRightIcon, SearchIcon } from '@/components/icons';
+import { deleteRejectedOutputs, rejectedIdsForSources } from '@/utils/deleteRejectedOutputs';
+import { CheckIcon, DiceIcon, DocumentLinesIcon, EyeIcon, EyeOffIcon, FolderIcon, ArrowRightIcon, SearchIcon, TrashIcon } from '@/components/icons';
 import { ContextMenuButton } from '@/components/buttons/ContextMenuButton';
 import { ContextMenuBuilder } from '@/components/menus/ContextMenuBuilder';
+import { Dialog } from '@/components/modals/Dialog';
 import { appChromeIconButtonBareClassName } from '@/components/chromeStyles';
 
 interface OutputsTopBarMenuProps {
@@ -22,6 +25,10 @@ export function OutputsTopBarMenu({
   onClose,
   onGoToWorkflow
 }: OutputsTopBarMenuProps) {
+  // The source the user is actually browsing: Delete rejected only removes
+  // files from it, so switching to `input` and deleting can't take outputs with
+  // it (and vice versa).
+  const source = useOutputsStore((s) => s.source);
   const viewMode = useOutputsStore((s) => s.viewMode);
   const showHidden = useOutputsStore((s) => s.showHidden);
   const searchOpen = useOutputsStore((s) => s.searchOpen);
@@ -30,6 +37,28 @@ export function OutputsTopBarMenu({
   const toggleShowHidden = useOutputsStore((s) => s.toggleShowHidden);
   const toggleSelectionMode = useOutputsStore((s) => s.toggleSelectionMode);
   const setNewFolderModalOpen = useOutputsStore((s) => s.setNewFolderModalOpen);
+  const rejected = useOutputsStore((s) => s.rejected);
+  // Only what this source holds — the count in the label, the visibility of the
+  // entry, and the delete itself all read the same list.
+  const rejectedHere = rejectedIdsForSources(rejected, [source]);
+  const refresh = useOutputsStore((s) => s.refresh);
+  const [deleteRejectedOpen, setDeleteRejectedOpen] = useState(false);
+
+  const handleDeleteRejectedClick = () => {
+    setDeleteRejectedOpen(true);
+    onClose();
+  };
+
+  const confirmDeleteRejected = async () => {
+    const result = await deleteRejectedOutputs([source]);
+    if (result.failed > 0) {
+      window.alert(
+        `Deleted ${result.deleted} of ${result.attempted} rejected outputs. ${result.failed} could not be deleted and remain marked.`,
+      );
+    }
+    refresh();
+    setDeleteRejectedOpen(false);
+  };
 
   const handleNewFolderClick = () => {
     setNewFolderModalOpen(true);
@@ -115,10 +144,41 @@ export function OutputsTopBarMenu({
                   ? <DocumentLinesIcon className="w-4 h-4" />
                   : <DiceIcon className="w-4 h-4" />,
                 onClick: handleToggleViewModeClick
+              },
+              {
+                key: 'delete-rejected',
+                label: `Delete rejected (${rejectedHere.length})`,
+                icon: <TrashIcon className="w-4 h-4" />,
+                onClick: handleDeleteRejectedClick,
+                hidden: rejectedHere.length === 0,
+                color: 'danger'
               }
             ]}
           />
         </div>
+      )}
+      {deleteRejectedOpen && (
+        <Dialog
+          onClose={() => setDeleteRejectedOpen(false)}
+          title="Delete rejected?"
+          description={`This will permanently delete ${rejectedHere.length} rejected ${
+            rejectedHere.length === 1 ? 'output' : 'outputs'
+          } from the server. This cannot be undone.`}
+          zIndex={1800}
+          actions={[
+            {
+              label: 'Cancel',
+              onClick: () => setDeleteRejectedOpen(false),
+              variant: 'secondary'
+            },
+            {
+              label: 'Delete',
+              autoFocus: true,
+              onClick: confirmDeleteRejected,
+              variant: 'danger'
+            }
+          ]}
+        />
       )}
     </div>
   );

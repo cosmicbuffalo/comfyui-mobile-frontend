@@ -15,7 +15,7 @@ import { useWorkflowHiddenStore } from '../useWorkflowHidden';
 import { useBookmarksStore } from '../useBookmarks';
 import { useWorkflowErrorsStore } from '../useWorkflowErrors';
 import { useSeedStore } from '../useSeed';
-import { queueAndGetEmbeddedWorkflow } from './helpers/queueAndGetEmbeddedWorkflow';
+import { queueAndGetEmbeddedWorkflow, queueAndGetPromptRequest } from './helpers/queueAndGetEmbeddedWorkflow';
 
 function makeNode(id: number, overrides?: Partial<WorkflowNode>): WorkflowNode {
   return {
@@ -199,6 +199,49 @@ describe('setSavedWorkflow hidden carry-over', () => {
     useWorkflowStore.getState().setSavedWorkflow(emptyWorkflow(), 'public/copy.json');
 
     expect(useWorkflowHiddenStore.getState().hidden).not.toContain('public/copy.json');
+  });
+});
+
+describe('queue prompt link/slot repair', () => {
+  it('includes a connection whose link is in the table even if inputs[].link was left stale', async () => {
+    // Reproduces the paste/connect bug: link 100 wires Source[0] -> Sink.model in
+    // the links table, but Sink's inputs[0].link was left null (out of sync). The
+    // embedded workflow was already repaired; the executed prompt must be too, or
+    // Sink loses its model input and its branch never runs.
+    const linkRepairNodeTypes: NodeTypes = {
+      Source: {
+        input: { required: {} },
+        output: ['MODEL'],
+        output_name: ['MODEL'],
+        name: 'Source', display_name: 'Source', description: '', python_module: '', category: 'test',
+      },
+      Sink: {
+        input: { required: { model: ['MODEL'] } },
+        output: [],
+        output_name: [],
+        name: 'Sink', display_name: 'Sink', description: '', python_module: '', category: 'test',
+      },
+    };
+    const source = makeNode(1, {
+      type: 'Source',
+      outputs: [{ name: 'MODEL', type: 'MODEL', links: [100] }],
+    });
+    const sink = makeNode(2, {
+      type: 'Sink',
+      inputs: [{ name: 'model', type: 'MODEL', link: null }], // stale: should be 100
+    });
+    const workflow = makeWorkflow([source, sink], [[100, 1, 0, 2, 0, 'MODEL']]);
+
+    useWorkflowStore.setState({
+      workflow,
+      nodeTypes: linkRepairNodeTypes,
+      ...rootNodeStableRegistry([1, 2]),
+    });
+
+    const body = await queueAndGetPromptRequest() as {
+      prompt?: Record<string, { inputs?: Record<string, unknown> }>;
+    };
+    expect(body.prompt?.['2']?.inputs?.model).toEqual(['1', 0]);
   });
 });
 
@@ -2281,5 +2324,172 @@ describe('setSavedWorkflow', () => {
 
     const state = useWorkflowStore.getState();
     expect(state.workflow?.nodes.find((n) => n.id === 1)?.widgets_values).toEqual([99]);
+  });
+});
+
+describe('popWidgetToPrimitive', () => {
+  const primitiveNodeTypes: NodeTypes = {
+    CLIPTextEncode: {
+      input: { required: { text: ['STRING', { multiline: true }] } },
+      output: ['CONDITIONING'],
+      output_name: ['CONDITIONING'],
+      name: 'CLIPTextEncode',
+      display_name: 'CLIP Text Encode',
+      description: '',
+      python_module: '',
+      category: 'conditioning'
+    },
+    PrimitiveString: {
+      input: { required: { value: ['STRING', {}] } },
+      output: ['STRING'],
+      output_name: ['STRING'],
+      name: 'PrimitiveString',
+      display_name: 'String',
+      description: '',
+      python_module: '',
+      category: 'primitive'
+    }
+  };
+
+  it('creates a typed primitive seeded with the value and connects it to the input', () => {
+    const target = makeNode(1, {
+      type: 'CLIPTextEncode',
+      inputs: [{ name: 'text', type: 'STRING', link: null }],
+      widgets_values: ['a photo of a cat'],
+    });
+    useWorkflowStore.setState({
+      workflow: makeWorkflow([target], []),
+      nodeTypes: primitiveNodeTypes,
+      ...rootNodeStableRegistry([1]),
+    });
+
+    const newId = useWorkflowStore
+      .getState()
+      .popWidgetToPrimitive(rootNodeHierarchicalKey(1), 'text', 'a photo of a cat', {
+        title: 'text (via Positive Prompt)',
+      });
+
+    expect(newId).not.toBeNull();
+    const state = useWorkflowStore.getState();
+    const created = state.workflow?.nodes.find((n) => n.id === newId);
+    expect(created?.type).toBe('PrimitiveString');
+    expect(created?.title).toBe('text (via Positive Prompt)');
+    expect((created?.widgets_values as unknown[] | undefined)?.[0]).toBe('a photo of a cat');
+
+    // The target's input now carries a link from the primitive's output.
+    const targetInputLink = state.workflow?.nodes.find((n) => n.id === 1)?.inputs[0]?.link;
+    expect(targetInputLink).not.toBeNull();
+    const link = state.workflow?.links.find((l) => l[0] === targetInputLink);
+    expect(link?.[1]).toBe(newId); // origin is the new primitive node
+    expect(link?.[3]).toBe(1);     // target is the CLIP node
+  });
+
+  it('returns null for a non-poppable type (no matching primitive node type)', () => {
+    const target = makeNode(1, {
+      type: 'CLIPTextEncode',
+      inputs: [{ name: 'image', type: 'IMAGE', link: null }],
+      widgets_values: [],
+    });
+    useWorkflowStore.setState({
+      workflow: makeWorkflow([target], []),
+      nodeTypes: primitiveNodeTypes,
+      ...rootNodeStableRegistry([1]),
+    });
+
+    const newId = useWorkflowStore
+      .getState()
+      .popWidgetToPrimitive(rootNodeHierarchicalKey(1), 'image', undefined);
+    expect(newId).toBeNull();
+  });
+
+  it('materializes the input slot when the widget-input is not in node.inputs', () => {
+    // Mirrors a CLIPTextEncode whose `text` widget was never converted to an
+    // input slot (only `clip` is present) — it should still pop out.
+    const target = makeNode(1, {
+      type: 'CLIPTextEncode',
+      inputs: [{ name: 'clip', type: 'CLIP', link: 11 }],
+      widgets_values: ['a photo of a dog'],
+    });
+    useWorkflowStore.setState({
+      workflow: makeWorkflow([target], []),
+      nodeTypes: primitiveNodeTypes,
+      ...rootNodeStableRegistry([1]),
+    });
+
+    const newId = useWorkflowStore
+      .getState()
+      .popWidgetToPrimitive(rootNodeHierarchicalKey(1), 'text', 'a photo of a dog');
+
+    expect(newId).not.toBeNull();
+    const state = useWorkflowStore.getState();
+    const targetNode = state.workflow?.nodes.find((n) => n.id === 1);
+    // The `text` input slot was created and now carries the link.
+    const textInput = targetNode?.inputs.find((inp) => inp.name === 'text');
+    expect(textInput).toBeTruthy();
+    expect(textInput?.link).not.toBeNull();
+    const created = state.workflow?.nodes.find((n) => n.id === newId);
+    expect(created?.type).toBe('PrimitiveString');
+    expect((created?.widgets_values as unknown[] | undefined)?.[0]).toBe('a photo of a dog');
+  });
+
+  it('ensureWidgetInputSlot returns the existing index or materializes a new slot', () => {
+    const target = makeNode(1, {
+      type: 'CLIPTextEncode',
+      inputs: [
+        { name: 'clip', type: 'CLIP', link: 11 },
+        { name: 'text', type: 'STRING', widget: { name: 'text' }, link: null },
+      ],
+      widgets_values: ['hi'],
+    });
+    useWorkflowStore.setState({
+      workflow: makeWorkflow([target], []),
+      nodeTypes: primitiveNodeTypes,
+      ...rootNodeStableRegistry([1]),
+    });
+    // Existing materialized slot → its index.
+    expect(
+      useWorkflowStore.getState().ensureWidgetInputSlot(rootNodeHierarchicalKey(1), 'text', 'STRING'),
+    ).toBe(1);
+
+    // Absent slot → created at the end and returned.
+    const target2 = makeNode(1, {
+      type: 'CLIPTextEncode',
+      inputs: [{ name: 'clip', type: 'CLIP', link: 11 }],
+      widgets_values: ['hi'],
+    });
+    useWorkflowStore.setState({
+      workflow: makeWorkflow([target2], []),
+      nodeTypes: primitiveNodeTypes,
+      ...rootNodeStableRegistry([1]),
+    });
+    const idx = useWorkflowStore.getState().ensureWidgetInputSlot(rootNodeHierarchicalKey(1), 'text', 'STRING');
+    expect(idx).toBe(1);
+    const node = useWorkflowStore.getState().workflow?.nodes.find((n) => n.id === 1);
+    expect(node?.inputs[1]).toMatchObject({ name: 'text', type: 'STRING', link: null });
+  });
+
+  it('renameSetGetNode renames a SetNode and syncs the Gets reading its old name', () => {
+    useWorkflowStore.setState({
+      workflow: makeWorkflow(
+        [
+          makeNode(2, { type: 'SetNode', widgets_values: ['oldname'] }),
+          makeNode(3, { type: 'GetNode', widgets_values: ['oldname'] }),
+          makeNode(4, { type: 'GetNode', widgets_values: ['other'] }),
+        ],
+        [],
+      ),
+      ...rootNodeStableRegistry([2, 3, 4]),
+    });
+
+    useWorkflowStore.getState().renameSetGetNode(rootNodeHierarchicalKey(2), 'newname');
+
+    const nodes = useWorkflowStore.getState().workflow?.nodes ?? [];
+    const nameOf = (id: number) =>
+      (nodes.find((n) => n.id === id)?.widgets_values as unknown[] | undefined)?.[0];
+    // Set + the Get reading the old name both move to the new name.
+    expect(nameOf(2)).toBe('newname');
+    expect(nameOf(3)).toBe('newname');
+    // An unrelated Get (different name) is untouched.
+    expect(nameOf(4)).toBe('other');
   });
 });

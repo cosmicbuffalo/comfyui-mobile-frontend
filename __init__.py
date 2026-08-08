@@ -17,14 +17,19 @@ _mobile_queue_metadata = _import_module('mobile_queue_metadata')
 _restart_utils = _import_module('restart_utils')
 _model_metadata = _import_module('model_metadata')
 _mobile_hidden_items = _import_module('mobile_hidden_items')
+# Unused on this branch — the unified file-state store replaced every call site,
+# and migrate_legacy reads file_favorites.json directly. Retained deliberately:
+# v3.1.1 still routes its favorites through this module, and deleting the import
+# here would delete it from that branch on the next merge (git takes the side
+# that changed), leaving it calling a name that no longer exists.
 _mobile_file_favorites = _import_module('mobile_file_favorites')
+_mobile_file_state = _import_module('mobile_file_state')
+_mobile_image_dimensions = _import_module('mobile_image_dimensions')
 _mobile_input_aliases = _import_module('mobile_input_aliases')
 _mobile_file_prefix_aliases = _import_module('mobile_file_prefix_aliases')
 _mobile_video_thumbs = _import_module('mobile_video_thumbs')
+_mobile_video_playback = _import_module('mobile_video_playback')
 _mobile_image_preview = _import_module('mobile_image_preview')
-# Push notifications: native-app delivery via a relay (mobile_app_push) and
-# self-hosted web-push (mobile_web_push). mobile_push polls history and fans
-# out completions to both sinks; mobile_push_prefs stores the user toggles.
 _mobile_push = _import_module('mobile_push')
 _mobile_web_push = _import_module('mobile_web_push')
 _mobile_app_push = _import_module('mobile_app_push')
@@ -56,6 +61,9 @@ QUEUE_METADATA_CACHE_PATH = os.path.join(CACHE_DIR, "queue_metadata_cache.json")
 _MOBILE_USERDATA_DIR = os.path.join(folder_paths.get_user_directory(), "default", "mobile")
 HIDDEN_ITEMS_CACHE_PATH = os.path.join(_MOBILE_USERDATA_DIR, "hidden_items.json")
 FILE_FAVORITES_CACHE_PATH = os.path.join(_MOBILE_USERDATA_DIR, "file_favorites.json")
+# Unified favorite/reject/hidden state (content-hash identity). The two paths
+# above are left in place after migration for rollback safety (not deleted).
+FILE_STATE_CACHE_PATH = os.path.join(_MOBILE_USERDATA_DIR, "file_state.json")
 INPUT_ALIASES_CACHE_PATH = os.path.join(_MOBILE_USERDATA_DIR, "input_aliases.json")
 FILE_PREFIX_ALIASES_CACHE_PATH = os.path.join(_MOBILE_USERDATA_DIR, "file_prefix_aliases.json")
 LEGACY_HIDDEN_ITEMS_CACHE_PATHS = [
@@ -81,17 +89,18 @@ def _safe_int(value, default):
         return default
 
 
-def _source_base_dir(source, *, allow_temp=False):
+_ASSET_SOURCES = ('output', 'input', 'temp')
+
+
+def _source_base_dir(source):
     """Resolve the base directory for an asset ``source``.
 
-    Most endpoints only distinguish 'input' from output (anything that isn't
-    'input' maps to the output dir), so 'temp' is served from output unless
-    ``allow_temp`` is set. The few endpoints that genuinely serve temp assets
-    pass ``allow_temp=True`` to get the temp dir.
+    Anything that isn't input or temp resolves to the output directory, so an
+    unrecognised source can never escape it.
     """
     if source == 'input':
         return folder_paths.get_input_directory()
-    if allow_temp and source == 'temp':
+    if source == 'temp':
         return folder_paths.get_temp_directory()
     return folder_paths.get_output_directory()
 
@@ -148,14 +157,83 @@ def setup_mobile_route():
         FILE_PREFIX_ALIASES_CACHE_PATH,
         LEGACY_FILE_PREFIX_ALIASES_CACHE_PATHS,
     )
+    # One-time structural migration into the unified favorite/reject/hidden
+    # state file. Runs after the legacy hidden-items migration above so
+    # HIDDEN_ITEMS_CACHE_PATH is already merged/durable by the time this reads
+    # it. file_favorites.json / hidden_items.json are left on disk afterward.
+    _mobile_file_state.migrate_legacy(
+        FILE_STATE_CACHE_PATH,
+        favorites_path=FILE_FAVORITES_CACHE_PATH,
+        hidden_path=HIDDEN_ITEMS_CACHE_PATH,
+        hidden_legacy_paths=tuple(LEGACY_HIDDEN_ITEMS_CACHE_PATHS),
+        base_dirs={
+            'output': folder_paths.get_output_directory(),
+            'input': folder_paths.get_input_directory(),
+            'temp': folder_paths.get_temp_directory(),
+        },
+    )
+
+    # Compress sizable JSON API responses on the fly. Model listings in
+    # particular can be multiple MB of metadata (checkpoints/loras), and shipping
+    # that uncompressed to a phone is the single biggest transfer cost in the app;
+    # gzip cuts it ~5x. Static assets are served pre-compressed by serve_asset as
+    # FileResponses (not web.Response), so they never reach this branch, and any
+    # response that already declares a Content-Encoding is left untouched to avoid
+    # double-compression. Small bodies are skipped — the CPU isn't worth it.
+    @web.middleware
+    async def _compress_json_responses(request, handler):
+        response = await handler(request)
+        try:
+            if (
+                isinstance(response, web.Response)
+                and response.body is not None
+                and 'Content-Encoding' not in response.headers
+                and (response.content_type or '').startswith('application/json')
+                and len(response.body) > 1024
+            ):
+                response.enable_compression()
+        except Exception:
+            # Compression is a best-effort optimization; never fail a request for it.
+            pass
+        return response
+
+    # Reject malformed JSON request bodies with a clean 400 up front. Every write
+    # handler does `await request.json()` inside a broad `except Exception -> 500`,
+    # so a truncated/garbage body would otherwise surface as a 500 (wrong status,
+    # and noise that hides real server errors). aiohttp caches the raw body bytes,
+    # not the parsed result, so the handler's own request.json() parses again —
+    # cheap for these small payloads, but not free. Only touches
+    # POST/PUT/PATCH requests that declare a JSON content-type.
+    @web.middleware
+    async def _reject_malformed_json(request, handler):
+        if (
+            request.method in ('POST', 'PUT', 'PATCH')
+            and 'application/json' in request.headers.get('Content-Type', '')
+            and request.can_read_body
+        ):
+            try:
+                parsed = await request.json()
+            except Exception:
+                return web.json_response({"error": "Invalid JSON body"}, status=400)
+            # Every write endpoint reads the body as an object (data.get(...)); a
+            # top-level array/scalar would otherwise blow up on .get() as a 500.
+            if not isinstance(parsed, dict):
+                return web.json_response(
+                    {"error": "Request body must be a JSON object"}, status=400
+                )
+        return await handler(request)
 
     # Create a sub-application for the mobile frontend
-    mobile_app = web.Application()
+    mobile_app = web.Application(
+        middlewares=[_reject_malformed_json, _compress_json_responses]
+    )
 
     async def api_list_files(request):
         try:
             query = request.rel_url.query
             source = query.get('source', 'output')
+            if source not in _ASSET_SOURCES:
+                return web.json_response({"error": "source must be output/input/temp"}, status=400)
             base_dir = _source_base_dir(source)
             subpath = query.get('path', '')
             recursive = query.get('recursive', 'false').lower() == 'true'
@@ -188,6 +266,23 @@ def setup_mobile_route():
             # event loop (which would freeze queue progress, websockets, and every
             # other client for the duration of a search/listing).
             def _build_listing():
+                # Manual hidden-state needs to be known before list_files walks
+                # the tree so recursive folder counts exclude hidden descendants
+                # in the same way the final listing does.
+                # Only verified current hidden paths may be used to pre-filter
+                # exact files. Directory inheritance remains path-based via
+                # hidden_set, while a replaced file at an old hidden path is
+                # retained for content-aware annotation below.
+                # One load, one verification pass: the verified paths pre-filter
+                # exact files while the directory paths carry inheritance, and
+                # fetching them separately parsed the state file twice per
+                # listing (it reaches 350KB+ on a well-used install).
+                verified_hidden, hidden_set = _mobile_file_state.get_hidden_listing_view(
+                    FILE_STATE_CACHE_PATH,
+                    source,
+                    base_dir,
+                )
+                verified_hidden_set = set(verified_hidden)
                 # `search` already filters by filename inside list_files. For the
                 # combined `q` case we want the union (filename OR prompt match),
                 # so don't pre-filter by filename here — apply both checks after.
@@ -198,7 +293,8 @@ def setup_mobile_route():
                     search='' if combined_search else search,
                     start_date=start_date,
                     end_date=end_date,
-                    dirs_only=dirs_only
+                    dirs_only=dirs_only,
+                    hidden_paths=verified_hidden_set
                 )
                 if source == 'input':
                     # Alias files must remain at the input root so stock Load Image
@@ -229,44 +325,31 @@ def setup_mobile_route():
                         )
                     results = [r for r in results if matches_combined(r)]
 
-                # Apply manually-hidden state (independent of the dot-prefix hiding
-                # already handled inside list_files). Do not prune missing paths
-                # here: a listing is a read, and folders can be transiently absent
-                # while external tools move/mount/generate them.
-                hidden_set = _mobile_hidden_items.get_hidden_paths(HIDDEN_ITEMS_CACHE_PATH, source)
-
-                def _path_is_hidden(rel_path):
-                    # Hidden if the path itself or any ancestor is hidden — by a
-                    # dot-prefixed segment or by a manual hidden-set entry. This makes
-                    # everything nested under a hidden folder render as hidden too.
-                    if not rel_path:
-                        return False
-                    parts = rel_path.split('/')
-                    if any(seg.startswith('.') for seg in parts):
-                        return True
-                    for i in range(1, len(parts) + 1):
-                        if '/'.join(parts[:i]) in hidden_set:
-                            return True
-                    return False
-
+                # Dot-prefixed segments are always hidden, independent of any
+                # manual state — annotate this first so it's visible even when
+                # show_hidden=True (list_files already excludes dot-hidden
+                # entries when show_hidden=False, so this only ever matters for
+                # display in the show_hidden=True case).
                 for r in results:
                     rel = r.get('path', '')
-                    # `hiddenSelf`: this exact item is in the hidden set (can be
-                    # unhidden directly). `hidden`: effectively hidden for display,
-                    # including inheritance from a hidden ancestor.
-                    if rel in hidden_set:
-                        r['hiddenSelf'] = True
-                    if _path_is_hidden(rel):
+                    if rel and any(seg.startswith('.') for seg in rel.split('/')):
                         r['hidden'] = True
-                if not show_hidden:
-                    results = [r for r in results if not r.get('hidden')]
 
-                _mobile_file_favorites.mark_favorites(
-                    FILE_FAVORITES_CACHE_PATH,
+                # Single content-hash-aware pass: sets favorite/rejected/
+                # hiddenSelf/hidden flags, rediscovers entries whose file moved
+                # externally, and applies hidden's folder inheritance via
+                # hidden_set. Do not prune missing paths here: a listing is a
+                # read, and folders can be transiently absent while external
+                # tools move/mount/generate them.
+                _mobile_file_state.annotate_listing(
+                    FILE_STATE_CACHE_PATH,
                     source,
                     base_dir,
                     results,
+                    hidden_set,
                 )
+                if not show_hidden:
+                    results = [r for r in results if not r.get('hidden')]
 
                 total = len(results)
                 if limit > 0:
@@ -292,6 +375,8 @@ def setup_mobile_route():
             source = data.get('source', 'output')
             if not filepath:
                 return web.json_response({"error": "No path provided"}, status=400)
+            if source not in _ASSET_SOURCES:
+                return web.json_response({"error": "source must be output/input/temp"}, status=400)
             
             base_dir = _source_base_dir(source)
             target_path = _safe_join(base_dir, filepath)
@@ -310,14 +395,24 @@ def setup_mobile_route():
                 # (including generation progress websockets).
                 if not os.path.exists(target_path):
                     return False
+                removal_plan = _mobile_file_state.plan_remove_path(
+                    FILE_STATE_CACHE_PATH,
+                    source,
+                    base_dir,
+                    filepath,
+                )
                 if os.path.isdir(target_path):
                     shutil.rmtree(target_path)
                 else:
                     os.remove(target_path)
-                # Clean up any leftover hidden-state trace for this item (and,
-                # for a folder, its descendants).
-                _mobile_hidden_items.remove_path(HIDDEN_ITEMS_CACHE_PATH, source, filepath)
-                _mobile_file_favorites.remove_path(FILE_FAVORITES_CACHE_PATH, source, filepath)
+                # Remove only identities verified at this path before deletion.
+                # A moved original whose old name was reused keeps its state.
+                _mobile_file_state.remove_path(
+                    FILE_STATE_CACHE_PATH,
+                    source,
+                    filepath,
+                    removal_plan,
+                )
                 return True
 
             loop = asyncio.get_event_loop()
@@ -325,6 +420,34 @@ def setup_mobile_route():
             if deleted:
                 return web.json_response({"success": True})
             return web.json_response({"error": "File not found"}, status=404)
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=500)
+
+    async def api_file_dimensions(request):
+        """True pixel dimensions for a batch of images.
+
+        Batched and client-driven rather than folded into the listing: this
+        backend returns a whole folder at once, so measuring every file there
+        would add a per-image open to a request that can carry thousands. The
+        client asks only for what it is about to show.
+        """
+        try:
+            data = await request.json()
+            source = data.get('source', 'output')
+            paths = data.get('paths')
+            if source not in _ASSET_SOURCES:
+                return web.json_response({"error": "source must be output/input/temp"}, status=400)
+            if not isinstance(paths, list):
+                return web.json_response({"error": "paths must be a list"}, status=400)
+            base_dir = _source_base_dir(source)
+            loop = asyncio.get_event_loop()
+            dimensions = await loop.run_in_executor(
+                None,
+                _mobile_image_dimensions.get_dimensions_for_paths,
+                base_dir,
+                paths[:512],
+            )
+            return web.json_response({"dimensions": dimensions})
         except Exception as e:
             return web.json_response({"error": str(e)}, status=500)
 
@@ -393,7 +516,7 @@ def setup_mobile_route():
 
             ext = os.path.splitext(target_path)[1].lower()
             image_extensions = ['.png', '.jpg', '.jpeg', '.webp', '.gif']
-            video_extensions = ['.mp4', '.mov', '.webm', '.mkv']
+            video_extensions = ['.mp4', '.m4v', '.mov', '.webm', '.mkv', '.avi']
 
             metadata_path = target_path
             if ext in video_extensions:
@@ -459,9 +582,26 @@ def setup_mobile_route():
         # a decode failure) get cached by the browser's heuristic freshness.
         no_store = {'Cache-Control': 'no-store'}
         try:
-            filename = request.query.get('filename')
-            subfolder = request.query.get('subfolder', '')
-            source = request.query.get('source', 'output')
+            prompt_id = request.query.get('prompt_id')
+            if prompt_id:
+                # Push-notification path: the payload carries only prompt_id
+                # (opaque, no filename), so resolve it against ComfyUI's own
+                # history server-side rather than trusting a client-supplied
+                # filename/subfolder.
+                inst = getattr(server.PromptServer, "instance", None)
+                queue = getattr(inst, "prompt_queue", None)
+                history = getattr(queue, "history", None)
+                entry = history.get(prompt_id) if isinstance(history, dict) else None
+                image = _mobile_push.find_first_output_image(entry) if entry is not None else None
+                if image is None:
+                    return web.Response(status=404, headers=no_store)
+                filename = image['filename']
+                subfolder = image['subfolder']
+                source = image['source']
+            else:
+                filename = request.query.get('filename')
+                subfolder = request.query.get('subfolder', '')
+                source = request.query.get('source', 'output')
 
             if not filename:
                 return web.Response(status=400, headers=no_store)
@@ -482,7 +622,7 @@ def setup_mobile_route():
 
             # For videos, look for an image with the same name
             ext = os.path.splitext(filename)[1].lower()
-            if ext in ['.mp4', '.mov', '.webm', '.mkv']:
+            if _mobile_video_thumbs.is_video(filename):
                 base_name = os.path.splitext(filename)[0]
                 folder_path = os.path.join(base_dir, subfolder) if subfolder else base_dir
                 image_extensions = ['.png', '.jpg', '.jpeg', '.webp', '.gif']
@@ -539,7 +679,7 @@ def setup_mobile_route():
             if not filename:
                 return web.Response(status=400, headers=no_store)
 
-            base_dir = _source_base_dir(source, allow_temp=True)
+            base_dir = _source_base_dir(source)
             file_path = _safe_join(base_dir, subfolder, filename)
 
             if file_path is None:
@@ -561,6 +701,162 @@ def setup_mobile_route():
         except Exception:
             return web.Response(status=500, headers=no_store)
 
+    async def api_get_playable_video(request):
+        """Serve an original or cached browser-safe MP4 with byte-range support."""
+        no_store = {'Cache-Control': 'no-store'}
+        try:
+            filename = request.query.get('filename')
+            subfolder = request.query.get('subfolder', '')
+            source = request.query.get('type', request.query.get('source', 'output'))
+
+            if not filename:
+                return web.Response(status=400, text='filename is required', headers=no_store)
+            if source not in _ASSET_SOURCES:
+                return web.Response(status=400, text='invalid asset source', headers=no_store)
+            if not _mobile_video_playback.is_video(filename):
+                return web.Response(status=415, text='unsupported video type', headers=no_store)
+
+            base_dir = _source_base_dir(source)
+            file_path = _safe_join(base_dir, subfolder, filename)
+            if file_path is None:
+                return web.Response(status=403, headers=no_store)
+            if not os.path.isfile(file_path):
+                return web.Response(status=404, headers=no_store)
+
+            loop = asyncio.get_event_loop()
+            playable = await loop.run_in_executor(
+                None, _mobile_video_playback.get_or_prepare, file_path
+            )
+            # This URL is keyed only by filename/subfolder/type, and ComfyUI
+            # reuses output filenames after a delete — so a far-future max-age is
+            # only safe when the caller supplied a cache-bust token that makes the
+            # URL unique to this file's identity. The client's token map is
+            # in-memory and empty after a reload, so without this a regenerated
+            # file replays the deleted one's bytes for a day (including into
+            # "Save video as…"). no-cache still stores and revalidates against the
+            # ETag below, so repeat opens cost a 304 rather than a full refetch.
+            cache_control = (
+                'private, max-age=86400'
+                if request.query.get('cb')
+                else 'private, no-cache'
+            )
+            return web.FileResponse(
+                playable.path,
+                headers={
+                    # aiohttp FileResponse implements Range/If-Range and emits
+                    # ETag/Last-Modified.
+                    'Cache-Control': cache_control,
+                    # Only a prepared file is guaranteed to be MP4. When the
+                    # original is served as-is (mode 'unprepared') it can be
+                    # webm/mkv/mov/avi, and mislabelling it video/mp4 makes any
+                    # engine that trusts the declared type refuse to play it —
+                    # /view derived this from the extension, so match that.
+                    'Content-Type': (
+                        mimetypes.guess_type(file_path)[0] or 'video/mp4'
+                        if playable.mode == 'unprepared'
+                        else 'video/mp4'
+                    ),
+                    # Saving straight from the video element (long-press → Save,
+                    # "Save video as…") otherwise names the file after the last
+                    # URL path segment — "playable.mp4". The served bytes may be
+                    # a remuxed cache copy, so name it after the original.
+                    'Content-Disposition': _file_utils.content_disposition(filename),
+                    'X-Mobile-Video-Mode': playable.mode,
+                },
+            )
+        except _mobile_video_playback.PlaybackPreparationError as exc:
+            # Preparation failed (decode error, worker killed by signal, timeout).
+            # The client routes ALL video through this endpoint with no fallback
+            # to /view, so refusing here makes a file unplayable that 3.0.x
+            # served straight from disk. Hand over the original bytes and let the
+            # browser decide — same outcome as before this gateway existed.
+            print('[Mobile Frontend] Could not prepare video {} ({}); serving it as-is.'.format(
+                request.query.get('filename', ''), exc
+            ))
+            try:
+                return web.FileResponse(
+                    file_path,
+                    headers={
+                        'Cache-Control': 'private, no-cache',
+                        'Content-Type': mimetypes.guess_type(file_path)[0] or 'video/mp4',
+                        'Content-Disposition': _file_utils.content_disposition(filename),
+                        'X-Mobile-Video-Mode': 'unprepared',
+                    },
+                )
+            except Exception:
+                pass
+            return web.Response(
+                status=422,
+                text='Video could not be prepared for browser playback',
+                headers=no_store,
+            )
+        except Exception as exc:
+            print('[Mobile Frontend] Playable video error: {}'.format(exc))
+            return web.Response(status=500, headers=no_store)
+
+    async def api_get_file_state(request):
+        try:
+            source = request.rel_url.query.get('source', 'output')
+            if source not in _ASSET_SOURCES:
+                return web.json_response({"error": "source must be output/input/temp"}, status=400)
+            base_dir = _source_base_dir(source)
+            loop = asyncio.get_event_loop()
+            state = await loop.run_in_executor(
+                None,
+                _mobile_file_state.get_all,
+                FILE_STATE_CACHE_PATH,
+                source,
+                base_dir,
+            )
+            return web.json_response(state)
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=500)
+
+    async def api_set_file_state(request):
+        try:
+            data = await request.json()
+            path = data.get('path')
+            source = data.get('source', 'output')
+            state = data.get('state')
+            value = data.get('value')
+            if not path:
+                return web.json_response({"error": "No path provided"}, status=400)
+            if state not in _mobile_file_state.STATES:
+                return web.json_response({"error": "state must be one of favorite/reject/hidden"}, status=400)
+            if not isinstance(value, bool):
+                return web.json_response({"error": "value must be a boolean"}, status=400)
+            if source not in _ASSET_SOURCES:
+                return web.json_response({"error": "source must be output/input/temp"}, status=400)
+            base_dir = _source_base_dir(source)
+            target_path = _safe_join(base_dir, path)
+            if target_path is None:
+                return web.json_response({"error": "Access denied"}, status=403)
+            loop = asyncio.get_event_loop()
+            applied = await loop.run_in_executor(
+                None,
+                _mobile_file_state.set_state,
+                FILE_STATE_CACHE_PATH,
+                source,
+                state,
+                base_dir,
+                path,
+                value,
+            )
+            if not applied:
+                if state == 'reject' and os.path.isdir(target_path):
+                    return web.json_response({"error": "Directories cannot be rejected"}, status=400)
+                return web.json_response(
+                    {"error": "File is not ready or changed while being read; retry"},
+                    status=409,
+                )
+            return web.json_response({"ok": True})
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=500)
+
+    # --- Temporary back-compat shims for the old three routes (§7/§14 of the
+    # file-state spec) — forward to the unified module so a stale client or
+    # bookmarked call keeps working across the transition. Remove once no
+    # shipped client calls them.
     async def api_set_hidden(request):
         try:
             data = await request.json()
@@ -569,7 +865,28 @@ def setup_mobile_route():
             hidden = bool(data.get('hidden'))
             if not path:
                 return web.json_response({"error": "No path provided"}, status=400)
-            _mobile_hidden_items.set_hidden(HIDDEN_ITEMS_CACHE_PATH, source, path, hidden)
+            if source not in _ASSET_SOURCES:
+                return web.json_response({"error": "source must be output/input/temp"}, status=400)
+            base_dir = _source_base_dir(source)
+            target_path = _safe_join(base_dir, path)
+            if target_path is None:
+                return web.json_response({"error": "Access denied"}, status=403)
+            loop = asyncio.get_event_loop()
+            applied = await loop.run_in_executor(
+                None,
+                _mobile_file_state.set_state,
+                FILE_STATE_CACHE_PATH,
+                source,
+                'hidden',
+                base_dir,
+                path,
+                hidden,
+            )
+            if not applied:
+                return web.json_response(
+                    {"error": "File is not ready or changed while being read; retry"},
+                    status=409,
+                )
             return web.json_response({"success": True})
         except Exception as e:
             return web.json_response({"error": str(e)}, status=500)
@@ -577,13 +894,16 @@ def setup_mobile_route():
     async def api_get_file_favorites(request):
         try:
             source = request.rel_url.query.get('source', 'output')
+            if source not in _ASSET_SOURCES:
+                return web.json_response({"error": "source must be output/input/temp"}, status=400)
             base_dir = _source_base_dir(source)
             loop = asyncio.get_event_loop()
             favorites = await loop.run_in_executor(
                 None,
-                _mobile_file_favorites.get_favorite_paths,
-                FILE_FAVORITES_CACHE_PATH,
+                _mobile_file_state.get_paths,
+                FILE_STATE_CACHE_PATH,
                 source,
+                'favorite',
                 base_dir,
             )
             return web.json_response({"favorites": favorites})
@@ -600,19 +920,35 @@ def setup_mobile_route():
                 return web.json_response({"error": "No path provided"}, status=400)
             if not isinstance(favorite, bool):
                 return web.json_response({"error": "favorite must be a boolean"}, status=400)
+            if source not in _ASSET_SOURCES:
+                return web.json_response({"error": "source must be output/input/temp"}, status=400)
             base_dir = _source_base_dir(source)
             target_path = _safe_join(base_dir, path)
             if target_path is None:
                 return web.json_response({"error": "Access denied"}, status=403)
             loop = asyncio.get_event_loop()
-            favorites = await loop.run_in_executor(
+            applied = await loop.run_in_executor(
                 None,
-                _mobile_file_favorites.set_favorite,
-                FILE_FAVORITES_CACHE_PATH,
+                _mobile_file_state.set_state,
+                FILE_STATE_CACHE_PATH,
                 source,
+                'favorite',
                 base_dir,
                 path,
                 favorite,
+            )
+            if not applied:
+                return web.json_response(
+                    {"error": "File is not ready or changed while being read; retry"},
+                    status=409,
+                )
+            favorites = await loop.run_in_executor(
+                None,
+                _mobile_file_state.get_paths,
+                FILE_STATE_CACHE_PATH,
+                source,
+                'favorite',
+                base_dir,
             )
             return web.json_response({"favorites": favorites})
         except Exception as e:
@@ -704,8 +1040,7 @@ def setup_mobile_route():
                     shutil.move(src_path, target)
                     # Keep hidden state attached to the item across the move.
                     new_rel = os.path.relpath(target, os.path.abspath(base_dir))
-                    _mobile_hidden_items.rename_path(HIDDEN_ITEMS_CACHE_PATH, asset_source, rel, new_rel)
-                    _mobile_file_favorites.rename_path(FILE_FAVORITES_CACHE_PATH, asset_source, rel, new_rel)
+                    _mobile_file_state.rename_path(FILE_STATE_CACHE_PATH, asset_source, rel, new_rel)
 
             loop = asyncio.get_event_loop()
             await loop.run_in_executor(None, _move_all)
@@ -808,8 +1143,7 @@ def setup_mobile_route():
             os.rename(src_path, dst_path)
             # Keep hidden state attached to the item across the rename.
             new_rel = os.path.relpath(dst_path, os.path.abspath(base_dir))
-            _mobile_hidden_items.rename_path(HIDDEN_ITEMS_CACHE_PATH, source, path, new_rel)
-            _mobile_file_favorites.rename_path(FILE_FAVORITES_CACHE_PATH, source, path, new_rel)
+            _mobile_file_state.rename_path(FILE_STATE_CACHE_PATH, source, path, new_rel)
             return web.json_response({"success": True})
         except Exception as e:
             return web.json_response({"error": str(e)}, status=500)
@@ -850,15 +1184,17 @@ def setup_mobile_route():
             if os.path.exists(dst_path) and not overwrite:
                 return web.json_response({"error": "Destination already exists"}, status=409)
             if os.path.isdir(dst_path):
-                # shutil.copy2 into a directory path raises IsADirectoryError,
-                # which the broad handler below would turn into an opaque 500.
+                # Materializing onto a directory path would raise deep in
+                # link_or_copy and the broad handler would turn it into an opaque
+                # 500; reject it up front with a clear status instead.
                 return web.json_response({"error": "Destination is a directory"}, status=409)
 
             def _copy_to_input():
-                # Always a physical copy (possibly multi-GB video); keep it off
-                # the event loop.
-                os.makedirs(os.path.dirname(dst_path), exist_ok=True)
-                shutil.copy2(src_path, dst_path)
+                # Prefer a hard link (no extra disk use, instant even for a
+                # multi-GB video) when input shares a filesystem with the source;
+                # fall back to a real copy across volumes or link-less filesystems.
+                # Either way it's filesystem work, so keep it off the event loop.
+                return _file_utils.link_or_copy(src_path, dst_path)
 
             loop = asyncio.get_event_loop()
             await loop.run_in_executor(None, _copy_to_input)
@@ -1006,14 +1342,31 @@ def setup_mobile_route():
                 return web.Response(status=403)
             if not os.path.isfile(path):
                 return web.Response(status=404)
-            # Optional ?w= downscaled thumbnail for still images — the dropdown
-            # rows only need a ~44px preview, so serving the full-res file there is
-            # wasteful. Videos and invalid widths fall through to the original; a
-            # decode failure also falls back rather than erroring. The day-long
-            # client cache means repeat views don't re-render.
+            # Optional ?w= thumbnail for model-picker rows. Still images are
+            # downscaled directly; videos return a cached extracted frame so a
+            # picker with many animated previews doesn't create many simultaneous
+            # range requests and decoders. Invalid widths fall through to the
+            # original. The day-long client cache avoids repeat rendering.
             width = _safe_int(request.query.get('w'), 0)
             is_video = path.lower().endswith(('.mp4', '.webm', '.mov', '.mkv'))
-            if width > 0 and not is_video:
+            if width > 0 and is_video:
+                loop = asyncio.get_event_loop()
+                rendered = await loop.run_in_executor(
+                    None, _mobile_video_thumbs.get_or_render_thumbnail, path
+                )
+                if rendered is not None:
+                    thumb = web.Response(body=rendered, content_type='image/jpeg')
+                    thumb.headers['Cache-Control'] = 'public, max-age=86400'
+                    return thumb
+                # Never fall through and return the original video to an <img>
+                # thumbnail request. Besides failing to decode as an image, a
+                # non-faststart MP4 could make the browser fetch the entire file.
+                return web.Response(
+                    status=400,
+                    text='Unable to render video thumbnail',
+                    headers={'Cache-Control': 'no-store'},
+                )
+            elif width > 0:
                 try:
                     loop = asyncio.get_event_loop()
                     body, content_type = await loop.run_in_executor(
@@ -1065,7 +1418,166 @@ def setup_mobile_route():
         except Exception as e:
             return web.json_response({"error": str(e)}, status=500)
 
+    # --- Web Push (browser notifications on generation completion) ---
+    async def api_push_config(request):
+        """Frontend reads this to get the VAPID public key (applicationServerKey)
+        it needs to subscribe, plus whether push is available at all."""
+        try:
+            if not _mobile_web_push.is_available():
+                return web.json_response({"enabled": False, "reason": _mobile_web_push.import_error()})
+            return web.json_response({
+                "enabled": True,
+                "vapidPublicKey": _mobile_web_push.get_public_key(),
+                "subscriptions": _mobile_web_push.subscription_count(),
+            })
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=500)
+
+    async def api_push_subscribe(request):
+        try:
+            if not _mobile_web_push.is_available():
+                return web.json_response({"error": "push_unavailable"}, status=503)
+            body = await request.json()
+            # Accept either {subscription: {...}} or the raw PushSubscription JSON.
+            subscription = body.get("subscription") if isinstance(body, dict) else None
+            if subscription is None and isinstance(body, dict) and "endpoint" in body:
+                subscription = body
+            if not _mobile_web_push.add_subscription(subscription):
+                return web.json_response({"error": "invalid_subscription"}, status=400)
+            return web.json_response({"ok": True, "subscriptions": _mobile_web_push.subscription_count()})
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=500)
+
+    async def api_push_unsubscribe(request):
+        try:
+            body = await request.json()
+            endpoint = body.get("endpoint") if isinstance(body, dict) else None
+            removed = _mobile_web_push.remove_subscription(endpoint)
+            return web.json_response({"ok": True, "removed": removed})
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=500)
+
+    async def api_push_test(request):
+        """Send a test notification to all subscriptions — used by the UI's
+        'send test' button to confirm the whole pipeline works."""
+        try:
+            if not _mobile_web_push.is_available():
+                return web.json_response({"error": "push_unavailable"}, status=503)
+            loop = asyncio.get_event_loop()
+            result = await loop.run_in_executor(
+                None, _mobile_web_push.send_to_all,
+                "Test notification", "Push notifications are working \U0001f389", {"test": True},
+            )
+            return web.json_response(result)
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=500)
+
+    # --- App push targets (native app pairs automatically via these) ---
+    # The pairing write endpoints accept an arbitrary https URL that this
+    # server then POSTs completion events to — an SSRF/exfiltration surface
+    # with zero legitimate callers until the native app ships. Off by
+    # default; app developers/testers opt in with COMFYUI_MOBILE_APP_PUSH=1.
+    _app_push_pairing_enabled = os.environ.get(
+        "COMFYUI_MOBILE_APP_PUSH", ""
+    ).strip().lower() in ("1", "true", "yes", "on")
+
+    async def api_push_app_targets_get(request):
+        # Gated with the writes: this lists the registered relay URLs and pairing
+        # state. With the feature off there is no legitimate caller, and leaving
+        # a read open discloses exactly what the write gate exists to protect.
+        if not _app_push_pairing_enabled:
+            return web.json_response({"error": "app_push_pairing_disabled"}, status=403)
+        try:
+            return web.json_response({"targets": _mobile_app_push.list_targets()})
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=500)
+
+    async def api_push_app_targets_add(request):
+        """Called by the native app on pairing — registers a relay + pairing code
+        so this server notifies that device on completion."""
+        if not _app_push_pairing_enabled:
+            return web.json_response({"error": "app_push_pairing_disabled"}, status=403)
+        try:
+            body = await request.json()
+            if not isinstance(body, dict):
+                return web.json_response({"error": "invalid_body"}, status=400)
+            ok = _mobile_app_push.add_target(
+                body.get("relay_url"),
+                body.get("pairing_code"),
+                body.get("label"),
+                body.get("added"),
+                server_id=body.get("server_id"),
+            )
+            if not ok:
+                return web.json_response({"error": "invalid_target"}, status=400)
+            return web.json_response({"ok": True, "targets": _mobile_app_push.target_count()})
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=500)
+
+    async def api_push_app_targets_remove(request):
+        if not _app_push_pairing_enabled:
+            return web.json_response({"error": "app_push_pairing_disabled"}, status=403)
+        try:
+            body = await request.json()
+            removed = _mobile_app_push.remove_target(
+                body.get("pairing_code") if isinstance(body, dict) else None,
+                body.get("relay_url") if isinstance(body, dict) else None,
+            )
+            return web.json_response({"ok": True, "removed": removed})
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=500)
+
+    async def api_push_app_test(request):
+        # Gated too: this fires a POST at every configured relay, which is the
+        # outbound request the pairing gate is meant to prevent.
+        if not _app_push_pairing_enabled:
+            return web.json_response({"error": "app_push_pairing_disabled"}, status=403)
+        try:
+            loop = asyncio.get_event_loop()
+            result = await loop.run_in_executor(None, _mobile_app_push.send_test)
+            return web.json_response(result)
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=500)
+
+    async def api_push_prefs_get(request):
+        try:
+            return web.json_response(_mobile_push_prefs.get_prefs())
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=500)
+
+    async def api_push_prefs_set(request):
+        try:
+            body = await request.json()
+            return web.json_response(_mobile_push_prefs.set_prefs(body))
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=500)
+
+    async def api_app_prefs_get(request):
+        try:
+            return web.json_response(_mobile_app_prefs.get_prefs())
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=500)
+
+    async def api_app_prefs_set(request):
+        try:
+            body = await request.json()
+            return web.json_response(_mobile_app_prefs.set_prefs(body))
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=500)
+
     # Register API routes
+    mobile_app.router.add_get('/api/push/config', api_push_config)
+    mobile_app.router.add_post('/api/push/subscribe', api_push_subscribe)
+    mobile_app.router.add_post('/api/push/unsubscribe', api_push_unsubscribe)
+    mobile_app.router.add_post('/api/push/test', api_push_test)
+    mobile_app.router.add_get('/api/push/app-targets', api_push_app_targets_get)
+    mobile_app.router.add_post('/api/push/app-targets', api_push_app_targets_add)
+    mobile_app.router.add_post('/api/push/app-targets/remove', api_push_app_targets_remove)
+    mobile_app.router.add_post('/api/push/app-test', api_push_app_test)
+    mobile_app.router.add_get('/api/push/preferences', api_push_prefs_get)
+    mobile_app.router.add_post('/api/push/preferences', api_push_prefs_set)
+    mobile_app.router.add_get('/api/preferences', api_app_prefs_get)
+    mobile_app.router.add_post('/api/preferences', api_app_prefs_set)
     mobile_app.router.add_get('/api/cpu-stats', api_cpu_stats)
     mobile_app.router.add_get('/api/history-count', api_history_count)
     mobile_app.router.add_get('/api/queue-metadata', api_queue_metadata_get)
@@ -1073,6 +1585,12 @@ def setup_mobile_route():
     mobile_app.router.add_post('/api/queue-metadata/remap', api_queue_metadata_remap)
     mobile_app.router.add_get('/api/files', api_list_files)
     mobile_app.router.add_delete('/api/files', api_delete_file)
+    mobile_app.router.add_get('/api/files/state', api_get_file_state)
+    mobile_app.router.add_post('/api/files/state', api_set_file_state)
+    # Back-compat shims — see api_set_hidden/api_get_file_favorites/
+    # api_set_file_favorite above. No client on THIS branch calls them (the
+    # unified /api/files/state replaced all three), but v3.1.1's client still
+    # does, so they stay until that branch moves over.
     mobile_app.router.add_post('/api/files/hidden', api_set_hidden)
     mobile_app.router.add_get('/api/files/favorites', api_get_file_favorites)
     mobile_app.router.add_post('/api/files/favorites', api_set_file_favorite)
@@ -1081,7 +1599,9 @@ def setup_mobile_route():
     mobile_app.router.add_post('/api/file-prefix-aliases/resolve', api_resolve_file_prefix_aliases)
     mobile_app.router.add_get('/api/thumbnail', api_get_thumbnail)
     mobile_app.router.add_get('/api/preview', api_get_preview)
+    mobile_app.router.add_get('/api/video/playable', api_get_playable_video)
     mobile_app.router.add_get('/api/file-metadata', api_file_metadata)
+    mobile_app.router.add_post('/api/file-dimensions', api_file_dimensions)
     mobile_app.router.add_get('/api/workflow-availability', api_workflow_availability)
     mobile_app.router.add_get('/api/image-metadata', api_image_metadata)
     mobile_app.router.add_post('/api/files/move', api_move_files)
@@ -1153,146 +1673,39 @@ def setup_mobile_route():
 
     mobile_app.router.add_get('/assets/{path:.*}', serve_asset)
 
-    # --- Web Push (browser notifications on generation completion) ---
-    async def api_push_config(request):
-        """Frontend reads this to get the VAPID public key (applicationServerKey)
-        it needs to subscribe, plus whether push is available at all."""
-        try:
-            if not _mobile_web_push.is_available():
-                return web.json_response({"enabled": False, "reason": _mobile_web_push.import_error()})
-            return web.json_response({
-                "enabled": True,
-                "vapidPublicKey": _mobile_web_push.get_public_key(),
-                "subscriptions": _mobile_web_push.subscription_count(),
-            })
-        except Exception as e:
-            return web.json_response({"error": str(e)}, status=500)
+    # Serve specific root-level static files that Vite emits to the dist root
+    # (PWA manifest, service worker, icons). These need explicit routes: the SPA
+    # catch-all below would otherwise return index.html for them. The service
+    # worker MUST be served from /mobile/ (not /mobile/assets/) so its scope can
+    # cover the whole app, and with no-cache so updates are picked up.
+    _ROOT_STATIC_FILES = {
+        'sw.js': ('application/javascript', 'no-cache'),
+        'manifest.webmanifest': ('application/manifest+json', 'no-cache'),
+        'vite.svg': ('image/svg+xml', 'public, max-age=86400'),
+        'icon-192.png': ('image/png', 'public, max-age=86400'),
+        'icon-512.png': ('image/png', 'public, max-age=86400'),
+        'icon-180.png': ('image/png', 'public, max-age=86400'),
+        'icon-maskable-512.png': ('image/png', 'public, max-age=86400'),
+    }
 
-    async def api_push_subscribe(request):
-        try:
-            if not _mobile_web_push.is_available():
-                return web.json_response({"error": "push_unavailable"}, status=503)
-            body = await request.json()
-            # Accept either {subscription: {...}} or the raw PushSubscription JSON.
-            subscription = body.get("subscription") if isinstance(body, dict) else None
-            if subscription is None and isinstance(body, dict) and "endpoint" in body:
-                subscription = body
-            if not _mobile_web_push.add_subscription(subscription):
-                return web.json_response({"error": "invalid_subscription"}, status=400)
-            return web.json_response({"ok": True, "subscriptions": _mobile_web_push.subscription_count()})
-        except Exception as e:
-            return web.json_response({"error": str(e)}, status=500)
+    async def serve_root_static(request):
+        name = os.path.basename(request.path)
+        meta = _ROOT_STATIC_FILES.get(name)
+        if meta is None:
+            return web.Response(status=404, text='Not found')
+        full = os.path.join(DIST_DIR, name)
+        if not os.path.isfile(full):
+            return web.Response(status=404, text='Not found')
+        content_type, cache_control = meta
+        headers = {'Cache-Control': cache_control}
+        if name == 'sw.js':
+            headers['Service-Worker-Allowed'] = '/mobile/'
+        response = web.FileResponse(full, headers=headers)
+        response.content_type = content_type
+        return response
 
-    async def api_push_unsubscribe(request):
-        try:
-            body = await request.json()
-            endpoint = body.get("endpoint") if isinstance(body, dict) else None
-            removed = _mobile_web_push.remove_subscription(endpoint)
-            return web.json_response({"ok": True, "removed": removed})
-        except Exception as e:
-            return web.json_response({"error": str(e)}, status=500)
-
-    async def api_push_test(request):
-        """Send a test notification to all subscriptions — used by the UI's
-        'send test' button to confirm the whole pipeline works."""
-        try:
-            if not _mobile_web_push.is_available():
-                return web.json_response({"error": "push_unavailable"}, status=503)
-            loop = asyncio.get_event_loop()
-            result = await loop.run_in_executor(
-                None, _mobile_web_push.send_to_all,
-                "Test notification", "Push notifications are working \U0001f389", {"test": True},
-            )
-            return web.json_response(result)
-        except Exception as e:
-            return web.json_response({"error": str(e)}, status=500)
-
-    # --- App push targets (native app pairs automatically via these) ---
-    async def api_push_app_targets_get(request):
-        try:
-            return web.json_response({"targets": _mobile_app_push.list_targets()})
-        except Exception as e:
-            return web.json_response({"error": str(e)}, status=500)
-
-    async def api_push_app_targets_add(request):
-        """Called by the native app on pairing — registers a relay + pairing code
-        so this server notifies that device on completion."""
-        try:
-            body = await request.json()
-            if not isinstance(body, dict):
-                return web.json_response({"error": "invalid_body"}, status=400)
-            ok = _mobile_app_push.add_target(
-                body.get("relay_url"),
-                body.get("pairing_code"),
-                body.get("label"),
-                body.get("added"),
-                server_id=body.get("server_id"),
-            )
-            if not ok:
-                return web.json_response({"error": "invalid_target"}, status=400)
-            return web.json_response({"ok": True, "targets": _mobile_app_push.target_count()})
-        except Exception as e:
-            return web.json_response({"error": str(e)}, status=500)
-
-    async def api_push_app_targets_remove(request):
-        try:
-            body = await request.json()
-            removed = _mobile_app_push.remove_target(
-                body.get("pairing_code") if isinstance(body, dict) else None,
-                body.get("relay_url") if isinstance(body, dict) else None,
-            )
-            return web.json_response({"ok": True, "removed": removed})
-        except Exception as e:
-            return web.json_response({"error": str(e)}, status=500)
-
-    async def api_push_app_test(request):
-        try:
-            loop = asyncio.get_event_loop()
-            result = await loop.run_in_executor(None, _mobile_app_push.send_test)
-            return web.json_response(result)
-        except Exception as e:
-            return web.json_response({"error": str(e)}, status=500)
-
-    async def api_push_prefs_get(request):
-        try:
-            return web.json_response(_mobile_push_prefs.get_prefs())
-        except Exception as e:
-            return web.json_response({"error": str(e)}, status=500)
-
-    async def api_push_prefs_set(request):
-        try:
-            body = await request.json()
-            return web.json_response(_mobile_push_prefs.set_prefs(body))
-        except Exception as e:
-            return web.json_response({"error": str(e)}, status=500)
-
-    async def api_app_prefs_get(request):
-        try:
-            return web.json_response(_mobile_app_prefs.get_prefs())
-        except Exception as e:
-            return web.json_response({"error": str(e)}, status=500)
-
-    async def api_app_prefs_set(request):
-        try:
-            body = await request.json()
-            return web.json_response(_mobile_app_prefs.set_prefs(body))
-        except Exception as e:
-            return web.json_response({"error": str(e)}, status=500)
-
-    # Register API routes — these must register before the SPA catchall below,
-    # otherwise '/api/push/*' GETs would be swallowed by the index.html fallback.
-    mobile_app.router.add_get('/api/push/config', api_push_config)
-    mobile_app.router.add_post('/api/push/subscribe', api_push_subscribe)
-    mobile_app.router.add_post('/api/push/unsubscribe', api_push_unsubscribe)
-    mobile_app.router.add_post('/api/push/test', api_push_test)
-    mobile_app.router.add_get('/api/push/app-targets', api_push_app_targets_get)
-    mobile_app.router.add_post('/api/push/app-targets', api_push_app_targets_add)
-    mobile_app.router.add_post('/api/push/app-targets/remove', api_push_app_targets_remove)
-    mobile_app.router.add_post('/api/push/app-test', api_push_app_test)
-    mobile_app.router.add_get('/api/push/preferences', api_push_prefs_get)
-    mobile_app.router.add_post('/api/push/preferences', api_push_prefs_set)
-    mobile_app.router.add_get('/api/preferences', api_app_prefs_get)
-    mobile_app.router.add_post('/api/preferences', api_app_prefs_set)
+    for _name in _ROOT_STATIC_FILES:
+        mobile_app.router.add_get('/' + _name, serve_root_static)
 
     # Serve index.html for root and all non-API routes (SPA)
     mobile_app.router.add_get('/', serve_index)
@@ -1307,8 +1720,8 @@ def setup_mobile_route():
     # Mount the sub-application at /mobile
     server.PromptServer.instance.app.add_subapp('/mobile', mobile_app)
 
-    # Push completion detection runs on the main app's event loop so it works
-    # regardless of any client being connected — start/stop with the server.
+    # Server-side completion detection (push-notification spike). Runs on the
+    # main app's event loop so it works regardless of any client being connected.
     server.PromptServer.instance.app.on_startup.append(_mobile_push.on_startup)
     server.PromptServer.instance.app.on_cleanup.append(_mobile_push.on_cleanup)
 

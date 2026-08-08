@@ -5,7 +5,7 @@ import type { OptionProps } from "react-select";
 import { FullscreenWidgetModal } from "../modals/FullscreenWidgetModal";
 import { PinButton } from "./PinButton";
 import { ChevronDownIcon, PlusIcon, FolderIcon, PromotedWidgetIcon, FunnelIcon, CheckIcon } from "@/components/icons";
-import { getImagePreviewUrl, setFileHidden, uploadImageFile } from "@/api/client";
+import { getImagePreviewUrl, setFileState, uploadImageFile } from "@/api/client";
 import { useWorkflowStore } from "@/hooks/useWorkflow";
 import { useWorkflowErrorsStore } from "@/hooks/useWorkflowErrors";
 import { InputFilePicker } from "./InputFilePicker";
@@ -349,7 +349,7 @@ export function ComboControl({
       // Auto-hiding the new input is best-effort declutter — never let it abort
       // the upload assignment, so fire-and-forget instead of awaiting.
       if (hiddenWorkflow && result.type === "input") {
-        void setFileHidden(nextValue, true, "input").catch((err) => {
+        void setFileState("input", nextValue, "hidden", true).catch((err) => {
           console.warn("Failed to hide input from hidden workflow:", err);
         });
       }
@@ -377,7 +377,7 @@ export function ComboControl({
     setIsUploading(true);
     try {
       if (hiddenWorkflow) {
-        void setFileHidden(nextValue, true, "input").catch((err) => {
+        void setFileState("input", nextValue, "hidden", true).catch((err) => {
           console.warn("Failed to hide input added to hidden workflow:", err);
         });
       }

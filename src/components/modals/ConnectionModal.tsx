@@ -1,6 +1,7 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useWorkflowStore } from '@/hooks/useWorkflow';
 import { getScopedWorkflowView } from '@/utils/canonicalWorkflowOps';
+import { runUndoTransaction } from '@/utils/undoTransaction';
 import { useConnectionSectionFoldsStore } from '@/hooks/useConnectionSectionFolds';
 import {
   findCompatibleSourceNodes,
@@ -22,6 +23,7 @@ import {
   findWorkflowNodeInScope,
   resolveWorkflowNodeDisplayName
 } from '@/utils/subgraphPlaceholderLabels';
+import { collectSetNodeNames, getSetGetName, isGetNode } from '@/utils/setGetNodes';
 import { ConnectionSearchResult } from './ConnectionModal/SearchResult';
 import { SearchActionModal } from './SearchActionModal';
 import { NodeTypeSearchResult } from './NodeTypeSearchResult';
@@ -60,6 +62,11 @@ type ConnectionModalProps = InputConnectionModalProps | OutputConnectionModalPro
 interface OutputCandidate {
   nodeId: number;
   inputIndex: number;
+  // Stable identifier for selection — `${nodeId}:${inputIndex}` for materialized
+  // inputs, `${nodeId}:w:${inputName}` for un-materialized widget-inputs.
+  selectionKey: string;
+  // True when the input slot isn't materialized yet (created on connect).
+  isSynthetic: boolean;
   displayName: string;
   pack: string;
   inputName: string;
@@ -67,6 +74,9 @@ interface OutputCandidate {
   currentlyConnectedFromThisOutput: boolean;
   hasExistingLink: boolean;
   existingSourceLabel: string | null;
+  // True when this input is backed by a widget — connecting overrides the
+  // widget's current value.
+  isOverrideable: boolean;
   score: number;
 }
 
@@ -75,6 +85,7 @@ interface OutputNodeCandidate {
   displayName: string;
   pack: string;
   score: number;
+  overrideableCount: number;
   inputs: OutputCandidate[];
 }
 
@@ -97,6 +108,8 @@ export function ConnectionModal(props: ConnectionModalProps) {
   const nodeTypes = useWorkflowStore((s) => s.nodeTypes);
   const connectNodes = useWorkflowStore((s) => s.connectNodes);
   const disconnectInput = useWorkflowStore((s) => s.disconnectInput);
+  const updateNodeWidget = useWorkflowStore((s) => s.updateNodeWidget);
+  const ensureWidgetInputSlot = useWorkflowStore((s) => s.ensureWidgetInputSlot);
   const addNode = useWorkflowStore((s) => s.addNode);
   const addNodeAndConnect = useWorkflowStore((s) => s.addNodeAndConnect);
   const scrollToNode = useWorkflowStore((s) => s.scrollToNode);
@@ -150,6 +163,15 @@ export function ConnectionModal(props: ConnectionModalProps) {
     const node = findWorkflowNodeInScope(workflow, nodeId, currentSubgraphId);
     return node?.itemKey ?? null;
   }, [currentSubgraphId, nodeId, workflow]);
+
+  // A GetNode reads its value from a SetNode by a shared name (no link). When the
+  // modal is opened on a Get's (synthesized) input, we list the available
+  // SetNodes here instead of compatible source slots; selecting one sets the
+  // Get's name widget.
+  const isGetInput = useMemo(
+    () => mode === 'input' && Boolean(scopedWorkflow?.nodes.find((n) => n.id === nodeId && isGetNode(n))),
+    [mode, scopedWorkflow, nodeId],
+  );
 
   const getHierarchicalKeyForNodeId = (targetNodeId: number): string | null => {
     const node = findWorkflowNodeInScope(
@@ -248,7 +270,7 @@ export function ConnectionModal(props: ConnectionModalProps) {
 
   const outputCandidates = useMemo<OutputCandidate[]>(() => {
     if (mode !== 'output' || !scopedWorkflow || !nodeTypes) return [];
-    const compatibleTargets = findCompatibleTargetNodesForOutput(scopedWorkflow, nodeId, props.outputIndex);
+    const compatibleTargets = findCompatibleTargetNodesForOutput(scopedWorkflow, nodeId, props.outputIndex, nodeTypes);
     const connectedKeys = new Set<string>();
     for (const link of scopedWorkflow.links) {
       const [, srcNodeId, srcSlot, tgtNodeId, tgtSlot] = link;
@@ -259,19 +281,24 @@ export function ConnectionModal(props: ConnectionModalProps) {
     const query = searchQuery.trim();
 
     const candidates = compatibleTargets
-      .map(({ node, inputIndex }) => {
+      .map(({ node, inputIndex, widgetInputName, widgetInputType }) => {
         const typeDef = nodeTypes[node.type];
         const displayName = resolveWorkflowNodeDisplayName(workflow, node, nodeTypes);
         const pack = prettyPackName(String(typeDef?.python_module ?? typeDef?.category?.split('/')[0] ?? 'Core'));
-        const inputSlot = node.inputs?.[inputIndex];
-        if (!inputSlot) return null;
-        const inputName = inputSlot.localized_name || inputSlot.name || `Input ${inputIndex + 1}`;
-        const inputType = String(inputSlot.type);
-        const selectionKey = makeOutputSelectionKey(node.id, inputIndex);
-        const currentlyConnectedFromThisOutput = connectedKeys.has(selectionKey);
+        const isSynthetic = inputIndex < 0;
+        const inputSlot = isSynthetic ? undefined : node.inputs?.[inputIndex];
+        if (!isSynthetic && !inputSlot) return null;
+        const inputName = isSynthetic
+          ? (widgetInputName ?? 'value')
+          : (inputSlot!.localized_name || inputSlot!.name || `Input ${inputIndex + 1}`);
+        const inputType = isSynthetic ? String(widgetInputType) : String(inputSlot!.type);
+        const selectionKey = isSynthetic
+          ? `${node.id}:w:${inputName}`
+          : makeOutputSelectionKey(node.id, inputIndex);
+        const currentlyConnectedFromThisOutput = !isSynthetic && connectedKeys.has(selectionKey);
         let hasExistingLink = false;
         let existingSourceLabel: string | null = null;
-        const existingLinkId = inputSlot.link;
+        const existingLinkId = inputSlot?.link;
         if (existingLinkId != null && !currentlyConnectedFromThisOutput) {
           const existingLink = scopedWorkflow.links.find((link) => link[0] === existingLinkId);
           if (existingLink) {
@@ -302,6 +329,8 @@ export function ConnectionModal(props: ConnectionModalProps) {
         return {
           nodeId: node.id,
           inputIndex,
+          selectionKey,
+          isSynthetic,
           displayName,
           pack,
           inputName,
@@ -309,6 +338,9 @@ export function ConnectionModal(props: ConnectionModalProps) {
           currentlyConnectedFromThisOutput,
           hasExistingLink,
           existingSourceLabel,
+          // Materialized widget-inputs carry .widget; synthetic ones are widgets
+          // by construction.
+          isOverrideable: isSynthetic || Boolean(inputSlot!.widget),
           score
         };
       });
@@ -322,14 +354,14 @@ export function ConnectionModal(props: ConnectionModalProps) {
     return new Set(
       outputCandidates
         .filter((candidate) => candidate.currentlyConnectedFromThisOutput)
-        .map((candidate) => makeOutputSelectionKey(candidate.nodeId, candidate.inputIndex))
+        .map((candidate) => candidate.selectionKey)
     );
   }, [mode, outputCandidates]);
 
   const outputCandidatesByKey = useMemo(() => {
     const map = new Map<string, OutputCandidate>();
     for (const candidate of outputCandidates) {
-      map.set(makeOutputSelectionKey(candidate.nodeId, candidate.inputIndex), candidate);
+      map.set(candidate.selectionKey, candidate);
     }
     return map;
   }, [outputCandidates]);
@@ -341,6 +373,7 @@ export function ConnectionModal(props: ConnectionModalProps) {
       const existing = byNode.get(candidate.nodeId);
       if (existing) {
         existing.inputs.push(candidate);
+        if (candidate.isOverrideable) existing.overrideableCount += 1;
         if (candidate.score > existing.score) existing.score = candidate.score;
         continue;
       }
@@ -349,6 +382,7 @@ export function ConnectionModal(props: ConnectionModalProps) {
         displayName: candidate.displayName,
         pack: candidate.pack,
         score: candidate.score,
+        overrideableCount: candidate.isOverrideable ? 1 : 0,
         inputs: [candidate]
       });
     }
@@ -467,8 +501,7 @@ export function ConnectionModal(props: ConnectionModalProps) {
     if (props.originHadConnection) scrollToNode(newHierarchicalKey);
   };
 
-  const toggleOutputTargetSelection = (nodeIdToToggle: number, inputIndexToToggle: number) => {
-    const key = makeOutputSelectionKey(nodeIdToToggle, inputIndexToToggle);
+  const toggleOutputTargetSelection = (key: string) => {
     setSelectedOutputTargetKeys((prev) => {
       const next = new Set(prev);
       if (next.has(key)) {
@@ -483,9 +516,8 @@ export function ConnectionModal(props: ConnectionModalProps) {
   const openMultiInputPicker = (nodeCandidate: OutputNodeCandidate) => {
     const initialSelection = new Set<string>();
     for (const candidate of nodeCandidate.inputs) {
-      const key = makeOutputSelectionKey(candidate.nodeId, candidate.inputIndex);
-      if (selectedOutputTargetKeys.has(key)) {
-        initialSelection.add(key);
+      if (selectedOutputTargetKeys.has(candidate.selectionKey)) {
+        initialSelection.add(candidate.selectionKey);
       }
     }
     setMultiInputPickerNodeId(nodeCandidate.nodeId);
@@ -516,7 +548,7 @@ export function ConnectionModal(props: ConnectionModalProps) {
       closeMultiInputPicker();
       return;
     }
-    const nodeKeys = nodeCandidate.inputs.map((input) => makeOutputSelectionKey(input.nodeId, input.inputIndex));
+    const nodeKeys = nodeCandidate.inputs.map((input) => input.selectionKey);
     setSelectedOutputTargetKeys((prev) => {
       const next = new Set(prev);
       for (const key of nodeKeys) {
@@ -537,11 +569,15 @@ export function ConnectionModal(props: ConnectionModalProps) {
     }
     const onlyInput = nodeCandidate.inputs[0];
     if (!onlyInput) return;
-    toggleOutputTargetSelection(onlyInput.nodeId, onlyInput.inputIndex);
+    toggleOutputTargetSelection(onlyInput.selectionKey);
   };
 
   const applyOutputSelection = () => {
     if (mode !== 'output') return;
+    // One undo step for the whole Apply: each disconnect/materialize/connect
+    // below commits its own store set(), and N targets would otherwise stack
+    // up to 2N separate undo snapshots.
+    runUndoTransaction(() => {
     for (const key of initialOutputSelection) {
       if (selectedOutputTargetKeys.has(key)) continue;
       const candidate = outputCandidatesByKey.get(key);
@@ -556,8 +592,15 @@ export function ConnectionModal(props: ConnectionModalProps) {
       if (!candidate) continue;
       const targetHierarchicalKey = getHierarchicalKeyForNodeId(candidate.nodeId);
       if (!targetHierarchicalKey || !currentNodeHierarchicalKey) continue;
-      connectNodes(currentNodeHierarchicalKey, props.outputIndex, targetHierarchicalKey, candidate.inputIndex, candidate.inputType);
+      // Un-materialized widget-inputs only exist in the type def — create the
+      // slot first (overriding the widget), then connect to it.
+      const targetInputIndex = candidate.isSynthetic
+        ? ensureWidgetInputSlot(targetHierarchicalKey, candidate.inputName, candidate.inputType)
+        : candidate.inputIndex;
+      if (targetInputIndex == null || targetInputIndex < 0) continue;
+      connectNodes(currentNodeHierarchicalKey, props.outputIndex, targetHierarchicalKey, targetInputIndex, candidate.inputType);
     }
+    });
     onClose();
   };
 
@@ -570,12 +613,85 @@ export function ConnectionModal(props: ConnectionModalProps) {
     applyOutputSelection();
   };
 
-  const modalTitle = mode === 'input'
+  // Escape closes the topmost layer: the overwrite confirm, then the multi-input
+  // picker, then the whole connection menu.
+  useEffect(() => {
+    if (!isOpen) return;
+    const handleKey = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      event.stopPropagation();
+      if (showOverwriteConfirm) {
+        setShowOverwriteConfirm(false);
+      } else if (multiInputPickerNodeId != null) {
+        setMultiInputPickerNodeId(null);
+        setMultiInputPickerSelection(new Set());
+      } else {
+        onClose();
+      }
+    };
+    document.addEventListener('keydown', handleKey);
+    return () => document.removeEventListener('keydown', handleKey);
+  }, [isOpen, showOverwriteConfirm, multiInputPickerNodeId, onClose]);
+
+  const modalTitle = isGetInput
+    ? 'Read from Set'
+    : mode === 'input'
     ? (currentAction === 'pick' ? `Connect ${props.inputName}` : 'Add new node')
     : (currentAction === 'pick' ? `Connect ${props.outputName}` : 'Add new node');
-  const searchPlaceholder = mode === 'input'
+  const searchPlaceholder = isGetInput
+    ? 'Search set nodes...'
+    : mode === 'input'
     ? (currentAction === 'pick' ? 'Search existing nodes...' : 'Search node types...')
     : (currentAction === 'pick' ? 'Search target nodes...' : 'Search node types...');
+
+  // GetNode source picker: list the SetNode relay names; selecting one sets the
+  // Get's name widget (index 0). Lives in the standard connection modal shell.
+  const renderGetSourceContent = () => {
+    const getNode = scopedWorkflow?.nodes.find((n) => n.id === nodeId);
+    const currentName = getNode ? getSetGetName(getNode) : null;
+    const allNames = scopedWorkflow ? collectSetNodeNames(scopedWorkflow) : [];
+    const query = searchQuery.trim().toLowerCase();
+    const names = query ? allNames.filter((n) => n.toLowerCase().includes(query)) : allNames;
+    const choose = (name: string) => {
+      if (currentNodeHierarchicalKey) updateNodeWidget(currentNodeHierarchicalKey, 0, name, 'value');
+      onClose();
+    };
+    return (
+      <div className="px-3 pt-3 pb-20 flex flex-col gap-2">
+        {names.length === 0 ? (
+          <SearchEmptyState query={searchQuery} message="No Set nodes found" />
+        ) : (
+          names.map((name) => (
+            <button
+              key={name}
+              type="button"
+              onClick={() => choose(name)}
+              className={`w-full text-left rounded-xl border px-4 py-3 flex items-center justify-between gap-3 transition active:scale-[0.998] shadow-sm ${
+                name === currentName
+                  ? 'border-cyan-400/40 bg-cyan-500/10'
+                  : 'border-white/10 bg-slate-900/80 hover:bg-white/10'
+              }`}
+            >
+              <span className="font-mono text-sm text-slate-100">{name}</span>
+              {name === currentName && <CheckIcon className="w-4 h-4 text-cyan-300" />}
+            </button>
+          ))
+        )}
+        {currentName && (
+          <button
+            type="button"
+            className="w-full text-left rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm font-semibold text-red-300 hover:bg-red-500/20 active:scale-[0.998] transition"
+            onClick={() => {
+              if (currentNodeHierarchicalKey) updateNodeWidget(currentNodeHierarchicalKey, 0, '', 'value');
+              onClose();
+            }}
+          >
+            Clear source
+          </button>
+        )}
+      </div>
+    );
+  };
 
   const renderInputPickContent = () => {
     if (mode !== 'input') return null;
@@ -743,7 +859,7 @@ export function ConnectionModal(props: ConnectionModalProps) {
 
     const renderOutputNodeEntry = (nodeCandidate: OutputNodeCandidate) => {
       const selectedCount = nodeCandidate.inputs.filter((candidate) =>
-        selectedOutputTargetKeys.has(makeOutputSelectionKey(candidate.nodeId, candidate.inputIndex))
+        selectedOutputTargetKeys.has(candidate.selectionKey)
       ).length;
       const isSelected = selectedCount > 0;
       const hasExistingLink = nodeCandidate.inputs.some((candidate) => candidate.hasExistingLink);
@@ -782,6 +898,11 @@ export function ConnectionModal(props: ConnectionModalProps) {
               </div>
               <div className="text-xs text-slate-400 truncate mt-0.5">{nodeCandidate.pack || 'Core'}</div>
               <div className="text-xs text-slate-300 mt-1 truncate">{subtitle}</div>
+              {nodeCandidate.overrideableCount > 0 && (
+                <div className="text-[11px] text-cyan-300/90 mt-0.5">
+                  {nodeCandidate.overrideableCount} overrideable widget{nodeCandidate.overrideableCount === 1 ? '' : 's'}
+                </div>
+              )}
             </div>
             <div className={`w-5 h-5 rounded border flex items-center justify-center ${isSelected ? 'bg-cyan-500 border-cyan-500 text-slate-950' : 'bg-slate-950 border-white/20'}`}>
               {isSelected && <CheckIcon className="w-3 h-3" />}
@@ -906,6 +1027,7 @@ export function ConnectionModal(props: ConnectionModalProps) {
               : []),
             ...(mode === 'input'
               && currentAction === 'pick'
+              && !isGetInput
               ? [{
                   key: 'apply',
                   label: 'Apply',
@@ -919,7 +1041,9 @@ export function ConnectionModal(props: ConnectionModalProps) {
       )}
     >
       <div className="flex-1 overflow-auto bg-slate-950/88">
-        {mode === 'input' ? (
+        {isGetInput ? (
+          renderGetSourceContent()
+        ) : mode === 'input' ? (
           currentAction === 'pick' ? (
             renderInputPickContent()
           ) : (
@@ -950,7 +1074,7 @@ export function ConnectionModal(props: ConnectionModalProps) {
               {outputNodeCandidates
                 .find((candidate) => candidate.nodeId === multiInputPickerNodeId)
                 ?.inputs.map((candidate) => {
-                  const key = makeOutputSelectionKey(candidate.nodeId, candidate.inputIndex);
+                  const key = candidate.selectionKey;
                   const selected = multiInputPickerSelection.has(key);
                   return (
                     <button
@@ -962,7 +1086,14 @@ export function ConnectionModal(props: ConnectionModalProps) {
                       onClick={() => toggleMultiInputPickerSelection(key)}
                     >
                       <span className="min-w-0">
-                        <span className="block text-slate-100 truncate">{candidate.inputName}</span>
+                        <span className="flex items-center gap-2 min-w-0">
+                          <span className="text-slate-100 truncate">{candidate.inputName}</span>
+                          {candidate.isOverrideable && (
+                            <span className="inline-flex items-center px-1.5 py-0.5 rounded-full bg-cyan-500/15 text-cyan-300 text-[10px] font-medium shrink-0">
+                              Override
+                            </span>
+                          )}
+                        </span>
                         <span className="block text-xs text-slate-400 truncate">{candidate.inputType}</span>
                       </span>
                       <span className={`w-5 h-5 rounded border flex items-center justify-center shrink-0 ${

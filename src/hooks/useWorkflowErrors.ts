@@ -11,6 +11,11 @@ export interface NodeError {
 interface WorkflowErrorsState {
   error: string | null;
   nodeErrors: Record<string, NodeError[]>;
+  // Whether the current nodeErrors came from a queue/run attempt (ComfyUI
+  // excluded a branch) rather than from loading a workflow. Run errors are
+  // surfaced loudly on every panel; load errors only matter on the workflow
+  // panel. Not persisted — a reload starts with no live run.
+  nodeErrorsFromRun: boolean;
   errorCycleIndex: number;
   errorsDismissed: boolean;
   // Run errors for background (parked) workflow tabs, keyed by session id. The
@@ -19,7 +24,7 @@ interface WorkflowErrorsState {
   // marker on that tab and is promoted to `error` when the user enters the tab.
   sessionErrors: Record<string, string>;
   setError: (message: string | null) => void;
-  setNodeErrors: (errors: Record<string, NodeError[]>) => void;
+  setNodeErrors: (errors: Record<string, NodeError[]>, fromRun?: boolean) => void;
   clearNodeErrors: () => void;
   clearNodeError: (nodeId: number) => void;
   setErrorCycleIndex: (index: number) => void;
@@ -33,17 +38,18 @@ export const useWorkflowErrorsStore = create<WorkflowErrorsState>()(
     (set) => ({
       error: null,
       nodeErrors: {},
+      nodeErrorsFromRun: false,
       errorCycleIndex: 0,
       errorsDismissed: false,
       sessionErrors: {},
       setError: (message) => {
         set({ error: message, errorsDismissed: false });
       },
-      setNodeErrors: (errors) => {
-        set({ nodeErrors: errors, errorCycleIndex: 0, errorsDismissed: false });
+      setNodeErrors: (errors, fromRun = false) => {
+        set({ nodeErrors: errors, nodeErrorsFromRun: fromRun, errorCycleIndex: 0, errorsDismissed: false });
       },
       clearNodeErrors: () => {
-        set({ error: null, nodeErrors: {}, errorCycleIndex: 0, errorsDismissed: false });
+        set({ error: null, nodeErrors: {}, nodeErrorsFromRun: false, errorCycleIndex: 0, errorsDismissed: false });
       },
       clearNodeError: (nodeId) => {
         set((state) => {

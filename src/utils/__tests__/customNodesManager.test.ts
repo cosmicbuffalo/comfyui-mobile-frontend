@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   buildAlternativesHashMap,
   buildCustomNodeRows,
+  filterCustomNodeRows,
   getCustomNodeActionOptions,
   isUnknownVersion,
 } from '../customNodesManager';
@@ -12,6 +13,19 @@ describe('isUnknownVersion', () => {
     expect(isUnknownVersion('')).toBe(true);
     expect(isUnknownVersion('unknown')).toBe(true);
     expect(isUnknownVersion('1.2.3')).toBe(false);
+  });
+});
+
+describe('filterCustomNodeRows searches by provided node types', () => {
+  it('finds the pack that installs an exact node type (e.g. from a missing-node popover)', () => {
+    const packs = { coolPack: { version: '1.0', state: 'enabled', title: 'Cool Pack' } } as never;
+    const mappings = { coolPack: [['FluxPro_fal', 'OtherNode'], { title_aux: 'Cool Pack' }] } as never;
+    const rows = buildCustomNodeRows(packs, { mappings });
+    expect(rows[0].nodesList?.some((n) => n.name === 'FluxPro_fal')).toBe(true);
+
+    // The node type is not in the title/description, but the pack is still found.
+    expect(filterCustomNodeRows(rows, '', 'FluxPro_fal')).toHaveLength(1);
+    expect(filterCustomNodeRows(rows, '', 'NotARealNode')).toHaveLength(0);
   });
 });
 

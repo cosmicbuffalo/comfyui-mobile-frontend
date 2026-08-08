@@ -41,6 +41,30 @@ describe('resolveInputPathForFile', () => {
     );
   });
 
+  it('can hide the copied input after server-side copy', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ name: 'a.png', subfolder: 'batch', type: 'input' }),
+      })
+      .mockResolvedValueOnce({ ok: true });
+    vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch);
+
+    await expect(
+      resolveInputPathForFile(makeFile(), 'output', { hideCopiedInput: true }),
+    ).resolves.toBe('batch/a.png');
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock).toHaveBeenLastCalledWith(
+      '/mobile/api/files/state',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({ source: 'input', path: 'batch/a.png', state: 'hidden', value: true }),
+      }),
+    );
+  });
+
   it('fails instead of falling back to browser transfer when server-side copy fails', async () => {
     const fetchMock = vi
       .fn()

@@ -16,7 +16,7 @@ import os
 import binary_cache_io as _binary_cache_io
 
 # Kept in sync with the video extensions recognized by api_get_thumbnail.
-VIDEO_EXTENSIONS = ('.mp4', '.mov', '.webm', '.mkv')
+VIDEO_EXTENSIONS = ('.mp4', '.m4v', '.mov', '.webm', '.mkv', '.avi')
 
 
 def is_video(filename):
@@ -34,7 +34,7 @@ def _cache_dir():
 def _cache_path(file_path):
     try:
         stat = os.stat(file_path)
-        key = '{}|{}|{}'.format(os.path.abspath(file_path), int(stat.st_mtime), stat.st_size)
+        key = '{}|{}|{}'.format(os.path.abspath(file_path), stat.st_mtime_ns, stat.st_size)
     except OSError:
         key = os.path.abspath(file_path)
     # Non-security cache key; usedforsecurity=False keeps security scanners quiet.

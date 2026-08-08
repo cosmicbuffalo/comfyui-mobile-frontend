@@ -8,6 +8,7 @@ import { useWorkflowErrorsStore } from '@/hooks/useWorkflowErrors';
 import { HIDDEN_WORKFLOW_EXTRA_DATA_KEY } from '@/utils/workflowHidden';
 import { useOutputsStore } from '@/hooks/useOutputs';
 import { bustImageCache } from '@/utils/imageCacheBust';
+import { getHistoryImageFileId } from '@/utils/viewerImages';
 
 // Invalidate the browser cache for a deleted entry's output images so a later
 // generation that reuses the same filename doesn't show the stale deleted image.
@@ -66,12 +67,22 @@ interface HistoryState {
   historyTotal: number | null;
 
   // Actions
-  fetchHistory: (maxItems?: number) => Promise<void>;
+  // Resolves true only after a response was fetched and processed. Failures are
+  // reported as false (rather than thrown) because websocket handlers also call
+  // this fire-and-forget; the queue panel uses the flag to retry initial load.
+  fetchHistory: (maxItems?: number) => Promise<boolean>;
   // Grow the loaded window by one page and refetch.
   loadMoreHistory: () => Promise<void>;
   // Internal: the actual fetch body, wrapped by fetchHistory's in-flight dedupe.
-  _runFetchHistory: (maxItems: number) => Promise<void>;
+  _runFetchHistory: (maxItems: number) => Promise<boolean>;
   deleteItem: (promptId: string) => Promise<void>;
+  // Reverse lookup for deleted output files. Given the file ids
+  // (`type/subfolder/filename`, matching getHistoryImageFileId) of outputs that
+  // have been deleted, drop those images from every history entry that holds
+  // them. Entries left with no images are deleted outright (server + store) so
+  // no orphaned queue card lingers; entries that still have images are updated
+  // in place so the card re-renders with only the survivors.
+  removeOutputImages: (fileIds: string[]) => Promise<void>;
   clearHistory: () => Promise<void>;
   clearEmptyItems: () => Promise<void>;
   addHistoryEntry: (entry: HistoryEntry) => void;
@@ -85,19 +96,26 @@ export const INITIAL_HISTORY_PAGE_SIZE = 10;
 // How many more items each "load more" (scroll near the bottom) pulls in.
 const HISTORY_PAGE_SIZE = 10;
 
-// Dedupe concurrent fetches of the same page size — the queue mount, the
-// post-execution refresh, and several websocket handlers can all fire
-// fetchHistory at once, otherwise each pulls the full payload in parallel.
-const historyFetchInFlight = new Map<number, Promise<void>>();
+// Only one history payload may be in flight, regardless of requested page size.
+// The endpoint returns a newest-N window, so racing (for example) N=10 and N=20
+// wastes bandwidth and can let the smaller response overwrite the larger one.
+// A larger request waits for the active smaller request, then runs; a smaller
+// request simply shares the active larger result.
+let historyFetchInFlight: { limit: number; promise: Promise<boolean> } | null = null;
 
-// Cheap signature of the RAW /history payload (per page size), so the recurring
+// Cheap signature of the latest RAW /history payload, so the recurring
 // ~2s poll during a run can bail out before the expensive part — building ~50
 // HistoryEntry objects (each parsing an embedded workflow), the per-entry
 // side-effect pass, and the two list signatures — whenever nothing changed.
 // Captures exactly the fields that gate that work: which prompts exist, their
 // completion status, and their output count. A real change (a run finishing,
 // an item cleared) flips the signature and the full rebuild runs as before.
-const lastRawHistorySignatures = new Map<number, string>();
+// Keep only the active window. Retaining one full signature for every 10-item
+// pagination step made memory grow quadratically as users scrolled deep history.
+// A single entry is sufficient only because refreshes go through
+// fetchHistory() with no explicit size (the current window): a smaller-limit
+// refetch would both miss this cache and truncate the loaded list.
+let lastRawHistorySignature: { limit: number; value: string } | null = null;
 
 function rawHistorySignature(data: Record<string, { status?: { status_str?: string; completed?: boolean }; outputs?: Record<string, unknown> }>): string {
   const parts: string[] = [];
@@ -142,7 +160,17 @@ function scheduleDurationStatUpdates(updates: DeferredDurationStat[]): void {
 const NOTIFIED_FAILED_CAP = 200;
 const notifiedFailedHistoryPromptIds = new Set<string>();
 const markedHiddenOutputIds = new Set<string>();
+const pendingHiddenOutputIds = new Set<string>();
+// Keys whose write was given up on. Kept separately from the marked set: these
+// were never persisted, so they must not be reported as hidden — they only need
+// to stop being retried for the rest of the session.
+const abandonedHiddenOutputIds = new Set<string>();
 const MARKED_HIDDEN_OUTPUT_CAP = 1000;
+const HIDDEN_OUTPUT_RETRY_DELAYS_MS = [100, 250, 500, 1000, 2000, 4000, 8000] as const;
+// ≈10 minutes at the capped delay — generous for slow/remote storage, but a
+// write that still fails by then (e.g. the file was deleted out-of-band) will
+// never succeed, and retrying it for the rest of the session is pure waste.
+const MAX_HIDDEN_OUTPUT_PERSIST_ATTEMPTS = 75;
 
 function markFailedNotified(promptId: string): void {
   notifiedFailedHistoryPromptIds.add(promptId);
@@ -152,6 +180,53 @@ function markFailedNotified(promptId: string): void {
     if (oldest === undefined) break;
     notifiedFailedHistoryPromptIds.delete(oldest);
   }
+}
+
+function persistHiddenOutput(key: string, path: string, attempt = 0): void {
+  if (markedHiddenOutputIds.has(key) || abandonedHiddenOutputIds.has(key)) {
+    pendingHiddenOutputIds.delete(key);
+    return;
+  }
+  pendingHiddenOutputIds.add(key);
+  void api.setFileState('output', path, 'hidden', true)
+    .then(() => {
+      pendingHiddenOutputIds.delete(key);
+      markedHiddenOutputIds.add(key);
+      while (markedHiddenOutputIds.size > MARKED_HIDDEN_OUTPUT_CAP) {
+        const oldest = markedHiddenOutputIds.values().next().value;
+        if (oldest === undefined) break;
+        markedHiddenOutputIds.delete(oldest);
+      }
+      useOutputsStore.getState().markItemHiddenLocally(key);
+    })
+    .catch((error) => {
+      // File creation can lag history substantially on slow disks or remote
+      // storage. After the fast retry window, keep retrying at the capped delay
+      // instead of dropping the pending marker at the first hiccup — but give
+      // up eventually so a permanently failing write doesn't poll all session.
+      if (attempt + 1 >= MAX_HIDDEN_OUTPUT_PERSIST_ATTEMPTS) {
+        pendingHiddenOutputIds.delete(key);
+        // Record the give-up. Dropping only the pending marker makes the
+        // caller's dedupe guard false again, so the next history rebuild starts
+        // the whole chain over at attempt 0 — the all-session polling this cap
+        // exists to stop.
+        abandonedHiddenOutputIds.add(key);
+        while (abandonedHiddenOutputIds.size > MARKED_HIDDEN_OUTPUT_CAP) {
+          const oldest = abandonedHiddenOutputIds.values().next().value;
+          if (oldest === undefined) break;
+          abandonedHiddenOutputIds.delete(oldest);
+        }
+        console.warn('Failed to hide output from hidden workflow after retries:', error);
+        return;
+      }
+      const delay = HIDDEN_OUTPUT_RETRY_DELAYS_MS[
+        Math.min(attempt, HIDDEN_OUTPUT_RETRY_DELAYS_MS.length - 1)
+      ];
+      if (attempt === HIDDEN_OUTPUT_RETRY_DELAYS_MS.length) {
+        console.warn('Still waiting to hide output from hidden workflow; retries will continue:', error);
+      }
+      window.setTimeout(() => persistHiddenOutput(key, path, attempt + 1), delay);
+    });
 }
 
 export const useHistoryStore = create<HistoryState>((set, get) => ({
@@ -184,14 +259,22 @@ export const useHistoryStore = create<HistoryState>((set, get) => ({
     // No explicit size → refresh the current loaded window (so background polls
     // and post-run refreshes don't shrink what the user already scrolled to).
     const limit = maxItems ?? get().historyLimit;
-    const inFlight = historyFetchInFlight.get(limit);
-    if (inFlight) return inFlight;
+    const active = historyFetchInFlight;
+    if (active) {
+      const success = await active.promise;
+      if (active.limit >= limit) return success;
+      // The requested window is larger. Run it only after the smaller active
+      // response settles, using fetchHistory again so a newer caller can share it.
+      return get().fetchHistory(limit);
+    }
+
     const run = get()._runFetchHistory(limit);
-    historyFetchInFlight.set(limit, run);
+    const record = { limit, promise: run };
+    historyFetchInFlight = record;
     try {
-      await run;
+      return await run;
     } finally {
-      historyFetchInFlight.delete(limit);
+      if (historyFetchInFlight === record) historyFetchInFlight = null;
     }
   },
 
@@ -230,12 +313,13 @@ export const useHistoryStore = create<HistoryState>((set, get) => ({
       // signature, so completion side-effects still fire exactly once.
       const rawSignature = rawHistorySignature(data);
       if (
-        lastRawHistorySignatures.get(maxItems) === rawSignature &&
+        lastRawHistorySignature?.limit === maxItems &&
+        lastRawHistorySignature.value === rawSignature &&
         get().history.length > 0
       ) {
-        return;
+        return true;
       }
-      lastRawHistorySignatures.set(maxItems, rawSignature);
+      lastRawHistorySignature = { limit: maxItems, value: rawSignature };
 
       const asText = (value: unknown): string | null => {
         if (typeof value === "string") {
@@ -375,19 +459,8 @@ export const useHistoryStore = create<HistoryState>((set, get) => ({
               ? `${output.subfolder}/${output.filename}`
               : output.filename;
             const key = `output/${path}`;
-            if (markedHiddenOutputIds.has(key)) continue;
-            markedHiddenOutputIds.add(key);
-            while (markedHiddenOutputIds.size > MARKED_HIDDEN_OUTPUT_CAP) {
-              const oldest = markedHiddenOutputIds.values().next().value;
-              if (oldest === undefined) break;
-              markedHiddenOutputIds.delete(oldest);
-            }
-            void api.setFileHidden(path, true, 'output')
-              .then(() => useOutputsStore.getState().markItemHiddenLocally(key))
-              .catch((error) => {
-                markedHiddenOutputIds.delete(key);
-                console.warn('Failed to hide output from hidden workflow:', error);
-              });
+            if (markedHiddenOutputIds.has(key) || pendingHiddenOutputIds.has(key)) continue;
+            persistHiddenOutput(key, path);
           }
         }
         queueStore.markPromptCompleted(entry.prompt_id);
@@ -417,8 +490,10 @@ export const useHistoryStore = create<HistoryState>((set, get) => ({
         }
       }
       scheduleDurationStatUpdates(durationUpdates);
+      return true;
     } catch (err) {
       console.error('Failed to fetch history:', err);
+      return false;
     } finally {
       set({ isLoading: false });
     }
@@ -436,6 +511,90 @@ export const useHistoryStore = create<HistoryState>((set, get) => ({
     } catch (err) {
       console.error('Failed to delete history item:', err);
     }
+  },
+
+  removeOutputImages: async (fileIds) => {
+    if (fileIds.length === 0) return;
+    const deleted = new Set(fileIds);
+    const history = get().history;
+
+    // First pass over the snapshot: bust the caches of the removed images and
+    // collect the prompt_ids of entries that lose their last image (so they can
+    // be deleted server-side). The actual store mutation happens below against
+    // the latest state.
+    const emptiedPromptIds: string[] = [];
+    let changed = false;
+
+    for (const entry of history) {
+      let removedHere = 0;
+      for (const img of entry.outputs.images) {
+        if (deleted.has(getHistoryImageFileId(img))) {
+          removedHere += 1;
+          bustImageCache(img.filename, img.subfolder, img.type);
+        }
+      }
+      if (removedHere === 0) continue;
+      changed = true;
+      // Remove the queue item only when it HAD a saved output (type 'output')
+      // and that was the last one — i.e. its real outputs were just deleted,
+      // leaving at most preview frames (type 'temp') behind. Without this,
+      // rejecting+deleting the one real output of a PreviewImage+SaveImage run
+      // left the card lingering showing just its previews.
+      //
+      // Deliberately scoped to entries that HAD a saved output: a preview-only
+      // run (no 'output' images ever) is never auto-removed here, even if all of
+      // its preview frames are gone — we don't delete queue items that never
+      // produced an output.
+      const hadSavedOutput = entry.outputs.images.some((img) => img.type === 'output');
+      const savedOutputRemains = entry.outputs.images.some(
+        (img) => img.type === 'output' && !deleted.has(getHistoryImageFileId(img)),
+      );
+      if (hadSavedOutput && !savedOutputRemains) {
+        emptiedPromptIds.push(entry.prompt_id);
+      }
+    }
+
+    if (!changed) return;
+
+    // Delete the now-empty entries server-side too, so they don't reappear on
+    // the next history fetch. Best-effort: even if the API call fails we still
+    // drop them locally (they're broken cards either way).
+    if (emptiedPromptIds.length > 0) {
+      try {
+        await api.deleteHistoryItems(emptiedPromptIds);
+      } catch (err) {
+        console.error('Failed to delete emptied history items:', err);
+      }
+    }
+
+    // Re-derive from the latest state rather than reusing the pre-await snapshot,
+    // so an entry a poll added during the await isn't clobbered.
+    const emptied = new Set(emptiedPromptIds);
+    set((state) => {
+      let removedCount = 0;
+      const filtered: HistoryEntry[] = [];
+      for (const entry of state.history) {
+        if (emptied.has(entry.prompt_id)) {
+          removedCount += 1;
+          continue;
+        }
+        const surviving = entry.outputs.images.filter(
+          (img) => !deleted.has(getHistoryImageFileId(img)),
+        );
+        filtered.push(
+          surviving.length === entry.outputs.images.length
+            ? entry
+            : { ...entry, outputs: { ...entry.outputs, images: surviving } },
+        );
+      }
+      return {
+        history: filtered,
+        historyTotal:
+          state.historyTotal != null
+            ? Math.max(0, state.historyTotal - removedCount)
+            : null,
+      };
+    });
   },
 
   clearHistory: async () => {

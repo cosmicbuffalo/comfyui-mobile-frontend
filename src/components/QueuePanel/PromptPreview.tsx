@@ -3,7 +3,6 @@ import type { Workflow } from '@/api/types';
 import { useQueueStore } from '@/hooks/useQueue';
 import { Collapsible } from '@/components/Collapsible';
 import { FoldIcon } from '@/components/FoldIcon';
-import { CloudDownloadIcon } from '@/components/icons';
 import {
   computeQueueWorkflowDiff,
   type DiffSegment,
@@ -17,8 +16,10 @@ export interface PromptPreviewInputImage {
   src: string;
   /** Preview URL displayed in the thumbnail. */
   displaySrc: string;
-  /** Whether this image has already been downloaded to the device. */
-  isDownloaded: boolean;
+  /** Stable file id (getHistoryImageFileId). Carried for the per-device
+   *  download-history badge, which ships with that feature in 3.1.1 — nothing
+   *  in this release renders it. */
+  fileId: string;
   /** Index into the card's media list, forwarded to the click handler. */
   index: number;
 }
@@ -222,11 +223,6 @@ export function PromptPreview({
                       loading="lazy"
                       onClick={() => onInputImageClick?.(img.src, img.index)}
                     />
-                    {img.isDownloaded && (
-                      <div className="absolute bottom-2 right-2 flex h-7 w-7 items-center justify-center rounded-full bg-black/60 text-white">
-                        <CloudDownloadIcon className="h-4 w-4" />
-                      </div>
-                    )}
                   </div>
                 ))}
               </div>

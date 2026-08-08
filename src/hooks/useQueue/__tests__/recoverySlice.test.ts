@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { useQueueStore } from "../../useQueue";
 import type { QueueWorkflowDiff } from "@/utils/workflowDiff";
+import * as helpers from '../queueHelpers';
 
 const diff = (): QueueWorkflowDiff => ({ prompts: [], nodeChanges: [] });
 
@@ -61,5 +62,32 @@ describe("markPromptCompleted", () => {
     });
     useQueueStore.getState().markPromptCompleted("x");
     expect(useQueueStore.getState().completing).toEqual([]);
+  });
+});
+
+describe('autoRestoredPromptIds', () => {
+  it('is bounded like the other persisted per-prompt maps', () => {
+    // Entries are only removed by deleteItem, so an install that keeps hitting
+    // the lost-jobs restore path would grow this in localStorage forever.
+    const { touchBoundedMap, WORKFLOW_DIFF_CAP } = helpers;
+    let map: Record<string, string> = {};
+    for (let i = 0; i < WORKFLOW_DIFF_CAP + 25; i += 1) {
+      map = touchBoundedMap(map, `prompt-${i}`, `original-${i}`, WORKFLOW_DIFF_CAP);
+    }
+
+    expect(Object.keys(map)).toHaveLength(WORKFLOW_DIFF_CAP);
+    expect(map['prompt-0']).toBeUndefined();
+    expect(map[`prompt-${WORKFLOW_DIFF_CAP + 24}`]).toBe(`original-${WORKFLOW_DIFF_CAP + 24}`);
+  });
+
+  it('keeps a re-touched entry rather than evicting it as oldest', () => {
+    const { touchBoundedMap } = helpers;
+    let map: Record<string, string> = { sticky: 'a' };
+    for (let i = 0; i < 4; i += 1) map = touchBoundedMap(map, `filler-${i}`, 'x', 5);
+    map = touchBoundedMap(map, 'sticky', 'b', 5);
+    map = touchBoundedMap(map, 'late', 'y', 5);
+
+    expect(map.sticky).toBe('b');
+    expect(map['filler-0']).toBeUndefined();
   });
 });

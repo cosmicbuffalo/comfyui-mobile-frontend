@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { FileItem, AssetSource } from '@/api/client';
-import { setFileHidden } from '@/api/client';
+import { setFileState } from '@/api/client';
 import { useWorkflowStore } from '@/hooks/useWorkflow';
 import { useWorkflowErrorsStore } from '@/hooks/useWorkflowErrors';
 import { useNavigationStore } from '@/hooks/useNavigation';
@@ -106,7 +106,7 @@ export function UseImageModal({
       // Auto-hiding the input for a hidden workflow is best-effort declutter and
       // must not abort the assignment above, so fire-and-forget after it commits.
       if (isWorkflowHidden(workflowSource, currentFilename, hiddenWorkflowPaths)) {
-        void setFileHidden(inputPath, true, 'input').catch((err) => {
+        void setFileState('input', inputPath, 'hidden', true).catch((err) => {
           console.warn('Failed to hide input from hidden workflow:', err);
         });
       }

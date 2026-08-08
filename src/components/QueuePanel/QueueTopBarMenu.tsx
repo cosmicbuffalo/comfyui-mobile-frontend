@@ -2,7 +2,9 @@ import type { RefObject } from 'react';
 import { useMemo } from 'react';
 import { useQueueStore } from '@/hooks/useQueue';
 import { useHistoryStore } from '@/hooks/useHistory';
-import { CancelCircleIcon, CaretDownIcon, CaretRightIcon, ClockIcon, DocumentLinesIcon, EyeIcon, EyeOffIcon, InfoIcon, ArrowRightIcon, TrashIcon } from '@/components/icons';
+import { QUEUE_REJECT_SOURCES, rejectedIdsForSources } from '@/utils/deleteRejectedOutputs';
+import { useOutputsStore } from '@/hooks/useOutputs';
+import { CancelCircleIcon, CaretDownIcon, CaretRightIcon, ClockIcon, DocumentLinesIcon, EyeIcon, EyeOffIcon, InfoIcon, ArrowRightIcon, QueueStackIcon, TrashIcon } from '@/components/icons';
 import { ContextMenuButton } from '@/components/buttons/ContextMenuButton';
 import { ContextMenuBuilder } from '@/components/menus/ContextMenuBuilder';
 import { appChromeIconButtonBareClassName } from '@/components/chromeStyles';
@@ -16,6 +18,7 @@ interface QueueTopBarMenuProps {
   onGoToWorkflow: () => void;
   onOpenClearHistoryConfirm: () => void;
   onOpenCancelPendingConfirm: () => void;
+  onOpenDeleteRejectedConfirm: () => void;
 }
 
 export function QueueTopBarMenu({
@@ -26,9 +29,16 @@ export function QueueTopBarMenu({
   onClose,
   onGoToWorkflow,
   onOpenClearHistoryConfirm,
-  onOpenCancelPendingConfirm
+  onOpenCancelPendingConfirm,
+  onOpenDeleteRejectedConfirm
 }: QueueTopBarMenuProps) {
+  // Scoped to what the QUEUE shows — generated output/temp media. An input the
+  // user rejected while browsing uploads is not this menu's to delete.
+  const rejectedCount = useOutputsStore(
+    (s) => rejectedIdsForSources(s.rejected, QUEUE_REJECT_SOURCES).length,
+  );
   const setQueueItemExpanded = useQueueStore((s) => s.setQueueItemExpanded);
+  const setQueueItemUserToggled = useQueueStore((s) => s.setQueueItemUserToggled);
   const queueItemExpanded = useQueueStore((s) => s.queueItemExpanded);
   const showQueueMetadata = useQueueStore((s) => s.showQueueMetadata);
   const toggleShowQueueMetadata = useQueueStore((s) => s.toggleShowQueueMetadata);
@@ -36,12 +46,15 @@ export function QueueTopBarMenu({
   const toggleShowQueueTimestamps = useQueueStore((s) => s.toggleShowQueueTimestamps);
   const showPromptPreview = useQueueStore((s) => s.showPromptPreview);
   const toggleShowPromptPreview = useQueueStore((s) => s.toggleShowPromptPreview);
+  const queueOutputLayout = useQueueStore((s) => s.queueOutputLayout);
+  const toggleQueueOutputLayout = useQueueStore((s) => s.toggleQueueOutputLayout);
   const previewVisibility = useQueueStore((s) => s.previewVisibility);
   const setPreviewVisibility = useQueueStore((s) => s.setPreviewVisibility);
   const previewVisibilityDefault = useQueueStore((s) => s.previewVisibilityDefault);
   const setPreviewVisibilityDefault = useQueueStore((s) => s.setPreviewVisibilityDefault);
   const pending = useQueueStore((s) => s.pending);
   const running = useQueueStore((s) => s.running);
+  const completing = useQueueStore((s) => s.completing);
   const history = useHistoryStore((s) => s.history);
   const clearEmptyItems = useHistoryStore((s) => s.clearEmptyItems);
 
@@ -54,11 +67,15 @@ export function QueueTopBarMenu({
     const ids = new Set<string>();
     pending.forEach((item) => ids.add(item.prompt_id));
     running.forEach((item) => ids.add(item.prompt_id));
+    // Items in the running→done hand-off window live only in `completing`
+    // (removeRunning already dropped them); QueuePanel renders them as running
+    // cards, so fold/unfold must reach them too.
+    completing.forEach((item) => ids.add(item.prompt_id));
     history.forEach((item) => {
       if (item.prompt_id) ids.add(String(item.prompt_id));
     });
     return Array.from(ids);
-  }, [pending, running, history]);
+  }, [pending, running, completing, history]);
 
   const hasFoldedQueueItem = useMemo(() => (
     allQueuePromptIds.some((id) => queueItemExpanded[id] === false)
@@ -98,7 +115,17 @@ export function QueueTopBarMenu({
   };
 
   const handleFoldAllClick = () => {
-    allQueuePromptIds.forEach((id) => setQueueItemExpanded(id, false));
+    allQueuePromptIds.forEach((id) => {
+      // Record the global fold as explicit user intent on every card so no
+      // auto-open path (prompt preview, live media, completion) re-expands it.
+      // Deriving exactly which cards are "active" here is a trap: cards render
+      // as running via the `completing` hand-off and the executing-prompt
+      // override too, and any missed set pops back open. Marking done cards is
+      // harmless — they have no auto-open path — and the maps are pruned of
+      // departed ids by the queue panel.
+      setQueueItemUserToggled(id, true);
+      setQueueItemExpanded(id, false);
+    });
     onClose();
   };
 
@@ -122,6 +149,11 @@ export function QueueTopBarMenu({
     onClose();
   };
 
+  const handleToggleOutputLayoutClick = () => {
+    toggleQueueOutputLayout();
+    onClose();
+  };
+
   const handleTogglePreviewClick = () => {
     const nextVisible = !previewsVisible;
     setPreviewVisibilityDefault(nextVisible);
@@ -137,6 +169,11 @@ export function QueueTopBarMenu({
   const handleClearHistoryClick = () => {
     onClose();
     onOpenClearHistoryConfirm();
+  };
+
+  const handleDeleteRejectedClick = () => {
+    onClose();
+    onOpenDeleteRejectedConfirm();
   };
 
   return (
@@ -189,6 +226,13 @@ export function QueueTopBarMenu({
                 onClick: handleTogglePromptPreviewClick
               },
               {
+                key: 'toggle-output-layout',
+                label: queueOutputLayout === 'tabbed' ? 'Stack Outputs' : 'Tab Outputs',
+                icon: <QueueStackIcon className="w-4 h-4" />,
+                onClick: handleToggleOutputLayoutClick,
+                hidden: !hasHistory
+              },
+              {
                 key: 'toggle-metadata',
                 label: showQueueMetadata ? 'Hide Metadata' : 'Show Metadata',
                 icon: <InfoIcon className="w-4 h-4" />,
@@ -209,6 +253,14 @@ export function QueueTopBarMenu({
                   : <EyeIcon className="w-4 h-4" />,
                 onClick: handleTogglePreviewClick,
                 hidden: !hasPreviewToggle
+              },
+              {
+                key: 'delete-rejected',
+                label: `Delete Rejected (${rejectedCount})`,
+                icon: <TrashIcon className="w-4 h-4" />,
+                onClick: handleDeleteRejectedClick,
+                color: 'danger',
+                hidden: rejectedCount === 0
               },
               {
                 key: 'clear-empty',

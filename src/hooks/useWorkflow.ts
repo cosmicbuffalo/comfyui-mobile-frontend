@@ -4,12 +4,14 @@ import type {
   HistoryOutputImage,
   Workflow,
   WorkflowGroup,
+  WorkflowInput,
   WorkflowLink,
   WorkflowNode,
   WorkflowSubgraphLink,
   NodeTypes,
 } from "@/api/types";
 import { useImageViewerStore } from "@/hooks/useImageViewer";
+import { runUndoTransaction } from "@/utils/undoTransaction";
 import {
   useWorkflowErrorsStore,
   type NodeError,
@@ -23,6 +25,17 @@ import { useRecentWorkflowsStore } from "@/hooks/useRecentWorkflows";
 import { useWorkflowHiddenStore } from "@/hooks/useWorkflowHidden";
 import { useSeedStore } from "@/hooks/useSeed";
 import { useGenerationSettingsStore } from "@/hooks/useGenerationSettings";
+import { useConnectionSectionFoldsStore } from "@/hooks/useConnectionSectionFolds";
+import { useParameterSectionFoldsStore } from "@/hooks/useParameterSectionFolds";
+import { useWorkflowClipboardStore } from "@/hooks/useWorkflowClipboard";
+import type { WorkflowClipboardPayload } from "@/hooks/useWorkflowClipboard";
+import {
+  applyClipboardPaste,
+  buildGroupClipboardPayload,
+  buildNodeClipboardPayload,
+  buildMultiNodeClipboardPayload,
+  placePastedNodesIntoGroup,
+} from "@/utils/workflowClipboard";
 import {
   hasRecognizedFilePrefixAliasShape,
   obfuscateQueuedInputPaths,
@@ -33,6 +46,8 @@ import {
   getNodeWidgetIndexMap,
   getWidgetValue,
   normalizeWidgetValue,
+  isFileLikeToken,
+  optionsAreFileLike,
   resolveComboOption,
 } from "@/utils/workflowInputs";
 import { buildWorkflowCacheKey } from "@/utils/workflowCacheKey";
@@ -69,6 +84,7 @@ import {
   resolveSubgraphPlaceholderInputWidgetDefs,
   resolveSubgraphProxyWidgetDefs,
   resolveSubgraphProxyInputWidgetDefs,
+  isPlaceholderPromotedConnection,
   resolveSubgraphBoundaryWidgetDefs,
   resolveSubgraphBoundaryInputWidgetDefs,
 } from "@/utils/widgetDefinitions";
@@ -81,10 +97,14 @@ import {
   createEmptyMobileLayout,
   buildDefaultLayout,
   makeLocationPointer,
+  parseLocationPointer,
+  collectScopedMembership,
+  scopedNodeKey,
   findItemInLayout,
   removeNodeFromLayout,
   addNodeToLayout,
   placeLayoutItemAfter,
+  placeLayoutItemBefore,
   removeGroupFromLayoutByKey,
 } from "@/utils/mobileLayout";
 import {
@@ -94,6 +114,8 @@ import {
   getPositionNearNode,
 } from "@/utils/nodePositioning";
 import { computeTidyWorkflowGeometry } from "@/utils/tidyLayout";
+import { injectMarketingNote, isMarketingNote } from "@/utils/marketingNote";
+import { getSetGetName, isGetNode, isSetGetNode, isSetNode } from "@/utils/setGetNodes";
 import {
   type ScopeFrame,
   resolveCurrentScope,
@@ -110,6 +132,7 @@ import {
   maxNodeIdAcrossScopes,
   maxRootLinkId,
 } from "@/utils/canonicalWorkflowOps";
+import { collapseSetGetNodes as collapseSetGetNodesPure } from "@/utils/collapseSetGetNodes";
 import { duplicateWorkflowNode } from "@/utils/duplicateNode";
 import type { HierarchicalKey, ScopedNodeIdentity } from "@/utils/workflowHierarchy";
 import {
@@ -127,7 +150,6 @@ import {
   collectNodeStateKeys,
   dedupeScopedNodeIdentities,
   findSubgraphHierarchicalKey,
-  getGroupIdForNode,
   getParentSubgraphIdFromContainer,
   getSubgraphChildMap,
   hasLayoutGroupKeyMismatch,
@@ -185,6 +207,7 @@ export {
   resolveSubgraphPlaceholderInputWidgetDefs,
   resolveSubgraphProxyWidgetDefs,
   resolveSubgraphProxyInputWidgetDefs,
+  isPlaceholderPromotedConnection,
   resolveSubgraphBoundaryWidgetDefs,
   resolveSubgraphBoundaryInputWidgetDefs,
   findSeedControlWidgetIndex,
@@ -322,6 +345,11 @@ function queueWorkflowLabel(
   if (source?.type === "template") return source.templateName;
   return "Untitled";
 }
+
+// Monotonic recency stamp for streaming queue latent previews (see
+// setQueueLatentPreview). A plain counter — not Date.now() — so it stays
+// deterministic and resume-safe.
+let queueLatentSeq = 0;
 
 // The flat store fields that constitute a single session's state. Everything in
 // the store NOT in this list is global (shared across all tabs): nodeTypes,
@@ -552,9 +580,21 @@ interface WorkflowState {
 
   // Actions
   deleteNode: (itemKey: HierarchicalKey, reconnect: boolean) => void;
+  // Collapse every Set/Get relay pair into direct connections (A -> Set ~ Get ->
+  // D becomes A -> D) and remove the relay nodes. No-op when there are none.
+  collapseSetGetNodes: () => void;
   // Duplicate a node (or subgraph placeholder): copies values + incoming
   // connections, leaves outgoing connections blank. Returns the new node ID.
   duplicateNode: (itemKey: HierarchicalKey) => number | null;
+  // Paste the shared clipboard's contents into the current scope. When
+  // belowNodeKey is given, the pasted nodes are placed directly below that node;
+  // otherwise they go to the bottom of the scope. Returns the new node ids.
+  pasteClipboard: (belowNodeKey?: HierarchicalKey | null) => number[] | null;
+  // Copy a whole container (group or subgraph placeholder) to the clipboard.
+  copyContainer: (itemKey: HierarchicalKey) => void;
+  // Paste the clipboard into a container: a subgraph's inner scope, or inside a
+  // group (the pasted nodes become members). Returns the new node ids.
+  pasteIntoContainer: (itemKey: HierarchicalKey) => number[] | null;
   connectNodes: (
     srcHierarchicalKey: HierarchicalKey,
     srcSlot: number,
@@ -571,11 +611,32 @@ interface WorkflowState {
       inSubgraphId?: string;
     },
   ) => number | null;
-  addGroupNearNode: (nearNodeHierarchicalKey?: HierarchicalKey | null) => HierarchicalKey | null;
+  addGroupNearNode: (
+    nearNodeHierarchicalKey?: HierarchicalKey | null,
+    scopeSubgraphId?: string | null,
+  ) => HierarchicalKey | null;
   addNodeAndConnect: (
     nodeType: string,
     targetHierarchicalKey: HierarchicalKey,
     targetInputIndex: number,
+  ) => number | null;
+  // "Pop out" a widget value into a new typed primitive node connected to the
+  // widget's input slot. Creates PrimitiveString/Int/Float/Boolean below the
+  // node in its scope, seeds its value with the current widget value, and links
+  // its output to the input. Returns the new node id, or null if not poppable.
+  popWidgetToPrimitive: (
+    targetHierarchicalKey: HierarchicalKey,
+    inputName: string,
+    widgetValue: unknown,
+    options?: { title?: string },
+  ) => number | null;
+  // Ensure a node has a materialized input slot for the named widget-input
+  // (creating it from the type definition when absent). Returns the slot index,
+  // or null if the node/key can't be resolved.
+  ensureWidgetInputSlot: (
+    targetHierarchicalKey: HierarchicalKey,
+    inputName: string,
+    inputType: string,
   ) => number | null;
   mobileLayout: MobileLayout;
   setMobileLayout: (layout: MobileLayout) => void;
@@ -603,6 +664,10 @@ interface WorkflowState {
     itemKey: HierarchicalKey,
     updates: Record<number, unknown>,
   ) => void;
+  // Rename a Set/Get relay (its name widget). When the target is a SetNode, every
+  // GetNode in the same scope that was reading the OLD name is updated to the new
+  // name too, so the wireless Set<->Get link survives the rename.
+  renameSetGetNode: (itemKey: HierarchicalKey, newName: string) => void;
   updateSubgraphInnerNodeWidget: (
     subgraphId: string,
     innerNodeId: number,
@@ -614,6 +679,13 @@ interface WorkflowState {
     properties: Record<string, unknown>,
   ) => void;
   updateNodeTitle: (itemKey: HierarchicalKey, title: string | null) => void;
+  // One-tap conversion between PreviewImage and SaveImage. Both nodes share the
+  // same `images` input topology, so existing connections survive — only `type`
+  // (and the filename_prefix widget value, which only SaveImage uses) flips.
+  convertImageOutputNode: (
+    itemKey: HierarchicalKey,
+    target: 'PreviewImage' | 'SaveImage',
+  ) => void;
   toggleBypass: (itemKey: HierarchicalKey) => void;
   scrollToNode: (
     itemKey: HierarchicalKey,
@@ -658,6 +730,16 @@ interface WorkflowState {
   latentPreviews: Record<string, string>;
   setLatentPreview: (url: string, itemKey: string | null) => void;
   clearAllLatentPreviews: () => void;
+  // Live latent preview keyed by prompt_id (global, not per-session) so the queue
+  // card for an actively-generating prompt can show it — even for a run started
+  // in a parked tab. `seq` is a monotonic recency stamp used by the card to
+  // decide whether the latest latent or the latest real output is newer.
+  // `prevUrl` is the immediately-previous frame, kept alive one extra generation
+  // so the queue card never references a revoked blob while React commits the
+  // new src (the card reads only `url`/`seq`).
+  latentPreviewByPrompt: Record<string, { url: string; prevUrl?: string; seq: number }>;
+  setQueueLatentPreview: (promptId: string | null, url: string) => void;
+  clearQueueLatentPreviews: () => void;
   addPromptOutputs: (
     promptId: string,
     images: HistoryOutputImage[],
@@ -686,6 +768,16 @@ interface WorkflowState {
     itemKey: HierarchicalKey,
     options?: { deleteNodes?: boolean },
   ) => void;
+
+  // Workflow-panel select-mode bulk operations. Each takes the selected items'
+  // hierarchical keys (nodes, subgraph placeholders, and/or group containers).
+  // copySelectedItems gathers the selected nodes into a one-shot paste payload;
+  // createGroupFromItems wraps the selected nodes in a new group; and
+  // deleteSelectedItems removes selected nodes and removes the box of any
+  // selected group (its nodes are kept unless individually selected).
+  copySelectedItems: (itemKeys: HierarchicalKey[]) => void;
+  createGroupFromItems: (itemKeys: HierarchicalKey[]) => void;
+  deleteSelectedItems: (itemKeys: HierarchicalKey[]) => void;
 
   updateContainerTitle: (itemKey: HierarchicalKey, title: string) => void;
   updateWorkflowItemColor: (itemKey: HierarchicalKey, color: string) => void;
@@ -1130,7 +1222,14 @@ function collectWorkflowLoadErrors(
           return optString === normalizedString || optString === normalizedBase;
         });
 
-      if (!hasMatch) {
+      // Closed-enum combos (sampler names, action widgets, …) enumerate every
+      // valid value and are auto-corrected to the default at queue time, so an
+      // unmatched value is not a load error. Only values normalizeComboValue
+      // will KEEP — file-picker combos, plus a file-like value sitting in an
+      // enum-looking list — reach the server unchanged and can genuinely be
+      // rejected, so those are what get flagged. The two rules have to agree:
+      // anything kept but unflagged fails silently at run time instead.
+      if (!hasMatch && (optionsAreFileLike(typeOrOptions) || isFileLikeToken(normalizedString))) {
         const nodeId = String(node.id);
         if (!errors[nodeId]) {
           errors[nodeId] = [];
@@ -1395,12 +1494,24 @@ function normalizeSessionInPlace(
 export const useWorkflowStore = create<WorkflowState>()(
   persist(
     (set, get) => {
-      const applyNodeErrors = (errors: Record<string, NodeError[]>) => {
+      const applyNodeErrors = (
+        rawErrors: Record<string, NodeError[]>,
+        fromRun = false,
+      ) => {
         const { hiddenItems, workflow, itemKeyByPointer, expandedNodeIdMap } = get();
         if (!workflow) {
-          useWorkflowErrorsStore.getState().setNodeErrors(errors);
+          useWorkflowErrorsStore.getState().setNodeErrors(rawErrors, fromRun);
           return;
         }
+        // A bypassed node (mode 4) is excluded from the queued prompt and never
+        // runs, so an invalid value on it is irrelevant — drop its errors so it
+        // doesn't raise an alarm the user can't act on.
+        const errors = Object.fromEntries(
+          Object.entries(rawErrors).filter(([id]) => {
+            const rootNode = workflow.nodes.find((n) => String(n.id) === id);
+            return !(rootNode && rootNode.mode === 4);
+          }),
+        );
         const errorNodeIds = Object.keys(errors);
 
         const resolveErrorNodeHierarchicalKeys = (id: string): string[] => {
@@ -1429,7 +1540,7 @@ export const useWorkflowStore = create<WorkflowState>()(
           }
           set({ hiddenItems: newHiddenNodes });
         }
-        useWorkflowErrorsStore.getState().setNodeErrors(errors);
+        useWorkflowErrorsStore.getState().setNodeErrors(errors, fromRun);
       };
 
       const deleteNode: WorkflowState["deleteNode"] = (
@@ -1591,6 +1702,58 @@ export const useWorkflowStore = create<WorkflowState>()(
 
         set({
           workflow: nextWorkflowWithHierarchicalKeys,
+          hiddenItems: nextHiddenNodes,
+          connectionHighlightModes: nextHighlightModes,
+          mobileLayout: nextMobileLayout,
+          itemKeyByPointer: reconciled.layoutToStable,
+          pointerByHierarchicalKey: reconciled.stableToLayout,
+        });
+      };
+
+      const collapseSetGetNodes: WorkflowState["collapseSetGetNodes"] = () => {
+        const {
+          workflow,
+          mobileLayout,
+          itemKeyByPointer,
+          pointerByHierarchicalKey,
+          hiddenItems,
+          connectionHighlightModes,
+        } = get();
+        if (!workflow) return;
+
+        const { workflow: collapsed, removed } = collapseSetGetNodesPure(workflow);
+        if (removed.length === 0) return;
+
+        // Prune each removed relay from the layout and any per-node UI state,
+        // mirroring deleteNode's cleanup so nothing dangles to a gone node.
+        let nextMobileLayout = mobileLayout;
+        const nextHiddenNodes = { ...hiddenItems };
+        const nextHighlightModes = { ...connectionHighlightModes };
+        for (const { nodeId, subgraphId } of removed) {
+          for (const itemKey of collectNodeHierarchicalKeys(
+            workflow,
+            itemKeyByPointer,
+            nodeId,
+            subgraphId,
+          )) {
+            delete nextHiddenNodes[itemKey];
+            delete nextHighlightModes[itemKey];
+          }
+          nextMobileLayout = removeNodeFromLayout(nextMobileLayout, nodeId, subgraphId);
+        }
+
+        const reconciled = reconcilePointerRegistry(
+          nextMobileLayout,
+          itemKeyByPointer,
+          pointerByHierarchicalKey,
+        );
+        const annotated = annotateWorkflowWithHierarchicalKeys(
+          collapsed,
+          reconciled.layoutToStable,
+        );
+
+        set({
+          workflow: annotated,
           hiddenItems: nextHiddenNodes,
           connectionHighlightModes: nextHighlightModes,
           mobileLayout: nextMobileLayout,
@@ -1935,6 +2098,18 @@ export const useWorkflowStore = create<WorkflowState>()(
           pointerByHierarchicalKey: reconciled.stableToLayout,
         });
 
+        // A freshly added node starts with both sections unfolded.
+        const createdPointer = makeLocationPointer({
+          type: "node",
+          nodeId: newId,
+          subgraphId: options?.inSubgraphId ?? null,
+        });
+        const createdKey = reconciled.layoutToStable[createdPointer];
+        if (createdKey) {
+          useConnectionSectionFoldsStore.getState().expand(createdKey);
+          useParameterSectionFoldsStore.getState().expand(createdKey);
+        }
+
         return newId;
       };
 
@@ -1977,8 +2152,160 @@ export const useWorkflowStore = create<WorkflowState>()(
         return result.newNodeId;
       };
 
+      const pasteClipboard: WorkflowState["pasteClipboard"] = (belowNodeKey) => {
+        const { workflow, scopeStack, hiddenItems, itemKeyByPointer, pointerByHierarchicalKey } = get();
+        if (!workflow) return null;
+        const payload = useWorkflowClipboardStore.getState().payload;
+        if (!payload) return null;
+        const currentFrame = scopeStack[scopeStack.length - 1];
+        const targetSubgraphId = currentFrame?.type === "subgraph" ? currentFrame.id : null;
+
+        const result = applyClipboardPaste(workflow, payload, targetSubgraphId);
+        if (!result) return null;
+
+        let nextLayout = buildLayoutForWorkflow(
+          result.workflow,
+          layoutRecordFromPointerRecord(hiddenItems, pointerByHierarchicalKey),
+        );
+        // Place the pasted nodes directly below the anchor (in order) when
+        // pasting "below" a specific node.
+        if (belowNodeKey) {
+          const anchor = resolveNodeIdentityFromHierarchicalKey(
+            result.workflow,
+            belowNodeKey,
+            pointerByHierarchicalKey,
+          );
+          if (anchor) {
+            let anchorId = anchor.nodeId;
+            for (const newId of result.newNodeIds) {
+              nextLayout = placeLayoutItemAfter(nextLayout, newId, anchorId);
+              anchorId = newId;
+            }
+          }
+        }
+
+        const reconciled = reconcilePointerRegistry(
+          nextLayout,
+          itemKeyByPointer,
+          pointerByHierarchicalKey,
+        );
+        set({
+          workflow: annotateWorkflowWithHierarchicalKeys(result.workflow, reconciled.layoutToStable),
+          mobileLayout: nextLayout,
+          itemKeyByPointer: reconciled.layoutToStable,
+          pointerByHierarchicalKey: reconciled.stableToLayout,
+        });
+        return result.newNodeIds;
+      };
+
+      const copyContainer: WorkflowState["copyContainer"] = (itemKey) => {
+        const { workflow, pointerByHierarchicalKey } = get();
+        if (!workflow) return;
+        const identity = resolveContainerIdentityFromHierarchicalKey(
+          workflow,
+          itemKey,
+          pointerByHierarchicalKey,
+        );
+        if (!identity) return;
+
+        let payload: WorkflowClipboardPayload | null = null;
+        if (identity.type === "group") {
+          const groups =
+            identity.subgraphId == null
+              ? workflow.groups ?? []
+              : workflow.definitions?.subgraphs?.find((sg) => sg.id === identity.subgraphId)?.groups ?? [];
+          const group = groups.find((g) => g.id === identity.groupId);
+          if (!group) return;
+          // Direct members in the group's own scope (placeholder nodes ride along;
+          // their definitions are gathered by buildGroupClipboardPayload).
+          const memberNodeIds = collectBypassGroupTargetNodes(
+            workflow,
+            identity.groupId,
+            identity.subgraphId,
+          )
+            .filter((t) => t.subgraphId === identity.subgraphId)
+            .map((t) => t.nodeId);
+          payload = buildGroupClipboardPayload(workflow, group, identity.subgraphId, memberNodeIds);
+        } else {
+          // Copy the subgraph by copying its placeholder node (+ its definition).
+          const placeholder = (workflow.nodes ?? []).find((n) => n.type === identity.subgraphId);
+          if (placeholder?.itemKey) {
+            payload = buildNodeClipboardPayload(workflow, placeholder.itemKey);
+          }
+        }
+        if (payload) useWorkflowClipboardStore.getState().setPayload(payload);
+      };
+
+      const pasteIntoContainer: WorkflowState["pasteIntoContainer"] = (itemKey) => {
+        const { workflow, hiddenItems, itemKeyByPointer, pointerByHierarchicalKey } = get();
+        if (!workflow) return null;
+        const payload = useWorkflowClipboardStore.getState().payload;
+        if (!payload) return null;
+        const identity = resolveContainerIdentityFromHierarchicalKey(
+          workflow,
+          itemKey,
+          pointerByHierarchicalKey,
+        );
+        if (!identity) return null;
+
+        // Subgraph container → paste into its inner scope (identity.subgraphId is
+        // the subgraph's own id). Group container → paste into the group's own
+        // scope, then pull the nodes into the group below.
+        const result = applyClipboardPaste(workflow, payload, identity.subgraphId);
+        if (!result) return null;
+        let nextWorkflow = result.workflow;
+        if (identity.type === "group") {
+          nextWorkflow = placePastedNodesIntoGroup(
+            nextWorkflow,
+            identity.groupId,
+            identity.subgraphId,
+            result.newNodeIds,
+          );
+          // A payload carrying its own group had that box recreated by
+          // applyClipboardPaste, but every pasted node just moved into the TARGET
+          // group — so the recreated box is left behind empty. "Paste here" means
+          // "into this group", not "make me a second group", so drop it.
+          if (result.newGroupId != null) {
+            const orphanGroupId = result.newGroupId;
+            const dropOrphan = (groups: WorkflowGroup[] | undefined) =>
+              (groups ?? []).filter((group) => group.id !== orphanGroupId);
+            nextWorkflow = identity.subgraphId
+              ? {
+                  ...nextWorkflow,
+                  definitions: {
+                    ...(nextWorkflow.definitions ?? {}),
+                    subgraphs: (nextWorkflow.definitions?.subgraphs ?? []).map((subgraph) =>
+                      subgraph.id === identity.subgraphId
+                        ? { ...subgraph, groups: dropOrphan(subgraph.groups) }
+                        : subgraph,
+                    ),
+                  },
+                }
+              : { ...nextWorkflow, groups: dropOrphan(nextWorkflow.groups) };
+          }
+        }
+
+        const nextLayout = buildLayoutForWorkflow(
+          nextWorkflow,
+          layoutRecordFromPointerRecord(hiddenItems, pointerByHierarchicalKey),
+        );
+        const reconciled = reconcilePointerRegistry(
+          nextLayout,
+          itemKeyByPointer,
+          pointerByHierarchicalKey,
+        );
+        set({
+          workflow: annotateWorkflowWithHierarchicalKeys(nextWorkflow, reconciled.layoutToStable),
+          mobileLayout: nextLayout,
+          itemKeyByPointer: reconciled.layoutToStable,
+          pointerByHierarchicalKey: reconciled.stableToLayout,
+        });
+        return result.newNodeIds;
+      };
+
       const addGroupNearNode: WorkflowState["addGroupNearNode"] = (
         nearNodeHierarchicalKey,
+        scopeSubgraphId,
       ) => {
         const { workflow, mobileLayout, itemKeyByPointer, pointerByHierarchicalKey } =
           get();
@@ -1991,7 +2318,9 @@ export const useWorkflowStore = create<WorkflowState>()(
               pointerByHierarchicalKey,
             )
           : null;
-        const targetSubgraphId = nearIdentity?.subgraphId ?? null;
+        // Scope by the near node when given, else the explicit scope (the
+        // bottom-of-list add button passes the current subgraph), else root.
+        const targetSubgraphId = nearIdentity?.subgraphId ?? scopeSubgraphId ?? null;
         const subgraphDefs = workflow.definitions?.subgraphs ?? [];
         const targetSubgraph = targetSubgraphId
           ? subgraphDefs.find((subgraph) => subgraph.id === targetSubgraphId)
@@ -2171,6 +2500,161 @@ export const useWorkflowStore = create<WorkflowState>()(
         return newGroupHierarchicalKey;
       };
 
+      // Resolve the current scope's subgraph id from the scope stack (null at root).
+      const currentScopeSubgraphId = (): string | null => {
+        const frame = get().scopeStack[get().scopeStack.length - 1];
+        return frame?.type === "subgraph" ? frame.id : null;
+      };
+
+      const copySelectedItems: WorkflowState["copySelectedItems"] = (itemKeys) => {
+        const { workflow } = get();
+        if (!workflow) return;
+        const subgraphId = currentScopeSubgraphId();
+        // Gather the selected nodes (and subgraph placeholders, which resolve as
+        // nodes) in the current scope. Group keys don't contribute nodes here —
+        // selecting a group already auto-selects its member nodes.
+        const nodeIds: number[] = [];
+        for (const key of itemKeys) {
+          const identity = resolveNodeIdentityFromHierarchicalKey(workflow, key);
+          if (identity && identity.subgraphId === subgraphId) {
+            nodeIds.push(identity.nodeId);
+          }
+        }
+        const payload = buildMultiNodeClipboardPayload(workflow, subgraphId, nodeIds);
+        if (payload) useWorkflowClipboardStore.getState().setPayload(payload);
+      };
+
+      const deleteSelectedItems: WorkflowState["deleteSelectedItems"] = (itemKeys) => {
+        const { workflow } = get();
+        if (!workflow) return;
+        // Partition up front (resolution is against the current workflow; item
+        // keys stay valid across the per-item deletes below since they're stable).
+        const groupKeys: HierarchicalKey[] = [];
+        const nodeKeys: HierarchicalKey[] = [];
+        for (const key of itemKeys) {
+          if (resolveNodeIdentityFromHierarchicalKey(workflow, key)) {
+            nodeKeys.push(key);
+            continue;
+          }
+          const container = resolveContainerIdentityFromHierarchicalKey(workflow, key);
+          if (container?.type === "group") groupKeys.push(key);
+          // A selected subgraph is its placeholder node (handled by nodeKeys);
+          // subgraph containers aren't selectable on their own here.
+        }
+        // Remove group boxes first (deleteNodes:false keeps their nodes), then
+        // delete the selected nodes. Reuse the single-item actions so all the
+        // link/layout cleanup they already do applies. reconnect:false — a bulk
+        // delete removes nodes outright rather than bridging links.
+        //
+        // Wrapped so the whole burst is ONE undo step: each per-item action
+        // commits its own set(), and the undo subscription snapshots each one.
+        // Undoing a 12-node delete would otherwise take 12 presses, and with
+        // MAX_STEPS at 10 the first items could never be restored at all.
+        runUndoTransaction(() => {
+          for (const key of groupKeys) get().deleteContainer(key, { deleteNodes: false });
+          for (const key of nodeKeys) get().deleteNode(key, false);
+        });
+      };
+
+      const createGroupFromItems: WorkflowState["createGroupFromItems"] = (itemKeys) => {
+        const { workflow, hiddenItems, itemKeyByPointer, pointerByHierarchicalKey } = get();
+        if (!workflow) return;
+        const subgraphId = currentScopeSubgraphId();
+        const subgraphDefs = workflow.definitions?.subgraphs ?? [];
+        const scopeNodes =
+          subgraphId == null
+            ? workflow.nodes
+            : subgraphDefs.find((sg) => sg.id === subgraphId)?.nodes ?? [];
+
+        // Selected nodes in this scope (subgraph placeholders included).
+        const idSet = new Set<number>();
+        for (const key of itemKeys) {
+          const identity = resolveNodeIdentityFromHierarchicalKey(workflow, key);
+          if (identity && identity.subgraphId === subgraphId) idSet.add(identity.nodeId);
+        }
+        const memberIds = scopeNodes.filter((n) => idSet.has(n.id)).map((n) => n.id);
+        if (memberIds.length === 0) return;
+
+        // Create the group in a FRESH empty area at the bottom of the scope, then
+        // RELOCATE exactly the selected nodes into it. Drawing the group's box
+        // around the nodes in place would let the geometric membership pass
+        // (computeNodeGroupsFor) also claim any UNSELECTED node whose center sits
+        // inside that rect. Moving only the selected nodes into a clean area makes
+        // membership exact — nothing else can be captured.
+        const groupsInScope =
+          subgraphId == null
+            ? workflow.groups ?? []
+            : subgraphDefs.find((sg) => sg.id === subgraphId)?.groups ?? [];
+        const newGroupId = groupsInScope.reduce((m, g) => Math.max(m, g.id), 0) + 1;
+        const newGroupHierarchicalKey = makeLocationPointer({
+          type: "group",
+          groupId: newGroupId,
+          subgraphId,
+        });
+        const basePos = getBottomPlacementForScope(workflow, { subgraphId });
+        const newGroup: WorkflowGroup = {
+          id: newGroupId,
+          itemKey: newGroupHierarchicalKey,
+          title: "",
+          bounding: [Math.round(basePos[0]), Math.round(basePos[1]), 320, 160],
+          color: themeColors.brand.blue400,
+          font_size: 24,
+          flags: {},
+        };
+
+        const workflowWithGroup: Workflow =
+          subgraphId == null
+            ? { ...workflow, groups: [...(workflow.groups ?? []), newGroup] }
+            : {
+                ...workflow,
+                definitions: {
+                  ...(workflow.definitions ?? {}),
+                  subgraphs: subgraphDefs.map((sg) =>
+                    sg.id === subgraphId
+                      ? { ...sg, groups: [...(sg.groups ?? []), newGroup] }
+                      : sg,
+                  ),
+                },
+              };
+
+        // Reposition the selected nodes into the new (empty) group and grow its
+        // box to fit exactly them.
+        const nextWorkflow = placePastedNodesIntoGroup(
+          workflowWithGroup,
+          newGroupId,
+          subgraphId,
+          memberIds,
+        );
+
+        // Rebuild the layout; with the group sitting in a clean area containing
+        // only the relocated nodes, geometry assigns exactly them as members.
+        const rebuiltLayout = buildLayoutForWorkflow(
+          nextWorkflow,
+          layoutRecordFromPointerRecord(hiddenItems, pointerByHierarchicalKey),
+        );
+        const reconciled = reconcilePointerRegistry(
+          rebuiltLayout,
+          itemKeyByPointer,
+          pointerByHierarchicalKey,
+        );
+        const nextWorkflowWithHierarchicalKeys = annotateWorkflowWithHierarchicalKeys(
+          nextWorkflow,
+          reconciled.layoutToStable,
+        );
+
+        set({
+          workflow: nextWorkflowWithHierarchicalKeys,
+          mobileLayout: rebuiltLayout,
+          itemKeyByPointer: reconciled.layoutToStable,
+          pointerByHierarchicalKey: reconciled.stableToLayout,
+          editContainerLabelRequest: {
+            id: ++editContainerLabelRequestId,
+            itemKey: newGroupHierarchicalKey,
+            initialValue: "",
+          },
+        });
+      };
+
       const addNodeAndConnect: WorkflowState["addNodeAndConnect"] = (
         nodeType,
         targetHierarchicalKey,
@@ -2231,6 +2715,209 @@ export const useWorkflowStore = create<WorkflowState>()(
         );
         return newId;
       };
+
+      // Map a widget value type to the ComfyUI core primitive node that outputs
+      // it. Only these scalar types can be popped out.
+      const PRIMITIVE_NODE_TYPE_BY_VALUE_TYPE: Record<string, string> = {
+        STRING: "PrimitiveString",
+        INT: "PrimitiveInt",
+        FLOAT: "PrimitiveFloat",
+        BOOLEAN: "PrimitiveBoolean",
+      };
+
+      const ensureWidgetInputSlot: WorkflowState["ensureWidgetInputSlot"] = (
+        targetHierarchicalKey,
+        inputName,
+        inputType,
+      ) => {
+        const { workflow, pointerByHierarchicalKey } = get();
+        if (!workflow) return null;
+        const identity = resolveNodeIdentityFromHierarchicalKey(
+          workflow,
+          targetHierarchicalKey,
+          pointerByHierarchicalKey,
+        );
+        if (!identity) return null;
+        const scopeNodes =
+          identity.subgraphId == null
+            ? workflow.nodes
+            : (workflow.definitions?.subgraphs?.find((sg) => sg.id === identity.subgraphId)?.nodes ?? []);
+        const node = scopeNodes.find((n) => n.id === identity.nodeId);
+        if (!node) return null;
+        const existing = node.inputs.findIndex((inp) => inp.name === inputName);
+        if (existing >= 0) return existing;
+
+        const newInput: WorkflowInput = {
+          name: inputName,
+          type: inputType,
+          widget: { name: inputName },
+          link: null,
+        };
+        const addInput = (n: WorkflowNode): WorkflowNode =>
+          n.id === identity.nodeId ? { ...n, inputs: [...n.inputs, newInput] } : n;
+        const nextWorkflow =
+          identity.subgraphId == null
+            ? { ...workflow, nodes: workflow.nodes.map(addInput) }
+            : {
+                ...workflow,
+                definitions: {
+                  ...(workflow.definitions ?? {}),
+                  subgraphs: (workflow.definitions?.subgraphs ?? []).map((sg) =>
+                    sg.id === identity.subgraphId
+                      ? { ...sg, nodes: (sg.nodes ?? []).map(addInput) }
+                      : sg,
+                  ),
+                },
+              };
+        const newIndex = node.inputs.length;
+        set({ workflow: nextWorkflow });
+        return newIndex;
+      };
+
+      // Wrapped in an undo transaction: slot materialization, addNode, title,
+      // value seed, and connect each commit their own set(), and recording them
+      // as separate undo steps let Undo restore half-materialized states (a
+      // dangling primitive that saving then persisted).
+      const popWidgetToPrimitive: WorkflowState["popWidgetToPrimitive"] = (
+        targetHierarchicalKey,
+        inputName,
+        widgetValue,
+        options,
+      ) => runUndoTransaction(() => {
+        const { workflow, nodeTypes, pointerByHierarchicalKey } = get();
+        if (!workflow || !nodeTypes) return null;
+        const targetIdentity = resolveNodeIdentityFromHierarchicalKey(
+          workflow,
+          targetHierarchicalKey,
+          pointerByHierarchicalKey,
+        );
+        if (!targetIdentity) return null;
+        const targetScopeNodes =
+          targetIdentity.subgraphId == null
+            ? workflow.nodes
+            : (workflow.definitions?.subgraphs?.find(
+                (sg) => sg.id === targetIdentity.subgraphId,
+              )?.nodes ?? []);
+        const targetNode = targetScopeNodes.find((n) => n.id === targetIdentity.nodeId);
+        if (!targetNode) return null;
+
+        // The widget's input slot may not be materialized in node.inputs (an
+        // un-converted widget-input — common in older workflows). Resolve the
+        // type from the existing slot, else the node type definition.
+        let slotIndex = targetNode.inputs.findIndex((inp) => inp.name === inputName);
+        let inputType: string | null =
+          slotIndex >= 0 ? String(targetNode.inputs[slotIndex].type) : null;
+        if (slotIndex < 0) {
+          const typeDef = nodeTypes[targetNode.type];
+          const def =
+            typeDef?.input?.required?.[inputName] ?? typeDef?.input?.optional?.[inputName];
+          if (!def) return null;
+          const [typeOrOptions] = def;
+          const signature = Array.isArray(typeOrOptions)
+            ? typeOrOptions.map((entry) => String(entry)).join(",")
+            : String(typeOrOptions);
+          if (signature.toUpperCase().includes("AUTOCOMPLETE_TEXT")) {
+            // Autocomplete-Plus tags its free-text inputs with a custom type;
+            // they're STRING widgets (and canPopOutWidget offers them as
+            // such), so the pop-out must agree — bailing here made the
+            // confirmed dialog silently do nothing.
+            inputType = "STRING";
+          } else if (Array.isArray(typeOrOptions)) {
+            return null; // combo — no primitive
+          } else {
+            inputType = String(typeOrOptions);
+          }
+        }
+        if (!inputType) return null;
+        // Same normalization for an already-materialized slot carrying the
+        // custom autocomplete type tag.
+        if (inputType.toUpperCase().includes("AUTOCOMPLETE_TEXT")) inputType = "STRING";
+
+        const primitiveType = PRIMITIVE_NODE_TYPE_BY_VALUE_TYPE[inputType.toUpperCase()];
+        if (!primitiveType || !nodeTypes[primitiveType]) return null;
+
+        // Materialize the input slot if it doesn't exist yet (convert the widget
+        // to an input) so the link has somewhere to attach.
+        if (slotIndex < 0) {
+          const newInput: WorkflowInput = {
+            name: inputName,
+            type: inputType,
+            widget: { name: inputName },
+            link: null,
+          };
+          const addInput = (n: WorkflowNode): WorkflowNode =>
+            n.id === targetIdentity.nodeId ? { ...n, inputs: [...n.inputs, newInput] } : n;
+          const nextWorkflow =
+            targetIdentity.subgraphId == null
+              ? { ...workflow, nodes: workflow.nodes.map(addInput) }
+              : {
+                  ...workflow,
+                  definitions: {
+                    ...(workflow.definitions ?? {}),
+                    subgraphs: (workflow.definitions?.subgraphs ?? []).map((sg) =>
+                      sg.id === targetIdentity.subgraphId
+                        ? { ...sg, nodes: (sg.nodes ?? []).map(addInput) }
+                        : sg,
+                    ),
+                  },
+                };
+          slotIndex = targetNode.inputs.length;
+          set({ workflow: nextWorkflow });
+        }
+
+        const newId = get().addNode(primitiveType, {
+          nearNodeHierarchicalKey: targetHierarchicalKey,
+          inSubgraphId: targetIdentity.subgraphId ?? undefined,
+        });
+        if (newId === null) return null;
+        const newPointer = makeLocationPointer({
+          type: "node",
+          nodeId: newId,
+          subgraphId: targetIdentity.subgraphId,
+        });
+        const newHierarchicalKey = get().itemKeyByPointer[newPointer];
+        if (!newHierarchicalKey) return null;
+
+        // Seed the primitive's value (widget 0) with the popped value, then wire
+        // its output (slot 0) into the input the widget was backing.
+        if (options?.title?.trim()) {
+          get().updateNodeTitle(newHierarchicalKey, options.title);
+        }
+        get().updateNodeWidget(newHierarchicalKey, 0, widgetValue, "value");
+        get().connectNodes(
+          newHierarchicalKey,
+          0,
+          targetHierarchicalKey,
+          slotIndex,
+          inputType,
+        );
+
+        // addNode appends to the bottom of the scope; move the new primitive
+        // directly above the node it was popped out of.
+        const after = get();
+        if (after.workflow) {
+          const movedLayout = placeLayoutItemBefore(
+            after.mobileLayout,
+            newId,
+            targetIdentity.nodeId,
+          );
+          const reconciled = reconcilePointerRegistry(
+            movedLayout,
+            after.itemKeyByPointer,
+            after.pointerByHierarchicalKey,
+          );
+          set({
+            workflow: annotateWorkflowWithHierarchicalKeys(
+              after.workflow,
+              reconciled.layoutToStable,
+            ),
+            mobileLayout: movedLayout,
+            itemKeyByPointer: reconciled.layoutToStable,
+            pointerByHierarchicalKey: reconciled.stableToLayout,
+          });
+        }
+        return newId;
+      });
 
       // Resolve which session a write targets. Returns null for the active
       // session (write flat fields), or the parked snapshot to mutate.
@@ -2523,6 +3210,28 @@ export const useWorkflowStore = create<WorkflowState>()(
             }
           };
 
+          // Reveal the WHOLE chain of groups a node sits in — its innermost group
+          // plus every ancestor group it's nested under — so a node buried in a
+          // folded group within a folded group is fully exposed, not just one level.
+          const layoutMembership = collectScopedMembership(state.mobileLayout);
+          const revealGroupChainForNode = (
+            nodeId: number,
+            subgraphId: string | null,
+          ) => {
+            const startKey = layoutMembership.get(scopedNodeKey(nodeId, subgraphId))?.groupKey;
+            const seen = new Set<string>();
+            let currentKey: string | null | undefined = startKey;
+            while (currentKey && !seen.has(currentKey)) {
+              seen.add(currentKey);
+              const parsed = parseLocationPointer(currentKey);
+              if (parsed?.type === "group") {
+                revealGroup(parsed.groupId, parsed.subgraphId);
+              }
+              const parent = state.mobileLayout.groupParents?.[currentKey];
+              currentKey = parent?.scope === "group" ? parent.groupKey : null;
+            }
+          };
+
           const expandSubgraph = (subgraphId: string | null | undefined) => {
             if (!subgraphId) return;
             const key = findSubgraphHierarchicalKey(workflow, subgraphId);
@@ -2532,20 +3241,10 @@ export const useWorkflowStore = create<WorkflowState>()(
           };
 
           if (targetSubgraphId === null) {
-            // Root-scope node: reveal its group and the groups of its parent nodes.
-            const groupId = getGroupIdForNode(
-              node.id,
-              rootNodes,
-              workflow.groups ?? [],
-            );
-            revealGroup(groupId, null);
+            // Root-scope node: reveal its full group chain and those of its parents.
+            revealGroupChainForNode(node.id, null);
             parentIds.forEach((parentId) => {
-              const parentGroupId = getGroupIdForNode(
-                parentId,
-                rootNodes,
-                workflow.groups ?? [],
-              );
-              revealGroup(parentGroupId, null);
+              revealGroupChainForNode(parentId, null);
             });
           } else {
             // Inner subgraph node: expand the subgraph section, reveal its group,
@@ -2553,34 +3252,19 @@ export const useWorkflowStore = create<WorkflowState>()(
             expandSubgraph(targetSubgraphId);
             const subgraph = subgraphById.get(targetSubgraphId);
             if (subgraph) {
-              const groupId = getGroupIdForNode(
-                node.id,
-                subgraph.nodes ?? [],
-                subgraph.groups ?? [],
-              );
-              revealGroup(groupId, targetSubgraphId);
+              revealGroupChainForNode(node.id, targetSubgraphId);
             }
 
             // Under the canonical model: find the placeholder node in root scope
-            // to reveal its parent group.
+            // to reveal its parent group chain.
             const placeholderNode = rootNodes.find((n) => n.type === targetSubgraphId);
             if (placeholderNode) {
-              const placeholderGroupId = getGroupIdForNode(
-                placeholderNode.id,
-                rootNodes,
-                workflow.groups ?? [],
-              );
-              revealGroup(placeholderGroupId, null);
+              revealGroupChainForNode(placeholderNode.id, null);
             }
 
             if (subgraph) {
               parentIds.forEach((parentId) => {
-                const parentGroupId = getGroupIdForNode(
-                  parentId,
-                  subgraph.nodes ?? [],
-                  subgraph.groups ?? [],
-                );
-                revealGroup(parentGroupId, targetSubgraphId);
+                revealGroupChainForNode(parentId, targetSubgraphId);
               });
             }
 
@@ -2595,12 +3279,7 @@ export const useWorkflowStore = create<WorkflowState>()(
                 expandSubgraph(parent.parentId);
                 const parentDef = subgraphById.get(parent.parentId);
                 if (parentDef) {
-                  const parentGroupId = getGroupIdForNode(
-                    parent.nodeId,
-                    parentDef.nodes ?? [],
-                    parentDef.groups ?? [],
-                  );
-                  revealGroup(parentGroupId, parent.parentId);
+                  revealGroupChainForNode(parent.nodeId, parent.parentId);
                 }
                 if (!visited.has(parent.parentId)) {
                   stack.push(parent.parentId);
@@ -2635,6 +3314,28 @@ export const useWorkflowStore = create<WorkflowState>()(
         const nextWorkflow = scope.applyPatch(workflow, { nodes: nextNodes });
         set({ workflow: nextWorkflow });
         useWorkflowErrorsStore.getState().clearNodeError(node.id);
+      };
+
+      const renameSetGetNode: WorkflowState["renameSetGetNode"] = (itemKey, newName) => {
+        const { workflow } = get();
+        if (!workflow) return;
+        const scope = resolveScopeForHierarchicalKey(workflow, itemKey);
+        const target = resolveNodeByHierarchicalKey(scope.nodes, itemKey);
+        if (!target) return;
+        const oldName = getSetGetName(target);
+        const trimmed = newName.trim();
+        if (!trimmed || trimmed === oldName) return;
+        // Renaming a SetNode also renames every GetNode in this scope that was
+        // reading the old name, so the name-matched link isn't broken.
+        const syncGets = isSetNode(target) && Boolean(oldName);
+        const nextNodes = scope.nodes.map((n) => {
+          if (n.id === target.id) return updateNodeWidgetValues(n, 0, trimmed, "value");
+          if (syncGets && isGetNode(n) && getSetGetName(n) === oldName) {
+            return updateNodeWidgetValues(n, 0, trimmed, "value");
+          }
+          return n;
+        });
+        set({ workflow: scope.applyPatch(workflow, { nodes: nextNodes }) });
       };
 
       const updateNodeWidgets: WorkflowState["updateNodeWidgets"] = (
@@ -2747,6 +3448,55 @@ export const useWorkflowStore = create<WorkflowState>()(
             delete nextNode.title;
           }
           return nextNode as WorkflowNode;
+        });
+        const nextWorkflow = scope.applyPatch(workflow, { nodes: nextNodes });
+        set({ workflow: nextWorkflow });
+      };
+
+      const convertImageOutputNode: WorkflowState["convertImageOutputNode"] = (
+        itemKey,
+        target,
+      ) => {
+        const { workflow } = get();
+        if (!workflow) return;
+        const scope = resolveScopeForHierarchicalKey(workflow, itemKey);
+        const node = resolveNodeByHierarchicalKey(scope.nodes, itemKey);
+        if (!node) return;
+        if (node.type !== 'PreviewImage' && node.type !== 'SaveImage') return;
+        if (node.type === target) return;
+        const nextNodes = scope.nodes.map((n) => {
+          if (n.id !== node.id) return n;
+          const next: WorkflowNode = {
+            ...n,
+            type: target,
+            properties: { ...(n.properties ?? {}) },
+          };
+          // Keep %NodeName.widget% text-replacement tokens working: the S&R
+          // name follows the type change when it was the default (a custom
+          // S&R name is the user's own token — leave it alone).
+          if (next.properties["Node name for S&R"] === n.type) {
+            next.properties["Node name for S&R"] = target;
+          }
+          if (target === 'SaveImage') {
+            // SaveImage has a single string widget (filename_prefix). Restore
+            // a prefix stashed by an earlier convert-to-Preview, else default
+            // to "ComfyUI" — matches the built-in node's default.
+            const stashed = next.properties["mobile.filenamePrefix"];
+            next.widgets_values = [
+              typeof stashed === 'string' && stashed ? stashed : 'ComfyUI',
+            ];
+            delete next.properties["mobile.filenamePrefix"];
+          } else {
+            // PreviewImage takes no widgets; drop the filename_prefix so the
+            // queued prompt doesn't carry stray values the node won't accept,
+            // but stash a custom prefix so converting back doesn't lose it.
+            const prefix = Array.isArray(n.widgets_values) ? n.widgets_values[0] : undefined;
+            if (typeof prefix === 'string' && prefix && prefix !== 'ComfyUI') {
+              next.properties["mobile.filenamePrefix"] = prefix;
+            }
+            delete next.widgets_values;
+          }
+          return next;
         });
         const nextWorkflow = scope.applyPatch(workflow, { nodes: nextNodes });
         set({ workflow: nextWorkflow });
@@ -3180,6 +3930,11 @@ export const useWorkflowStore = create<WorkflowState>()(
             };
           }
 
+          // Full tidy-layout recompute: rebuild the entire scope's geometry from
+          // the (new) mobile ordering so the desktop canvas mirrors the mobile
+          // list left-to-right with no overlaps. Engages on the first reposition
+          // and keeps the geometry compliant on every reposition after. Cheap —
+          // a single O(n) pass over the layout tree.
           const tidiedWorkflow = computeTidyWorkflowGeometry(
             baseWorkflow,
             normalized,
@@ -3533,8 +4288,13 @@ export const useWorkflowStore = create<WorkflowState>()(
         useWorkflowErrorsStore.getState().clearNodeErrors();
 
         // Phase 2: Store canonical form directly — no expansion step.
-        // Normalize workflow to ensure required fields exist
-        const normalizedNodes = normalizeWorkflowNodes(workflow.nodes);
+        // Normalize workflow to ensure required fields exist. Strip any embedded
+        // credit note so it never enters the in-app workflow (it's re-injected
+        // into the embedded copy at execution time, and must stay invisible /
+        // unselectable / undeletable in the mobile UI).
+        const normalizedNodes = normalizeWorkflowNodes(workflow.nodes).filter(
+          (node) => !isMarketingNote(node),
+        );
 
         const normalizedWorkflow: Workflow = {
           ...workflow,
@@ -4022,6 +4782,38 @@ export const useWorkflowStore = create<WorkflowState>()(
           URL.revokeObjectURL(url);
         }
         set({ latentPreviews: {} });
+      };
+
+      const setQueueLatentPreview: WorkflowState["setQueueLatentPreview"] = (promptId, url) => {
+        if (!promptId) { URL.revokeObjectURL(url); return; }
+        const prev = get().latentPreviewByPrompt[promptId];
+        // Keep a one-frame buffer: revoke the frame TWO generations back (which the
+        // card has long stopped referencing) but keep the immediately-previous
+        // frame alive, so a still-decoding displayed frame is never revoked out
+        // from under the <img>. Without this the streaming previews would still be
+        // freed each step, but the currently-shown one stays valid.
+        if (prev?.prevUrl) URL.revokeObjectURL(prev.prevUrl);
+        queueLatentSeq += 1;
+        set((state) => ({
+          latentPreviewByPrompt: {
+            ...state.latentPreviewByPrompt,
+            [promptId]: { url, prevUrl: prev?.url, seq: queueLatentSeq },
+          },
+        }));
+      };
+
+      // Revoke + drop every prompt's latent preview. Called at run start (not at
+      // run end) so the just-finished run's last frame keeps painting in the
+      // queue card until its real output decodes and swaps in — avoiding a flash
+      // of a revoked blob URL.
+      const clearQueueLatentPreviews: WorkflowState["clearQueueLatentPreviews"] = () => {
+        const previews = get().latentPreviewByPrompt;
+        if (Object.keys(previews).length === 0) return;
+        for (const entry of Object.values(previews)) {
+          URL.revokeObjectURL(entry.url);
+          if (entry.prevUrl) URL.revokeObjectURL(entry.prevUrl);
+        }
+        set({ latentPreviewByPrompt: {} });
       };
 
       const addPromptOutputs: WorkflowState["addPromptOutputs"] = (
@@ -5342,6 +6134,16 @@ export const useWorkflowStore = create<WorkflowState>()(
             writeSeedLastValues(nextSeedLastValues);
             writeWorkflow(currentWorkflow);
 
+            // Repair link/slot consistency BEFORE building the executed prompt,
+            // not only before embedding the workflow in the PNG (see below). An
+            // edit can leave a link present in the `links` table while the target
+            // node's inputs[].link still points elsewhere (e.g. after pasting and
+            // wiring up a section). Persistence/embed already repairs this, so the
+            // saved workflow looks correct — but the prompt is built from
+            // inputs[].link, so without this it would silently drop that
+            // connection and the downstream branch never executes.
+            const validatedForQueue = validateAndNormalizeWorkflow(currentWorkflow);
+
             // Seed overrides recorded above for a promoted-seed placeholder (no
             // real control_after_generate on the boundary, so processSeedNode
             // took the ephemeral seedOverrides path rather than mutating
@@ -5351,7 +6153,7 @@ export const useWorkflowStore = create<WorkflowState>()(
             // instead of being overwritten by the stale saved one. See
             // applySeedOverridesForExpansion's own docstring for why.
             const workflowForExpansion = applySeedOverridesForExpansion(
-              currentWorkflow,
+              validatedForQueue,
               nodeTypes,
               seedOverrides,
             );
@@ -5447,6 +6249,12 @@ export const useWorkflowStore = create<WorkflowState>()(
 
             for (const node of expandedForQueue.nodes) {
               if (node.mode === 4) continue;
+              // SetNode/GetNode are virtual relays: consumers already resolve
+              // through them to the real source (resolveSource), so drop them
+              // from the prompt. Leaving them out of allowedNodeIds means the
+              // emit loop below skips them too. Works whether or not the backend
+              // has the KJNodes types installed.
+              if (isSetGetNode(node)) continue;
               let classType: string | null = null;
               if (nodeTypes[node.type]) {
                 classType = node.type;
@@ -5509,6 +6317,14 @@ export const useWorkflowStore = create<WorkflowState>()(
               queuedPrompt = obfuscated.prompt;
               queuedWorkflow = obfuscated.workflow;
             }
+            // Embed a hidden credit note above the top-left-most node (opt-out).
+            // Only ever added to this embedded copy — never the in-app workflow —
+            // so it stays invisible/unselectable in the mobile UI. Recomputed from
+            // the current geometry each run, so it tracks the top-left node even
+            // after a tidy-layout reflow.
+            if (useGenerationSettingsStore.getState().marketingNoteEnabled) {
+              queuedWorkflow = injectMarketingNote(queuedWorkflow);
+            }
             const metadataFilename = isActive ? state.currentFilename : parked?.currentFilename ?? null;
             const metadataSource = isActive ? state.workflowSource : parked?.workflowSource ?? null;
             const metadataWorkflowLabel = queueWorkflowLabel(metadataFilename, metadataSource);
@@ -5525,6 +6341,40 @@ export const useWorkflowStore = create<WorkflowState>()(
                 ...(previewMethod !== 'none' ? { preview_method: previewMethod } : {}),
               },
             };
+            // Parse ComfyUI's node_errors map (array or {errors:[…]} form) into our
+            // NodeError shape. ComfyUI returns this both on a hard reject (HTTP 400)
+            // AND on a partial accept (HTTP 200) when it queues the valid output
+            // nodes but excludes branches with a validation error (e.g. an
+            // out-of-range value) — so we must check it on success too.
+            const parseQueueNodeErrors = (raw: unknown): Record<string, NodeError[]> => {
+              const parsed: Record<string, NodeError[]> = {};
+              if (!raw || typeof raw !== "object") return parsed;
+              for (const [nodeId, nodeError] of Object.entries(raw)) {
+                const errorsArray = Array.isArray(nodeError)
+                  ? nodeError
+                  : (typeof nodeError === "object" &&
+                      nodeError !== null &&
+                      "errors" in nodeError &&
+                      Array.isArray((nodeError as { errors?: unknown[] }).errors))
+                  ? (nodeError as { errors: Array<{
+                      type: string;
+                      message: string;
+                      details: string;
+                      extra_info?: { input_name?: string };
+                    }> }).errors
+                  : [];
+                if (errorsArray && errorsArray.length > 0) {
+                  parsed[nodeId] = errorsArray.map((e) => ({
+                    type: e.type,
+                    message: e.message,
+                    details: e.details,
+                    inputName: e.extra_info?.input_name,
+                  }));
+                }
+              }
+              return parsed;
+            };
+
             const response = await fetch('/api/prompt', {
               method: "POST",
               headers: { "Content-Type": "application/json" },
@@ -5544,38 +6394,9 @@ export const useWorkflowStore = create<WorkflowState>()(
                 return null;
               };
 
-              // Parse node-specific errors if present
-              const nodeErrors: Record<string, NodeError[]> = {};
-              if (errorData.node_errors) {
-                for (const [nodeId, nodeError] of Object.entries(
-                  errorData.node_errors,
-                )) {
-                  const errorsArray = Array.isArray(nodeError)
-                    ? nodeError
-                    : (typeof nodeError === "object" &&
-                        nodeError !== null &&
-                        "errors" in nodeError &&
-                        Array.isArray((nodeError as { errors?: unknown[] }).errors))
-                    ? (nodeError as { errors: Array<{
-                        type: string;
-                        message: string;
-                        details: string;
-                        extra_info?: { input_name?: string };
-                      }> }).errors
-                    : [];
-                  if (errorsArray && errorsArray.length > 0) {
-                    nodeErrors[nodeId] = errorsArray.map((e) => ({
-                      type: e.type,
-                      message: e.message,
-                      details: e.details,
-                      inputName: e.extra_info?.input_name,
-                    }));
-                  }
-                }
-              }
-
+              const nodeErrors = parseQueueNodeErrors(errorData.node_errors);
               if (Object.keys(nodeErrors).length > 0) {
-                applyNodeErrors(nodeErrors);
+                applyNodeErrors(nodeErrors, true);
               }
 
               throw new Error(
@@ -5585,7 +6406,23 @@ export const useWorkflowStore = create<WorkflowState>()(
 
             // Record which session owns this prompt_id for websocket routing.
             try {
-              const okData = (await response.json()) as { prompt_id?: string };
+              const okData = (await response.json()) as {
+                prompt_id?: string;
+                node_errors?: unknown;
+              };
+              // A 200 with node_errors means ComfyUI queued the valid outputs but
+              // SILENTLY dropped the branches it couldn't validate. Surface those
+              // loudly (fromRun) so the user sees which node failed — with
+              // jump-to-node — on whatever panel they're on, instead of wondering
+              // why part of their workflow never ran.
+              const partialErrors = parseQueueNodeErrors(okData?.node_errors);
+              if (Object.keys(partialErrors).length > 0) {
+                applyNodeErrors(partialErrors, true);
+              } else {
+                // Clean accept — clear any stale validation errors from a prior
+                // partial/failed queue so the badges don't linger after a fix.
+                useWorkflowErrorsStore.getState().clearNodeErrors();
+              }
               const promptId = okData?.prompt_id;
               if (promptId && sid) {
                 // Prompts still in the backend queue must keep their routing
@@ -5762,6 +6599,7 @@ export const useWorkflowStore = create<WorkflowState>()(
         parkedSessions: {},
         infiniteLoopSessionId: null,
         promptToSession: {},
+        latentPreviewByPrompt: {},
         isLoadingBySession: {},
         lastPromptSignatureBySession: {},
         savingSessionId: null,
@@ -5786,9 +6624,18 @@ export const useWorkflowStore = create<WorkflowState>()(
         addNode,
         addGroupNearNode,
         addNodeAndConnect,
+        popWidgetToPrimitive,
+        ensureWidgetInputSlot,
         deleteNode,
+        collapseSetGetNodes,
         duplicateNode,
+        pasteClipboard,
+        copyContainer,
+        pasteIntoContainer,
         deleteContainer,
+        copySelectedItems,
+        createGroupFromItems,
+        deleteSelectedItems,
         connectNodes,
         disconnectInput,
         setNodeOutput,
@@ -5797,6 +6644,8 @@ export const useWorkflowStore = create<WorkflowState>()(
         clearNodeOutputs,
         setLatentPreview,
         clearAllLatentPreviews,
+        setQueueLatentPreview,
+        clearQueueLatentPreviews,
         requestAddNodeModal,
         clearAddNodeModalRequest,
         clearEditContainerLabelRequest,
@@ -5804,9 +6653,11 @@ export const useWorkflowStore = create<WorkflowState>()(
         bypassAllInContainer,
         updateNodeWidget,
         updateNodeWidgets,
+        renameSetGetNode,
         updateSubgraphInnerNodeWidget,
 
         updateNodeProperties,
+        convertImageOutputNode,
 
         // Cosmetic workflow editing
         updateNodeTitle,

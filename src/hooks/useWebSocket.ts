@@ -95,8 +95,8 @@ export function getBackendReconnectMessage(downtimeMs: number): string {
 // finalization. A still-running prompt stays in `running`, so the history fetch
 // is skipped entirely until something completes. Exported for testing.
 export async function runQueuePollTick(
-  fetchQueue: () => Promise<void>,
-  fetchHistory: () => Promise<void>,
+  fetchQueue: () => Promise<unknown>,
+  fetchHistory: () => Promise<unknown>,
 ): Promise<void> {
   const queueState = useQueueStore.getState();
   if (queueState.running.length === 0 && queueState.completing.length === 0) {
@@ -117,6 +117,8 @@ function snapshotStoreActions() {
     clearNodeOutputs: useWorkflowStore.getState().clearNodeOutputs,
     setLatentPreview: useWorkflowStore.getState().setLatentPreview,
     clearAllLatentPreviews: useWorkflowStore.getState().clearAllLatentPreviews,
+    setQueueLatentPreview: useWorkflowStore.getState().setQueueLatentPreview,
+    clearQueueLatentPreviews: useWorkflowStore.getState().clearQueueLatentPreviews,
     addPromptOutputs: useWorkflowStore.getState().addPromptOutputs,
     clearPromptOutputs: useWorkflowStore.getState().clearPromptOutputs,
     applyControlAfterGenerate: useWorkflowStore.getState().applyControlAfterGenerate,
@@ -345,6 +347,7 @@ export function useWebSocket() {
         ),
       }));
       storeActionsRef.current.clearAllLatentPreviews();
+      storeActionsRef.current.clearQueueLatentPreviews();
     };
 
     const handleMessage = (data: unknown) => {
@@ -523,6 +526,10 @@ export function useWebSocket() {
             // Track new prompt without clearing existing outputs to avoid layout shift.
             if (promptId && promptId !== lastPromptIdRef.current) {
               lastPromptIdRef.current = promptId;
+              // A new prompt is starting and has no latent frames yet, so this is
+              // the safe moment to revoke the previous run's queue latent previews
+              // (the just-finished card has already swapped to its real output).
+              storeActionsRef.current.clearQueueLatentPreviews();
             }
             if (promptId && promptStartedAtRef.current[promptId] === undefined) {
               promptStartedAtRef.current[promptId] = Date.now();
@@ -656,7 +663,12 @@ export function useWebSocket() {
                   },
                 ],
               };
-              useWorkflowErrorsStore.getState().setNodeErrors(nodeErrors);
+              // fromRun: this IS the mid-run failure path (the execution_error
+              // frame). Without the flag the error is classified as a workflow
+              // LOAD error, and BottomStatusOverlay suppresses its toast on
+              // every panel except the workflow one — so a run that died while
+              // the user watched the queue or outputs failed silently.
+              useWorkflowErrorsStore.getState().setNodeErrors(nodeErrors, true);
             }
           }
           console.error('Execution error:', {
@@ -759,6 +771,24 @@ export function useWebSocket() {
       return ws.executingNodeHierarchicalKey;
     };
 
+    // Route a decoded preview frame to its two consumers. They have independent
+    // lifecycles (the node card is active-tab-only and keyed by node; the queue
+    // card is global and keyed by prompt), so each gets its OWN object URL from
+    // the same blob — revoking one must never invalidate the other.
+    const dispatchPreviewFrame = (blob: Blob) => {
+      // Queue card: keyed by the executing prompt, so it works even for a run
+      // started in a parked tab.
+      const execPromptId = executingPromptIdRef.current;
+      if (execPromptId) {
+        storeActionsRef.current.setQueueLatentPreview(execPromptId, URL.createObjectURL(blob));
+      }
+      // Node card: only the active session's executing node.
+      const nodeUrl = URL.createObjectURL(blob);
+      const itemKey = resolvePreviewItemKey();
+      if (!itemKey) { URL.revokeObjectURL(nodeUrl); return; }
+      storeActionsRef.current.setLatentPreview(nodeUrl, itemKey);
+    };
+
     const handleBinaryMessage = (data: ArrayBuffer) => {
       if (data.byteLength < 8) return;
 
@@ -770,11 +800,7 @@ export function useWebSocket() {
         const imageType = view.getUint32(4, false);
         const mime = imageType === 2 ? 'image/png' : 'image/jpeg';
         const imageData = data.slice(8);
-        const blob = new Blob([imageData], { type: mime });
-        const url = URL.createObjectURL(blob);
-        const itemKey = resolvePreviewItemKey();
-        if (!itemKey) { URL.revokeObjectURL(url); return; }
-        storeActionsRef.current.setLatentPreview(url, itemKey);
+        dispatchPreviewFrame(new Blob([imageData], { type: mime }));
       } else if (type === 4) {
         // Modern: [type(4B)][jsonLen(4B)][JSON metadata][imageData]
         try {
@@ -782,11 +808,7 @@ export function useWebSocket() {
           const imageData = data.slice(8 + jsonLen);
           const header = new Uint8Array(imageData.slice(0, 4));
           const mime = (header[0] === 0x89 && header[1] === 0x50) ? 'image/png' : 'image/jpeg';
-          const blob = new Blob([imageData], { type: mime });
-          const url = URL.createObjectURL(blob);
-          const itemKey = resolvePreviewItemKey();
-          if (!itemKey) { URL.revokeObjectURL(url); return; }
-          storeActionsRef.current.setLatentPreview(url, itemKey);
+          dispatchPreviewFrame(new Blob([imageData], { type: mime }));
         } catch (e) {
           console.error('[WS] Failed to parse binary type 4 message:', e);
         }
@@ -849,9 +871,18 @@ export function useWebSocket() {
             .getState()
             .history
             .map((entry) => entry.prompt_id);
-          const recoverableJobIds = useQueueStore
+          let recoverableJobIds = useQueueStore
             .getState()
             .detectRecoverableJobs(completedPromptIds);
+          // The loaded history window is small (10 newest by default), so a job
+          // that completed while the UI was closed can be pushed past it and
+          // wrongly flagged. Confirm each candidate against its own backend
+          // history entry before treating it as lost.
+          if (recoverableJobIds.length > 0) {
+            recoverableJobIds = await useQueueStore
+              .getState()
+              .verifyRecoverableJobsAgainstHistory();
+          }
 
           // Only surface the disruption popup when the outage was long enough to
           // matter AND it actually cost us queued work. Brief blips, or
@@ -978,11 +1009,12 @@ export function useWebSocket() {
       if (resumeAttemptedSessionRef.current === infiniteLoopSessionId) {
         resumeAttemptedSessionRef.current = null;
       }
-      // A run is live, so the loop is genuinely active now — clear the
-      // arm-without-run guard so the idle-resume backup can act again.
-      if (workflowState.infiniteLoopAwaitingRun) {
-        useWorkflowStore.setState({ infiniteLoopAwaitingRun: false });
-      }
+      // Do NOT clear infiniteLoopAwaitingRun here. A live prompt for this
+      // session may be a pre-existing manual run that was already queued when
+      // infinite mode was armed — clearing on that would make arming look like
+      // an active loop and auto-start generation once those items drain. Only an
+      // actual loop Run (queueWorkflow) clears the guard, so existing queue
+      // items finish first and the loop starts only when the user hits Run.
       return;
     }
     // Infinite mode was armed via the toggle but no run has started yet.

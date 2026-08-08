@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { debugLog } from '@/utils/debugLog';
+import { isDesktopViewport } from './useIsDesktop';
 
 function scrollTextareaIntoView(
   target: HTMLTextAreaElement,
@@ -198,6 +199,11 @@ export function useTextareaFocus() {
       }
       if (target instanceof HTMLTextAreaElement) {
         setTextareaFocusState(true);
+        // The scroll-into-view dance compensates for the on-screen keyboard
+        // covering the caret on phones. On a desktop-size viewport there's no
+        // virtual keyboard, so it just yanks the panel to the top on focus —
+        // skip it there.
+        if (isDesktopViewport()) return;
         const runScroll = () => scrollTextareaIntoView(target, 'smooth', 'focus');
         if (textareaScrollTimerRef.current) {
           clearTimeout(textareaScrollTimerRef.current);

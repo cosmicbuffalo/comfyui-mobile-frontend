@@ -2,7 +2,7 @@ import type { QueueInfo, History } from '../types';
 import type { QueueWorkflowDiff } from '@/utils/workflowDiff';
 
 export async function getQueue(): Promise<QueueInfo> {
-  const response = await fetch(`/api/queue`);
+  const response = await fetch(`/api/queue`, { cache: 'no-store' });
   if (!response.ok) throw new Error('Failed to fetch queue');
   return response.json();
 }
@@ -11,9 +11,38 @@ export async function getHistory(maxItems?: number): Promise<History> {
   const url = maxItems
     ? `/api/history?max_items=${maxItems}`
     : `/api/history`;
-  const response = await fetch(url);
+  // History is live application state. A cached empty/partial response after a
+  // WebView navigation is worse than another small request, especially because
+  // this endpoint is what rebuilds completed queue cards after an app restart.
+  const response = await fetch(url, { cache: 'no-store' });
   if (!response.ok) throw new Error('Failed to fetch history');
   return response.json();
+}
+
+// Whether a specific prompt has a backend history entry (i.e. it actually ran —
+// successfully or not). Used to confirm a locally-tracked "shadow" job's fate
+// when it's fallen outside the loaded history window, so jobs that completed
+// while the UI was closed aren't mis-flagged as lost.
+//
+// `null` means UNKNOWN — the server couldn't be asked — and is deliberately not
+// `false`. This runs on websocket reconnect, exactly when the link is least
+// reliable, and the caller may auto-resubmit a job it believes never ran: a
+// failed check reported as "didn't run" duplicates completed work on a flaky
+// connection.
+export async function promptHasHistory(promptId: string): Promise<boolean | null> {
+  if (!promptId) return false;
+  try {
+    const response = await fetch(`/api/history/${encodeURIComponent(promptId)}`, {
+      cache: 'no-store',
+    });
+    // A non-OK response answers nothing about whether the prompt ran, so it must
+    // not read as "it didn't" — see the null contract above.
+    if (!response.ok) return null;
+    const data = (await response.json()) as History;
+    return Boolean(data && promptId in data);
+  } catch {
+    return null;
+  }
 }
 
 // Total number of runs in ComfyUI's history (the frontend pages /history with
@@ -152,4 +181,3 @@ export async function clearHistory(): Promise<void> {
     body: JSON.stringify({ clear: true })
   });
 }
-

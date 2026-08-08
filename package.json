@@ -1,14 +1,15 @@
 {
   "name": "comfyui-mobile-frontend",
   "private": true,
-  "version": "3.0.7",
+  "version": "3.1.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build && node scripts/compress-assets.mjs",
     "lint": "eslint .",
     "preview": "vite preview",
-    "test": "vitest run"
+    "test": "vitest run",
+    "smoke": "node scripts/smoke-test.mjs"
   },
   "dependencies": {
     "react": "^19.2.0",

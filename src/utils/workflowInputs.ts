@@ -304,14 +304,14 @@ export function normalizeComboValue(
   return value;
 }
 
-// A token is "file-like" when it carries a path separator or a known
-// model/media/config file extension. Combo lists with such options are
+// A combo is treated as a file picker when any of its options carries a path
+// separator or a known model/media/config file extension. Such lists are
 // inherently incomplete (uploads aren't enumerated), so unmatched values are
 // kept as-is. Everything else is a closed enum that lists all valid values.
 const FILE_LIKE_OPTION =
   /[\\/]|\.(safetensors|sft|ckpt|pt|pth|bin|gguf|onnx|vae|yaml|yml|json|txt|csv|png|jpe?g|webp|gif|bmp|tiff?|mp4|webm|mov|mkv|wav|mp3|flac|ogg|npy|npz|pkl|engine|trt)$/i;
 
-function isFileLikeToken(token: unknown): boolean {
+export function isFileLikeToken(token: unknown): boolean {
   return FILE_LIKE_OPTION.test(String(token));
 }
 
