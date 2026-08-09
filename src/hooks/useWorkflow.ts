@@ -49,6 +49,8 @@ import {
   isFileLikeToken,
   optionsAreFileLike,
   resolveComboOption,
+  isComboType,
+  getComboOptions,
 } from "@/utils/workflowInputs";
 import { buildWorkflowCacheKey } from "@/utils/workflowCacheKey";
 import { collectAllWorkflowGroups, collectAllWorkflowNodes } from "@/utils/workflowNodes";
@@ -1190,9 +1192,10 @@ function collectWorkflowLoadErrors(
         typeDef.input.required?.[name] || typeDef.input.optional?.[name];
       if (!inputDef) continue;
 
-      const [typeOrOptions] = inputDef;
-      if (!Array.isArray(typeOrOptions)) continue;
-      if (typeOrOptions.length === 0) continue;
+      const [typeOrOptions, inputOptions] = inputDef;
+      if (!isComboType(typeOrOptions)) continue;
+      const comboOpts = getComboOptions(typeOrOptions, inputOptions);
+      if (comboOpts.length === 0) continue;
 
       const inputEntry = node.inputs.find((input) => input.name === name);
       if (inputEntry?.link != null) continue;
@@ -1208,8 +1211,8 @@ function collectWorkflowLoadErrors(
       const rawValue = getWidgetValue(node, name, widgetIndex);
       if (rawValue === undefined || rawValue === null) continue;
 
-      const resolved = resolveComboOption(rawValue, typeOrOptions);
-      const normalized = normalizeWidgetValue(rawValue, typeOrOptions, {
+      const resolved = resolveComboOption(rawValue, comboOpts);
+      const normalized = normalizeWidgetValue(rawValue, comboOpts, {
         comboIndexToValue: true,
       });
       const normalizedString = String(normalized);
@@ -1217,7 +1220,7 @@ function collectWorkflowLoadErrors(
         normalizedString.split(/[\\/]/).pop() ?? normalizedString;
       const hasMatch =
         resolved !== undefined ||
-        typeOrOptions.some((opt) => {
+        comboOpts.some((opt) => {
           const optString = String(opt);
           return optString === normalizedString || optString === normalizedBase;
         });
@@ -1229,7 +1232,7 @@ function collectWorkflowLoadErrors(
       // enum-looking list — reach the server unchanged and can genuinely be
       // rejected, so those are what get flagged. The two rules have to agree:
       // anything kept but unflagged fails silently at run time instead.
-      if (!hasMatch && (optionsAreFileLike(typeOrOptions) || isFileLikeToken(normalizedString))) {
+      if (!hasMatch && (optionsAreFileLike(comboOpts) || isFileLikeToken(normalizedString))) {
         const nodeId = String(node.id);
         if (!errors[nodeId]) {
           errors[nodeId] = [];
@@ -1266,8 +1269,10 @@ function normalizeWorkflowComboValues(
     for (const name of orderedInputs) {
       const inputDef = typeDef.input.required?.[name] || typeDef.input.optional?.[name];
       if (!inputDef) continue;
-      const [typeOrOptions] = inputDef;
-      if (!Array.isArray(typeOrOptions) || typeOrOptions.length === 0) continue;
+      const [typeOrOptions, inputOptions] = inputDef;
+      if (!isComboType(typeOrOptions)) continue;
+      const comboOpts = getComboOptions(typeOrOptions, inputOptions);
+      if (comboOpts.length === 0) continue;
 
       const inputEntry = node.inputs.find((input) => input.name === name);
       if (inputEntry?.link != null) continue;
@@ -1279,7 +1284,7 @@ function normalizeWorkflowComboValues(
       const rawValue = getWidgetValue(node, name, widgetIndex);
       if (rawValue === undefined || rawValue === null) continue;
 
-      const resolved = resolveComboOption(rawValue, typeOrOptions);
+      const resolved = resolveComboOption(rawValue, comboOpts);
       if (resolved === undefined || resolved === rawValue) continue;
 
       if (!nextValues) {

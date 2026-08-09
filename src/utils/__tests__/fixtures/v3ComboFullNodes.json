@@ -1,0 +1,962 @@
+{
+  "ResizeImageMaskNode": {
+    "name": "ResizeImageMaskNode",
+    "input": {
+      "required": {
+        "input": [
+          "COMFY_MATCHTYPE_V3",
+          {
+            "template": {
+              "template_id": "input_type",
+              "allowed_types": "IMAGE,MASK"
+            }
+          }
+        ],
+        "resize_type": [
+          "COMFY_DYNAMICCOMBO_V3",
+          {
+            "tooltip": "Select how to resize: by exact dimensions, scale factor, matching another image, etc.",
+            "options": [
+              {
+                "key": "scale dimensions",
+                "inputs": {
+                  "required": {
+                    "width": [
+                      "INT",
+                      {
+                        "tooltip": "Target width in pixels. Set to 0 to auto-calculate from height while preserving aspect ratio.",
+                        "default": 512,
+                        "min": 0,
+                        "max": 16384,
+                        "step": 1
+                      }
+                    ],
+                    "height": [
+                      "INT",
+                      {
+                        "tooltip": "Target height in pixels. Set to 0 to auto-calculate from width while preserving aspect ratio.",
+                        "default": 512,
+                        "min": 0,
+                        "max": 16384,
+                        "step": 1
+                      }
+                    ],
+                    "crop": [
+                      "COMBO",
+                      {
+                        "tooltip": "How to handle aspect ratio mismatch: 'disabled' stretches to fit, 'center' crops to maintain aspect ratio.",
+                        "default": "center",
+                        "multiselect": false,
+                        "options": [
+                          "disabled",
+                          "center"
+                        ]
+                      }
+                    ]
+                  }
+                }
+              },
+              {
+                "key": "scale by multiplier",
+                "inputs": {
+                  "required": {
+                    "multiplier": [
+                      "FLOAT",
+                      {
+                        "tooltip": "Scale factor (e.g., 2.0 doubles size, 0.5 halves size).",
+                        "default": 1.0,
+                        "min": 0.01,
+                        "max": 8.0,
+                        "step": 0.01
+                      }
+                    ]
+                  }
+                }
+              },
+              {
+                "key": "scale longer dimension",
+                "inputs": {
+                  "required": {
+                    "longer_size": [
+                      "INT",
+                      {
+                        "tooltip": "The longer edge will be resized to this value. Aspect ratio is preserved.",
+                        "default": 512,
+                        "min": 0,
+                        "max": 16384,
+                        "step": 1
+                      }
+                    ]
+                  }
+                }
+              },
+              {
+                "key": "scale shorter dimension",
+                "inputs": {
+                  "required": {
+                    "shorter_size": [
+                      "INT",
+                      {
+                        "tooltip": "The shorter edge will be resized to this value. Aspect ratio is preserved.",
+                        "default": 512,
+                        "min": 0,
+                        "max": 16384,
+                        "step": 1
+                      }
+                    ]
+                  }
+                }
+              },
+              {
+                "key": "scale width",
+                "inputs": {
+                  "required": {
+                    "width": [
+                      "INT",
+                      {
+                        "tooltip": "Target width in pixels. Height auto-adjusts to preserve aspect ratio.",
+                        "default": 512,
+                        "min": 0,
+                        "max": 16384,
+                        "step": 1
+                      }
+                    ]
+                  }
+                }
+              },
+              {
+                "key": "scale height",
+                "inputs": {
+                  "required": {
+                    "height": [
+                      "INT",
+                      {
+                        "tooltip": "Target height in pixels. Width auto-adjusts to preserve aspect ratio.",
+                        "default": 512,
+                        "min": 0,
+                        "max": 16384,
+                        "step": 1
+                      }
+                    ]
+                  }
+                }
+              },
+              {
+                "key": "scale total pixels",
+                "inputs": {
+                  "required": {
+                    "megapixels": [
+                      "FLOAT",
+                      {
+                        "tooltip": "Target total megapixels (e.g., 1.0 \u2248 1024\u00d71024). Aspect ratio is preserved.",
+                        "default": 1.0,
+                        "min": 0.01,
+                        "max": 16.0,
+                        "step": 0.01
+                      }
+                    ]
+                  }
+                }
+              },
+              {
+                "key": "match size",
+                "inputs": {
+                  "required": {
+                    "match": [
+                      "IMAGE,MASK",
+                      {
+                        "tooltip": "Resize input to match the dimensions of this reference image or mask."
+                      }
+                    ],
+                    "crop": [
+                      "COMBO",
+                      {
+                        "tooltip": "How to handle aspect ratio mismatch: 'disabled' stretches to fit, 'center' crops to maintain aspect ratio.",
+                        "default": "center",
+                        "multiselect": false,
+                        "options": [
+                          "disabled",
+                          "center"
+                        ]
+                      }
+                    ]
+                  }
+                }
+              },
+              {
+                "key": "scale to multiple",
+                "inputs": {
+                  "required": {
+                    "multiple": [
+                      "INT",
+                      {
+                        "tooltip": "Resize so width and height are divisible by this number. Useful for latent alignment (e.g., 8 or 64).",
+                        "default": 8,
+                        "min": 1,
+                        "max": 16384,
+                        "step": 1
+                      }
+                    ]
+                  }
+                }
+              }
+            ]
+          }
+        ],
+        "scale_method": [
+          "COMBO",
+          {
+            "tooltip": "Interpolation algorithm. 'area' is best for downscaling, 'lanczos' for upscaling, 'nearest-exact' for pixel art.",
+            "default": "area",
+            "multiselect": false,
+            "options": [
+              "nearest-exact",
+              "bilinear",
+              "area",
+              "bicubic",
+              "lanczos"
+            ]
+          }
+        ]
+      }
+    },
+    "input_order": {
+      "required": [
+        "input",
+        "resize_type",
+        "scale_method"
+      ]
+    },
+    "output": [
+      "COMFY_MATCHTYPE_V3"
+    ],
+    "output_name": [
+      "resized"
+    ],
+    "display_name": "Resize Image/Mask",
+    "description": "",
+    "python_module": "comfy_extras.nodes_post_processing",
+    "category": "image/transform"
+  },
+  "ColorTransfer": {
+    "name": "ColorTransfer",
+    "input": {
+      "required": {
+        "image_target": [
+          "IMAGE",
+          {
+            "tooltip": "Image(s) to apply the color transform to."
+          }
+        ],
+        "image_ref": [
+          "IMAGE",
+          {
+            "tooltip": "Reference image(s) to match colors to."
+          }
+        ],
+        "method": [
+          "COMBO",
+          {
+            "multiselect": false,
+            "options": [
+              "reinhard_lab",
+              "mkl_lab",
+              "histogram"
+            ]
+          }
+        ],
+        "source_stats": [
+          "COMFY_DYNAMICCOMBO_V3",
+          {
+            "tooltip": "per_frame: each frame matched to image_ref individually. uniform: pool stats across all source frames as baseline, match to image_ref. target_frame: use one chosen frame as the baseline for the transform to image_ref, applied uniformly to all frames (preserves relative differences)",
+            "options": [
+              {
+                "key": "per_frame",
+                "inputs": {
+                  "required": {}
+                }
+              },
+              {
+                "key": "uniform",
+                "inputs": {
+                  "required": {}
+                }
+              },
+              {
+                "key": "target_frame",
+                "inputs": {
+                  "required": {
+                    "target_index": [
+                      "INT",
+                      {
+                        "tooltip": "Frame index used as the source baseline for computing the transform to image_ref",
+                        "default": 0,
+                        "min": 0,
+                        "max": 10000
+                      }
+                    ]
+                  }
+                }
+              }
+            ]
+          }
+        ],
+        "strength": [
+          "FLOAT",
+          {
+            "default": 1.0,
+            "min": 0.0,
+            "max": 10.0,
+            "step": 0.01
+          }
+        ]
+      }
+    },
+    "input_order": {
+      "required": [
+        "image_target",
+        "image_ref",
+        "method",
+        "source_stats",
+        "strength"
+      ]
+    },
+    "output": [
+      "IMAGE"
+    ],
+    "output_name": [
+      "image"
+    ],
+    "display_name": "Transfer Color",
+    "description": "",
+    "python_module": "comfy_extras.nodes_post_processing",
+    "category": "image/filters"
+  },
+  "BasicScheduler": {
+    "name": "BasicScheduler",
+    "input": {
+      "required": {
+        "model": [
+          "MODEL",
+          {}
+        ],
+        "scheduler": [
+          "COMBO",
+          {
+            "multiselect": false,
+            "options": [
+              "simple",
+              "sgm_uniform",
+              "karras",
+              "exponential",
+              "ddim_uniform",
+              "beta",
+              "normal",
+              "linear_quadratic",
+              "kl_optimal",
+              "bong_tangent",
+              "beta57"
+            ]
+          }
+        ],
+        "steps": [
+          "INT",
+          {
+            "default": 20,
+            "min": 1,
+            "max": 10000
+          }
+        ],
+        "denoise": [
+          "FLOAT",
+          {
+            "default": 1.0,
+            "min": 0.0,
+            "max": 1.0,
+            "step": 0.01
+          }
+        ]
+      }
+    },
+    "input_order": {
+      "required": [
+        "model",
+        "scheduler",
+        "steps",
+        "denoise"
+      ]
+    },
+    "output": [
+      "SIGMAS"
+    ],
+    "output_name": [
+      "SIGMAS"
+    ],
+    "display_name": "BasicScheduler",
+    "description": "",
+    "python_module": "comfy_extras.nodes_custom_sampler",
+    "category": "model/sampling/schedulers"
+  },
+  "SaveImageAdvanced": {
+    "name": "SaveImageAdvanced",
+    "input": {
+      "required": {
+        "images": [
+          "IMAGE",
+          {
+            "tooltip": "The images to save."
+          }
+        ],
+        "filename_prefix": [
+          "STRING",
+          {
+            "tooltip": "The prefix for the file to save. May include formatting tokens such as %date:yyyy-MM-dd% or %Empty Latent Image.width%.",
+            "default": "ComfyUI",
+            "multiline": false
+          }
+        ],
+        "format": [
+          "COMFY_DYNAMICCOMBO_V3",
+          {
+            "tooltip": "The file format in which to save the image.",
+            "options": [
+              {
+                "key": "png",
+                "inputs": {
+                  "required": {
+                    "bit_depth": [
+                      "COMBO",
+                      {
+                        "advanced": true,
+                        "default": "8-bit",
+                        "multiselect": false,
+                        "options": [
+                          "8-bit",
+                          "16-bit"
+                        ]
+                      }
+                    ],
+                    "input_color_space": [
+                      "COMBO",
+                      {
+                        "advanced": true,
+                        "default": "sRGB",
+                        "multiselect": false,
+                        "options": [
+                          "sRGB"
+                        ]
+                      }
+                    ]
+                  }
+                }
+              },
+              {
+                "key": "exr",
+                "inputs": {
+                  "required": {
+                    "bit_depth": [
+                      "COMBO",
+                      {
+                        "advanced": true,
+                        "default": "32-bit float",
+                        "multiselect": false,
+                        "options": [
+                          "32-bit float"
+                        ]
+                      }
+                    ],
+                    "input_color_space": [
+                      "COMBO",
+                      {
+                        "tooltip": "Colorspace of the input tensor. The EXR is always written as scene-linear in the matching gamut.\nsRGB \u2014 input is sRGB-encoded Rec.709; the inverse sRGB EOTF is applied.\nHDR \u2014 input is HLG-encoded Rec.2020 (BT.2100); the inverse HLG OETF is applied to get scene-linear light.\nlinear \u2014 input is already scene-linear (Rec.709 primaries); written through unchanged. Use this for renderer/compositor output.",
+                        "advanced": true,
+                        "default": "sRGB",
+                        "multiselect": false,
+                        "options": [
+                          "sRGB",
+                          "HDR",
+                          "linear"
+                        ]
+                      }
+                    ]
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "hidden": {
+        "prompt": [
+          "PROMPT"
+        ],
+        "extra_pnginfo": [
+          "EXTRA_PNGINFO"
+        ]
+      }
+    },
+    "input_order": {
+      "required": [
+        "images",
+        "filename_prefix",
+        "format"
+      ],
+      "hidden": [
+        "prompt",
+        "extra_pnginfo"
+      ]
+    },
+    "output": [
+      "IMAGE"
+    ],
+    "output_name": [
+      "images"
+    ],
+    "display_name": "Save Image (Advanced)",
+    "description": "",
+    "python_module": "comfy_extras.nodes_images",
+    "category": "image"
+  },
+  "SaveVideo": {
+    "name": "SaveVideo",
+    "input": {
+      "required": {
+        "video": [
+          "VIDEO",
+          {
+            "tooltip": "The video to save."
+          }
+        ],
+        "filename_prefix": [
+          "STRING",
+          {
+            "tooltip": "The prefix for the file to save. This may include formatting information such as %date:yyyy-MM-dd% or %Empty Latent Image.width% to include values from nodes.",
+            "default": "video/ComfyUI",
+            "multiline": false
+          }
+        ],
+        "format": [
+          "COMBO",
+          {
+            "tooltip": "The format to save the video as.",
+            "default": "auto",
+            "multiselect": false,
+            "options": [
+              "auto",
+              "mp4"
+            ]
+          }
+        ],
+        "codec": [
+          "COMFY_DYNAMICCOMBO_V3",
+          {
+            "tooltip": "The codec to use for the video.",
+            "options": [
+              {
+                "key": "auto",
+                "inputs": {
+                  "required": {}
+                }
+              },
+              {
+                "key": "h264",
+                "inputs": {
+                  "required": {},
+                  "optional": {
+                    "encoding": [
+                      "COMFY_DYNAMICCOMBO_V3",
+                      {
+                        "display_name": "encoding mode",
+                        "tooltip": "Automatic preserves compatible H.264 streams. Re-encode applies a custom CRF.",
+                        "options": [
+                          {
+                            "key": "auto",
+                            "inputs": {
+                              "required": {}
+                            }
+                          },
+                          {
+                            "key": "re-encode",
+                            "inputs": {
+                              "required": {
+                                "crf": [
+                                  "FLOAT",
+                                  {
+                                    "tooltip": "Lower values produce higher quality and larger files.",
+                                    "default": 23.0,
+                                    "min": 0.0,
+                                    "max": 51.0,
+                                    "step": 1.0
+                                  }
+                                ]
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "hidden": {
+        "prompt": [
+          "PROMPT"
+        ],
+        "extra_pnginfo": [
+          "EXTRA_PNGINFO"
+        ]
+      }
+    },
+    "input_order": {
+      "required": [
+        "video",
+        "filename_prefix",
+        "format",
+        "codec"
+      ],
+      "hidden": [
+        "prompt",
+        "extra_pnginfo"
+      ]
+    },
+    "output": [
+      "VIDEO"
+    ],
+    "output_name": [
+      "video"
+    ],
+    "display_name": "Save Video",
+    "description": "",
+    "python_module": "comfy_extras.nodes_video",
+    "category": "video"
+  },
+  "SeedVR2TemporalChunk": {
+    "name": "SeedVR2TemporalChunk",
+    "input": {
+      "required": {
+        "latent": [
+          "LATENT",
+          {
+            "tooltip": "The VAE-encoded SeedVR2 latent to split."
+          }
+        ],
+        "temporal_overlap": [
+          "INT",
+          {
+            "tooltip": "Latent frames shared between adjacent chunks and crossfaded at merge; 0 = no overlap.",
+            "default": 0,
+            "min": 0,
+            "max": 16384
+          }
+        ],
+        "chunking_mode": [
+          "COMFY_DYNAMICCOMBO_V3",
+          {
+            "tooltip": "manual = use frames_per_chunk exactly; auto = predict the largest chunk that fits free VRAM.",
+            "options": [
+              {
+                "key": "auto",
+                "inputs": {
+                  "required": {}
+                }
+              },
+              {
+                "key": "manual",
+                "inputs": {
+                  "required": {
+                    "frames_per_chunk": [
+                      "INT",
+                      {
+                        "tooltip": "Pixel frames per temporal chunk (4n+1: 1, 5, 9, 13, ...).",
+                        "default": 21,
+                        "min": 1,
+                        "max": 16384,
+                        "step": 4
+                      }
+                    ]
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "input_order": {
+      "required": [
+        "latent",
+        "temporal_overlap",
+        "chunking_mode"
+      ]
+    },
+    "output": [
+      "LATENT",
+      "INT"
+    ],
+    "output_name": [
+      "latents",
+      "temporal_overlap"
+    ],
+    "display_name": "Split SeedVR2 Latent",
+    "description": "",
+    "python_module": "comfy_extras.nodes_seedvr",
+    "category": "model/latent/batch"
+  },
+  "easy humanSegmentation": {
+    "name": "easy humanSegmentation",
+    "input": {
+      "required": {
+        "image": [
+          "IMAGE"
+        ],
+        "method": [
+          [
+            "selfie_multiclass_256x256",
+            "human_parsing_lip",
+            "human_parts (deeplabv3p)",
+            "segformer_b3_clothes",
+            "segformer_b3_fashion",
+            "face_parsing"
+          ]
+        ],
+        "confidence": [
+          "FLOAT",
+          {
+            "default": 0.4,
+            "min": 0.05,
+            "max": 0.95,
+            "step": 0.01
+          }
+        ],
+        "crop_multi": [
+          "FLOAT",
+          {
+            "default": 0.0,
+            "min": 0.0,
+            "max": 10.0,
+            "step": 0.001
+          }
+        ],
+        "mask_components": [
+          "EASY_COMBO",
+          {
+            "options": [
+              {
+                "label": "Background",
+                "value": 0
+              }
+            ],
+            "multi_select": {
+              "placeholder": "select mask components",
+              "chip": true,
+              "max_selected_labels": 4
+            }
+          }
+        ]
+      },
+      "hidden": {
+        "prompt": "PROMPT",
+        "my_unique_id": "UNIQUE_ID"
+      }
+    },
+    "input_order": {
+      "required": [
+        "image",
+        "method",
+        "confidence",
+        "crop_multi",
+        "mask_components"
+      ],
+      "hidden": [
+        "prompt",
+        "my_unique_id"
+      ]
+    },
+    "output": [
+      "IMAGE",
+      "MASK",
+      "BBOX"
+    ],
+    "output_name": [
+      "image",
+      "mask",
+      "bbox"
+    ],
+    "display_name": "Human Segmentation",
+    "description": "",
+    "python_module": "custom_nodes.comfyui-easy-use",
+    "category": "EasyUse/Segmentation"
+  },
+  "DecodeAndSaveVideo": {
+    "name": "DecodeAndSaveVideo",
+    "input": {
+      "required": {
+        "video_latent": [
+          "LATENT",
+          {
+            "tooltip": "The latent representation of the video frames."
+          }
+        ],
+        "fps": [
+          "FLOAT",
+          {
+            "tooltip": "Frame rate for the output video.",
+            "default": 25.0,
+            "min": 0.0,
+            "max": 999.0,
+            "step": 0.01
+          }
+        ],
+        "filename_prefix": [
+          "STRING",
+          {
+            "tooltip": "The prefix for the file to save. This may include formatting information such as %date:yyyy-MM-dd% or %Empty Latent Image.width% to include values from nodes.",
+            "default": "video/ComfyUI",
+            "multiline": false
+          }
+        ],
+        "format": [
+          "COMBO",
+          {
+            "tooltip": "The format to save the video as.",
+            "default": "auto",
+            "multiselect": false,
+            "options": [
+              "auto",
+              "mp4"
+            ]
+          }
+        ],
+        "codec": [
+          "COMBO",
+          {
+            "tooltip": "The codec to use for the video.",
+            "default": "auto",
+            "multiselect": false,
+            "options": [
+              "auto",
+              "h264"
+            ]
+          }
+        ],
+        "video_vae": [
+          "VAE",
+          {
+            "tooltip": "The VAE model to use for encoding."
+          }
+        ],
+        "tiling": [
+          "COMFY_DYNAMICCOMBO_V3",
+          {
+            "options": [
+              {
+                "key": "disabled",
+                "inputs": {
+                  "required": {}
+                }
+              },
+              {
+                "key": "enabled",
+                "inputs": {
+                  "required": {
+                    "tile_size": [
+                      "INT",
+                      {
+                        "tooltip": "Size of the tiles to decode. Smaller tiles use less memory but take more time.",
+                        "default": 512,
+                        "min": 64,
+                        "max": 4096,
+                        "step": 32
+                      }
+                    ],
+                    "overlap": [
+                      "INT",
+                      {
+                        "tooltip": "Amount of overlap between tiles. Higher overlap can improve quality at the edges of tiles but uses more memory and takes more time.",
+                        "default": 64,
+                        "min": 0,
+                        "max": 4096,
+                        "step": 32
+                      }
+                    ],
+                    "temporal_size": [
+                      "INT",
+                      {
+                        "tooltip": "Only used for video VAEs: Amount of frames to decode at a time. Higher value than number of frames = disabled",
+                        "default": 4096,
+                        "min": 8,
+                        "max": 4096,
+                        "step": 4
+                      }
+                    ],
+                    "temporal_overlap": [
+                      "INT",
+                      {
+                        "tooltip": "Only used for video VAEs: Amount of frames to overlap. Higher overlap can improve quality at the edges of temporal tiles but uses more memory and takes more time.",
+                        "default": 16,
+                        "min": 4,
+                        "max": 4096,
+                        "step": 4
+                      }
+                    ]
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "optional": {
+        "audio_latent": [
+          "LATENT",
+          {
+            "tooltip": "The latent representation of the audio frames."
+          }
+        ],
+        "audio_vae": [
+          "VAE",
+          {
+            "tooltip": "The VAE model to use for decoding audio."
+          }
+        ]
+      },
+      "hidden": {
+        "prompt": [
+          "PROMPT"
+        ],
+        "extra_pnginfo": [
+          "EXTRA_PNGINFO"
+        ]
+      }
+    },
+    "input_order": {
+      "required": [
+        "video_latent",
+        "fps",
+        "filename_prefix",
+        "format",
+        "codec",
+        "video_vae",
+        "tiling"
+      ],
+      "optional": [
+        "audio_latent",
+        "audio_vae"
+      ],
+      "hidden": [
+        "prompt",
+        "extra_pnginfo"
+      ]
+    },
+    "output": [],
+    "output_name": [],
+    "display_name": "Decode and Save Video",
+    "description": "",
+    "python_module": "custom_nodes.comfyui-kjnodes",
+    "category": "KJNodes/image"
+  }
+}
