@@ -69,24 +69,12 @@ function defaultForSub(type: string, opts?: Record<string, unknown>): unknown {
   return null;
 }
 
+const PRIMITIVE_WIDGET_TYPES = ['INT', 'FLOAT', 'BOOLEAN', 'STRING'];
+
+/** An input occupies a widget slot when it is a combo or a primitive; everything else is a socket. */
 function isSocketType(t: unknown): boolean {
-  const tStr = String(t).toUpperCase();
-  // Anything that is a graph socket (not a form widget) in object_info.
-  return (
-    tStr === 'COMFY_MATCHTYPE_V3' ||
-    tStr === 'IMAGE' ||
-    tStr === 'MASK' ||
-    tStr === 'VIDEO' ||
-    tStr === 'LATENT' ||
-    tStr === 'MODEL' ||
-    tStr === 'CLIP' ||
-    tStr === 'VAE' ||
-    tStr === 'CONDITIONING' ||
-    tStr === 'AUDIO' ||
-    tStr.includes('IMAGE') ||
-    tStr.includes('MASK') ||
-    tStr.includes('LATENT')
-  );
+  if (isComboType(t as string | unknown[])) return false;
+  return !PRIMITIVE_WIDGET_TYPES.includes(String(t).toUpperCase());
 }
 
 /** Build widgets_values for a DynamicCombo selection + trailing sibling widgets. */
@@ -141,7 +129,7 @@ function widgetsForDynamicCombo(
       continue;
     }
 
-    if (['INT', 'FLOAT', 'BOOLEAN', 'STRING'].includes(String(t).toUpperCase())) {
+    if (PRIMITIVE_WIDGET_TYPES.includes(String(t).toUpperCase())) {
       widgets.push(defaultForSub(String(t), opts));
     }
   }
