@@ -1,5 +1,5 @@
 import type { WorkflowInput, WorkflowLink, WorkflowNode, NodeTypes, NodeTypeDefinition, NodeInputEntry, Workflow, WorkflowSubgraphLink, WorkflowSubgraphDefinition } from '@/api/types';
-import { getNodePropertyWidgetIndexMap, getWidgetValue, isWidgetInputType, skipImplicitSeedControlSlot } from '@/utils/workflowInputs';
+import { getNodePropertyWidgetIndexMap, getWidgetValue, isWidgetInputType, isComboType, getComboOptions, getDynamicComboSubInputs, skipImplicitSeedControlSlot } from '@/utils/workflowInputs';
 import { findLoraListIndex, isLoraList, isLoraManagerNodeType, isPowerLoraLoaderNodeType } from '@/utils/loraManager';
 import { modelWidgetKind } from '@/utils/modelWidgetKind';
 import {
@@ -283,10 +283,11 @@ function collectWidgetDefinitions(
       const isWidgetToggle = Boolean(inputEntry?.widget) && !isConnected;
       const hasSocket = Boolean(inputEntry);
       const hasDefault = Object.prototype.hasOwnProperty.call(inputOptions ?? {}, 'default');
-      const isWidgetType = isWidgetInputType(typeOrOptions) || isWidgetToggle || !hasSocket || hasDefault;
-      const isCombo = Array.isArray(typeOrOptions) && !isAutocompleteTextInput;
+      // V3 string-typed combos ("COMBO", etc.) are not covered by isWidgetInputType.
+      const isWidgetType = isWidgetInputType(typeOrOptions) || isWidgetToggle || !hasSocket || hasDefault || (!isConnected && isComboType(typeOrOptions));
+      const isCombo = isComboType(typeOrOptions) && !isAutocompleteTextInput;
       const comboOptions: Record<string, unknown> = isCombo
-        ? { ...(inputOptions ?? {}), options: typeOrOptions }
+        ? { ...(inputOptions ?? {}), options: getComboOptions(typeOrOptions, inputOptions) }
         : { ...(inputOptions ?? {}) };
       // PrimitiveString holds free text (often popped out of a multiline widget
       // like CLIP text) — render it as a multiline textarea, not a one-line box.
@@ -323,6 +324,17 @@ function collectWidgetDefinitions(
           // which would be the value of the next real widget.
           if (skipImplicitSeedControlSlot(node, widgetIndex)) {
             widgetIndex += 1;
+          }
+        }
+        // COMFY_DYNAMICCOMBO_V3: the selected option exposes conditional
+        // sub-inputs (e.g. width/height/crop) that appear as additional
+        // widgets in widgets_values right after the combo value.
+        // Process them recursively so they show up as widget definitions.
+        if (String(typeOrOptions).toUpperCase() === 'COMFY_DYNAMICCOMBO_V3') {
+          const lastDef = definitions[definitions.length - 1];
+          const subInputs = getDynamicComboSubInputs(typeOrOptions, inputOptions, lastDef?.value, name);
+          for (const { name: subName, inputDef: subInputDef } of subInputs) {
+            processInput(subName, subInputDef);
           }
         }
       }

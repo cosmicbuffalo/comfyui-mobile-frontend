@@ -1,5 +1,5 @@
 import type { Workflow, WorkflowNode, NodeTypes } from '@/api/types';
-import { getNodeWidgetIndexMap, isWidgetInputType, skipImplicitSeedControlSlot } from '@/utils/workflowInputs';
+import { getNodeWidgetIndexMap, isWidgetInputType, isComboType, skipImplicitSeedControlSlot } from '@/utils/workflowInputs';
 
 // Seed mode type
 export type SeedMode = 'fixed' | 'randomize' | 'increment' | 'decrement';
@@ -125,7 +125,8 @@ export function getWidgetIndexForInput(
     const isConnected = inputEntry?.link != null;
     const isWidgetToggle = Boolean(inputEntry?.widget) && !isConnected;
     const hasSocket = Boolean(inputEntry);
-    const isWidgetType = isWidgetInputType(typeOrOptions) || isWidgetToggle || !hasSocket;
+    // V3 string-typed combos ("COMBO", etc.) are not covered by isWidgetInputType.
+    const isWidgetType = isWidgetInputType(typeOrOptions) || isWidgetToggle || !hasSocket || (!isConnected && isComboType(typeOrOptions));
     const isWidget = isWidgetType;
 
     if (isWidget) {
@@ -209,7 +210,8 @@ export function findSeedWidgetIndex(
     const isConnected = inputEntry?.link != null;
     const isWidgetToggle = Boolean(inputEntry?.widget) && !isConnected;
     const hasSocket = Boolean(inputEntry);
-    const isWidgetType = isWidgetInputType(typeOrOptions) || isWidgetToggle || !hasSocket;
+    // V3 string-typed combos ("COMBO", etc.) are not covered by isWidgetInputType.
+    const isWidgetType = isWidgetInputType(typeOrOptions) || isWidgetToggle || !hasSocket || (!isConnected && isComboType(typeOrOptions));
 
     if (isWidgetType) {
       const mappedIndex = widgetIndexMap?.[name];

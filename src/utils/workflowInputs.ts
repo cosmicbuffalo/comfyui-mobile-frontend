@@ -235,6 +235,88 @@ export function isWidgetInputType(typeOrOptions: string | unknown[]): boolean {
     normalized.includes('AUTOCOMPLETE_TEXT_PROMPT');
 }
 
+// V3 combo type strings used by ComfyUI's newer API format.
+// - COMBO: options in inputDef[1].options (string array)
+// - COMFY_DYNAMICCOMBO_V3: options in inputDef[1].options (array of {key, inputs} objects)
+// - EASY_COMBO: options in inputDef[1].options (array of {label, value} objects)
+// COMFY_AUTOGROW_V3 and COMFY_MATCHTYPE_V3 are socket-only, NOT widget combos.
+const V3_COMBO_TYPES = new Set(['COMBO', 'COMFY_DYNAMICCOMBO_V3', 'EASY_COMBO']);
+
+export function isV3ComboType(typeOrOptions: string | unknown[]): boolean {
+  if (Array.isArray(typeOrOptions)) return false;
+  return V3_COMBO_TYPES.has(String(typeOrOptions).toUpperCase());
+}
+
+export function isComboType(typeOrOptions: string | unknown[]): boolean {
+  return Array.isArray(typeOrOptions) || isV3ComboType(typeOrOptions);
+}
+
+export function getComboOptions(
+  typeOrOptions: string | unknown[],
+  inputOptions?: Record<string, unknown>
+): unknown[] {
+  if (Array.isArray(typeOrOptions)) {
+    return typeOrOptions;
+  }
+  const typeName = String(typeOrOptions).toUpperCase();
+  const rawOptions = inputOptions?.options;
+  if (!Array.isArray(rawOptions)) return [];
+  if (typeName === 'EASY_COMBO') {
+    return rawOptions.map((opt: unknown) =>
+      typeof opt === 'object' && opt !== null && 'value' in opt
+        ? (opt as Record<string, unknown>).value
+        : opt
+    );
+  }
+  if (typeName === 'COMFY_DYNAMICCOMBO_V3') {
+    return rawOptions.map((opt: unknown) =>
+      typeof opt === 'object' && opt !== null && 'key' in opt
+        ? (opt as Record<string, unknown>).key
+        : opt
+    );
+  }
+  // COMBO or unknown string-typed combo: options are plain strings
+  return rawOptions;
+}
+
+export interface DynamicComboSubInput {
+  name: string;           // unprefixed name (for widget lookups)
+  qualifiedName: string;  // prefixed name (for API prompt submission)
+  inputDef: [string | unknown[], Record<string, unknown>?];
+}
+
+export function getDynamicComboSubInputs(
+  typeOrOptions: string | unknown[],
+  inputOptions: Record<string, unknown> | undefined,
+  selectedValue: unknown,
+  parentName?: string,
+): DynamicComboSubInput[] {
+  if (!isV3ComboType(typeOrOptions) || String(typeOrOptions).toUpperCase() !== 'COMFY_DYNAMICCOMBO_V3') {
+    return [];
+  }
+  const rawOptions = inputOptions?.options;
+  if (!Array.isArray(rawOptions)) return [];
+  const selectedKey = String(selectedValue);
+  const option = rawOptions.find(
+    (opt: unknown) =>
+      typeof opt === 'object' && opt !== null && 'key' in opt &&
+      String((opt as Record<string, unknown>).key) === selectedKey
+  ) as Record<string, unknown> | undefined;
+  if (!option) return [];
+  const subInputs = option.inputs as Record<string, Record<string, [string | unknown[], Record<string, unknown>?]>> | undefined;
+  if (!subInputs) return [];
+  const prefix = parentName ? `${parentName}.` : '';
+  const result: DynamicComboSubInput[] = [];
+  for (const section of ['required', 'optional']) {
+    const sectionInputs = subInputs[section];
+    if (!sectionInputs) continue;
+    for (const [name, inputDef] of Object.entries(sectionInputs)) {
+      result.push({ name, qualifiedName: `${prefix}${name}`, inputDef });
+    }
+  }
+  return result;
+}
+
 export function normalizeWidgetValue(
   value: unknown,
   typeOrOptions: string | unknown[],
@@ -538,14 +620,15 @@ export function buildWorkflowPromptInputs(
       const inputDef = typeDef.input.required?.[name] || typeDef.input.optional?.[name];
       if (!inputDef) continue;
 
-      const [typeOrOptions] = inputDef;
+      const [typeOrOptions, inputOptions] = inputDef;
       const inputEntry = node.inputs.find((i) => i.name === name);
       const isConnected = inputEntry?.link != null;
       const isWidgetToggle = Boolean(inputEntry?.widget) && !isConnected;
       const hasSocket = Boolean(inputEntry);
       const defaultValue = inputDef[1]?.default;
       const hasDefault = Object.prototype.hasOwnProperty.call(inputDef[1] ?? {}, 'default');
-      const isWidgetType = isWidgetInputType(typeOrOptions) || isWidgetToggle || !hasSocket;
+      // V3 string-typed combos ("COMBO", etc.) are not covered by isWidgetInputType.
+      const isWidgetType = isWidgetInputType(typeOrOptions) || isWidgetToggle || !hasSocket || (!isConnected && isComboType(typeOrOptions));
       const isWidget = isWidgetType;
 
       if (isWidget) {
@@ -567,11 +650,12 @@ export function buildWorkflowPromptInputs(
         } else if (indexToUse !== undefined && !isConnected && !(name in inputs)) {
           const rawValue = getWidgetValue(node, name, indexToUse);
           if (rawValue !== undefined) {
-            if (Array.isArray(typeOrOptions)) {
+            if (isComboType(typeOrOptions)) {
+              const comboOpts = getComboOptions(typeOrOptions, inputOptions);
               inputs[name] = finalizeInputValue(
                 workflow,
                 name,
-                normalizeComboValue(rawValue, typeOrOptions)
+                normalizeComboValue(rawValue, comboOpts)
               );
             } else {
               inputs[name] = finalizeInputValue(
@@ -596,6 +680,44 @@ export function buildWorkflowPromptInputs(
               widgetCursor = Math.max(widgetCursor, indexToUse + 2);
             } else {
               widgetCursor = Math.max(widgetCursor, widgetCursor + 1);
+            }
+          }
+        }
+
+        // COMFY_DYNAMICCOMBO_V3: process conditional sub-inputs (width/height/crop, etc.)
+        // that appear as additional widgets in widgets_values after the combo value.
+        if (String(typeOrOptions).toUpperCase() === 'COMFY_DYNAMICCOMBO_V3') {
+          const comboValue = inputs[name];
+          const subInputs = getDynamicComboSubInputs(typeOrOptions, inputOptions, comboValue, name);
+          for (const { name: subName, qualifiedName: subQualifiedName, inputDef: subInputDef } of subInputs) {
+            if (subQualifiedName in inputs) continue;
+            const [subType, subOpts] = subInputDef;
+            const subHasDefault = Object.prototype.hasOwnProperty.call(subOpts ?? {}, 'default');
+            const subEntry = node.inputs.find((i) => i.name === subName);
+            const subIsConnected = subEntry?.link != null;
+            if (subIsConnected) continue;
+            const subIndex = widgetIndexMap?.[subName] ?? widgetCursor;
+            const subRawValue = getWidgetValue(node, subName, subIndex);
+            if (subRawValue !== undefined) {
+              if (isComboType(subType)) {
+                const subComboOpts = getComboOptions(subType, subOpts);
+                inputs[subQualifiedName] = finalizeInputValue(
+                  workflow,
+                  subQualifiedName,
+                  normalizeComboValue(subRawValue, subComboOpts)
+                );
+              } else {
+                inputs[subQualifiedName] = finalizeInputValue(
+                  workflow,
+                  subQualifiedName,
+                  normalizeWidgetValue(subRawValue, subType)
+                );
+              }
+            } else if (subHasDefault) {
+              inputs[subQualifiedName] = subOpts!.default;
+            }
+            if (subIndex !== undefined) {
+              widgetCursor = Math.max(widgetCursor, subIndex + 1);
             }
           }
         }

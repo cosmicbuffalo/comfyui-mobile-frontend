@@ -4,6 +4,10 @@ import {
   getWidgetValue,
   getWorkflowWidgetIndexMap,
   isWidgetInputType,
+  isComboType,
+  isV3ComboType,
+  getComboOptions,
+  getDynamicComboSubInputs,
   normalizeWidgetValue,
   normalizeComboValue,
   optionsAreFileLike,
@@ -137,6 +141,155 @@ describe('isWidgetInputType', () => {
     expect(isWidgetInputType('MODEL')).toBe(false);
     expect(isWidgetInputType('LATENT')).toBe(false);
     expect(isWidgetInputType('CONDITIONING')).toBe(false);
+  });
+});
+
+describe('isV3ComboType', () => {
+  it('returns true for V3 combo type strings', () => {
+    expect(isV3ComboType('COMBO')).toBe(true);
+    expect(isV3ComboType('combo')).toBe(true);
+    expect(isV3ComboType('COMFY_DYNAMICCOMBO_V3')).toBe(true);
+    expect(isV3ComboType('EASY_COMBO')).toBe(true);
+  });
+
+  it('returns false for non-combo type strings', () => {
+    expect(isV3ComboType('INT')).toBe(false);
+    expect(isV3ComboType('STRING')).toBe(false);
+    expect(isV3ComboType('MODEL')).toBe(false);
+    expect(isV3ComboType('COMFY_MATCHTYPE_V3')).toBe(false);
+    expect(isV3ComboType('COMFY_AUTOGROW_V3')).toBe(false);
+  });
+
+  it('returns false for arrays', () => {
+    expect(isV3ComboType(['euler', 'ddim'])).toBe(false);
+  });
+});
+
+describe('isComboType', () => {
+  it('returns true for arrays', () => {
+    expect(isComboType(['euler', 'ddim'])).toBe(true);
+  });
+
+  it('returns true for V3 combo type strings', () => {
+    expect(isComboType('COMBO')).toBe(true);
+    expect(isComboType('COMFY_DYNAMICCOMBO_V3')).toBe(true);
+    expect(isComboType('EASY_COMBO')).toBe(true);
+  });
+
+  it('returns false for non-combo types', () => {
+    expect(isComboType('INT')).toBe(false);
+    expect(isComboType('MODEL')).toBe(false);
+    expect(isComboType('COMFY_MATCHTYPE_V3')).toBe(false);
+  });
+});
+
+describe('getComboOptions', () => {
+  it('returns array directly for legacy array-typed combos', () => {
+    expect(getComboOptions(['euler', 'ddim'])).toEqual(['euler', 'ddim']);
+  });
+
+  it('extracts options from COMBO type', () => {
+    const opts = { options: ['a', 'b', 'c'] };
+    expect(getComboOptions('COMBO', opts)).toEqual(['a', 'b', 'c']);
+  });
+
+  it('extracts key from COMFY_DYNAMICCOMBO_V3 options', () => {
+    const opts = {
+      options: [
+        { key: 'scale dimensions', inputs: {} },
+        { key: 'scale by multiplier', inputs: {} },
+      ],
+    };
+    expect(getComboOptions('COMFY_DYNAMICCOMBO_V3', opts)).toEqual([
+      'scale dimensions',
+      'scale by multiplier',
+    ]);
+  });
+
+  it('extracts value from EASY_COMBO options', () => {
+    const opts = {
+      options: [
+        { label: 'Foo', value: 'foo' },
+        { label: 'Bar', value: 'bar' },
+      ],
+    };
+    expect(getComboOptions('EASY_COMBO', opts)).toEqual(['foo', 'bar']);
+  });
+
+  it('returns empty array when options is missing', () => {
+    expect(getComboOptions('COMBO', {})).toEqual([]);
+    expect(getComboOptions('COMBO', undefined)).toEqual([]);
+  });
+});
+
+describe('getDynamicComboSubInputs', () => {
+  it('returns sub-inputs for the selected DYNAMICCOMBO option', () => {
+    const opts = {
+      options: [
+        {
+          key: 'scale dimensions',
+          inputs: {
+            required: {
+              width: ['INT', { default: 512, min: 0, max: 16384 }],
+              height: ['INT', { default: 512, min: 0, max: 16384 }],
+            },
+            optional: {
+              crop: ['COMBO', { options: ['disabled', 'center'] }],
+            },
+          },
+        },
+        {
+          key: 'scale by multiplier',
+          inputs: {
+            required: {
+              multiplier: ['FLOAT', { default: 1.0 }],
+            },
+          },
+        },
+      ],
+    };
+    const subInputs = getDynamicComboSubInputs('COMFY_DYNAMICCOMBO_V3', opts, 'scale dimensions', 'resize_type');
+    expect(subInputs).toHaveLength(3);
+    expect(subInputs[0].name).toBe('width');
+    expect(subInputs[0].qualifiedName).toBe('resize_type.width');
+    expect(subInputs[0].inputDef[0]).toBe('INT');
+    expect(subInputs[1].name).toBe('height');
+    expect(subInputs[1].qualifiedName).toBe('resize_type.height');
+    expect(subInputs[2].name).toBe('crop');
+    expect(subInputs[2].qualifiedName).toBe('resize_type.crop');
+  });
+
+  it('returns sub-inputs for the other option', () => {
+    const opts = {
+      options: [
+        {
+          key: 'scale dimensions',
+          inputs: { required: { width: ['INT', {}] } },
+        },
+        {
+          key: 'scale by multiplier',
+          inputs: { required: { multiplier: ['FLOAT', { default: 1.0 }] } },
+        },
+      ],
+    };
+    const subInputs = getDynamicComboSubInputs('COMFY_DYNAMICCOMBO_V3', opts, 'scale by multiplier', 'resize_type');
+    expect(subInputs).toHaveLength(1);
+    expect(subInputs[0].name).toBe('multiplier');
+    expect(subInputs[0].qualifiedName).toBe('resize_type.multiplier');
+  });
+
+  it('returns empty array for non-DYNAMICCOMBO types', () => {
+    expect(getDynamicComboSubInputs('COMBO', { options: ['a', 'b'] }, 'a')).toEqual([]);
+    expect(getDynamicComboSubInputs(['a', 'b'], undefined, 'a')).toEqual([]);
+  });
+
+  it('returns empty array when selected value does not match any option', () => {
+    const opts = {
+      options: [
+        { key: 'option1', inputs: { required: { x: ['INT', {}] } } },
+      ],
+    };
+    expect(getDynamicComboSubInputs('COMFY_DYNAMICCOMBO_V3', opts, 'nonexistent')).toEqual([]);
   });
 });
 

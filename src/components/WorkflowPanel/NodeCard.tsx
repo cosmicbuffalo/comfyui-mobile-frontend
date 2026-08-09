@@ -3,6 +3,7 @@ import type { WorkflowInput, WorkflowNode } from '@/api/types';
 import { useWorkflowStore, getWidgetDefinitions, getInputWidgetDefinitions, getWidgetIndexForInput, findSeedWidgetIndex, findSeedControlWidgetIndex, resolveSubgraphPlaceholderWidgetDefs, resolveSubgraphPlaceholderInputWidgetDefs, resolveSubgraphProxyWidgetDefs, resolveSubgraphProxyInputWidgetDefs, resolveSubgraphBoundaryWidgetDefs, resolveSubgraphBoundaryInputWidgetDefs, isPlaceholderPromotedConnection } from '@/hooks/useWorkflow';
 import type { LinkedWidgetRoute, ProxyWidgetRoute } from '@/utils/widgetDefinitions';
 import { isSubgraphPlaceholder } from '@/utils/canonicalWorkflowOps';
+import { isComboType } from '@/utils/workflowInputs';
 import { isLoraManagerNodeType } from '@/utils/loraManager';
 import { useSeedStore } from '@/hooks/useSeed';
 import { useBookmarksStore } from '@/hooks/useBookmarks';
@@ -424,7 +425,7 @@ export const NodeCard = memo(function NodeCard({
     const inputDef = typeDef?.input?.required?.[input.name] || typeDef?.input?.optional?.[input.name];
     if (!inputDef) return false;
     const [typeOrOptions, options] = inputDef;
-    if (Array.isArray(typeOrOptions)) return true;
+    if (isComboType(typeOrOptions)) return true;
     const normalized = String(typeOrOptions).toUpperCase();
     const hasDefault = Object.prototype.hasOwnProperty.call(options ?? {}, 'default');
     return [
