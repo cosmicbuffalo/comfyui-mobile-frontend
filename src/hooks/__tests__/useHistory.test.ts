@@ -72,6 +72,56 @@ beforeEach(() => {
 });
 
 describe('useHistoryStore', () => {
+  it('does not surface Image Compare side outputs as queue images', async () => {
+    const promptId = '92391d2a-cb46-4e3a-bb08-487a3e892b3d';
+    const item = makeHistoryItem(promptId, {
+      status_str: 'success', completed: true, messages: [],
+    });
+    // The comparer's a_images/b_images are temp copies handled by the
+    // dedicated comparer store; the real files arrive under `images` from
+    // the workflow's save nodes.
+    item.outputs = {
+      comparer: {
+        a_images: [{ filename: 'before.png', subfolder: 'compare', type: 'temp' }],
+        b_images: [{ filename: 'after.png', subfolder: 'compare', type: 'temp' }],
+      },
+      saver: {
+        images: [{ filename: 'result.png', subfolder: '', type: 'output' }],
+      },
+    };
+    mockGetHistory.mockResolvedValue({ [promptId]: item } satisfies History);
+
+    await useHistoryStore.getState().fetchHistory();
+
+    expect(useHistoryStore.getState().history[0].outputs.images).toEqual([
+      { filename: 'result.png', subfolder: '', type: 'output' },
+    ]);
+  });
+
+  it('ignores file descriptors published under nonstandard output keys', async () => {
+    const item = makeHistoryItem('mixed-files', {
+      status_str: 'success', completed: true, messages: [],
+    });
+    item.outputs = {
+      extension: {
+        files: [
+          { filename: 'voice.flac', subfolder: 'audio', type: 'output' },
+          { filename: 'notes.txt', subfolder: '', type: 'output' },
+          { filename: 'scene.glb', subfolder: 'models', type: 'output' },
+          { filename: 'preview.webp', subfolder: 'images', type: 'output' },
+        ],
+        videos: [{ filename: 'clip.mp4', subfolder: '', type: 'output' }],
+      },
+    };
+    mockGetHistory.mockResolvedValue({ 'mixed-files': item } satisfies History);
+
+    await useHistoryStore.getState().fetchHistory();
+
+    expect(useHistoryStore.getState().history[0].outputs.images).toEqual([
+      { filename: 'clip.mp4', subfolder: '', type: 'output' },
+    ]);
+  });
+
   it('reports a failed fetch so the queue panel can retry it', async () => {
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     mockGetHistory.mockRejectedValueOnce(new TypeError('Load failed'));
@@ -600,9 +650,7 @@ describe('useHistoryStore', () => {
       expect(vi.mocked(deleteHistoryItems)).not.toHaveBeenCalled();
     });
 
-    // The user's constraint: never auto-delete a queue item that never produced a
-    // saved output. A preview-only run stays even if its preview frame is removed.
-    it('does not delete a preview-only queue item that never had a saved output', async () => {
+    it('deletes a temp-only queue item once every referenced file is deleted', async () => {
       useHistoryStore.setState({
         history: [typedEntry('p1', [{ filename: 'prev.png', type: 'temp' }])],
         historyTotal: 1,
@@ -610,8 +658,28 @@ describe('useHistoryStore', () => {
 
       await useHistoryStore.getState().removeOutputImages(['temp/prev.png']);
 
-      expect(useHistoryStore.getState().history.map((h) => h.prompt_id)).toEqual(['p1']);
-      expect(vi.mocked(deleteHistoryItems)).not.toHaveBeenCalled();
+      expect(useHistoryStore.getState().history).toEqual([]);
+      expect(vi.mocked(deleteHistoryItems)).toHaveBeenCalledWith(['p1']);
+      expect(useHistoryStore.getState().historyTotal).toBe(0);
+    });
+
+    it('deletes a queue item after its rejected image and video are both deleted', async () => {
+      useHistoryStore.setState({
+        history: [typedEntry('video-prompt', [
+          { filename: 'poster.png', type: 'output' },
+          { filename: 'render.mp4', type: 'output' },
+        ])],
+        historyTotal: 1,
+      });
+
+      await useHistoryStore.getState().removeOutputImages([
+        'output/poster.png',
+        'output/render.mp4',
+      ]);
+
+      expect(useHistoryStore.getState().history).toEqual([]);
+      expect(vi.mocked(deleteHistoryItems)).toHaveBeenCalledWith(['video-prompt']);
+      expect(useHistoryStore.getState().historyTotal).toBe(0);
     });
   });
 });

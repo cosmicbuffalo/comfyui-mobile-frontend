@@ -158,26 +158,29 @@ export async function remapQueuePromptMetadata(
 
 
 export async function deleteHistoryItem(promptId: string): Promise<void> {
-  await fetch(`/api/history`, {
+  const response = await fetch(`/api/history`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ delete: [promptId] })
   });
+  if (!response.ok) throw new Error('Failed to delete history item');
 }
 
 export async function deleteHistoryItems(promptIds: string[]): Promise<void> {
   if (promptIds.length === 0) return;
-  await fetch(`/api/history`, {
+  const response = await fetch(`/api/history`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ delete: promptIds })
   });
+  if (!response.ok) throw new Error('Failed to delete history items');
 }
 
 export async function clearHistory(): Promise<void> {
-  await fetch(`/api/history`, {
+  const response = await fetch(`/api/history`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ clear: true })
   });
+  if (!response.ok) throw new Error('Failed to clear history');
 }

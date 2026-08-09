@@ -138,6 +138,51 @@ beforeEach(() => {
 });
 
 describe('useWorkflow lora manager actions', () => {
+  it.each([
+    [
+      'legacy array combo',
+      ['models/main/model.safetensors'] as unknown as string,
+      undefined as Record<string, unknown> | undefined,
+    ],
+    [
+      'V3 string-typed combo',
+      'COMBO',
+      { options: ['models/main/model.safetensors'] },
+    ],
+  ])(
+    'applyWidgetUpdate resolves a bare filename against a %s',
+    (_label, typeOrOptions, options) => {
+      // LoRA Manager sends a bare filename; it has to resolve to the full
+      // option path or the queued prompt carries a value the server rejects.
+      const localNodeTypes = {
+        ...nodeTypes,
+        CheckpointLoaderSimple: {
+          ...nodeTypes.CheckpointLoaderSimple,
+          input: { required: { ckpt_name: [typeOrOptions, options] }, optional: {} },
+        },
+      } as unknown as NodeTypes;
+
+      const ckptNode = makeNode(2, 'CheckpointLoaderSimple', {
+        widgets_values: ['models/main/model.safetensors'],
+      });
+      useWorkflowStore.setState({
+        workflow: makeWorkflow([ckptNode], []),
+        nodeTypes: localNodeTypes,
+      });
+
+      useLoraManagerStore.getState().applyWidgetUpdate({
+        node_id: 2,
+        graph_id: 'root',
+        widget_name: 'ckpt_name',
+        value: 'model.safetensors',
+      });
+
+      const next = useWorkflowStore.getState().workflow?.nodes.find((n) => n.id === 2);
+      expect(Array.isArray(next?.widgets_values) ? next.widgets_values[0] : undefined)
+        .toBe('models/main/model.safetensors');
+    }
+  );
+
   it('applyWidgetUpdate(text) updates text/list and syncs trigger words', () => {
     const requestTriggerWordsSpy = vi
       .spyOn(api, 'requestTriggerWords')

@@ -1,5 +1,5 @@
 import type { WorkflowInput, WorkflowLink, WorkflowNode, NodeTypes, NodeTypeDefinition, NodeInputEntry, Workflow, WorkflowSubgraphLink, WorkflowSubgraphDefinition } from '@/api/types';
-import { getNodePropertyWidgetIndexMap, getWidgetValue, isWidgetInputType, isComboType, getComboOptions, getDynamicComboSubInputs, skipImplicitSeedControlSlot } from '@/utils/workflowInputs';
+import { getDefaultWidgetValue, getNodePropertyWidgetIndexMap, getWidgetValue, isComboType, getComboOptions, getDynamicComboSubInputs, occupiesWidgetSlot, skipImplicitSeedControlSlot } from '@/utils/workflowInputs';
 import { findLoraListIndex, isLoraList, isLoraManagerNodeType, isPowerLoraLoaderNodeType } from '@/utils/loraManager';
 import { modelWidgetKind } from '@/utils/modelWidgetKind';
 import {
@@ -12,6 +12,8 @@ import { getLinkId, getLinkOriginId, getLinkOriginSlot } from '@/utils/canonical
 
 export interface WidgetDefinition {
   name: string;
+  /** Canonical schema/socket name; differs from `name` for DynamicCombo children. */
+  inputName?: string;
   type: string;
   options?: Record<string, unknown> | unknown[];
   value: unknown;
@@ -32,13 +34,14 @@ function getNodeTypeDefinition(
 function getStandardLoraOptions(nodeTypes: NodeTypes | null): unknown[] {
   if (!nodeTypes) return [];
   const standardLoraNode = getNodeTypeDefinition(nodeTypes, 'LoraLoader');
-  if (standardLoraNode?.input?.required?.['lora_name']) {
-    const [typeOrOptions] = standardLoraNode.input.required['lora_name'];
-    if (Array.isArray(typeOrOptions)) {
-      return typeOrOptions;
-    }
-  }
-  return [];
+  const inputDef = standardLoraNode?.input?.required?.['lora_name'];
+  if (!inputDef) return [];
+  const [typeOrOptions, inputOptions] = inputDef;
+  // LoraLoader is still a legacy array combo in current ComfyUI, but read it
+  // through getComboOptions so the lora picker keeps working if it moves to the
+  // V3 string form — an empty list here silently drops every choice.
+  if (!isComboType(typeOrOptions)) return [];
+  return getComboOptions(typeOrOptions, inputOptions);
 }
 
 function buildLoraManagerWidgetDefinitions(
@@ -263,7 +266,11 @@ function collectWidgetDefinitions(
     const propertyWidgetIndexMap = getNodePropertyWidgetIndexMap(node);
     let widgetIndex = 0;
 
-    const processInput = (name: string, input: [string | unknown[], Record<string, unknown>?]) => {
+    const processInput = (
+      name: string,
+      qualifiedName: string,
+      input: [string | unknown[], Record<string, unknown>?],
+    ) => {
       if (!input) return; // Defensive check
       const [typeOrOptions, inputOptions] = input;
       const typeSignature = Array.isArray(typeOrOptions)
@@ -277,15 +284,19 @@ function collectWidgetDefinitions(
         isLoraManagerNodeType(node.type) && name === 'text';
       const isAutocompleteTextInput =
         isAutocompleteLoras || isAutocompletePrompt || isLoraManagerTextInput;
-      const inputIndex = node.inputs.findIndex((i) => i.name === name);
+      const inputIndex = node.inputs.findIndex((i) => i.name === qualifiedName);
       const inputEntry = inputIndex >= 0 ? node.inputs[inputIndex] : undefined;
       const isConnected = inputEntry?.link != null;
-      const isWidgetToggle = Boolean(inputEntry?.widget) && !isConnected;
-      const hasSocket = Boolean(inputEntry);
-      const hasDefault = Object.prototype.hasOwnProperty.call(inputOptions ?? {}, 'default');
-      // V3 string-typed combos ("COMBO", etc.) are not covered by isWidgetInputType.
-      const isWidgetType = isWidgetInputType(typeOrOptions) || isWidgetToggle || !hasSocket || hasDefault || (!isConnected && isComboType(typeOrOptions));
+      const isWidgetType = occupiesWidgetSlot(
+        node,
+        qualifiedName,
+        typeOrOptions,
+        inputOptions,
+      );
       const isCombo = isComboType(typeOrOptions) && !isAutocompleteTextInput;
+      const resolvedWidgetIndex = propertyWidgetIndexMap?.[qualifiedName]
+        ?? (qualifiedName === name ? propertyWidgetIndexMap?.[name] : undefined)
+        ?? widgetIndex;
       const comboOptions: Record<string, unknown> = isCombo
         ? { ...(inputOptions ?? {}), options: getComboOptions(typeOrOptions, inputOptions) }
         : { ...(inputOptions ?? {}) };
@@ -297,10 +308,10 @@ function collectWidgetDefinitions(
         comboOptions.multiline = true;
       }
       if (isWidgetType) {
-        const resolvedWidgetIndex = propertyWidgetIndexMap?.[name] ?? widgetIndex;
-        const value = getWidgetValue(node, name, resolvedWidgetIndex);
+        const value = getWidgetValue(node, qualifiedName, resolvedWidgetIndex);
         definitions.push({
           name,
+          inputName: qualifiedName,
           type: isCombo ? 'COMBO' : (isAutocompleteTextInput ? 'STRING' : normalizedType),
           options: comboOptions,
           value,
@@ -312,7 +323,7 @@ function collectWidgetDefinitions(
       }
 
       if (isWidgetType) {
-        widgetIndex += 1;
+        widgetIndex = Math.max(widgetIndex + 1, resolvedWidgetIndex + 1);
         if (String(typeOrOptions) === 'INT' && (name === 'seed' || name === 'noise_seed')) {
           // ComfyUI auto-adds a control_after_generate widget after every INT
           // seed input. Some custom nodes (Efficient KSampler family) strip it
@@ -322,8 +333,8 @@ function collectWidgetDefinitions(
           // strings ('fixed'/'randomize'/etc.), null, and out-of-bounds
           // (slot absent entirely), but NOT for numbers/booleans/objects
           // which would be the value of the next real widget.
-          if (skipImplicitSeedControlSlot(node, widgetIndex)) {
-            widgetIndex += 1;
+          if (skipImplicitSeedControlSlot(node, resolvedWidgetIndex + 1)) {
+            widgetIndex = Math.max(widgetIndex, resolvedWidgetIndex + 2);
           }
         }
         // COMFY_DYNAMICCOMBO_V3: the selected option exposes conditional
@@ -332,9 +343,14 @@ function collectWidgetDefinitions(
         // Process them recursively so they show up as widget definitions.
         if (String(typeOrOptions).toUpperCase() === 'COMFY_DYNAMICCOMBO_V3') {
           const lastDef = definitions[definitions.length - 1];
-          const subInputs = getDynamicComboSubInputs(typeOrOptions, inputOptions, lastDef?.value, name);
-          for (const { name: subName, inputDef: subInputDef } of subInputs) {
-            processInput(subName, subInputDef);
+          const subInputs = getDynamicComboSubInputs(
+            typeOrOptions,
+            inputOptions,
+            lastDef?.value ?? getDefaultWidgetValue(typeOrOptions, inputOptions),
+            qualifiedName,
+          );
+          for (const { name: subName, qualifiedName: subQualifiedName, inputDef: subInputDef } of subInputs) {
+            processInput(subName, subQualifiedName, subInputDef);
           }
         }
       }
@@ -342,12 +358,12 @@ function collectWidgetDefinitions(
 
     for (const name of requiredOrder) {
       const input = typeDef.input.required?.[name];
-      if (input) processInput(name, input);
+      if (input) processInput(name, name, input);
     }
 
     for (const name of optionalOrder) {
       const input = typeDef.input.optional?.[name];
-      if (input) processInput(name, input);
+      if (input) processInput(name, name, input);
     }
 
     if (isLoraManagerNodeType(node.type)) {
@@ -380,11 +396,12 @@ function collectWidgetDefinitions(
 export function getWidgetDefinitions(
   nodeTypes: NodeTypes | null,
   node: WorkflowNode
-): Array<{ name: string; type: string; options?: Record<string, unknown>; value: unknown; widgetIndex: number; connected: boolean; inputIndex: number }> {
+): Array<{ name: string; inputName?: string; type: string; options?: Record<string, unknown>; value: unknown; widgetIndex: number; connected: boolean; inputIndex: number }> {
   return collectWidgetDefinitions(nodeTypes, node)
     .filter((def) => !def.isCombo)
     .map((def) => ({
       name: def.name,
+      inputName: def.inputName,
       type: def.type,
       options: def.options as Record<string, unknown> | undefined,
       value: def.value,
@@ -397,11 +414,12 @@ export function getWidgetDefinitions(
 export function getInputWidgetDefinitions(
   nodeTypes: NodeTypes | null,
   node: WorkflowNode
-): Array<{ name: string; type: string; value: unknown; options: Record<string, unknown> | unknown[]; widgetIndex: number; connected: boolean; inputIndex: number }> {
+): Array<{ name: string; inputName?: string; type: string; value: unknown; options: Record<string, unknown> | unknown[]; widgetIndex: number; connected: boolean; inputIndex: number }> {
   return collectWidgetDefinitions(nodeTypes, node)
     .filter((def) => def.isCombo)
     .map((def) => ({
       name: def.name,
+      inputName: def.inputName,
       type: def.type,
       value: def.value,
       options: def.options as Record<string, unknown> | unknown[],
@@ -704,6 +722,8 @@ export interface ProxyWidgetRoute {
   subgraphId: string;
   innerNodeId: number;
   innerWidgetIndex: number;
+  /** Canonical schema name, qualified for nested DynamicCombo children. */
+  innerWidgetName?: string;
 }
 
 const SEED_CONTROL_MODES = ['fixed', 'randomize', 'increment', 'decrement'];
@@ -747,10 +767,15 @@ export function resolveAllSubgraphProxyWidgetDefs(
       innerWidgetIndex: -1, // set below per branch
     };
 
-    // Try non-COMBO first
-    const innerWidgetDef = getWidgetDefinitions(nodeTypes, innerNode).find((def) => def.name === widgetName);
+    // Try non-COMBO first. proxyWidgets entries may use either the bare child
+    // name or the qualified DynamicCombo name (desktop serializes the latter,
+    // e.g. "resize_type.multiplier").
+    const matchesWidgetName = (def: { name: string; inputName?: string }) =>
+      def.name === widgetName || def.inputName === widgetName;
+    const innerWidgetDef = getWidgetDefinitions(nodeTypes, innerNode).find(matchesWidgetName);
     if (innerWidgetDef) {
       proxy.innerWidgetIndex = innerWidgetDef.widgetIndex;
+      proxy.innerWidgetName = innerWidgetDef.inputName ?? innerWidgetDef.name;
       widgets.push({
         ...innerWidgetDef,
         name: displayName,
@@ -765,9 +790,10 @@ export function resolveAllSubgraphProxyWidgetDefs(
     }
 
     // Try COMBO
-    const innerInputWidgetDef = getInputWidgetDefinitions(nodeTypes, innerNode).find((def) => def.name === widgetName);
+    const innerInputWidgetDef = getInputWidgetDefinitions(nodeTypes, innerNode).find(matchesWidgetName);
     if (innerInputWidgetDef) {
       proxy.innerWidgetIndex = innerInputWidgetDef.widgetIndex;
+      proxy.innerWidgetName = innerInputWidgetDef.inputName ?? innerInputWidgetDef.name;
       // Proxy widgets are shown under "Node: widget" labels, so carry the model
       // picker kind detected from the real inner widget name (e.g. lora_name).
       const modelKind = modelWidgetKind(widgetName);
@@ -804,6 +830,7 @@ export function resolveAllSubgraphProxyWidgetDefs(
       if (typeof controlValue !== 'string') return;
 
       proxy.innerWidgetIndex = controlWidgetIndex;
+      proxy.innerWidgetName = 'control_after_generate';
       inputWidgets.push({
         name: displayName,
         type: 'COMBO',

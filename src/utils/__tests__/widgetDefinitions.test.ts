@@ -7,6 +7,7 @@ import {
   resolveSubgraphPlaceholderInputWidgetDefs,
   resolveSubgraphPlaceholderWidgetDefs,
   resolveSubgraphProxyInputWidgetDefs,
+  resolveSubgraphProxyWidgetDefs,
   resolveSubgraphBoundaryWidgetDefs,
   resolveSubgraphBoundaryInputWidgetDefs,
 } from '../widgetDefinitions';
@@ -59,6 +60,43 @@ describe('widgetDefinitions lora manager support', () => {
 
     const loraDef = defs.find((d) => d.type === 'LM_LORA');
     expect(loraDef?.options).toMatchObject({ entryIndex: 0 });
+  });
+
+  it.each([
+    [
+      'legacy array combo',
+      ['a.safetensors', 'b.safetensors'] as unknown as string,
+      undefined as Record<string, unknown> | undefined,
+    ],
+    [
+      'V3 string-typed combo',
+      'COMBO',
+      { options: ['a.safetensors', 'b.safetensors'] },
+    ],
+  ])('reads LoraLoader choices from a %s', (_label, typeOrOptions, options) => {
+    const nodeTypes: NodeTypes = {
+      LoraLoader: {
+        input: { required: { lora_name: [typeOrOptions, options] } },
+        output: [],
+        output_name: [],
+        name: 'LoraLoader',
+        display_name: 'LoraLoader',
+        description: '',
+        python_module: '',
+        category: '',
+      },
+    } as unknown as NodeTypes;
+
+    const node = makeNode(1, 'Lora Loader (LoraManager)', [
+      'text',
+      [{ name: 'a.safetensors', strength: 1, active: true }],
+    ]);
+
+    const loraDef = getWidgetDefinitions(nodeTypes, node).find((d) => d.type === 'LM_LORA');
+    // An empty list here silently drops every choice from the lora picker.
+    expect(loraDef?.options).toMatchObject({
+      choices: ['a.safetensors', 'b.safetensors'],
+    });
   });
 
   it('uses LoRA Manager widget ids to skip metadata widgets', () => {
@@ -251,6 +289,75 @@ describe('widgetDefinitions lora manager support', () => {
           subgraphId: 'subgraph-a',
           innerNodeId: 915,
           innerWidgetIndex: 1,
+          innerWidgetName: 'control_after_generate',
+        },
+      },
+    });
+  });
+
+  it('resolves proxyWidgets entries that use qualified DynamicCombo child names', () => {
+    const dynTypes: NodeTypes = {
+      Resize: {
+        input: {
+          required: {
+            resize_type: ['COMFY_DYNAMICCOMBO_V3', {
+              options: [
+                { key: 'by factor', inputs: { required: { factor: ['FLOAT', { default: 2.0 }] } } },
+              ],
+            }],
+          },
+          optional: {},
+        },
+        output: [],
+        output_name: [],
+        name: 'Resize',
+        display_name: 'Resize',
+        description: '',
+        python_module: '',
+        category: '',
+      },
+    };
+
+    const inner = makeNode(21, 'Resize', ['by factor', 2.5]);
+    const placeholder = makeNode(20, 'subgraph-dyn', []);
+    // Desktop serializes dynamic children under their qualified names.
+    placeholder.properties = {
+      proxyWidgets: [['21', 'resize_type.factor']],
+    };
+
+    const workflow: Workflow = {
+      last_node_id: 21,
+      last_link_id: 0,
+      nodes: [placeholder],
+      links: [],
+      groups: [],
+      config: {},
+      version: 1,
+      definitions: {
+        subgraphs: [
+          {
+            id: 'subgraph-dyn',
+            nodes: [inner],
+            links: [],
+            groups: [],
+            config: {},
+          },
+        ],
+      },
+    };
+
+    const defs = resolveSubgraphProxyWidgetDefs(placeholder, workflow, dynTypes);
+
+    expect(defs).toHaveLength(1);
+    expect(defs[0]).toMatchObject({
+      value: 2.5,
+      widgetIndex: PROXY_INDEX_OFFSET,
+      options: {
+        __proxy: {
+          subgraphId: 'subgraph-dyn',
+          innerNodeId: 21,
+          innerWidgetIndex: 1,
+          innerWidgetName: 'resize_type.factor',
         },
       },
     });

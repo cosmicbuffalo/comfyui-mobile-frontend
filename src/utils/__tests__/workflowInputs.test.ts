@@ -7,6 +7,7 @@ import {
   isComboType,
   isV3ComboType,
   getComboOptions,
+  getDefaultWidgetValue,
   getDynamicComboSubInputs,
   normalizeWidgetValue,
   normalizeComboValue,
@@ -335,6 +336,11 @@ describe('normalizeWidgetValue', () => {
 });
 
 describe('normalizeComboValue', () => {
+  it('normalizes every member of a multi-select without collapsing the array', () => {
+    expect(normalizeComboValue([0, 2], [0, 1, 2], true)).toEqual([0, 2]);
+    expect(normalizeComboValue(0, [0, 1, 2], true)).toEqual([0]);
+  });
+
   it('returns direct match from options', () => {
     expect(normalizeComboValue('euler', ['euler', 'ddim'])).toBe('euler');
   });
@@ -393,6 +399,70 @@ describe('normalizeComboValue', () => {
 
   it('returns value as-is for empty options', () => {
     expect(normalizeComboValue('anything', [])).toBe('anything');
+  });
+});
+
+describe('getDefaultWidgetValue', () => {
+  it('uses a display-equivalent advertised combo option for a mismatched Unicode default', () => {
+    const declared = '🔞\uFE0FSelect the nsfw add to the text';
+    const advertised = '🔞Select the nsfw add to the text';
+
+    expect(getDefaultWidgetValue('COMBO', {
+      default: declared,
+      options: [advertised, 'nude'],
+    })).toBe(advertised);
+  });
+
+  it('keeps a numeric combo default that is itself an advertised option', () => {
+    expect(getDefaultWidgetValue('COMBO', {
+      default: 1,
+      options: [1, 2, 4],
+    })).toBe(1);
+  });
+});
+
+describe('numeric combo prompt serialization', () => {
+  it('queues a literal numeric V3 COMBO value instead of remapping it as an option index', () => {
+    const node = makeNode(1, 'HitPawGeneralImageEnhance', {
+      widgets_values: [1],
+    });
+    const workflow: Workflow = {
+      last_node_id: 1,
+      last_link_id: 0,
+      nodes: [node],
+      links: [],
+      groups: [],
+      config: {},
+      version: 1,
+    };
+    const nodeTypes: NodeTypes = {
+      HitPawGeneralImageEnhance: {
+        input: {
+          required: {
+            upscale_factor: ['COMBO', { options: [1, 2, 4] }],
+          },
+        },
+        input_order: { required: ['upscale_factor'], optional: [] },
+        output: [],
+        output_name: [],
+        name: 'HitPawGeneralImageEnhance',
+        display_name: 'HitPaw General Image Enhance',
+        description: '',
+        python_module: '',
+        category: '',
+      },
+    };
+
+    const inputs = buildWorkflowPromptInputs(
+      workflow,
+      nodeTypes,
+      node,
+      node.type,
+      new Set([node.id]),
+      null,
+    );
+
+    expect(inputs.upscale_factor).toBe(1);
   });
 });
 
@@ -1095,6 +1165,18 @@ describe('resolveComboOption', () => {
   it('resolves numeric combo index values to option value', () => {
     const options = ['euler', 'ddim', 'dpmpp'];
     expect(resolveComboOption(1, options)).toBe('ddim');
+  });
+
+  it('prefers a numeric option value over interpreting it as an index', () => {
+    expect(resolveComboOption(1, [1, 2, 4])).toBe(1);
+    expect(resolveComboOption(0, ['disabled', 'center', 0])).toBe(0);
+  });
+
+  it('matches labels that differ only by an emoji variation selector', () => {
+    expect(resolveComboOption(
+      '🔞\uFE0FSelect the nsfw add to the text',
+      ['🔞Select the nsfw add to the text', 'nude'],
+    )).toBe('🔞Select the nsfw add to the text');
   });
 });
 

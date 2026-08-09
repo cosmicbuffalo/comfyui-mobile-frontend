@@ -1,5 +1,32 @@
 # Changelog
 
+## 3.1.1 - 2026-08-09
+
+### Fixed
+
+**ComfyUI V3-schema nodes**
+
+- **V3 string-typed combos are now real dropdowns.** Nodes whose schema publishes combos as `COMBO`/custom string types with an options list (instead of the legacy array form) previously rendered without their dropdowns and queued without those values; they now render, edit, and queue like any other combo
+- **Dynamic combos rebuild their conditional inputs.** Switching a `COMFY_DYNAMICCOMBO_V3` option swaps the sub-widgets *and* sockets that option contributes — compatible connections are kept, invalidated ones are cleanly removed, and nested dynamic combos work. Promoted and pinned widgets inside subgraphs get the same handling
+- **Custom widget types with a declared default** (color pickers and friends) get their control and their value in the queued prompt again, while null-default connection inputs correctly stay sockets
+- **Numeric combo options are matched by value** before falling back to legacy index interpretation, so combos like `[1, 2, 4]` no longer queue a different option than the one picked
+- **Seed `control_after_generate` slots follow desktop's rule** (schema flag, or seed-name fallback), keeping widget values aligned when workflows round-trip between mobile and desktop
+- **Widget index drift** between seed handling and rendering is fixed via a single shared slot walk
+
+**Workflow loading**
+
+- A combo value that can't be resolved against the server's options is left intact and flagged as missing, instead of being silently replaced on load
+
+**Queue**
+
+- Favorite/reject work on completed temp-format outputs, and the hover controls stay reachable no matter which state is active
+- History deletion reports API failures instead of silently doing nothing
+
+**Desktop**
+
+- Two-finger trackpad swipes no longer misfire on SVG elements or steal the gesture from horizontally scrollable areas
+- Large model dropdowns no longer rebuild their option list on every render
+
 ## 3.1.0 - 2026-08-08
 
 ### Added

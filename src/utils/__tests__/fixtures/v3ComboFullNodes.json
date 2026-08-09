@@ -148,7 +148,7 @@
                     "megapixels": [
                       "FLOAT",
                       {
-                        "tooltip": "Target total megapixels (e.g., 1.0 \u2248 1024\u00d71024). Aspect ratio is preserved.",
+                        "tooltip": "Target total megapixels (e.g., 1.0 ≈ 1024×1024). Aspect ratio is preserved.",
                         "default": 1.0,
                         "min": 0.01,
                         "max": 16.0,
@@ -468,7 +468,7 @@
                     "input_color_space": [
                       "COMBO",
                       {
-                        "tooltip": "Colorspace of the input tensor. The EXR is always written as scene-linear in the matching gamut.\nsRGB \u2014 input is sRGB-encoded Rec.709; the inverse sRGB EOTF is applied.\nHDR \u2014 input is HLG-encoded Rec.2020 (BT.2100); the inverse HLG OETF is applied to get scene-linear light.\nlinear \u2014 input is already scene-linear (Rec.709 primaries); written through unchanged. Use this for renderer/compositor output.",
+                        "tooltip": "Colorspace of the input tensor. The EXR is always written as scene-linear in the matching gamut.\nsRGB — input is sRGB-encoded Rec.709; the inverse sRGB EOTF is applied.\nHDR — input is HLG-encoded Rec.2020 (BT.2100); the inverse HLG OETF is applied to get scene-linear light.\nlinear — input is already scene-linear (Rec.709 primaries); written through unchanged. Use this for renderer/compositor output.",
                         "advanced": true,
                         "default": "sRGB",
                         "multiselect": false,
@@ -958,5 +958,649 @@
     "description": "",
     "python_module": "custom_nodes.comfyui-kjnodes",
     "category": "KJNodes/image"
+  },
+  "ClaudeNode": {
+    "input": {
+      "required": {
+        "prompt": [
+          "STRING",
+          {
+            "tooltip": "Text input to the model.",
+            "default": "",
+            "multiline": true
+          }
+        ],
+        "model": [
+          "COMFY_DYNAMICCOMBO_V3",
+          {
+            "tooltip": "The Claude model used to generate the response.",
+            "options": [
+              {
+                "key": "Opus 5",
+                "inputs": {
+                  "required": {
+                    "max_tokens": [
+                      "INT",
+                      {
+                        "tooltip": "Maximum number of tokens to generate (includes reasoning tokens when enabled).",
+                        "advanced": true,
+                        "default": 32768,
+                        "min": 4096,
+                        "max": 64000
+                      }
+                    ],
+                    "reasoning_effort": [
+                      "COMBO",
+                      {
+                        "tooltip": "Extended thinking effort. Reasoning is always enabled for this model.",
+                        "advanced": true,
+                        "default": "high",
+                        "multiselect": false,
+                        "options": [
+                          "low",
+                          "medium",
+                          "high"
+                        ]
+                      }
+                    ]
+                  }
+                }
+              },
+              {
+                "key": "Opus 4.8",
+                "inputs": {
+                  "required": {
+                    "max_tokens": [
+                      "INT",
+                      {
+                        "tooltip": "Maximum number of tokens to generate (includes reasoning tokens when enabled).",
+                        "advanced": true,
+                        "default": 32768,
+                        "min": 4096,
+                        "max": 64000
+                      }
+                    ],
+                    "reasoning_effort": [
+                      "COMBO",
+                      {
+                        "tooltip": "Extended thinking effort. 'off' disables reasoning.",
+                        "advanced": true,
+                        "default": "off",
+                        "multiselect": false,
+                        "options": [
+                          "off",
+                          "low",
+                          "medium",
+                          "high"
+                        ]
+                      }
+                    ]
+                  }
+                }
+              },
+              {
+                "key": "Fable 5",
+                "inputs": {
+                  "required": {
+                    "max_tokens": [
+                      "INT",
+                      {
+                        "tooltip": "Maximum number of tokens to generate (includes reasoning tokens when enabled).",
+                        "advanced": true,
+                        "default": 32768,
+                        "min": 4096,
+                        "max": 64000
+                      }
+                    ],
+                    "reasoning_effort": [
+                      "COMBO",
+                      {
+                        "tooltip": "Extended thinking effort. Reasoning is always enabled for this model.",
+                        "advanced": true,
+                        "default": "high",
+                        "multiselect": false,
+                        "options": [
+                          "low",
+                          "medium",
+                          "high"
+                        ]
+                      }
+                    ]
+                  }
+                }
+              },
+              {
+                "key": "Sonnet 5",
+                "inputs": {
+                  "required": {
+                    "max_tokens": [
+                      "INT",
+                      {
+                        "tooltip": "Maximum number of tokens to generate (includes reasoning tokens when enabled).",
+                        "advanced": true,
+                        "default": 32768,
+                        "min": 4096,
+                        "max": 64000
+                      }
+                    ],
+                    "reasoning_effort": [
+                      "COMBO",
+                      {
+                        "tooltip": "Extended thinking effort. 'off' disables reasoning.",
+                        "advanced": true,
+                        "default": "off",
+                        "multiselect": false,
+                        "options": [
+                          "off",
+                          "low",
+                          "medium",
+                          "high"
+                        ]
+                      }
+                    ]
+                  }
+                }
+              },
+              {
+                "key": "Opus 4.7",
+                "inputs": {
+                  "required": {
+                    "max_tokens": [
+                      "INT",
+                      {
+                        "tooltip": "Maximum number of tokens to generate (includes reasoning tokens when enabled).",
+                        "advanced": true,
+                        "default": 32768,
+                        "min": 4096,
+                        "max": 64000
+                      }
+                    ],
+                    "temperature": [
+                      "FLOAT",
+                      {
+                        "tooltip": "Controls randomness. 0.0 is deterministic, 1.0 is most random. Ignored for Opus 4.7 and any model when reasoning_effort is set.",
+                        "advanced": true,
+                        "default": 1.0,
+                        "min": 0.0,
+                        "max": 1.0,
+                        "step": 0.01
+                      }
+                    ],
+                    "reasoning_effort": [
+                      "COMBO",
+                      {
+                        "tooltip": "Extended thinking effort. 'off' disables reasoning.",
+                        "advanced": true,
+                        "default": "off",
+                        "multiselect": false,
+                        "options": [
+                          "off",
+                          "low",
+                          "medium",
+                          "high"
+                        ]
+                      }
+                    ]
+                  }
+                }
+              },
+              {
+                "key": "Opus 4.6",
+                "inputs": {
+                  "required": {
+                    "max_tokens": [
+                      "INT",
+                      {
+                        "tooltip": "Maximum number of tokens to generate (includes reasoning tokens when enabled).",
+                        "advanced": true,
+                        "default": 32768,
+                        "min": 4096,
+                        "max": 64000
+                      }
+                    ],
+                    "temperature": [
+                      "FLOAT",
+                      {
+                        "tooltip": "Controls randomness. 0.0 is deterministic, 1.0 is most random. Ignored for Opus 4.7 and any model when reasoning_effort is set.",
+                        "advanced": true,
+                        "default": 1.0,
+                        "min": 0.0,
+                        "max": 1.0,
+                        "step": 0.01
+                      }
+                    ],
+                    "reasoning_effort": [
+                      "COMBO",
+                      {
+                        "tooltip": "Extended thinking effort. 'off' disables reasoning.",
+                        "advanced": true,
+                        "default": "off",
+                        "multiselect": false,
+                        "options": [
+                          "off",
+                          "low",
+                          "medium",
+                          "high"
+                        ]
+                      }
+                    ]
+                  }
+                }
+              },
+              {
+                "key": "Sonnet 4.6",
+                "inputs": {
+                  "required": {
+                    "max_tokens": [
+                      "INT",
+                      {
+                        "tooltip": "Maximum number of tokens to generate (includes reasoning tokens when enabled).",
+                        "advanced": true,
+                        "default": 32768,
+                        "min": 4096,
+                        "max": 64000
+                      }
+                    ],
+                    "temperature": [
+                      "FLOAT",
+                      {
+                        "tooltip": "Controls randomness. 0.0 is deterministic, 1.0 is most random. Ignored for Opus 4.7 and any model when reasoning_effort is set.",
+                        "advanced": true,
+                        "default": 1.0,
+                        "min": 0.0,
+                        "max": 1.0,
+                        "step": 0.01
+                      }
+                    ],
+                    "reasoning_effort": [
+                      "COMBO",
+                      {
+                        "tooltip": "Extended thinking effort. 'off' disables reasoning.",
+                        "advanced": true,
+                        "default": "off",
+                        "multiselect": false,
+                        "options": [
+                          "off",
+                          "low",
+                          "medium",
+                          "high"
+                        ]
+                      }
+                    ]
+                  }
+                }
+              },
+              {
+                "key": "Sonnet 4.5",
+                "inputs": {
+                  "required": {
+                    "max_tokens": [
+                      "INT",
+                      {
+                        "tooltip": "Maximum number of tokens to generate (includes reasoning tokens when enabled).",
+                        "advanced": true,
+                        "default": 32768,
+                        "min": 4096,
+                        "max": 64000
+                      }
+                    ],
+                    "temperature": [
+                      "FLOAT",
+                      {
+                        "tooltip": "Controls randomness. 0.0 is deterministic, 1.0 is most random. Ignored for Opus 4.7 and any model when reasoning_effort is set.",
+                        "advanced": true,
+                        "default": 1.0,
+                        "min": 0.0,
+                        "max": 1.0,
+                        "step": 0.01
+                      }
+                    ],
+                    "reasoning_effort": [
+                      "COMBO",
+                      {
+                        "tooltip": "Extended thinking effort. 'off' disables reasoning.",
+                        "advanced": true,
+                        "default": "off",
+                        "multiselect": false,
+                        "options": [
+                          "off",
+                          "low",
+                          "medium",
+                          "high"
+                        ]
+                      }
+                    ]
+                  }
+                }
+              },
+              {
+                "key": "Haiku 4.5",
+                "inputs": {
+                  "required": {
+                    "max_tokens": [
+                      "INT",
+                      {
+                        "tooltip": "Maximum number of tokens to generate (includes reasoning tokens when enabled).",
+                        "advanced": true,
+                        "default": 32768,
+                        "min": 4096,
+                        "max": 64000
+                      }
+                    ],
+                    "temperature": [
+                      "FLOAT",
+                      {
+                        "tooltip": "Controls randomness. 0.0 is deterministic, 1.0 is most random. Ignored for Opus 4.7 and any model when reasoning_effort is set.",
+                        "advanced": true,
+                        "default": 1.0,
+                        "min": 0.0,
+                        "max": 1.0,
+                        "step": 0.01
+                      }
+                    ]
+                  }
+                }
+              }
+            ]
+          }
+        ],
+        "seed": [
+          "INT",
+          {
+            "tooltip": "Seed controls whether the node should re-run; results are non-deterministic regardless of seed.",
+            "default": 0,
+            "min": 0,
+            "max": 2147483647,
+            "control_after_generate": true
+          }
+        ],
+        "images": [
+          "COMFY_AUTOGROW_V3",
+          {
+            "tooltip": "Optional image(s) to use as context for the model. Up to 20 images.",
+            "template": {
+              "input": {
+                "required": {
+                  "image": [
+                    "IMAGE",
+                    {}
+                  ]
+                }
+              },
+              "names": [
+                "image_1",
+                "image_2",
+                "image_3",
+                "image_4",
+                "image_5",
+                "image_6",
+                "image_7",
+                "image_8",
+                "image_9",
+                "image_10",
+                "image_11",
+                "image_12",
+                "image_13",
+                "image_14",
+                "image_15",
+                "image_16",
+                "image_17",
+                "image_18",
+                "image_19",
+                "image_20"
+              ],
+              "min": 0
+            }
+          }
+        ]
+      },
+      "optional": {
+        "system_prompt": [
+          "STRING",
+          {
+            "tooltip": "Foundational instructions that dictate the model's behavior.",
+            "advanced": true,
+            "default": "",
+            "multiline": true
+          }
+        ]
+      }
+    },
+    "input_order": {
+      "required": [
+        "prompt",
+        "model",
+        "seed",
+        "images"
+      ],
+      "optional": [
+        "system_prompt"
+      ]
+    },
+    "is_input_list": false,
+    "output": [
+      "STRING"
+    ],
+    "output_is_list": [
+      false
+    ],
+    "output_name": [
+      "STRING"
+    ],
+    "output_tooltips": [
+      null
+    ],
+    "output_matchtypes": null,
+    "name": "ClaudeNode",
+    "display_name": "Anthropic Claude",
+    "description": "Generate text responses with Anthropic's Claude models. Provide a text prompt and optionally one or more images for multimodal context.",
+    "python_module": "comfy_api_nodes.nodes_anthropic",
+    "category": "partner/text/Anthropic",
+    "output_node": false,
+    "deprecated": false,
+    "experimental": false,
+    "dev_only": false,
+    "api_node": true,
+    "price_badge": {
+      "engine": "jsonata",
+      "depends_on": {
+        "widgets": [
+          {
+            "name": "model",
+            "type": "COMFY_DYNAMICCOMBO_V3"
+          }
+        ],
+        "inputs": [],
+        "input_groups": []
+      },
+      "expr": "\n                (\n                  $m := widgets.model;\n                  $contains($m, \"fable\") ? {\n                    \"type\": \"list_usd\",\n                    \"usd\": [0.0143, 0.0715],\n                    \"format\": { \"approximate\": true, \"separator\": \"-\", \"suffix\": \" per 1K tokens\" }\n                  }\n                  : $contains($m, \"opus 4.8\") ? {\n                    \"type\": \"list_usd\",\n                    \"usd\": [0.00715, 0.03575],\n                    \"format\": { \"approximate\": true, \"separator\": \"-\", \"suffix\": \" per 1K tokens\" }\n                  }\n                  : $contains($m, \"sonnet 5\") ? {\n                    \"type\": \"list_usd\",\n                    \"usd\": [0.00286, 0.0143],\n                    \"format\": { \"approximate\": true, \"separator\": \"-\", \"suffix\": \" per 1K tokens\" }\n                  }\n                  : $contains($m, \"opus 5\") ? {\n                    \"type\": \"list_usd\",\n                    \"usd\": [0.00715, 0.03575],\n                    \"format\": { \"approximate\": true, \"separator\": \"-\", \"suffix\": \" per 1K tokens\" }\n                  }\n                  : $contains($m, \"opus\") ? {\n                    \"type\": \"list_usd\",\n                    \"usd\": [0.005, 0.025],\n                    \"format\": { \"approximate\": true, \"separator\": \"-\", \"suffix\": \" per 1K tokens\" }\n                  }\n                  : $contains($m, \"sonnet\") ? {\n                    \"type\": \"list_usd\",\n                    \"usd\": [0.003, 0.015],\n                    \"format\": { \"approximate\": true, \"separator\": \"-\", \"suffix\": \" per 1K tokens\" }\n                  }\n                  : $contains($m, \"haiku\") ? {\n                    \"type\": \"list_usd\",\n                    \"usd\": [0.001, 0.005],\n                    \"format\": { \"approximate\": true, \"separator\": \"-\", \"suffix\": \" per 1K tokens\" }\n                  }\n                  : {\"type\":\"text\", \"text\":\"Token-based\"}\n                )\n                "
+    },
+    "search_aliases": null,
+    "essentials_category": "Text Generation",
+    "has_intermediate_output": false
+  },
+  "MediaPipeFaceMeshVisualize": {
+    "input": {
+      "required": {
+        "face_landmarks": [
+          "FACE_LANDMARKS",
+          {}
+        ],
+        "connections": [
+          "COMFY_DYNAMICCOMBO_V3",
+          {
+            "tooltip": "'all' = oval+eyes+brows+lips+irises+nose. 'fill' = solid face_oval polygon (silhouette mask). 'custom' = toggle each feature individually (including 'tesselation', the full 2547-edge wireframe).",
+            "options": [
+              {
+                "key": "all",
+                "inputs": {
+                  "required": {}
+                }
+              },
+              {
+                "key": "fill",
+                "inputs": {
+                  "required": {}
+                }
+              },
+              {
+                "key": "custom",
+                "inputs": {
+                  "required": {
+                    "face_oval": [
+                      "BOOLEAN",
+                      {
+                        "tooltip": "Draw the 'face_oval' connection set.",
+                        "default": true
+                      }
+                    ],
+                    "lips": [
+                      "BOOLEAN",
+                      {
+                        "tooltip": "Draw the 'lips' connection set.",
+                        "default": true
+                      }
+                    ],
+                    "left_eye": [
+                      "BOOLEAN",
+                      {
+                        "tooltip": "Draw the 'left_eye' connection set.",
+                        "default": true
+                      }
+                    ],
+                    "right_eye": [
+                      "BOOLEAN",
+                      {
+                        "tooltip": "Draw the 'right_eye' connection set.",
+                        "default": true
+                      }
+                    ],
+                    "left_eyebrow": [
+                      "BOOLEAN",
+                      {
+                        "tooltip": "Draw the 'left_eyebrow' connection set.",
+                        "default": true
+                      }
+                    ],
+                    "right_eyebrow": [
+                      "BOOLEAN",
+                      {
+                        "tooltip": "Draw the 'right_eyebrow' connection set.",
+                        "default": true
+                      }
+                    ],
+                    "irises": [
+                      "BOOLEAN",
+                      {
+                        "tooltip": "Draw the 'irises' connection set.",
+                        "default": true
+                      }
+                    ],
+                    "nose": [
+                      "BOOLEAN",
+                      {
+                        "tooltip": "Draw the 'nose' connection set.",
+                        "default": true
+                      }
+                    ],
+                    "tesselation": [
+                      "BOOLEAN",
+                      {
+                        "tooltip": "Draw the 'tesselation' connection set.",
+                        "default": false
+                      }
+                    ]
+                  }
+                }
+              }
+            ]
+          }
+        ],
+        "color": [
+          "COLOR",
+          {
+            "default": "#00ff00",
+            "socketless": true
+          }
+        ],
+        "thickness": [
+          "INT",
+          {
+            "tooltip": "Edge line thickness in pixels. 0 disables edge drawing.",
+            "default": 1,
+            "min": 0,
+            "max": 8,
+            "step": 1
+          }
+        ],
+        "point_size": [
+          "INT",
+          {
+            "tooltip": "Landmark dot radius in pixels. 0 disables point drawing.",
+            "default": 2,
+            "min": 0,
+            "max": 16,
+            "step": 1
+          }
+        ]
+      },
+      "optional": {
+        "image": [
+          "IMAGE",
+          {
+            "tooltip": "If not connected, a black canvas will be used."
+          }
+        ]
+      }
+    },
+    "input_order": {
+      "required": [
+        "face_landmarks",
+        "connections",
+        "color",
+        "thickness",
+        "point_size"
+      ],
+      "optional": [
+        "image"
+      ]
+    },
+    "is_input_list": false,
+    "output": [
+      "IMAGE"
+    ],
+    "output_is_list": [
+      false
+    ],
+    "output_name": [
+      "IMAGE"
+    ],
+    "output_tooltips": [
+      null
+    ],
+    "output_matchtypes": null,
+    "name": "MediaPipeFaceMeshVisualize",
+    "display_name": "Visualize Face Landmarks (MediaPipe)",
+    "description": "Draws face landmarks mesh on the input image.",
+    "python_module": "comfy_extras.nodes_mediapipe",
+    "category": "image/detection",
+    "output_node": false,
+    "deprecated": false,
+    "experimental": false,
+    "dev_only": false,
+    "api_node": false,
+    "price_badge": null,
+    "search_aliases": [
+      "face",
+      "facial",
+      "mediapipe",
+      "face landmark",
+      "face mesh",
+      "blazeface",
+      "face detection",
+      "visualize"
+    ],
+    "essentials_category": null,
+    "has_intermediate_output": false
   }
 }

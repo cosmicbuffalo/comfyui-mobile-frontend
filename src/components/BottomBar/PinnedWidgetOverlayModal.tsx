@@ -152,6 +152,7 @@ export function PinnedWidgetOverlayModal() {
         proxyRoute.innerNodeId,
         proxyRoute.innerWidgetIndex,
         newValue,
+        proxyRoute.innerWidgetName ?? pinnedWidget.inputName ?? pinnedWidget.widgetName,
       );
       return;
     }
@@ -162,6 +163,7 @@ export function PinnedWidgetOverlayModal() {
           linkedWidgetRoute.nodeId,
           linkedWidgetRoute.widgetIndex,
           newValue,
+          linkedWidgetRoute.widgetName ?? pinnedWidget.inputName ?? pinnedWidget.widgetName,
         );
         return;
       }
@@ -171,7 +173,7 @@ export function PinnedWidgetOverlayModal() {
           sourceItemKey,
           linkedWidgetRoute.widgetIndex,
           newValue,
-          linkedWidgetRoute.widgetName ?? pinnedWidget.widgetName,
+          linkedWidgetRoute.widgetName ?? pinnedWidget.inputName ?? pinnedWidget.widgetName,
         );
       }
       return;
@@ -181,7 +183,7 @@ export function PinnedWidgetOverlayModal() {
         pinnedNodeHierarchicalKey,
         pinnedWidget.widgetIndex,
         newValue,
-        pinnedWidget.widgetName,
+        pinnedWidget.inputName ?? pinnedWidget.widgetName,
       );
     }
   };

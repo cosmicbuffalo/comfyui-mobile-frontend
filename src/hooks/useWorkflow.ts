@@ -50,7 +50,12 @@ import {
   optionsAreFileLike,
   resolveComboOption,
   isComboType,
+  isMultiSelectCombo,
   getComboOptions,
+  buildDefaultConnectionInputs,
+  buildDefaultWidgetValues,
+  getActiveNodeInputDefinitions,
+  rebuildDynamicComboNode,
 } from "@/utils/workflowInputs";
 import { buildWorkflowCacheKey } from "@/utils/workflowCacheKey";
 import { collectAllWorkflowGroups, collectAllWorkflowNodes } from "@/utils/workflowNodes";
@@ -78,6 +83,7 @@ import {
   hasSeedControlWidget,
   findSeedControlWidgetIndex,
   resolveSpecialSeedToUse,
+  nodeTypeStripsSeedControl,
 } from "@/utils/seedUtils";
 import {
   getWidgetDefinitions,
@@ -675,6 +681,7 @@ interface WorkflowState {
     innerNodeId: number,
     innerWidgetIndex: number,
     value: unknown,
+    widgetName?: string,
   ) => void;
   updateNodeProperties: (
     itemKey: HierarchicalKey,
@@ -1211,38 +1218,38 @@ function collectWorkflowLoadErrors(
       const rawValue = getWidgetValue(node, name, widgetIndex);
       if (rawValue === undefined || rawValue === null) continue;
 
-      const resolved = resolveComboOption(rawValue, comboOpts);
-      const normalized = normalizeWidgetValue(rawValue, comboOpts, {
-        comboIndexToValue: true,
-      });
-      const normalizedString = String(normalized);
-      const normalizedBase =
-        normalizedString.split(/[\\/]/).pop() ?? normalizedString;
-      const hasMatch =
-        resolved !== undefined ||
-        comboOpts.some((opt) => {
-          const optString = String(opt);
-          return optString === normalizedString || optString === normalizedBase;
+      const rawValues = isMultiSelectCombo(inputOptions)
+        ? Array.isArray(rawValue) ? rawValue : [rawValue]
+        : [rawValue];
+      for (const rawEntry of rawValues) {
+        const resolved = resolveComboOption(rawEntry, comboOpts);
+        const normalized = normalizeWidgetValue(rawEntry, comboOpts, {
+          comboIndexToValue: true,
         });
+        const normalizedString = String(normalized);
+        const normalizedBase =
+          normalizedString.split(/[\\/]/).pop() ?? normalizedString;
+        const hasMatch =
+          resolved !== undefined ||
+          comboOpts.some((opt) => {
+            const optString = String(opt);
+            return optString === normalizedString || optString === normalizedBase;
+          });
 
-      // Closed-enum combos (sampler names, action widgets, …) enumerate every
-      // valid value and are auto-corrected to the default at queue time, so an
-      // unmatched value is not a load error. Only values normalizeComboValue
-      // will KEEP — file-picker combos, plus a file-like value sitting in an
-      // enum-looking list — reach the server unchanged and can genuinely be
-      // rejected, so those are what get flagged. The two rules have to agree:
-      // anything kept but unflagged fails silently at run time instead.
-      if (!hasMatch && (optionsAreFileLike(comboOpts) || isFileLikeToken(normalizedString))) {
-        const nodeId = String(node.id);
-        if (!errors[nodeId]) {
-          errors[nodeId] = [];
+        // Closed-enum combos are corrected at queue time. File-picker values
+        // stay untouched, so report each missing multi-select member separately.
+        if (!hasMatch && (optionsAreFileLike(comboOpts) || isFileLikeToken(normalizedString))) {
+          const nodeId = String(node.id);
+          if (!errors[nodeId]) {
+            errors[nodeId] = [];
+          }
+          errors[nodeId].push({
+            type: "workflow_load",
+            message: `Missing value: ${normalizedString}`,
+            details: "Not found on server.",
+            inputName: name,
+          });
         }
-        errors[nodeId].push({
-          type: "workflow_load",
-          message: `Missing value: ${normalizedString}`,
-          details: "Not found on server.",
-          inputName: name,
-        });
       }
     }
   }
@@ -1284,13 +1291,27 @@ function normalizeWorkflowComboValues(
       const rawValue = getWidgetValue(node, name, widgetIndex);
       if (rawValue === undefined || rawValue === null) continue;
 
-      const resolved = resolveComboOption(rawValue, comboOpts);
-      if (resolved === undefined || resolved === rawValue) continue;
+      const normalized = isMultiSelectCombo(inputOptions)
+        ? (Array.isArray(rawValue) ? rawValue : [rawValue]).map(
+            (entry) => resolveComboOption(entry, comboOpts) ?? entry,
+          )
+        : resolveComboOption(rawValue, comboOpts);
+      // Loading may canonicalize a value that genuinely resolves (basename,
+      // legacy numeric index, Unicode display equivalent), but an unavailable
+      // value must remain intact so the UI can show it as missing. Queue-time
+      // normalization remains responsible for closed-enum fallbacks.
+      if (normalized === undefined) continue;
+      const unchanged = Array.isArray(rawValue) && Array.isArray(normalized)
+        ? rawValue.length === normalized.length && rawValue.every(
+            (entry, index) => Object.is(entry, normalized[index]),
+          )
+        : Object.is(rawValue, normalized);
+      if (unchanged) continue;
 
       if (!nextValues) {
         nextValues = [...node.widgets_values];
       }
-      nextValues[widgetIndex] = resolved;
+      nextValues[widgetIndex] = normalized;
       changed = true;
     }
 
@@ -1306,6 +1327,27 @@ function normalizeWorkflowComboValues(
     workflow: { ...workflow, nodes },
     changed: true
   };
+}
+
+/** Drop a root node's workflow-level widget-index-map entries (both the
+ *  top-level and `extra` locations Lora Manager writes to). Used after a
+ *  DynamicCombo rebuild renumbers the node's slots, which makes any recorded
+ *  indices stale by construction. */
+function stripNodeWidgetIndexMap(workflow: Workflow, nodeId: number): Workflow {
+  const key = String(nodeId);
+  let next = workflow;
+  if (next.widget_idx_map?.[key]) {
+    const { [key]: _dropped, ...rest } = next.widget_idx_map;
+    next = { ...next, widget_idx_map: rest };
+  }
+  const extraMap = next.extra?.widget_idx_map as
+    | Record<string, Record<string, number>>
+    | undefined;
+  if (extraMap?.[key]) {
+    const { [key]: _dropped, ...rest } = extraMap;
+    next = { ...next, extra: { ...next.extra, widget_idx_map: rest } };
+  }
+  return next;
 }
 
 // Fields a session-shaped object must expose for rehydration normalization.
@@ -1910,35 +1952,16 @@ export const useWorkflowStore = create<WorkflowState>()(
         const newId = maxNodeIdAcrossScopes(workflow) + 1;
 
         // Build inputs from type definition
-        const inputs: Array<{ name: string; type: string; link: null }> = [];
-        const requiredInputs = typeDef.input?.required ?? {};
-        const optionalInputs = typeDef.input?.optional ?? {};
-        const requiredOrder =
-          typeDef.input_order?.required ?? Object.keys(requiredInputs);
-        const optionalOrder =
-          typeDef.input_order?.optional ?? Object.keys(optionalInputs);
-
-        for (const name of requiredOrder) {
-          const def = requiredInputs[name];
-          if (!def) continue;
-          const [typeOrOptions] = def;
-          // Skip widget inputs (arrays = combo, primitive types = widgets)
-          if (Array.isArray(typeOrOptions)) continue;
-          const normalized = String(typeOrOptions).toUpperCase();
-          if (["INT", "FLOAT", "BOOLEAN", "STRING"].includes(normalized))
-            continue;
-          inputs.push({ name, type: String(typeOrOptions), link: null });
-        }
-        for (const name of optionalOrder) {
-          const def = optionalInputs[name];
-          if (!def) continue;
-          const [typeOrOptions] = def;
-          if (Array.isArray(typeOrOptions)) continue;
-          const normalized = String(typeOrOptions).toUpperCase();
-          if (["INT", "FLOAT", "BOOLEAN", "STRING"].includes(normalized))
-            continue;
-          inputs.push({ name, type: String(typeOrOptions), link: null });
-        }
+        const inputs: WorkflowInput[] = [];
+        // Include connection inputs from the active default DynamicCombo branch
+        // as well as top-level sockets. Explicit socketless/forceInput flags are
+        // handled by the shared schema classifier.
+        inputs.push(
+          ...buildDefaultConnectionInputs(typeDef).map((input) => ({
+            ...input,
+            link: null,
+          })),
+        );
 
         // Build outputs from type definition
         const outputs = (typeDef.output ?? []).map((type, i) => ({
@@ -1948,56 +1971,12 @@ export const useWorkflowStore = create<WorkflowState>()(
           slot_index: i,
         }));
 
-        // Build default widget values
-        const widgetsValues: unknown[] = [];
-        for (const name of requiredOrder) {
-          const def = requiredInputs[name];
-          if (!def) continue;
-          const [typeOrOptions, opts] = def;
-          if (Array.isArray(typeOrOptions)) {
-            widgetsValues.push(typeOrOptions[0] ?? "");
-            continue;
-          }
-          const normalized = String(typeOrOptions).toUpperCase();
-          if (normalized === "INT")
-            widgetsValues.push((opts as Record<string, unknown>)?.default ?? 0);
-          else if (normalized === "FLOAT")
-            widgetsValues.push(
-              (opts as Record<string, unknown>)?.default ?? 0.0,
-            );
-          else if (normalized === "STRING")
-            widgetsValues.push(
-              (opts as Record<string, unknown>)?.default ?? "",
-            );
-          else if (normalized === "BOOLEAN")
-            widgetsValues.push(
-              (opts as Record<string, unknown>)?.default ?? false,
-            );
-        }
-        for (const name of optionalOrder) {
-          const def = optionalInputs[name];
-          if (!def) continue;
-          const [typeOrOptions, opts] = def;
-          if (Array.isArray(typeOrOptions)) {
-            widgetsValues.push(typeOrOptions[0] ?? "");
-            continue;
-          }
-          const normalized = String(typeOrOptions).toUpperCase();
-          if (normalized === "INT")
-            widgetsValues.push((opts as Record<string, unknown>)?.default ?? 0);
-          else if (normalized === "FLOAT")
-            widgetsValues.push(
-              (opts as Record<string, unknown>)?.default ?? 0.0,
-            );
-          else if (normalized === "STRING")
-            widgetsValues.push(
-              (opts as Record<string, unknown>)?.default ?? "",
-            );
-          else if (normalized === "BOOLEAN")
-            widgetsValues.push(
-              (opts as Record<string, unknown>)?.default ?? false,
-            );
-        }
+        // Build default widget values in slot order, including the sub-inputs a
+        // DynamicCombo's default option contributes and any schema-declared
+        // control_after_generate slot that follows an INT seed.
+        const widgetsValues = buildDefaultWidgetValues(typeDef, {
+          emitSeedControl: !nodeTypeStripsSeedControl(nodeType),
+        });
 
         // Resolve the canonical scope where this node belongs.
         // If inSubgraphId is specified explicitly, use that subgraph's node list;
@@ -2827,8 +2806,11 @@ export const useWorkflowStore = create<WorkflowState>()(
             // such), so the pop-out must agree — bailing here made the
             // confirmed dialog silently do nothing.
             inputType = "STRING";
-          } else if (Array.isArray(typeOrOptions)) {
-            return null; // combo — no primitive
+          } else if (isComboType(typeOrOptions)) {
+            // Combo — no primitive equivalent. Covers the V3 string-typed forms
+            // too, which would otherwise fall through as a literal "COMBO" type
+            // and only bail further down when no primitive node matches.
+            return null;
           } else {
             inputType = String(typeOrOptions);
           }
@@ -3306,19 +3288,115 @@ export const useWorkflowStore = create<WorkflowState>()(
         value,
         widgetName,
       ) => {
-        const { workflow } = get();
+        const { workflow, nodeTypes } = get();
         if (!workflow) return;
         const scope = resolveScopeForHierarchicalKey(workflow, itemKey);
         const node = resolveNodeByHierarchicalKey(scope.nodes, itemKey);
         if (!node) return;
-        const nextNodes = scope.nodes.map((n) =>
-          n.id === node.id
-            ? updateNodeWidgetValues(n, widgetIndex, value, widgetName)
-            : n,
+
+        // Resolve nested DynamicCombo children by their fully-qualified name.
+        // Bare-name lookup is intentionally limited to top-level inputs so two
+        // active branches can safely reuse a child name.
+        const typeDef = nodeTypes?.[node.type];
+        const activeInputs = typeDef ? getActiveNodeInputDefinitions(typeDef, node) : [];
+        const activeInput = activeInputs.find(
+          (definition) => definition.qualifiedName === widgetName,
+        ) ?? activeInputs.find(
+          (definition) => definition.widgetIndex === widgetIndex,
         );
-        const nextWorkflow = scope.applyPatch(workflow, { nodes: nextNodes });
+        const inputDef = activeInput?.inputDef ?? (widgetName && typeDef
+          ? typeDef.input?.required?.[widgetName] ?? typeDef.input?.optional?.[widgetName]
+          : undefined);
+        const resolvedInputName = activeInput?.qualifiedName ?? widgetName;
+        const rebuilt = inputDef && typeDef && resolvedInputName
+          ? rebuildDynamicComboNode(
+              node,
+              typeDef,
+              resolvedInputName,
+              inputDef,
+              widgetIndex,
+              value,
+            )
+          : null;
+
+        let nextLinks: Array<WorkflowLink | WorkflowSubgraphLink> = scope.links;
+        let nextNodes: WorkflowNode[];
+        if (rebuilt) {
+          const removedLinkIds = new Set(rebuilt.removedLinkIds);
+          const newSlotByLinkId = new Map<number, number>();
+          rebuilt.node.inputs.forEach((input, index) => {
+            if (input.link != null) newSlotByLinkId.set(input.link, index);
+          });
+          nextLinks = scope.links
+            .filter((link) => !removedLinkIds.has(getLinkId(link)))
+            .map((link) => {
+              if (getLinkTargetId(link) !== node.id) return link;
+              const targetSlot = newSlotByLinkId.get(getLinkId(link));
+              if (targetSlot === undefined || targetSlot === getLinkTargetSlot(link)) return link;
+              if (Array.isArray(link)) {
+                const nextLink: WorkflowLink = [...link];
+                nextLink[4] = targetSlot;
+                return nextLink;
+              }
+              return { ...link, target_slot: targetSlot };
+            });
+          nextNodes = scope.nodes.map((candidate) => {
+            let nextNode = candidate.id === node.id ? rebuilt.node : candidate;
+            if (removedLinkIds.size > 0) {
+              const outputs = (nextNode.outputs ?? []).map((output) => {
+                const links = output.links?.filter((linkId) => !removedLinkIds.has(linkId)) ?? null;
+                return links === output.links
+                  ? output
+                  : { ...output, links: links && links.length > 0 ? links : null };
+              });
+              nextNode = { ...nextNode, outputs };
+            }
+            return nextNode;
+          });
+        } else {
+          nextNodes = scope.nodes.map((candidate) =>
+            candidate.id === node.id
+              ? updateNodeWidgetValues(candidate, widgetIndex, value, widgetName)
+              : candidate,
+          );
+        }
+        let nextWorkflow = scope.applyPatch(workflow, {
+          nodes: nextNodes,
+          ...(rebuilt
+            ? {
+                links: scope.subgraphId == null
+                  ? (nextLinks as WorkflowLink[])
+                  : (nextLinks as WorkflowSubgraphLink[]),
+              }
+            : {}),
+        });
+        if (rebuilt && scope.subgraphId == null) {
+          // Workflow-level widget-index maps (Lora Manager metadata) recorded
+          // the pre-rebuild slot layout; a stale entry would override the
+          // schema walk and shift every submitted value. Node ids are only
+          // unambiguous at root scope, so inner rebuilds leave the maps alone.
+          nextWorkflow = stripNodeWidgetIndexMap(nextWorkflow, node.id);
+        }
         set({ workflow: nextWorkflow });
         useWorkflowErrorsStore.getState().clearNodeError(node.id);
+        if (rebuilt && typeDef && scope.subgraphId == null) {
+          // A branch switch renumbers the slots after the combo, so any pin on
+          // this node must follow its input to the new index — or disappear
+          // with the retired branch. Without this, the by-index pin would
+          // silently edit whichever widget now occupies the old slot.
+          const rebuiltDefinitions = getActiveNodeInputDefinitions(typeDef, rebuilt.node);
+          usePinnedWidgetStore.getState().reconcilePinsForNode(
+            node.id,
+            get().currentWorkflowKey,
+            (pin) => {
+              const target = pin.inputName ?? pin.widgetName;
+              const definition = rebuiltDefinitions.find(
+                (candidate) => candidate.qualifiedName === target || candidate.name === target,
+              );
+              return definition?.widgetIndex ?? null;
+            },
+          );
+        }
       };
 
       const renameSetGetNode: WorkflowState["renameSetGetNode"] = (itemKey, newName) => {
@@ -3365,39 +3443,14 @@ export const useWorkflowStore = create<WorkflowState>()(
         innerNodeId,
         innerWidgetIndex,
         value,
+        widgetName,
       ) => {
-        const { workflow } = get();
-        if (!workflow) return;
-
-        const subgraphs = workflow.definitions?.subgraphs ?? [];
-        const sgIndex = subgraphs.findIndex((s) => s.id === subgraphId);
-        if (sgIndex === -1) return;
-
-        const sg = subgraphs[sgIndex];
-        const nodes = sg.nodes ?? [];
-        const nodeIndex = nodes.findIndex((n) => n.id === innerNodeId);
-        if (nodeIndex === -1) return;
-
-        const updatedInnerNode = updateNodeWidgetValues(nodes[nodeIndex], innerWidgetIndex, value);
-        const updatedNodes = [
-          ...nodes.slice(0, nodeIndex),
-          updatedInnerNode,
-          ...nodes.slice(nodeIndex + 1),
-        ];
-        const updatedSg = { ...sg, nodes: updatedNodes };
-        const updatedSubgraphs = [
-          ...subgraphs.slice(0, sgIndex),
-          updatedSg,
-          ...subgraphs.slice(sgIndex + 1),
-        ];
-        const nextWorkflow = {
-          ...workflow,
-          definitions: {
-            ...workflow.definitions,
-            subgraphs: updatedSubgraphs,
-          },
-        };
-        set({ workflow: nextWorkflow });
+        updateNodeWidget(
+          makeLocationPointer({ type: 'node', nodeId: innerNodeId, subgraphId }),
+          innerWidgetIndex,
+          value,
+          widgetName,
+        );
       };
 
       const updateNodeProperties: WorkflowState["updateNodeProperties"] = (

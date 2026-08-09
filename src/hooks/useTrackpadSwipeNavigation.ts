@@ -13,17 +13,30 @@ const HORIZONTAL_INTENT_RATIO = 1.35;
 // Gap with no wheel events that ends the current gesture, re-arming the next.
 const GESTURE_IDLE_MS = 250;
 
+// Regions that opt out of swipe navigation entirely, using the same attribute
+// the touch handler honours (useSwipeNavigation). Unlike the scroll check
+// below this does not depend on remaining scroll distance: a horizontal strip
+// like the workflow tab bar must keep its own gesture even once it is scrolled
+// hard against either end, or flicking through tabs throws you into another
+// panel just as you reach the last one.
+function isSwipeNavIgnored(target: EventTarget | null): boolean {
+  if (!(target instanceof Element)) return false;
+  return Boolean(target.closest('[data-swipe-nav-ignore="true"]'));
+}
+
 // True when the event target sits inside a horizontally-scrollable region that
 // can still scroll further in the swipe direction — let it scroll instead of
 // navigating panels.
 function targetCanScrollHorizontally(target: EventTarget | null, deltaX: number): boolean {
-  let el = target instanceof HTMLElement ? target : null;
+  let el = target instanceof Element ? target : null;
   while (el && el !== document.body) {
-    const overflowX = getComputedStyle(el).overflowX;
-    if ((overflowX === 'auto' || overflowX === 'scroll') && el.scrollWidth > el.clientWidth + 1) {
-      const max = el.scrollWidth - el.clientWidth;
-      if (deltaX > 0 && el.scrollLeft < max - 1) return true;
-      if (deltaX < 0 && el.scrollLeft > 1) return true;
+    if (el instanceof HTMLElement) {
+      const overflowX = getComputedStyle(el).overflowX;
+      if ((overflowX === 'auto' || overflowX === 'scroll') && el.scrollWidth > el.clientWidth + 1) {
+        const max = el.scrollWidth - el.clientWidth;
+        if (deltaX > 0 && el.scrollLeft < max - 1) return true;
+        if (deltaX < 0 && el.scrollLeft > 1) return true;
+      }
     }
     el = el.parentElement;
   }
@@ -72,6 +85,8 @@ export function useTrackpadSwipeNavigation({
 
     const handleWheel = (event: WheelEvent) => {
       if (event.ctrlKey) return; // pinch-zoom
+      // Opted-out region under the pointer: never navigate from here.
+      if (isSwipeNavIgnored(event.target)) return;
       // Let a horizontally-scrollable region under the pointer scroll natively.
       if (targetCanScrollHorizontally(event.target, event.deltaX)) return;
 

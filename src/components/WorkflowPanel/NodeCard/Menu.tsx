@@ -12,6 +12,7 @@ import { resolveWorkflowColor, themeColors, workflowColorPickerOptions } from '@
 interface PinnableWidget {
   widgetIndex: number;
   name: string;
+  inputName?: string;
   type: string;
   options?: Record<string, unknown> | unknown[];
 }
@@ -41,12 +42,14 @@ interface NodeCardMenuProps {
     widgetIndex: number,
     widgetName: string,
     widgetType: string,
-    options?: Record<string, unknown> | unknown[]
+    options?: Record<string, unknown> | unknown[],
+    inputName?: string,
   ) => void;
   setPinnedWidget: (pin: {
     nodeId: number;
     widgetIndex: number;
     widgetName: string;
+    inputName?: string;
     widgetType: string;
     options?: Record<string, unknown> | unknown[];
   } | null) => void;
@@ -246,7 +249,8 @@ export function NodeCardMenu({
       singlePinnableWidget.widgetIndex,
       singlePinnableWidget.name,
       singlePinnableWidget.type,
-      singlePinnableWidget.options
+      singlePinnableWidget.options,
+      singlePinnableWidget.inputName,
     );
     closeMenu();
   };
@@ -268,6 +272,7 @@ export function NodeCardMenu({
       nodeId,
       widgetIndex: widget.widgetIndex,
       widgetName: widget.name,
+      inputName: widget.inputName,
       widgetType: widget.type,
       options: widget.options
     });
