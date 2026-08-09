@@ -138,9 +138,12 @@ function QueueMediaEntry({
   const isLatent = Boolean(entry.rawSrc);
   // The latent preview is a streamed blob: URL, not a server file or video.
   const isVideo = !isLatent && isVideoFilename(img.filename);
-  // Favorite/reject only apply to actual saved outputs — not `temp` previews,
-  // `input` prompt-preview images, or the live latent preview.
-  const isSavedOutput = !isLatent && img.type === 'output';
+  // Both durable outputs and completed temp media are real server files the
+  // viewer can favorite/reject/delete. Prompt-input thumbnails and the live
+  // latent blob are not queue outputs and must not get those actions.
+  const isManageableOutput = !isLatent && (
+    img.type === 'output' || (hasCompleted && img.type === 'temp')
+  );
   const showDurationLabel = !isLatent && hasCompleted && img.type === 'output' && durationLabel;
   // Reserve the media's vertical space so it doesn't collapse to nothing while
   // loading (which both leaves an empty unfolded card and makes the list jump as
@@ -322,25 +325,12 @@ function QueueMediaEntry({
     mediaElementStyle.aspectRatio = String(knownAspect);
   }
 
-  // Overlay affordances. For a NEUTRAL output, hovering reveals two disc buttons:
-  // reject (left) + favorite (right). Once a state is chosen the hover overlay no
-  // longer appears; instead a single BARE icon (no disc) sits in the corner and
-  // stays clickable to toggle that state back off.
-  //  - Favorite's hover button and its bare indicator share the corner spot, so
-  //    favoriting only fades the disc away — the heart never moves.
-  //  - Reject's hover button is on the left, but its chosen-state indicator moves
-  //    to the corner (same spot as the heart), per the requested behavior.
+  // Hover always exposes both actions. A chosen state also gets a persistent
+  // bare corner indicator, which fades while the full hover controls are shown.
+  // Keeping the actions consistent avoids making a viewed/favorited/rejected
+  // image look as though its controls have disappeared.
   const hoverRevealClass =
     'opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto';
-  // Corner control (right): favorite hover-button when neutral, bare heart when
-  // favorited, hidden when rejected.
-  const favoriteControlClass = favorited
-    ? 'opacity-100 pointer-events-auto'
-    : rejected
-      ? 'hidden'
-      : hoverRevealClass;
-  // Left hover-button: reject, only for a neutral output on hover.
-  const rejectHoverClass = favorited || rejected ? 'hidden' : hoverRevealClass;
   return (
     <div
       key={entry.key}
@@ -486,27 +476,29 @@ function QueueMediaEntry({
           onClick={isLatent ? undefined : onMediaClick(src, index, isTopDoneItem)}
         />
       )}
-      {/* Favorite/reject affordances — saved outputs only (never temp previews
-          or input prompt-previews). */}
-      {isSavedOutput && (
+      {/* Favorite/reject affordances for completed output/temp server files,
+          never input prompt-previews or the live latent blob. */}
+      {isManageableOutput && (
         <>
           {/* Reject hover-button (left). */}
           <div
-            className={`rejected-badge-container absolute bottom-2 right-12 transition-opacity ${rejectHoverClass}`}
+            className={`rejected-badge-container absolute bottom-2 right-12 z-20 transition-opacity ${hoverRevealClass}`}
           >
-            <RejectButton onClick={onToggleReject} isRejected={false} isFavorited={false} />
+            <RejectButton onClick={onToggleReject} isRejected={rejected} isFavorited={favorited} />
           </div>
-          {/* Corner control (right): favorite hover-button or, once favorited, the
-              bare heart indicator — same spot, so only the disc fades on toggle. */}
+          {/* Favorite hover-button (right). */}
           <div
-            className={`favorite-badge-container absolute bottom-2 right-2 transition-opacity ${favoriteControlClass}`}
+            className={`favorite-badge-container absolute bottom-2 right-2 z-20 transition-opacity ${hoverRevealClass}`}
           >
-            <FavoriteButton onClick={onToggleFavorite} isFavorited={favorited} bare={favorited} />
+            <FavoriteButton onClick={onToggleFavorite} isFavorited={favorited} />
           </div>
-          {/* Rejected-state indicator: bare X in the corner (same spot as the heart),
-              clickable to clear the rejected mark. */}
+          {favorited && (
+            <div className="favorite-state-indicator pointer-events-none absolute bottom-2 right-2 z-10 transition-opacity group-hover:opacity-0">
+              <FavoriteButton onClick={onToggleFavorite} isFavorited bare />
+            </div>
+          )}
           {rejected && (
-            <div className="rejected-badge-container absolute bottom-2 right-2">
+            <div className="rejected-state-indicator pointer-events-none absolute bottom-2 right-2 z-10 transition-opacity group-hover:opacity-0">
               <RejectButton onClick={onToggleReject} isRejected isFavorited={false} bare />
             </div>
           )}
@@ -600,11 +592,16 @@ function sessionDisplayLabel(
 }
 
 function getPreferredOutputFilename(images: HistoryOutputImage[]): string | null {
-  // `.filter()` returns a fresh array, so reversing it in place is safe.
-  const outputImages = images.filter((img) => img.type === 'output').reverse();
-  const videoOutput = outputImages.find((img) => isVideoFilename(img.filename));
+  // Prefer durable outputs when present. A PreviewImage or Image Compare run
+  // only has completed temp media; its filename is still meaningful and was
+  // previously the reason those cards had a blank second header line.
+  const durable = images.filter((img) => img.type === 'output');
+  const generated = (durable.length > 0
+    ? durable
+    : images.filter((img) => img.type === 'temp')).reverse();
+  const videoOutput = generated.find((img) => isVideoFilename(img.filename));
   if (videoOutput) return videoOutput.filename;
-  const imageOutput = outputImages.find((img) => !isVideoFilename(img.filename));
+  const imageOutput = generated.find((img) => !isVideoFilename(img.filename));
   return imageOutput?.filename ?? null;
 }
 
@@ -1615,8 +1612,15 @@ function QueueCardComponent({
       onVideoPlay: handleVideoPlay,
       onReplay: handleReplayClick,
       recordDimensions,
-      onToggleFavorite: () => toggleFavorite(fileId),
-      onToggleReject: () => toggleRejected(fileId),
+      // The heart is an enter-only action (matching the viewer and outputs
+      // panel). A favorited item is cleared through the contextual X action.
+      onToggleFavorite: () => {
+        if (!favoriteIds.has(fileId)) toggleFavorite(fileId);
+      },
+      onToggleReject: () => {
+        if (favoriteIds.has(fileId)) toggleFavorite(fileId);
+        else toggleRejected(fileId);
+      },
     };
   };
 
@@ -1792,8 +1796,8 @@ function QueueCardComponent({
                       doesn't feel frozen. The QueueMediaEntry's own spinner
                       stays out of view (it's on the hidden back slot). */}
                   {isSwappingMedia && (
-                    <div className="pointer-events-none absolute right-2 top-2 z-30">
-                      <div className="h-6 w-6 rounded-full border-2 border-white/25 border-t-cyan-300 animate-spin" />
+                    <div className="queue-media-swap-spinner pointer-events-none absolute inset-0 z-30 flex items-center justify-center">
+                      <div className="h-[72px] w-[72px] rounded-full border-[6px] border-white/25 border-t-cyan-300 animate-spin" />
                     </div>
                   )}
                 </div>

@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import * as api from '@/api/client';
-import type { HistoryOutputImage, Workflow } from '@/api/types';
+import type { HistoryItem, HistoryOutputImage, Workflow } from '@/api/types';
 import type { PromptQueueRequest } from '@/api/client';
 import { useWorkflowStore, getWorkflowSignature } from '@/hooks/useWorkflow';
 import { useQueueStore } from '@/hooks/useQueue';
@@ -127,6 +127,46 @@ function rawHistorySignature(data: Record<string, { status?: { status_str?: stri
     parts.push(`${id}:${status?.status_str ?? ''}:${completed}:${outputCount}`);
   }
   return parts.join('|');
+}
+
+function isHistoryOutputImage(value: unknown): value is HistoryOutputImage {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
+  const candidate = value as Partial<HistoryOutputImage>;
+  return (
+    typeof candidate.filename === 'string' &&
+    typeof candidate.subfolder === 'string' &&
+    typeof candidate.type === 'string'
+  );
+}
+
+/**
+ * Queue media comes only from the standard UI keys (`images`, `gifs`,
+ * `videos`). Extensions publish other file arrays with the same descriptor
+ * shape — Image Compare's `a_images`/`b_images` temp copies (already handled
+ * by the dedicated comparer store), audio, text, 3D — and none of those
+ * belong on queue cards.
+ */
+const HISTORY_MEDIA_KEYS = ['images', 'gifs', 'videos'] as const;
+
+function collectHistoryOutputImages(outputs: HistoryItem['outputs']): HistoryOutputImage[] {
+  const images: HistoryOutputImage[] = [];
+  const seen = new Set<string>();
+
+  for (const output of Object.values(outputs)) {
+    for (const key of HISTORY_MEDIA_KEYS) {
+      const value = output[key];
+      if (!Array.isArray(value)) continue;
+      for (const candidate of value) {
+        if (!isHistoryOutputImage(candidate)) continue;
+        const id = getHistoryImageFileId(candidate);
+        if (seen.has(id)) continue;
+        seen.add(id);
+        images.push(candidate);
+      }
+    }
+  }
+
+  return images;
 }
 
 type DeferredDurationStat = { workflow: Workflow; durationMs: number };
@@ -348,19 +388,7 @@ export const useHistoryStore = create<HistoryState>((set, get) => ({
       };
 
       const entries: HistoryEntry[] = Object.entries(data).map(([prompt_id, item]) => {
-        // Collect all images from all output nodes
-        const images: HistoryOutputImage[] = [];
-        for (const output of Object.values(item.outputs)) {
-          if (output.images) {
-            images.push(...output.images);
-          }
-          if (output.gifs) {
-            images.push(...output.gifs);
-          }
-          if (output.videos) {
-            images.push(...output.videos);
-          }
-        }
+        const images = collectHistoryOutputImages(item.outputs);
 
         // Extract timestamp and duration from status messages if available
         let timestamp = Date.now();
@@ -535,21 +563,20 @@ export const useHistoryStore = create<HistoryState>((set, get) => ({
       }
       if (removedHere === 0) continue;
       changed = true;
-      // Remove the queue item only when it HAD a saved output (type 'output')
-      // and that was the last one — i.e. its real outputs were just deleted,
-      // leaving at most preview frames (type 'temp') behind. Without this,
-      // rejecting+deleting the one real output of a PreviewImage+SaveImage run
-      // left the card lingering showing just its previews.
-      //
-      // Deliberately scoped to entries that HAD a saved output: a preview-only
-      // run (no 'output' images ever) is never auto-removed here, even if all of
-      // its preview frames are gone — we don't delete queue items that never
-      // produced an output.
+      // A prompt is no longer a useful history item when either all of its media
+      // was explicitly deleted, or its last durable output was deleted and only
+      // transient previews remain. The first case matters for PreviewImage,
+      // Image Compare, and video extensions that intentionally publish `temp`
+      // files: Delete Rejected is allowed to delete those files, so retaining
+      // their prompt produced a queue card pointing at a broken asset.
       const hadSavedOutput = entry.outputs.images.some((img) => img.type === 'output');
       const savedOutputRemains = entry.outputs.images.some(
         (img) => img.type === 'output' && !deleted.has(getHistoryImageFileId(img)),
       );
-      if (hadSavedOutput && !savedOutputRemains) {
+      const mediaRemains = entry.outputs.images.some(
+        (img) => !deleted.has(getHistoryImageFileId(img)),
+      );
+      if (!mediaRemains || (hadSavedOutput && !savedOutputRemains)) {
         emptiedPromptIds.push(entry.prompt_id);
       }
     }

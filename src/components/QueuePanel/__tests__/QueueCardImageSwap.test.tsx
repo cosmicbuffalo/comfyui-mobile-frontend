@@ -21,7 +21,10 @@ const mocks = vi.hoisted(() => ({
     setQueueItemUserToggled: vi.fn(),
   },
   outputsState: {
-    favorites: [],
+    favorites: [] as string[],
+    rejected: [] as string[],
+    toggleFavorite: vi.fn(),
+    toggleRejected: vi.fn(),
   },
   workflowState: {
     promptToSession: {},
@@ -75,6 +78,10 @@ describe('QueueCard image-slot tab swap', () => {
     document.body.appendChild(container);
     root = createRoot(container);
     preloads.length = 0;
+    mocks.outputsState.favorites = [];
+    mocks.outputsState.rejected = [];
+    mocks.outputsState.toggleFavorite.mockClear();
+    mocks.outputsState.toggleRejected.mockClear();
     vi.stubGlobal('fetch', vi.fn(async () => ({
       ok: true,
       status: 200,
@@ -158,7 +165,13 @@ describe('QueueCard image-slot tab swap', () => {
     // swap-in-progress spinner is showing.
     expect(slotSrcs().some((s) => s.includes('b.png'))).toBe(true);
     expect(slotSrcs().some((s) => s.includes('a.png'))).toBe(true);
-    expect(container.querySelector('.animate-spin')).not.toBeNull();
+    const swapOverlay = container.querySelector('.queue-media-swap-spinner');
+    expect(swapOverlay).not.toBeNull();
+    expect(swapOverlay?.className).toContain('inset-0');
+    expect(swapOverlay?.className).toContain('items-center');
+    expect(swapOverlay?.className).toContain('justify-center');
+    expect(swapOverlay?.querySelector('.animate-spin')?.className).toContain('h-[72px]');
+    expect(swapOverlay?.querySelector('.animate-spin')?.className).toContain('w-[72px]');
 
     // The back slot's <img> finishes loading and the promote timer fires: the
     // slot swaps to a.png (b.png unmounts) and the spinner clears.
@@ -166,6 +179,101 @@ describe('QueueCard image-slot tab swap', () => {
     expect(slotSrcs()).toHaveLength(1);
     expect(slotSrcs()[0]).toContain('a.png');
     expect(container.querySelector('.animate-spin')).toBeNull();
+  });
+
+  it('keeps both hover actions available after an output is favorited', async () => {
+    mocks.outputsState.favorites = ['output/images/b.png'];
+    await act(async () => {
+      root.render(
+        <QueueCard
+          item={doneItem}
+          isActuallyRunning={false}
+          progress={0}
+          viewerImages={[]}
+          runningImages={[]}
+          onOpenMenu={() => {}}
+          isTopDoneItem
+        />,
+      );
+    });
+
+    const favoriteAction = container.querySelector('.favorite-badge-container');
+    const rejectAction = container.querySelector('.rejected-badge-container');
+    expect(favoriteAction?.className).toContain('group-hover:opacity-100');
+    expect(rejectAction?.className).toContain('group-hover:opacity-100');
+    expect(container.querySelector('.favorite-state-indicator')).not.toBeNull();
+
+    await act(async () => {
+      favoriteAction?.querySelector('button')?.click();
+    });
+    expect(mocks.outputsState.toggleFavorite).not.toHaveBeenCalled();
+
+    await act(async () => {
+      rejectAction?.querySelector('button')?.click();
+    });
+    expect(mocks.outputsState.toggleFavorite).toHaveBeenCalledWith('output/images/b.png');
+    expect(mocks.outputsState.toggleRejected).not.toHaveBeenCalled();
+  });
+
+  it('shows a temp-only comparer filename and its favorite/reject controls', async () => {
+    const comparerItem: UnifiedItem = {
+      ...doneItem,
+      data: {
+        ...doneItem.data,
+        outputs: {
+          images: [{ filename: 'comfy.compare.a_00001_.png', subfolder: '', type: 'temp' }],
+        },
+      },
+    };
+
+    await act(async () => {
+      root.render(
+        <QueueCard
+          item={comparerItem}
+          isActuallyRunning={false}
+          progress={0}
+          viewerImages={[]}
+          runningImages={[]}
+          onOpenMenu={() => {}}
+          isTopDoneItem
+        />,
+      );
+    });
+
+    expect(container.textContent).toContain('comfy.compare.a_00001_.png');
+    expect(container.querySelector('.favorite-badge-container')).not.toBeNull();
+    expect(container.querySelector('.rejected-badge-container')).not.toBeNull();
+  });
+
+  it('does not show persistent actions for a temporary preview while running', async () => {
+    const runningItem: UnifiedItem = {
+      id: 'swap-prompt',
+      status: 'running',
+      data: {
+        number: 1,
+        prompt_id: 'swap-prompt',
+        prompt: {},
+        extra: {},
+        outputs_to_execute: [],
+      },
+    };
+
+    await act(async () => {
+      root.render(
+        <QueueCard
+          item={runningItem}
+          isActuallyRunning
+          progress={50}
+          viewerImages={[]}
+          runningImages={[{ filename: 'live-preview.png', subfolder: '', type: 'temp' }]}
+          onOpenMenu={() => {}}
+          isTopDoneItem={false}
+        />,
+      );
+    });
+
+    expect(container.querySelector('.favorite-badge-container')).toBeNull();
+    expect(container.querySelector('.rejected-badge-container')).toBeNull();
   });
 
   const renderCard = async () => {

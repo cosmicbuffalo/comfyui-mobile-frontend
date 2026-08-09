@@ -45,6 +45,7 @@ import { FastGroupsBypasserControls } from './FastGroupsBypasserControls';
 interface WidgetDescriptor {
   widgetIndex: number;
   name: string;
+  inputName?: string;
   type: string;
   value: unknown;
   options?: Record<string, unknown> | unknown[];
@@ -72,7 +73,7 @@ interface NodeCardParametersProps {
   isPlaceholder?: boolean;
   setSeedMode: (nodeId: number, mode: 'fixed' | 'randomize' | 'increment' | 'decrement') => void;
   isWidgetPinned: (widgetIndex: number) => boolean;
-  toggleWidgetPin: (widgetIndex: number, widgetName: string, widgetType: string, options?: Record<string, unknown> | unknown[]) => void;
+  toggleWidgetPin: (widgetIndex: number, widgetName: string, widgetType: string, options?: Record<string, unknown> | unknown[], inputName?: string) => void;
   resolveWidgetValue?: (widgetIndex: number) => unknown;
   showFastGroupConfig: boolean;
   setShowFastGroupConfig: (open: boolean) => void;
@@ -370,8 +371,15 @@ export function NodeCardParameters({
   };
 
   const handleInputWidgetChange = (inputWidget: WidgetDescriptor) => (newValue: unknown) => {
-    onUpdateNodeWidget(inputWidget.widgetIndex, newValue, inputWidget.name);
+    onUpdateNodeWidget(
+      inputWidget.widgetIndex,
+      newValue,
+      inputWidget.inputName ?? inputWidget.name,
+    );
   };
+
+  const hasWidgetError = (widget: WidgetDescriptor) =>
+    errorInputNames.has(widget.inputName ?? widget.name) || errorInputNames.has(widget.name);
 
   const canPinWidget = (widgetType: string, widgetName: string) => {
     if (widgetType.startsWith('LM_LORA')) return false;
@@ -544,7 +552,11 @@ export function NodeCardParameters({
         }
       }
     } else {
-      onUpdateNodeWidget(widget.widgetIndex, newValue, widget.name);
+      onUpdateNodeWidget(
+        widget.widgetIndex,
+        newValue,
+        widget.inputName ?? widget.name,
+      );
     }
   };
 
@@ -894,8 +906,8 @@ export function NodeCardParameters({
                                     onChange={handleCrWidgetChange(widget)}
                                     disabled={isBypassed}
                                     isPinned={pinAllowed ? isWidgetPinned(widget.widgetIndex) : false}
-                                    onTogglePin={pinAllowed ? () => toggleWidgetPin(widget.widgetIndex, widget.name, widget.type, widgetOptions) : undefined}
-                                    hasError={errorInputNames.has(widget.name)}
+                                    onTogglePin={pinAllowed ? () => toggleWidgetPin(widget.widgetIndex, widget.name, widget.type, widgetOptions, widget.inputName) : undefined}
+                                    hasError={hasWidgetError(widget)}
                                     isPromoted={isPromotedWidget(widget.name)}
                                   />
                                 </div>
@@ -921,8 +933,8 @@ export function NodeCardParameters({
                       onChange={handleCrWidgetChange(widget)}
                       disabled={isBypassed}
                       isPinned={pinAllowed ? isWidgetPinned(widget.widgetIndex) : false}
-                      onTogglePin={pinAllowed ? () => toggleWidgetPin(widget.widgetIndex, widget.name, widget.type, widgetOptions) : undefined}
-                      hasError={errorInputNames.has(widget.name)}
+                      onTogglePin={pinAllowed ? () => toggleWidgetPin(widget.widgetIndex, widget.name, widget.type, widgetOptions, widget.inputName) : undefined}
+                      hasError={hasWidgetError(widget)}
                       isPromoted={isPromotedWidget(widget.name)}
                     />
                   </div>
@@ -941,8 +953,8 @@ export function NodeCardParameters({
                     onChange={handleInputWidgetChange(inputWidget)}
                     disabled={isBypassed}
                     isPinned={canPinWidget(inputWidget.type, inputWidget.name) ? isWidgetPinned(inputWidget.widgetIndex) : false}
-                    onTogglePin={canPinWidget(inputWidget.type, inputWidget.name) ? () => toggleWidgetPin(inputWidget.widgetIndex, inputWidget.name, inputWidget.type, inputWidget.options) : undefined}
-                    hasError={errorInputNames.has(inputWidget.name)}
+                    onTogglePin={canPinWidget(inputWidget.type, inputWidget.name) ? () => toggleWidgetPin(inputWidget.widgetIndex, inputWidget.name, inputWidget.type, inputWidget.options, inputWidget.inputName) : undefined}
+                    hasError={hasWidgetError(inputWidget)}
                     isPromoted={isPromotedWidget(inputWidget.name)}
                   />
                 </div>
@@ -960,8 +972,8 @@ export function NodeCardParameters({
                       onChange={handleWidgetChange(widget)}
                       disabled={isBypassed}
                       isPinned={canPinWidget(widget.type, widget.name) ? isWidgetPinned(widget.widgetIndex) : false}
-                      onTogglePin={canPinWidget(widget.type, widget.name) ? () => toggleWidgetPin(widget.widgetIndex, widget.name, widget.type, widget.options) : undefined}
-                      hasError={errorInputNames.has(widget.name)}
+                      onTogglePin={canPinWidget(widget.type, widget.name) ? () => toggleWidgetPin(widget.widgetIndex, widget.name, widget.type, widget.options, widget.inputName) : undefined}
+                      hasError={hasWidgetError(widget)}
                       isPromoted={isPromotedWidget(widget.name)}
                       labelAccessory={canPopOut ? (
                         <button

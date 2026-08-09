@@ -1,5 +1,8 @@
-import type { Workflow, WorkflowNode, NodeTypes } from '@/api/types';
-import { getNodeWidgetIndexMap, isWidgetInputType, isComboType, skipImplicitSeedControlSlot } from '@/utils/workflowInputs';
+import type { Workflow, WorkflowNode, NodeTypes, NodeTypeDefinition } from '@/api/types';
+import {
+  getNodeWidgetIndexMap,
+  getActiveNodeInputDefinitions,
+} from '@/utils/workflowInputs';
 
 // Seed mode type
 export type SeedMode = 'fixed' | 'randomize' | 'increment' | 'decrement';
@@ -32,6 +35,14 @@ export const RGTHREE_SEED_NODE_TYPE = 'Seed (rgthree)';
 const NODE_TYPES_WITHOUT_SEED_CONTROL: ReadonlySet<string> = new Set([
   RGTHREE_SEED_NODE_TYPE,
 ]);
+
+/**
+ * True when this node type strips ComfyUI's auto-added control_after_generate
+ * widget, so a freshly built node must not reserve a slot for it.
+ */
+export function nodeTypeStripsSeedControl(nodeType: string): boolean {
+  return NODE_TYPES_WITHOUT_SEED_CONTROL.has(nodeType);
+}
 
 /**
  * True when the value at widgets_values[seedIndex + 1] represents a real
@@ -94,6 +105,45 @@ export function findSeedControlWidgetIndex(
   return entry ? entry.widgetIndex : null;
 }
 
+/**
+ * Walk a node's inputs in widgets_values order, calling `visit` for each input
+ * that occupies a widget slot. Walking stops at the first `visit` that returns
+ * a value other than undefined, which becomes the result.
+ *
+ * This mirrors the slot arithmetic in widgetDefinitions.collectWidgetDefinitions
+ * — including the implicit control_after_generate slot after an INT seed and the
+ * conditional sub-inputs a COMFY_DYNAMICCOMBO_V3 contributes right after itself.
+ * The two must stay in agreement: widgetDefinitions decides which widget the UI
+ * renders at an index, while the callers here decide which index gets WRITTEN.
+ * A mismatch silently writes to a different widget than the one on screen.
+ * See widgetIndexAgreement.test.ts, which pins both against a known layout.
+ */
+function walkWidgetSlots(
+  node: WorkflowNode,
+  typeDef: NodeTypeDefinition,
+  visit: (
+    name: string,
+    qualifiedName: string,
+    typeOrOptions: string | unknown[],
+    widgetIndex: number
+  ) => number | null | undefined
+): number | null {
+  for (const definition of getActiveNodeInputDefinitions(typeDef, node)) {
+    if (definition.widgetIndex === null) continue;
+    const [typeOrOptions] = definition.inputDef;
+    const visited = visit(
+      definition.name,
+      definition.qualifiedName,
+      typeOrOptions,
+      definition.widgetIndex,
+    );
+    if (visited !== undefined) {
+      return visited;
+    }
+  }
+  return null;
+}
+
 export function getWidgetIndexForInput(
   workflow: Workflow,
   nodeTypes: NodeTypes | null,
@@ -111,39 +161,16 @@ export function getWidgetIndexForInput(
   const typeDef = nodeTypes[node.type];
   if (!typeDef?.input) return null;
 
-  const requiredOrder = typeDef.input_order?.required || Object.keys(typeDef.input.required || {});
-  const optionalOrder = typeDef.input_order?.optional || Object.keys(typeDef.input.optional || {});
-  const orderedInputs = [...requiredOrder, ...optionalOrder];
-  let widgetIndex = 0;
+  const active = getActiveNodeInputDefinitions(typeDef, node, widgetIndexMap)
+    .filter((definition) => definition.widgetIndex !== null);
+  const exact = active.find((definition) => definition.qualifiedName === inputName);
+  if (exact?.widgetIndex != null) return exact.widgetIndex;
 
-  for (const name of orderedInputs) {
-    const inputDef = typeDef.input.required?.[name] || typeDef.input.optional?.[name];
-    if (!inputDef) continue;
-
-    const [typeOrOptions] = inputDef;
-    const inputEntry = node.inputs.find((i) => i.name === name);
-    const isConnected = inputEntry?.link != null;
-    const isWidgetToggle = Boolean(inputEntry?.widget) && !isConnected;
-    const hasSocket = Boolean(inputEntry);
-    // V3 string-typed combos ("COMBO", etc.) are not covered by isWidgetInputType.
-    const isWidgetType = isWidgetInputType(typeOrOptions) || isWidgetToggle || !hasSocket || (!isConnected && isComboType(typeOrOptions));
-    const isWidget = isWidgetType;
-
-    if (isWidget) {
-      if (name === inputName) {
-        return widgetIndex;
-      }
-      widgetIndex += 1;
-
-      if (String(typeOrOptions) === 'INT' && (name === 'seed' || name === 'noise_seed')) {
-        if (skipImplicitSeedControlSlot(node, widgetIndex)) {
-          widgetIndex += 1;
-        }
-      }
-    }
-  }
-
-  return null;
+  // Preserve the long-standing bare-name API when it is unambiguous. Callers
+  // that edit nested DynamicCombos use qualified names, so duplicate child
+  // names never silently select the first branch.
+  const bareMatches = active.filter((definition) => definition.name === inputName);
+  return bareMatches.length === 1 ? bareMatches[0].widgetIndex : null;
 }
 
 // Find seed widget index by looking for any INT input containing 'seed' in its name
@@ -196,42 +223,14 @@ export function findSeedWidgetIndex(
   }
 
   const widgetIndexMap = getNodeWidgetIndexMap(workflow, node);
-  const requiredOrder = typeDef.input_order?.required || Object.keys(typeDef.input.required || {});
-  const optionalOrder = typeDef.input_order?.optional || Object.keys(typeDef.input.optional || {});
-  const orderedInputs = [...requiredOrder, ...optionalOrder];
-  let widgetIndex = 0;
 
-  for (const name of orderedInputs) {
-    const inputDef = typeDef.input.required?.[name] || typeDef.input.optional?.[name];
-    if (!inputDef) continue;
-
-    const [typeOrOptions] = inputDef;
-    const inputEntry = node.inputs.find((i) => i.name === name);
-    const isConnected = inputEntry?.link != null;
-    const isWidgetToggle = Boolean(inputEntry?.widget) && !isConnected;
-    const hasSocket = Boolean(inputEntry);
-    // V3 string-typed combos ("COMBO", etc.) are not covered by isWidgetInputType.
-    const isWidgetType = isWidgetInputType(typeOrOptions) || isWidgetToggle || !hasSocket || (!isConnected && isComboType(typeOrOptions));
-
-    if (isWidgetType) {
-      const mappedIndex = widgetIndexMap?.[name];
-      const indexToUse = mappedIndex ?? widgetIndex;
-
-      // Check if this is an INT input with 'seed' in its name (case-insensitive)
-      if (String(typeOrOptions) === 'INT' && name.toLowerCase().includes('seed')) {
-        return indexToUse;
-      }
-
-      widgetIndex += 1;
-      if (String(typeOrOptions) === 'INT' && (name === 'seed' || name === 'noise_seed')) {
-        if (skipImplicitSeedControlSlot(node, widgetIndex)) {
-          widgetIndex += 1;
-        }
-      }
+  return walkWidgetSlots(node, typeDef, (name, qualifiedName, typeOrOptions, widgetIndex) => {
+    // Any INT input with 'seed' in its name (case-insensitive).
+    if (String(typeOrOptions) === 'INT' && name.toLowerCase().includes('seed')) {
+      return widgetIndexMap?.[qualifiedName] ?? widgetIndexMap?.[name] ?? widgetIndex;
     }
-  }
-
-  return null;
+    return undefined;
+  });
 }
 
 export function getSeedStep(nodeTypes: NodeTypes, node: WorkflowNode): number {

@@ -1,7 +1,7 @@
 import { useMemo, useRef, useState } from "react";
 import type { ChangeEvent } from "react";
 import Select, { components, createFilter } from "react-select";
-import type { OptionProps } from "react-select";
+import type { OnChangeValue, OptionProps } from "react-select";
 import { FullscreenWidgetModal } from "../modals/FullscreenWidgetModal";
 import { PinButton } from "./PinButton";
 import { ChevronDownIcon, PlusIcon, FolderIcon, PromotedWidgetIcon, FunnelIcon, CheckIcon } from "@/components/icons";
@@ -13,7 +13,7 @@ import { resolveUploadFolder } from "./outputPickerUtils";
 import type { AssetSource } from "@/api/client";
 import { useCoarsePointer } from "@/hooks/useCoarsePointer";
 import { themeColors } from "@/theme/colors";
-import { resolveComboOption } from "@/utils/workflowInputs";
+import { isMultiSelectCombo, resolveComboOption } from "@/utils/workflowInputs";
 import type { ModelLookup } from "@/api/loraManagerClient";
 import {
   ModelOption,
@@ -33,6 +33,7 @@ import {
   appChromeIconButtonActiveClassName,
   appChromeIconButtonClassName,
 } from "@/components/chromeStyles";
+import { comboSelectionToValue } from "./comboSelection";
 
 const VIDEO_EXTENSIONS = new Set(["mp4", "webm", "mkv", "gif", "mov", "avi", "wmv"]);
 const comboInputBackground = "rgb(2 6 23 / 0.8)";
@@ -44,7 +45,6 @@ const NULL_OPTION_VALUE = "__null__";
 // Options that participate in the base-model filter (real selectable models).
 const isFilterableOption = (opt: ComboSelectOption) =>
   opt.value !== NULL_OPTION_VALUE && !opt.isMissing;
-
 
 interface ComboControlProps {
   containerClass: string;
@@ -109,6 +109,9 @@ export function ComboControl({
     if (Array.isArray(options)) return options;
     return (options?.options as unknown[]) ?? [];
   }, [options]);
+  const isMultiSelect = isMultiSelectCombo(
+    Array.isArray(options) ? undefined : options,
+  );
   const supportsImageUpload = Boolean(getOption("image_upload"));
   const imageFolder = (getOption("image_folder") as string) ?? "input";
   const supportsVideoUpload = useMemo(() => {
@@ -140,6 +143,14 @@ export function ComboControl({
     () => Array.from(new Set([...choices, ...uploadedChoices])),
     [choices, uploadedChoices],
   );
+  const rawChoiceByString = useMemo(() => {
+    const result = new Map<string, unknown>();
+    for (const choice of rawChoices) {
+      const key = String(choice);
+      if (!result.has(key)) result.set(key, choice);
+    }
+    return result;
+  }, [rawChoices]);
   const rawValueString =
     value === null ? NULL_OPTION_VALUE : String(value ?? "");
   const rawBase = rawValueString.split(/[\\/]/).pop() ?? rawValueString;
@@ -150,11 +161,20 @@ export function ComboControl({
     resolvedValueString !== null ||
     mergedChoices.includes(rawValueString) ||
     mergedChoices.includes(rawBase);
-  const isMissingValue =
-    value !== null &&
-    value !== undefined &&
-    rawValueString !== "" &&
-    !hasValueMatch;
+  const selectedRawValues = useMemo(
+    () => isMultiSelect
+      ? Array.isArray(value) ? value : value == null ? [] : [value]
+      : [value],
+    [isMultiSelect, value],
+  );
+  const missingValues = useMemo(
+    () => selectedRawValues.filter((entry) => {
+      if (entry === null || entry === undefined || String(entry) === "") return false;
+      return resolveComboOption(entry, mergedChoices) === undefined;
+    }),
+    [mergedChoices, selectedRawValues],
+  );
+  const isMissingValue = isMultiSelect ? missingValues.length > 0 : !hasValueMatch && missingValues.length > 0;
   const valueString = hasValueMatch
     ? resolvedValueString ??
       (mergedChoices.includes(rawValueString) ? rawValueString : rawBase)
@@ -169,27 +189,46 @@ export function ComboControl({
         ? optionValue.replace(/\.safetensors$/i, "")
         : optionValue;
     // In model mode, prefer Lora Manager's display name; otherwise plain filename.
-    const buildOption = (optionValue: string): SelectOption => {
+    const buildOption = (optionValue: string, rawValue: unknown = optionValue): SelectOption => {
       const model = isModelMode ? modelLookup!(optionValue) : null;
       const label = model?.model_name?.trim() || getDisplayLabel(optionValue);
-      return { value: optionValue, label, model };
+      return { value: optionValue, label, model, rawValue };
     };
     const opts: SelectOption[] = [];
     if (value === null || hasNullChoice) {
       opts.push({ value: NULL_OPTION_VALUE, label: "None" });
     }
-    if (isMissingValue) {
+    for (const missingValue of missingValues) {
+      const missingString = String(missingValue);
       opts.push({
-        value: rawValueString,
-        label: getDisplayLabel(rawValueString),
+        value: missingString,
+        rawValue: missingValue,
+        label: getDisplayLabel(missingString),
         isMissing: true,
       });
     }
-    opts.push(...mergedChoices.map(buildOption));
+    opts.push(...mergedChoices.map((optionValue) => {
+      const rawValue = rawChoiceByString.get(optionValue) ?? optionValue;
+      return buildOption(optionValue, rawValue);
+    }));
     return opts;
-  }, [mergedChoices, isModelMode, modelLookup, stripSafetensorsSuffix, value, hasNullChoice, isMissingValue, rawValueString]);
+  }, [mergedChoices, isModelMode, modelLookup, stripSafetensorsSuffix, value, hasNullChoice, missingValues, rawChoiceByString]);
   const selectedOption =
     selectOptions.find((opt) => opt.value === valueString) ?? null;
+  const selectedOptions = isMultiSelect
+    ? (Array.isArray(value) ? value : value == null ? [] : [value])
+        .map((entry) => selectOptions.find(
+          // A null member selects the "None" option, which is keyed by the
+          // sentinel rather than String(null).
+          (opt) => opt.value === (entry === null ? NULL_OPTION_VALUE : String(entry)),
+        ))
+        .filter((option): option is SelectOption => option !== undefined)
+    : [];
+  const selectValue = isMultiSelect ? selectedOptions : selectedOption;
+  const selectedLabel = isMultiSelect
+    ? selectedOptions.map((option) => option.label).join(', ')
+    : selectedOption?.label;
+  const hasSelection = isMultiSelect ? selectedOptions.length > 0 : selectedOption !== null;
 
   // Model-picker base-model filter. Collect the distinct base_model values present
   // in the resolved options (plus whether any lack metadata → "Unknown").
@@ -322,14 +361,15 @@ export function ComboControl({
     onModalClose?.();
   };
 
-  const handleSelectChange = (next: SelectOption | null) => {
-    if (!next) return;
-    onChange(next.value === NULL_OPTION_VALUE ? null : next.value);
+  const handleSelectChange = (next: OnChangeValue<SelectOption, boolean>) => {
+    const nextValue = comboSelectionToValue(next, isMultiSelect);
+    if (nextValue === undefined) return;
+    onChange(nextValue);
   };
 
-  const handleModalSelectChange = (next: SelectOption | null) => {
+  const handleModalSelectChange = (next: OnChangeValue<SelectOption, boolean>) => {
     handleSelectChange(next);
-    handleClose();
+    if (!isMultiSelect) handleClose();
   };
 
   const handleUploadClick = () => {
@@ -478,7 +518,7 @@ export function ComboControl({
           }}
         >
           <span className={`truncate min-w-0 flex-1 text-slate-100 ${hasPin ? "pr-16" : "pr-6"}`}>
-            {selectedOption?.label ?? (valueString || "Select...")}
+            {selectedLabel || valueString || "Select..."}
           </span>
           <span className="absolute right-0 top-0 bottom-0 flex items-center pointer-events-none">
             <span className="px-2 text-slate-400"><ChevronDownIcon className="w-5 h-5" /></span>
@@ -543,12 +583,12 @@ export function ComboControl({
             </div>
           ) : (
             <span
-              className={`combo-control-trigger-label truncate min-w-0 flex-1 ${!selectedOption ? "text-slate-500" : "text-slate-100"} ${hasPin ? "pr-16" : "pr-6"}`}
+              className={`combo-control-trigger-label truncate min-w-0 flex-1 ${!hasSelection ? "text-slate-500" : "text-slate-100"} ${hasPin ? "pr-16" : "pr-6"}`}
               style={
-                selectedOption ? { color: themeColors.text.onDark } : undefined
+                hasSelection ? { color: themeColors.text.onDark } : undefined
               }
             >
-              {selectedOption ? selectedOption.label : "Select..."}
+              {selectedLabel || "Select..."}
             </span>
           )}
 
@@ -600,12 +640,13 @@ export function ComboControl({
                 the control's top-right corner (the control reserves right padding
                 for it), so results aren't squished into a narrower column. */}
             <div className="relative">
-            <Select<SelectOption, false>
+            <Select<SelectOption, boolean>
               className={modalSelectClassName}
               classNamePrefix="rs"
               options={modalSelectOptions}
-              value={selectedOption}
+              value={selectValue}
               onChange={handleModalSelectChange}
+              isMulti={isMultiSelect}
               isSearchable
               autoFocus={!forceModalOpen}
               menuIsOpen={forceModalOpen ? undefined : true}
@@ -755,12 +796,13 @@ export function ComboControl({
         ref={selectWrapperRef}
         data-swipe-nav-ignore="true"
       >
-        <Select<SelectOption, false>
+        <Select<SelectOption, boolean>
           className={selectClassName}
           classNamePrefix="rs"
           options={selectOptions}
-          value={selectedOption}
+          value={selectValue}
           onChange={handleSelectChange}
+          isMulti={isMultiSelect}
           isSearchable
           isDisabled={disabled}
           filterOption={createFilter({

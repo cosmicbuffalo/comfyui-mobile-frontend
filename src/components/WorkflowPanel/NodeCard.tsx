@@ -3,7 +3,6 @@ import type { WorkflowInput, WorkflowNode } from '@/api/types';
 import { useWorkflowStore, getWidgetDefinitions, getInputWidgetDefinitions, getWidgetIndexForInput, findSeedWidgetIndex, findSeedControlWidgetIndex, resolveSubgraphPlaceholderWidgetDefs, resolveSubgraphPlaceholderInputWidgetDefs, resolveSubgraphProxyWidgetDefs, resolveSubgraphProxyInputWidgetDefs, resolveSubgraphBoundaryWidgetDefs, resolveSubgraphBoundaryInputWidgetDefs, isPlaceholderPromotedConnection } from '@/hooks/useWorkflow';
 import type { LinkedWidgetRoute, ProxyWidgetRoute } from '@/utils/widgetDefinitions';
 import { isSubgraphPlaceholder } from '@/utils/canonicalWorkflowOps';
-import { isComboType } from '@/utils/workflowInputs';
 import { isLoraManagerNodeType } from '@/utils/loraManager';
 import { useSeedStore } from '@/hooks/useSeed';
 import { useBookmarksStore } from '@/hooks/useBookmarks';
@@ -132,6 +131,7 @@ export const NodeCard = memo(function NodeCard({
       nodeId: number;
       widgetIndex: number;
       widgetName: string;
+      inputName?: string;
       widgetType: string;
       options?: Record<string, unknown> | unknown[];
     } | null) => {
@@ -391,7 +391,7 @@ export const NodeCard = memo(function NodeCard({
 
   // Collect all pinnable widgets for the pin submenu
   const pinnableWidgets = useMemo(() => {
-    const items: Array<{ widgetIndex: number; name: string; type: string; options?: Record<string, unknown> | unknown[] }> = [];
+    const items: Array<{ widgetIndex: number; name: string; inputName?: string; type: string; options?: Record<string, unknown> | unknown[] }> = [];
     const isPinEligible = (widgetType: string, widgetName: string) => {
       if (widgetType.startsWith('LM_LORA')) return false;
       if (widgetType.startsWith('TW_')) return false;
@@ -400,11 +400,11 @@ export const NodeCard = memo(function NodeCard({
     };
     visibleInputWidgets.forEach((w) => {
       if (!isPinEligible(w.type, w.name)) return;
-      items.push({ widgetIndex: w.widgetIndex, name: w.name, type: w.type, options: w.options });
+      items.push({ widgetIndex: w.widgetIndex, name: w.name, inputName: w.inputName, type: w.type, options: w.options });
     });
     visibleWidgets.forEach((w) => {
       if (!isPinEligible(w.type, w.name)) return;
-      items.push({ widgetIndex: w.widgetIndex, name: w.name, type: w.type, options: w.options });
+      items.push({ widgetIndex: w.widgetIndex, name: w.name, inputName: w.inputName, type: w.type, options: w.options });
     });
     return items;
   }, [visibleInputWidgets, visibleWidgets, isLoraManagerNode]);
@@ -422,22 +422,10 @@ export const NodeCard = memo(function NodeCard({
     }
     if (input.link != null) return false;
     if (input.widget) return true;
-    const inputDef = typeDef?.input?.required?.[input.name] || typeDef?.input?.optional?.[input.name];
-    if (!inputDef) return false;
-    const [typeOrOptions, options] = inputDef;
-    if (isComboType(typeOrOptions)) return true;
-    const normalized = String(typeOrOptions).toUpperCase();
-    const hasDefault = Object.prototype.hasOwnProperty.call(options ?? {}, 'default');
-    return [
-      'INT',
-      'FLOAT',
-      'BOOLEAN',
-      'STRING',
-    ].includes(normalized) ||
-      normalized.includes('AUTOCOMPLETE_TEXT_LORAS') ||
-      normalized.includes('AUTOCOMPLETE_TEXT_PROMPT') ||
-      hasDefault;
-  }, [typeDef, isPlaceholder]);
+    return [...allResolvedWidgets, ...inputWidgets].some(
+      (widget) => (widget.inputName ?? widget.name) === input.name,
+    );
+  }, [allResolvedWidgets, inputWidgets, isPlaceholder]);
 
   const connectionInputs = useMemo(() => {
     const real = node.inputs.filter((input) => {
@@ -484,7 +472,7 @@ export const NodeCard = memo(function NodeCard({
   };
 
   // Helper to toggle pin for a widget
-  const toggleWidgetPin = (widgetIndex: number, widgetName: string, widgetType: string, options?: Record<string, unknown> | unknown[]) => {
+  const toggleWidgetPin = (widgetIndex: number, widgetName: string, widgetType: string, options?: Record<string, unknown> | unknown[], inputName?: string) => {
     if (isWidgetPinned(widgetIndex)) {
       handleSetPinnedWidget(null);
     } else {
@@ -492,6 +480,7 @@ export const NodeCard = memo(function NodeCard({
         nodeId: node.id,
         widgetIndex,
         widgetName,
+        inputName,
         widgetType,
         options
       });
@@ -654,7 +643,13 @@ export const NodeCard = memo(function NodeCard({
   const updateLinkedSourceWidget = useCallback(
     (route: LinkedWidgetRoute, value: unknown): boolean => {
       if (route.subgraphId != null) {
-        updateSubgraphInnerNodeWidget(route.subgraphId, route.nodeId, route.widgetIndex, value);
+        updateSubgraphInnerNodeWidget(
+          route.subgraphId,
+          route.nodeId,
+          route.widgetIndex,
+          value,
+          route.widgetName,
+        );
         return true;
       }
       const sourceNode = findLinkedSourceNode(route);
@@ -675,7 +670,13 @@ export const NodeCard = memo(function NodeCard({
     (widgetIndex: number, value: unknown, widgetName?: string) => {
       const proxy = proxyRoutes.get(widgetIndex);
       if (proxy) {
-        updateSubgraphInnerNodeWidget(proxy.subgraphId, proxy.innerNodeId, proxy.innerWidgetIndex, value);
+        updateSubgraphInnerNodeWidget(
+          proxy.subgraphId,
+          proxy.innerNodeId,
+          proxy.innerWidgetIndex,
+          value,
+          proxy.innerWidgetName ?? widgetName,
+        );
       } else {
         const linkedSource = linkedSourceRoutes.get(widgetIndex);
         if (linkedSource && updateLinkedSourceWidget(linkedSource, value)) {
@@ -729,7 +730,8 @@ export const NodeCard = memo(function NodeCard({
             proxy.subgraphId,
             proxy.innerNodeId,
             proxy.innerWidgetIndex,
-            value
+            value,
+            proxy.innerWidgetName,
           );
         } else {
           const linkedSource = linkedSourceRoutes.get(widgetIndex);

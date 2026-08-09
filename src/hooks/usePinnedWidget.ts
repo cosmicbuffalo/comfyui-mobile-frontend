@@ -6,6 +6,8 @@ export interface PinnedWidget {
   nodeId: number;
   widgetIndex: number;
   widgetName: string;
+  /** Canonical schema name when the display name is shortened or decorated. */
+  inputName?: string;
   widgetType: string;
   options?: Record<string, unknown> | unknown[];
 }
@@ -20,6 +22,16 @@ interface PinnedWidgetState {
   clearPinnedWidgetForKey: (cacheKey: string | null | undefined) => void;
   restorePinnedWidgetForWorkflow: (cacheKey: string | null | undefined, workflow: Workflow) => void;
   clearCurrentPin: () => void;
+  /**
+   * Re-point or drop pins on `nodeId` after its widget slots changed (e.g. a
+   * DynamicCombo branch switch). `resolveIndex` returns the widget's new slot,
+   * or null when the pinned input no longer exists on the node.
+   */
+  reconcilePinsForNode: (
+    nodeId: number,
+    cacheKey: string | null | undefined,
+    resolveIndex: (pin: PinnedWidget) => number | null,
+  ) => void;
 }
 
 export const usePinnedWidgetStore = create<PinnedWidgetState>()(
@@ -91,6 +103,35 @@ export const usePinnedWidgetStore = create<PinnedWidgetState>()(
 
       clearCurrentPin: () => {
         set({ pinnedWidget: null, pinOverlayOpen: false });
+      },
+
+      reconcilePinsForNode: (nodeId, cacheKey, resolveIndex) => {
+        set((state) => {
+          const reconcile = (pin: PinnedWidget | null): PinnedWidget | null => {
+            if (!pin || pin.nodeId !== nodeId) return pin;
+            const index = resolveIndex(pin);
+            if (index === null) return null;
+            return index === pin.widgetIndex ? pin : { ...pin, widgetIndex: index };
+          };
+
+          const next: Partial<PinnedWidgetState> = {};
+          const current = reconcile(state.pinnedWidget);
+          if (current !== state.pinnedWidget) {
+            next.pinnedWidget = current;
+            if (!current) next.pinOverlayOpen = false;
+          }
+          if (cacheKey) {
+            const cached = state.pinnedWidgets[cacheKey] ?? null;
+            const reconciled = reconcile(cached);
+            if (reconciled !== cached) {
+              const nextPinnedWidgets = { ...state.pinnedWidgets };
+              if (reconciled) nextPinnedWidgets[cacheKey] = reconciled;
+              else delete nextPinnedWidgets[cacheKey];
+              next.pinnedWidgets = nextPinnedWidgets;
+            }
+          }
+          return next;
+        });
       }
     }),
     {

@@ -114,5 +114,7 @@ describe('QueueCard latent preview', () => {
     const labels = tabs.map((t) => t.getAttribute('title'));
     expect(labels).toContain('Latent');
     expect(labels).toContain('Preview #1');
+    expect(container.querySelector('.favorite-badge-container')).toBeNull();
+    expect(container.querySelector('.rejected-badge-container')).toBeNull();
   });
 });

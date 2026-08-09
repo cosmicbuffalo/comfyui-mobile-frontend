@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { getHistory, getQueue, searchUserImagesByPrompt } from '@/api/client';
+import { deleteHistoryItems, getHistory, getQueue, searchUserImagesByPrompt } from '@/api/client';
 
 describe('searchUserImagesByPrompt', () => {
   afterEach(() => {
@@ -80,5 +80,12 @@ describe('queue bootstrap requests', () => {
 
     expect(fetchMock).toHaveBeenNthCalledWith(1, '/api/queue', { cache: 'no-store' });
     expect(fetchMock).toHaveBeenNthCalledWith(2, '/api/history?max_items=10', { cache: 'no-store' });
+  });
+
+  it('reports a rejected server-side history deletion', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, status: 500 } as Response)));
+
+    await expect(deleteHistoryItems(['prompt-with-deleted-video']))
+      .rejects.toThrow('Failed to delete history items');
   });
 });

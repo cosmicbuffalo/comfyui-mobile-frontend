@@ -15,6 +15,7 @@ import { useWorkflowHiddenStore } from '../useWorkflowHidden';
 import { useBookmarksStore } from '../useBookmarks';
 import { useWorkflowErrorsStore } from '../useWorkflowErrors';
 import { useSeedStore } from '../useSeed';
+import { usePinnedWidgetStore } from '../usePinnedWidget';
 import { queueAndGetEmbeddedWorkflow, queueAndGetPromptRequest } from './helpers/queueAndGetEmbeddedWorkflow';
 
 function makeNode(id: number, overrides?: Partial<WorkflowNode>): WorkflowNode {
@@ -662,7 +663,8 @@ describe('useWorkflow editing actions', () => {
     const next = useWorkflowStore.getState();
     const newNode = next.workflow?.nodes.find((n) => n.id === newId);
     expect(newId).toBe(2);
-    expect(newNode?.inputs.map((i) => i.name)).toEqual(['model']);
+    expect(newNode?.inputs.map((i) => i.name)).toEqual(['model', 'steps']);
+    expect(newNode?.inputs[1]?.widget).toEqual({ name: 'steps' });
     expect(newNode?.outputs.map((o) => o.type)).toEqual(['MODEL']);
     expect(newNode?.widgets_values).toEqual([8]);
     expect(newNode?.pos[0]).toBeGreaterThanOrEqual(124);
@@ -670,6 +672,499 @@ describe('useWorkflow editing actions', () => {
     expect(flattenLayoutToNodeOrder(next.mobileLayout!)).toEqual([1, 2]);
     // Node 2 should be in group 10
     expect(next.mobileLayout!.groups[makeLocationPointer({ type: 'group', groupId: 10, subgraphId: null })]).toContainEqual({ type: 'node', id: 2 });
+  });
+
+  it('addNode gives V3 string-typed combos widget values and coexisting sockets', () => {
+    // A V3 node: one real socket, a DynamicCombo whose default option adds two
+    // sub-inputs, a plain V3 COMBO, an INT seed (implicit control slot), and a
+    // explicitly socketless COLOR widget.
+    const v3NodeTypes: NodeTypes = {
+      V3Node: {
+        input: {
+          required: {
+            image: ['IMAGE'],
+            resize_type: ['COMFY_DYNAMICCOMBO_V3', {
+              options: [
+                { key: 'by size', inputs: { required: {
+                  width: ['INT', { default: 512 }],
+                  crop: ['COMBO', { default: 'center', options: ['disabled', 'center'] }],
+                } } },
+                { key: 'by factor', inputs: { required: { factor: ['FLOAT', { default: 2.0 }] } } },
+              ],
+            }],
+            scale_method: ['COMBO', { default: 'area', options: ['nearest', 'area'] }],
+            seed: ['INT', { default: 0, control_after_generate: true }],
+            tint: ['COLOR', { default: '#ffffff', socketless: true }],
+          },
+        },
+        input_order: {
+          required: ['image', 'resize_type', 'scale_method', 'seed', 'tint'],
+        },
+        output: ['IMAGE'],
+        output_name: ['IMAGE'],
+        name: 'V3Node',
+        display_name: 'V3 Node',
+        description: '',
+        python_module: '',
+        category: 'test',
+      },
+    } as unknown as NodeTypes;
+
+    useWorkflowStore.setState({
+      workflow: makeWorkflow([makeNode(1)], []),
+      nodeTypes: v3NodeTypes,
+      ...rootNodeStableRegistry([1]),
+      mobileLayout: { root: [{ type: 'node', id: 1 }], groups: {}, subgraphs: {}, hiddenBlocks: {} },
+    });
+
+    const newId = useWorkflowStore.getState().addNode('V3Node', {
+      nearNodeHierarchicalKey: rootNodeHierarchicalKey(1),
+    });
+    const added = useWorkflowStore.getState().workflow?.nodes.find((n) => n.id === newId);
+
+    // Current ComfyUI gives widgets a coexisting socket; only the explicitly
+    // socketless color omits one. Dynamic children are active for the default.
+    expect(added?.inputs.map((i) => i.name)).toEqual([
+      'image',
+      'resize_type',
+      'resize_type.width',
+      'resize_type.crop',
+      'scale_method',
+      'seed',
+    ]);
+    expect(added?.inputs.find((input) => input.name === 'resize_type')?.widget)
+      .toEqual({ name: 'resize_type' });
+    // Slot order: combo, its default option's sub-inputs, then the rest, with
+    // control_after_generate reserved right after the INT seed.
+    expect(added?.widgets_values).toEqual([
+      'by size', 512, 'center', 'area', 0, 'randomize', '#ffffff',
+    ]);
+  });
+
+  it('updateNodeWidget rebuilds DynamicCombo sub-slots when the option changes', () => {
+    const dynTypes: NodeTypes = {
+      Resize: {
+        input: {
+          required: {
+            image: ['IMAGE'],
+            resize_type: ['COMFY_DYNAMICCOMBO_V3', {
+              options: [
+                { key: 'by size', inputs: { required: {
+                  width: ['INT', { default: 512 }],
+                  crop: ['COMBO', { default: 'center', options: ['disabled', 'center'] }],
+                } } },
+                { key: 'by factor', inputs: { required: { factor: ['FLOAT', { default: 2.0 }] } } },
+              ],
+            }],
+            scale_method: ['COMBO', { default: 'area', options: ['nearest', 'area'] }],
+          },
+        },
+        input_order: { required: ['image', 'resize_type', 'scale_method'] },
+        output: ['IMAGE'],
+        output_name: ['IMAGE'],
+        name: 'Resize',
+        display_name: 'Resize',
+        description: '',
+        python_module: '',
+        category: 'test',
+      },
+    } as unknown as NodeTypes;
+
+    // In "by size": [combo, width, crop, scale_method]
+    const target = makeNode(1, {
+      type: 'Resize',
+      inputs: [{ name: 'image', type: 'IMAGE', link: null }],
+      widgets_values: ['by size', 768, 'disabled', 'nearest'],
+    });
+    useWorkflowStore.setState({
+      workflow: makeWorkflow([target], []),
+      nodeTypes: dynTypes,
+      ...rootNodeStableRegistry([1]),
+    });
+
+    // `image` is a materialized socket, so the combo is widget slot 0.
+    // Switch to "by factor", which contributes a single sub-input.
+    useWorkflowStore.getState().updateNodeWidget(rootNodeHierarchicalKey(1), 0, 'by factor', 'resize_type');
+
+    const next = useWorkflowStore.getState().workflow?.nodes.find((n) => n.id === 1);
+    // Stale width/crop are gone; scale_method keeps its value instead of being
+    // read out of a leftover slot.
+    expect(next?.widgets_values).toEqual(['by factor', 2.0, 'nearest']);
+  });
+
+  it('updateNodeWidget reconciles pins and stale index maps across a DynamicCombo branch change', () => {
+    const dynTypes: NodeTypes = {
+      Resize: {
+        input: {
+          required: {
+            image: ['IMAGE'],
+            resize_type: ['COMFY_DYNAMICCOMBO_V3', {
+              options: [
+                { key: 'by size', inputs: { required: {
+                  width: ['INT', { default: 512 }],
+                  crop: ['COMBO', { default: 'center', options: ['disabled', 'center'] }],
+                } } },
+                { key: 'by factor', inputs: { required: { factor: ['FLOAT', { default: 2.0 }] } } },
+              ],
+            }],
+            scale_method: ['COMBO', { default: 'area', options: ['nearest', 'area'] }],
+          },
+        },
+        input_order: { required: ['image', 'resize_type', 'scale_method'] },
+        output: ['IMAGE'],
+        output_name: ['IMAGE'],
+        name: 'Resize',
+        display_name: 'Resize',
+        description: '',
+        python_module: '',
+        category: 'test',
+      },
+    } as unknown as NodeTypes;
+
+    // In "by size": [combo, width, crop, scale_method], with per-node and
+    // workflow-level index metadata recorded against that layout.
+    const target = makeNode(1, {
+      type: 'Resize',
+      inputs: [{ name: 'image', type: 'IMAGE', link: null }],
+      widgets_values: ['by size', 768, 'disabled', 'nearest'],
+      properties: {
+        __lm_widget_ids: ['resize_type', 'resize_type.width', 'resize_type.crop', 'scale_method'],
+      },
+    });
+    const workflow = makeWorkflow([target], []);
+    workflow.widget_idx_map = { '1': { scale_method: 3 } };
+    useWorkflowStore.setState({
+      workflow,
+      nodeTypes: dynTypes,
+      ...rootNodeStableRegistry([1]),
+    });
+    usePinnedWidgetStore.setState({
+      pinnedWidget: {
+        nodeId: 1, widgetIndex: 3, widgetName: 'scale_method',
+        inputName: 'scale_method', widgetType: 'COMBO',
+      },
+      pinOverlayOpen: true,
+    });
+
+    useWorkflowStore.getState().updateNodeWidget(rootNodeHierarchicalKey(1), 0, 'by factor', 'resize_type');
+
+    // "by factor" leaves [combo, factor, scale_method]: the pin follows its
+    // input to slot 2 instead of editing whatever landed on slot 3, and the
+    // stale index metadata is dropped rather than overriding the schema walk.
+    expect(usePinnedWidgetStore.getState().pinnedWidget).toMatchObject({ nodeId: 1, widgetIndex: 2 });
+    const next = useWorkflowStore.getState().workflow;
+    expect(next?.widget_idx_map?.['1']).toBeUndefined();
+    expect(next?.nodes.find((n) => n.id === 1)?.properties?.__lm_widget_ids).toBeUndefined();
+
+    usePinnedWidgetStore.setState({ pinnedWidget: null, pinnedWidgets: {}, pinOverlayOpen: false });
+  });
+
+  it('updateNodeWidget clears a pin whose input retired with the old DynamicCombo branch', () => {
+    const dynTypes: NodeTypes = {
+      Resize: {
+        input: {
+          required: {
+            resize_type: ['COMFY_DYNAMICCOMBO_V3', {
+              options: [
+                { key: 'by size', inputs: { required: { width: ['INT', { default: 512 }] } } },
+                { key: 'by factor', inputs: { required: { factor: ['FLOAT', { default: 2.0 }] } } },
+              ],
+            }],
+          },
+        },
+        input_order: { required: ['resize_type'] },
+        output: [],
+        output_name: [],
+        name: 'Resize',
+        display_name: 'Resize',
+        description: '',
+        python_module: '',
+        category: 'test',
+      },
+    } as unknown as NodeTypes;
+
+    const target = makeNode(1, {
+      type: 'Resize',
+      widgets_values: ['by size', 768],
+    });
+    useWorkflowStore.setState({
+      workflow: makeWorkflow([target], []),
+      nodeTypes: dynTypes,
+      ...rootNodeStableRegistry([1]),
+    });
+    usePinnedWidgetStore.setState({
+      pinnedWidget: {
+        nodeId: 1, widgetIndex: 1, widgetName: 'width',
+        inputName: 'resize_type.width', widgetType: 'INT',
+      },
+      pinOverlayOpen: true,
+    });
+
+    useWorkflowStore.getState().updateNodeWidget(rootNodeHierarchicalKey(1), 0, 'by factor', 'resize_type');
+
+    // width no longer exists on the active branch — a stale by-index pin
+    // would otherwise silently edit the factor widget now occupying slot 1.
+    expect(usePinnedWidgetStore.getState().pinnedWidget).toBeNull();
+    expect(usePinnedWidgetStore.getState().pinOverlayOpen).toBe(false);
+  });
+
+  it('updateNodeWidget leaves values alone when the DynamicCombo selection is unchanged', () => {
+    const dynTypes: NodeTypes = {
+      Resize: {
+        input: {
+          required: {
+            resize_type: ['COMFY_DYNAMICCOMBO_V3', {
+              options: [{ key: 'by factor', inputs: { required: { factor: ['FLOAT', { default: 2.0 }] } } }],
+            }],
+          },
+        },
+        input_order: { required: ['resize_type'] },
+        output: [], output_name: [], name: 'Resize', display_name: 'Resize',
+        description: '', python_module: '', category: 'test',
+      },
+    } as unknown as NodeTypes;
+
+    const target = makeNode(1, {
+      type: 'Resize', inputs: [], widgets_values: ['by factor', 7.5],
+    });
+    useWorkflowStore.setState({
+      workflow: makeWorkflow([target], []),
+      nodeTypes: dynTypes,
+      ...rootNodeStableRegistry([1]),
+    });
+
+    useWorkflowStore.getState().updateNodeWidget(rootNodeHierarchicalKey(1), 0, 'by factor', 'resize_type');
+
+    // A user-edited 7.5 must not be reset to the option default.
+    expect(
+      useWorkflowStore.getState().workflow?.nodes.find((n) => n.id === 1)?.widgets_values
+    ).toEqual(['by factor', 7.5]);
+  });
+
+  it('reconciles DynamicCombo sockets, links, source outputs, and target slots', () => {
+    const dynTypes: NodeTypes = {
+      Switcher: {
+        input: {
+          required: {
+            mode: ['COMFY_DYNAMICCOMBO_V3', {
+              options: [
+                { key: 'a', inputs: { required: {
+                  old_image: ['IMAGE'],
+                  shared: ['MASK'],
+                } } },
+                { key: 'b', inputs: { required: {
+                  shared: ['MASK'],
+                  new_model: ['MODEL'],
+                } } },
+              ],
+            }],
+            tail: ['LATENT'],
+          },
+        },
+        input_order: { required: ['mode', 'tail'] },
+        output: [], output_name: [], name: 'Switcher', display_name: 'Switcher',
+        description: '', python_module: '', category: 'test',
+      },
+    } as unknown as NodeTypes;
+    const target = makeNode(1, {
+      type: 'Switcher',
+      inputs: [
+        { name: 'mode.old_image', type: 'IMAGE', link: 10 },
+        { name: 'mode.shared', type: 'MASK', link: 11 },
+        { name: 'tail', type: 'LATENT', link: 12 },
+      ],
+      widgets_values: ['a'],
+    });
+    const oldSource = makeNode(2, {
+      outputs: [{ name: 'IMAGE', type: 'IMAGE', links: [10] }],
+    });
+    const sharedSource = makeNode(3, {
+      outputs: [{ name: 'MASK', type: 'MASK', links: [11] }],
+    });
+    const tailSource = makeNode(4, {
+      outputs: [{ name: 'LATENT', type: 'LATENT', links: [12] }],
+    });
+    const links: WorkflowLink[] = [
+      [10, 2, 0, 1, 0, 'IMAGE'],
+      [11, 3, 0, 1, 1, 'MASK'],
+      [12, 4, 0, 1, 2, 'LATENT'],
+    ];
+    useWorkflowStore.setState({
+      workflow: makeWorkflow([target, oldSource, sharedSource, tailSource], links),
+      nodeTypes: dynTypes,
+      ...rootNodeStableRegistry([1, 2, 3, 4]),
+    });
+
+    useWorkflowStore.getState().updateNodeWidget(
+      rootNodeHierarchicalKey(1), 0, 'b', 'mode',
+    );
+
+    const workflow = useWorkflowStore.getState().workflow!;
+    const next = workflow.nodes.find((node) => node.id === 1)!;
+    expect(next.widgets_values).toEqual(['b']);
+    expect(next.inputs).toEqual([
+      { name: 'mode.shared', type: 'MASK', link: 11 },
+      { name: 'mode.new_model', type: 'MODEL', link: null },
+      { name: 'tail', type: 'LATENT', link: 12 },
+    ]);
+    expect(workflow.links).toEqual([
+      [11, 3, 0, 1, 0, 'MASK'],
+      [12, 4, 0, 1, 2, 'LATENT'],
+    ]);
+    expect(workflow.nodes.find((node) => node.id === 2)?.outputs[0].links).toBeNull();
+    expect(workflow.nodes.find((node) => node.id === 3)?.outputs[0].links).toEqual([11]);
+  });
+
+  it('disconnects a same-named DynamicCombo socket when its type changes', () => {
+    const dynTypes: NodeTypes = {
+      Switcher: {
+        input: { required: {
+          mode: ['COMFY_DYNAMICCOMBO_V3', { options: [
+            { key: 'image', inputs: { required: { source: ['IMAGE'] } } },
+            { key: 'model', inputs: { required: { source: ['MODEL'] } } },
+          ] }],
+        } },
+        input_order: { required: ['mode'] },
+        output: [], output_name: [], name: 'Switcher', display_name: 'Switcher',
+        description: '', python_module: '', category: 'test',
+      },
+    } as unknown as NodeTypes;
+    const target = makeNode(1, {
+      type: 'Switcher',
+      inputs: [{ name: 'mode.source', type: 'IMAGE', link: 10 }],
+      widgets_values: ['image'],
+    });
+    const source = makeNode(2, {
+      outputs: [{ name: 'IMAGE', type: 'IMAGE', links: [10] }],
+    });
+    useWorkflowStore.setState({
+      workflow: makeWorkflow([target, source], [[10, 2, 0, 1, 0, 'IMAGE']]),
+      nodeTypes: dynTypes,
+      ...rootNodeStableRegistry([1, 2]),
+    });
+
+    useWorkflowStore.getState().updateNodeWidget(
+      rootNodeHierarchicalKey(1), 0, 'model', 'mode',
+    );
+
+    const workflow = useWorkflowStore.getState().workflow!;
+    expect(workflow.nodes.find((node) => node.id === 1)?.inputs).toEqual([
+      { name: 'mode.source', type: 'MODEL', link: null },
+    ]);
+    expect(workflow.links).toEqual([]);
+    expect(workflow.nodes.find((node) => node.id === 2)?.outputs[0].links).toBeNull();
+  });
+
+  it('updates a nested DynamicCombo by qualified name', () => {
+    const dynTypes: NodeTypes = {
+      Encoder: {
+        input: {
+          required: {
+            codec: ['COMFY_DYNAMICCOMBO_V3', {
+              options: [{ key: 'h264', inputs: { required: {
+                encoding: ['COMFY_DYNAMICCOMBO_V3', {
+                  options: [
+                    { key: 'hardware', inputs: { required: { device: ['DEVICE'] } } },
+                    { key: 'software', inputs: { required: { threads: ['INT', { default: 4 }] } } },
+                  ],
+                }],
+              } } }],
+            }],
+            method: ['COMBO', { options: ['area'], default: 'area' }],
+          },
+        },
+        input_order: { required: ['codec', 'method'] },
+        output: [], output_name: [], name: 'Encoder', display_name: 'Encoder',
+        description: '', python_module: '', category: 'test',
+      },
+    } as unknown as NodeTypes;
+    const target = makeNode(1, {
+      type: 'Encoder',
+      inputs: [{ name: 'codec.encoding.device', type: 'DEVICE', link: 10 }],
+      widgets_values: ['h264', 'hardware', 'area'],
+    });
+    const source = makeNode(2, {
+      outputs: [{ name: 'DEVICE', type: 'DEVICE', links: [10] }],
+    });
+    useWorkflowStore.setState({
+      workflow: makeWorkflow([target, source], [[10, 2, 0, 1, 0, 'DEVICE']]),
+      nodeTypes: dynTypes,
+      ...rootNodeStableRegistry([1, 2]),
+    });
+
+    useWorkflowStore.getState().updateNodeWidget(
+      rootNodeHierarchicalKey(1), 1, 'software', 'codec.encoding',
+    );
+
+    const workflow = useWorkflowStore.getState().workflow!;
+    const next = workflow.nodes.find((node) => node.id === 1)!;
+    expect(next.widgets_values).toEqual(['h264', 'software', 4, 'area']);
+    expect(next.inputs).toEqual([
+      {
+        name: 'codec.encoding.threads',
+        type: 'INT',
+        widget: { name: 'codec.encoding.threads' },
+        link: null,
+      },
+    ]);
+    expect(workflow.links).toEqual([]);
+    expect(workflow.nodes.find((node) => node.id === 2)?.outputs[0].links).toBeNull();
+  });
+
+  it('rebuilds DynamicCombos through the subgraph proxy update route', () => {
+    const dynTypes: NodeTypes = {
+      Switcher: {
+        input: { required: {
+          mode: ['COMFY_DYNAMICCOMBO_V3', { options: [
+            { key: 'image', inputs: { required: { source: ['IMAGE'] } } },
+            { key: 'none', inputs: {} },
+          ] }],
+        } },
+        input_order: { required: ['mode'] },
+        output: [], output_name: [], name: 'Switcher', display_name: 'Switcher',
+        description: '', python_module: '', category: 'test',
+      },
+    } as unknown as NodeTypes;
+    const innerKey = (nodeId: number) =>
+      makeLocationPointer({ type: 'node', nodeId, subgraphId: 'sg-a' });
+    const target = makeNode(1, {
+      itemKey: innerKey(1),
+      type: 'Switcher',
+      inputs: [
+        { name: 'mode', type: 'COMFY_DYNAMICCOMBO_V3', link: null, widget: { name: 'mode' } },
+        { name: 'mode.source', type: 'IMAGE', link: 10 },
+      ],
+      widgets_values: ['image'],
+    });
+    const source = makeNode(2, {
+      itemKey: innerKey(2),
+      outputs: [{ name: 'IMAGE', type: 'IMAGE', links: [10] }],
+    });
+    // Real-world malformed/custom nodes occasionally omit outputs entirely.
+    // Link cleanup must remain defensive for every node in the scope.
+    const withoutOutputs = makeNode(3, { itemKey: innerKey(3) });
+    delete (withoutOutputs as Partial<WorkflowNode>).outputs;
+    const workflow: Workflow = {
+      ...makeWorkflow([], []),
+      definitions: { subgraphs: [{
+        id: 'sg-a', nodes: [target, source, withoutOutputs], groups: [],
+        links: [{ id: 10, origin_id: 2, origin_slot: 0, target_id: 1, target_slot: 1, type: 'IMAGE' }],
+      }] },
+    };
+    useWorkflowStore.setState({ workflow, nodeTypes: dynTypes });
+
+    // The store must infer the schema name from the slot so persisted pins and
+    // older callers without canonical-name metadata still rebuild correctly.
+    useWorkflowStore.getState().updateSubgraphInnerNodeWidget('sg-a', 1, 0, 'none');
+
+    const subgraph = useWorkflowStore.getState().workflow?.definitions?.subgraphs?.[0];
+    expect(subgraph?.nodes.find((node) => node.id === 1)?.widgets_values).toEqual(['none']);
+    expect(subgraph?.nodes.find((node) => node.id === 1)?.inputs).toEqual([
+      { name: 'mode', type: 'COMFY_DYNAMICCOMBO_V3', link: null, widget: { name: 'mode' } },
+    ]);
+    expect(subgraph?.links).toEqual([]);
+    expect(subgraph?.nodes.find((node) => node.id === 2)?.outputs[0].links).toBeNull();
+    expect(subgraph?.nodes.find((node) => node.id === 3)?.outputs).toEqual([]);
   });
 
   it('setMobileLayout updates layout', () => {
@@ -1382,6 +1877,25 @@ describe('useWorkflow editing actions', () => {
     expect(next.workflow?.nodes.find((node) => node.id === 1)?.widgets_values).toEqual([
       'models/main/model.safetensors'
     ]);
+  });
+
+  it('preserves an unavailable closed-enum combo value on load', () => {
+    const samplerTypes = {
+      Sampler: {
+        input: { required: { sampler_name: [['euler', 'dpmpp_2m']] } },
+        output: [], output_name: [], name: 'Sampler', display_name: 'Sampler',
+        description: '', python_module: '', category: 'test',
+      },
+    } as unknown as NodeTypes;
+    const wf = makeWorkflow([
+      makeNode(1, { type: 'Sampler', widgets_values: ['custom_pack_sampler'] }),
+    ], []);
+    useWorkflowStore.setState({ nodeTypes: samplerTypes });
+
+    useWorkflowStore.getState().loadWorkflow(wf, 'missing-sampler.json');
+
+    expect(useWorkflowStore.getState().workflow?.nodes[0]?.widgets_values)
+      .toEqual(['custom_pack_sampler']);
   });
 
   it('ignores missing combo options on bypassed nodes when loading', () => {
@@ -2400,6 +2914,40 @@ describe('popWidgetToPrimitive', () => {
       .getState()
       .popWidgetToPrimitive(rootNodeHierarchicalKey(1), 'image', undefined);
     expect(newId).toBeNull();
+  });
+
+  it.each([
+    ['legacy array combo', ['euler', 'ddim'] as unknown as string, undefined],
+    ['V3 COMBO', 'COMBO', { options: ['euler', 'ddim'] }],
+    ['V3 DynamicCombo', 'COMFY_DYNAMICCOMBO_V3', { options: [{ key: 'euler', inputs: {} }] }],
+  ])('returns null for a %s — no primitive equivalent', (_label, typeOrOptions, options) => {
+    const comboNodeTypes = {
+      ...primitiveNodeTypes,
+      ComboOnly: {
+        input: { required: { sampler: [typeOrOptions, options] } },
+        output: ['LATENT'],
+        output_name: ['LATENT'],
+        name: 'ComboOnly',
+        display_name: 'Combo Only',
+        description: '',
+        python_module: '',
+        category: 'test',
+      },
+    } as unknown as NodeTypes;
+
+    const target = makeNode(1, { type: 'ComboOnly', inputs: [], widgets_values: ['euler'] });
+    useWorkflowStore.setState({
+      workflow: makeWorkflow([target], []),
+      nodeTypes: comboNodeTypes,
+      ...rootNodeStableRegistry([1]),
+    });
+
+    expect(
+      useWorkflowStore.getState().popWidgetToPrimitive(rootNodeHierarchicalKey(1), 'sampler', 'euler')
+    ).toBeNull();
+    // and no stray node or slot was materialized on the way out
+    expect(useWorkflowStore.getState().workflow?.nodes).toHaveLength(1);
+    expect(useWorkflowStore.getState().workflow?.nodes[0].inputs).toHaveLength(0);
   });
 
   it('materializes the input slot when the widget-input is not in node.inputs', () => {

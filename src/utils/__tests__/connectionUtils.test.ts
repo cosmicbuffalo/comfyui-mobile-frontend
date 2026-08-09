@@ -356,6 +356,31 @@ describe('findCompatibleNodeTypesForOutput', () => {
     expect(result.map((r) => r.typeName)).toEqual(['WildcardSink', 'ImageSink']);
     expect(result.find((r) => r.typeName === 'WildcardSink')?.inputIndex).toBe(0);
   });
+
+  it('counts active DynamicCombo child sockets when reporting the target index', () => {
+    const nodeTypes = {
+      DynamicSink: {
+        input: { required: {
+          mode: ['COMFY_DYNAMICCOMBO_V3', { options: [
+            { key: 'default', inputs: { required: {
+              strength: ['FLOAT', { default: 1 }],
+              mask: ['MASK'],
+            } } },
+          ] }],
+          image: ['IMAGE'],
+        } },
+        input_order: { required: ['mode', 'image'] },
+        output: [], output_name: [], name: 'DynamicSink', display_name: 'Dynamic Sink',
+        description: '', python_module: '', category: 'test',
+      },
+    } as unknown as NodeTypes;
+
+    const match = findCompatibleNodeTypesForOutput(nodeTypes, 'IMAGE')[0];
+    // addNode materializes mode, mode.strength, mode.mask, then image.
+    expect(match).toMatchObject({
+      typeName: 'DynamicSink', inputName: 'image', inputIndex: 3,
+    });
+  });
 });
 
 describe('isWildcardOnlyMatch', () => {

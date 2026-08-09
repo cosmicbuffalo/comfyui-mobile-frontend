@@ -3,7 +3,7 @@ import type { NodeTypes, Workflow, WorkflowLink, WorkflowNode, WorkflowSubgraphL
 import * as api from "@/api/client";
 import { useWorkflowStore } from "@/hooks/useWorkflow";
 import { getWidgetIndexForInput } from "@/utils/seedUtils";
-import { getNodeWidgetIndexMap, resolveComboOption, resolveSource } from "@/utils/workflowInputs";
+import { getNodeWidgetIndexMap, resolveComboOption, resolveSource, isComboType, getComboOptions } from "@/utils/workflowInputs";
 import { collectScopedWorkflowNodes } from "@/utils/workflowNodes";
 import type { ScopedNode } from "@/utils/workflowNodes";
 import {
@@ -588,8 +588,11 @@ export const useLoraManagerStore = create<LoraManagerState>((set, get) => {
           typeDef?.input?.required?.[widgetName] ||
           typeDef?.input?.optional?.[widgetName];
         const typeOrOptions = inputDef?.[0];
-        if (Array.isArray(typeOrOptions)) {
-          const resolved = resolveComboOption(rawValue, typeOrOptions);
+        if (typeOrOptions !== undefined && isComboType(typeOrOptions)) {
+          const resolved = resolveComboOption(
+            rawValue,
+            getComboOptions(typeOrOptions, inputDef?.[1]),
+          );
           if (resolved !== undefined) {
             nextValue = resolved;
           }

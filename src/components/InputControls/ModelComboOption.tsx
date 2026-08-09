@@ -8,6 +8,8 @@ import type { LoraManagerModel } from "@/api/loraManagerClient";
 export interface ComboSelectOption {
   value: string;
   label: string;
+  /** Original typed combo value (EASY_COMBO commonly uses numbers). */
+  rawValue?: unknown;
   isMissing?: boolean;
   model?: LoraManagerModel | null;
 }

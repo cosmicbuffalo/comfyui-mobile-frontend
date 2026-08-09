@@ -1,4 +1,5 @@
 import type { Workflow, WorkflowNode, NodeTypes, NodeTypeDefinition } from '@/api/types';
+import { buildDefaultConnectionInputs } from '@/utils/workflowInputs';
 
 function normalizeTypeTokens(value: unknown): string[] {
   if (value == null) return [];
@@ -171,34 +172,13 @@ export function findCompatibleNodeTypesForInput(
 function getConnectableInputSlots(
   def: NodeTypeDefinition
 ): Array<{ inputIndex: number; inputName: string; inputType: string }> {
-  const requiredInputs = def.input?.required ?? {};
-  const optionalInputs = def.input?.optional ?? {};
-  const requiredOrder = def.input_order?.required ?? Object.keys(requiredInputs);
-  const optionalOrder = def.input_order?.optional ?? Object.keys(optionalInputs);
-  const slots: Array<{ inputIndex: number; inputName: string; inputType: string }> = [];
-
-  const appendSlot = (name: string, value: unknown) => {
-    if (!Array.isArray(value) || value.length === 0) return;
-    const [typeOrOptions] = value;
-    // Ignore widget-only inputs to match addNode input construction.
-    if (Array.isArray(typeOrOptions)) return;
-    const normalized = String(typeOrOptions).toUpperCase();
-    if (["INT", "FLOAT", "BOOLEAN", "STRING"].includes(normalized)) return;
-    slots.push({
-      inputIndex: slots.length,
-      inputName: name,
-      inputType: String(typeOrOptions)
-    });
-  };
-
-  for (const name of requiredOrder) {
-    appendSlot(name, requiredInputs[name]);
-  }
-  for (const name of optionalOrder) {
-    appendSlot(name, optionalInputs[name]);
-  }
-
-  return slots;
+  // Use the same active-default schema walk as addNode so DynamicCombo child
+  // sockets occupy exactly the indices that the newly-created node receives.
+  return buildDefaultConnectionInputs(def).map((input, inputIndex) => ({
+    inputIndex,
+    inputName: input.name,
+    inputType: input.type,
+  }));
 }
 
 /**
