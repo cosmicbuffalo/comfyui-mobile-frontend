@@ -1,7 +1,7 @@
 {
   "name": "comfyui-mobile-frontend",
   "private": true,
-  "version": "3.1.1",
+  "version": "3.1.2",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -9,7 +9,8 @@
     "lint": "eslint .",
     "preview": "vite preview",
     "test": "vitest run",
-    "smoke": "node scripts/smoke-test.mjs"
+    "smoke": "node scripts/smoke-test.mjs",
+    "smoke:workflow-video": "node scripts/workflow-video-preview-smoke.mjs"
   },
   "dependencies": {
     "react": "^19.2.0",

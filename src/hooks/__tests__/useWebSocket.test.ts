@@ -6,10 +6,14 @@ import { useQueueStore } from '@/hooks/useQueue';
 import { useWorkflowErrorsStore } from '@/hooks/useWorkflowErrors';
 import { useWorkflowStore } from '@/hooks/useWorkflow';
 import { useGenerationSettingsStore } from '@/hooks/useGenerationSettings';
+import type { Workflow } from '@/api/types';
 import {
   BACKEND_LOST_NOTICE_MIN_DOWNTIME_MS,
   extractTextPreviewFromOutput,
+  collectExecutedMediaOutputs,
+  collectDenoVideoCompareOutput,
   getBackendReconnectMessage,
+  parseBinaryPreviewMessage,
   runQueuePollTick,
   useWebSocket,
 } from '../useWebSocket';
@@ -409,6 +413,147 @@ describe('extractTextPreviewFromOutput', () => {
   });
 });
 
+describe('collectExecutedMediaOutputs', () => {
+  it('collects video descriptors regardless of the standard bucket a node uses', () => {
+    expect(collectExecutedMediaOutputs({
+      // Native SaveVideo currently publishes PreviewVideo entries here.
+      images: [{ filename: 'core.mp4', subfolder: 'video', type: 'output' }],
+      // VideoHelperSuite publishes its video combine entries here.
+      gifs: [{ filename: 'vhs.webm', subfolder: '', type: 'temp', format: 'video/webm' }],
+      videos: [{ filename: 'custom.mov', subfolder: 'clips', type: 'output' }],
+    })).toEqual([
+      { filename: 'core.mp4', subfolder: 'video', type: 'output' },
+      { filename: 'vhs.webm', subfolder: '', type: 'temp', format: 'video/webm' },
+      { filename: 'custom.mov', subfolder: 'clips', type: 'output' },
+    ]);
+  });
+
+  it('preserves mixed-media order, removes duplicates, and ignores malformed entries', () => {
+    const repeated = { filename: 'same.mp4', subfolder: '', type: 'output' };
+    expect(collectExecutedMediaOutputs({
+      images: [
+        { filename: 'still.png', subfolder: '', type: 'output' },
+        repeated,
+        { filename: 'missing-type.mp4', subfolder: '' },
+      ],
+      gifs: [repeated, null],
+      videos: [{ filename: 'last.mkv', subfolder: 'batch', type: 'output' }],
+    })).toEqual([
+      { filename: 'still.png', subfolder: '', type: 'output' },
+      repeated,
+      { filename: 'last.mkv', subfolder: 'batch', type: 'output' },
+    ]);
+  });
+
+  it('normalizes DenoVideoPreview and gives its overwritten filename a run identity', () => {
+    expect(collectExecutedMediaOutputs({
+      deno_video_preview: [{
+        filename: 'deno_preview_7.mp4',
+        subfolder: 'deno_video_preview',
+        type: 'temp',
+        frame_rate: 24,
+      }],
+    }, 'run-2')).toEqual([expect.objectContaining({
+      filename: 'deno_preview_7.mp4',
+      type: 'temp',
+      frame_rate: 24,
+      cacheToken: 'run-2',
+    })]);
+  });
+});
+
+describe('collectDenoVideoCompareOutput', () => {
+  it('normalizes frame sequences and raw PCM metadata for the mobile player', () => {
+    const output = collectDenoVideoCompareOutput({
+      deno_video_compare: [{
+        mode: 'Difference', split_position: 0.4, toggle_image: 'A', swap: true,
+        fps: 30, source_fps: 60, duration: 2, frame_count: 60,
+        subfolder: 'deno_vcmp_abc', have_a: true, have_b: true,
+        files_a: ['a_000000.webp', 'a_000001.webp'],
+        files_b: ['b_000000.webp', 'b_000001.webp'],
+        a_src_w: 1920, a_src_h: 1080, a_count: 60,
+        b_src_w: 1280, b_src_h: 720, b_count: 60,
+        audio_a: { filename: 'a_audio.f32', channels: 2, samples: 96000, sample_rate: 48000 },
+      }],
+    });
+    expect(output?.a[0]).toEqual({
+      filename: 'a_000000.webp', subfolder: 'deno_vcmp_abc', type: 'temp',
+    });
+    expect(output?.video).toMatchObject({
+      mode: 'Difference', splitPosition: 0.4, toggleImage: 'A', swapped: true,
+      fps: 30, sourceFps: 60, duration: 2, frameCount: 60,
+      audioA: { filename: 'a_audio.f32', channels: 2, sample_rate: 48000 },
+    });
+  });
+});
+
+describe('parseBinaryPreviewMessage', () => {
+  const blobBytes = (blob: Blob): Promise<Uint8Array> => new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(reader.error);
+    reader.onload = () => resolve(new Uint8Array(reader.result as ArrayBuffer));
+    reader.readAsArrayBuffer(blob);
+  });
+
+  it('keeps ordinary Comfy preview image bytes intact', async () => {
+    const bytes = new Uint8Array(12);
+    new DataView(bytes.buffer).setUint32(0, 1, false);
+    new DataView(bytes.buffer).setUint32(4, 1, false);
+    bytes.set([0xff, 0xd8, 0xff, 0xd9], 8);
+    const parsed = parseBinaryPreviewMessage(bytes.buffer);
+    expect(parsed?.kind).toBe('image');
+    expect(await blobBytes(parsed!.blob)).toEqual(
+      new Uint8Array([0xff, 0xd8, 0xff, 0xd9]),
+    );
+  });
+
+  it('strips VHS frame index and Pascal node-id headers from animated latent JPEGs', async () => {
+    const bytes = new Uint8Array(32);
+    const view = new DataView(bytes.buffer);
+    view.setUint32(0, 1, false);
+    view.setUint32(4, 1, false);
+    view.setUint32(8, 3, false);
+    const id = new TextEncoder().encode('50:7');
+    bytes[12] = id.length;
+    bytes.set(id, 13);
+    bytes.set([0xff, 0xd8, 0xff, 0xd9], 28);
+    const parsed = parseBinaryPreviewMessage(bytes.buffer);
+    expect(parsed).toMatchObject({ kind: 'vhs', nodeId: '50:7', index: 3 });
+    expect(await blobBytes(parsed!.blob)).toEqual(
+      new Uint8Array([0xff, 0xd8, 0xff, 0xd9]),
+    );
+  });
+
+  it('decodes a modern JSON-prefixed envelope and rejects a truncated one', () => {
+    const json = new TextEncoder().encode('{"image_type":"PNG"}');
+    const bytes = new Uint8Array(8 + json.length + 4);
+    const view = new DataView(bytes.buffer);
+    view.setUint32(0, 4, false);
+    view.setUint32(4, json.length, false);
+    bytes.set(json, 8);
+    bytes.set([0x89, 0x50, 0x4e, 0x47], 8 + json.length);
+    const parsed = parseBinaryPreviewMessage(bytes.buffer);
+    expect(parsed?.kind).toBe('image');
+    expect(parsed?.blob.type).toBe('image/png');
+
+    // Fewer than 4 payload bytes cannot be an image; the parser must not
+    // wrap them in a mislabeled Blob.
+    const truncated = bytes.slice(0, 8 + json.length + 2);
+    expect(parseBinaryPreviewMessage(truncated.buffer)).toBeNull();
+  });
+
+  it('does not mistake ordinary JPEG payload bytes for a VHS envelope', () => {
+    const bytes = new Uint8Array(40);
+    const view = new DataView(bytes.buffer);
+    view.setUint32(0, 1, false);
+    view.setUint32(4, 1, false);
+    bytes.set([0xff, 0xd8], 8);
+    bytes[12] = 4; // Plausible VHS id length in ordinary compressed data.
+    bytes.set([0xff, 0xd8], 28); // Plausible nested JPEG marker by coincidence.
+    expect(parseBinaryPreviewMessage(bytes.buffer)?.kind).toBe('image');
+  });
+});
+
 describe('runQueuePollTick', () => {
   const makeItem = (promptId: string) =>
     ({ number: 1, prompt_id: promptId, prompt: {}, extra: {}, outputs_to_execute: [] }) as never;
@@ -474,6 +619,7 @@ describe('orphaned closed-tab run routing', () => {
   let container: HTMLDivElement;
   let root: Root;
   let onMessage: ((msg: unknown) => void) | undefined;
+  let onBinaryMessage: ((data: ArrayBuffer) => void) | undefined;
 
   const emptyWorkflow = {
     nodes: [],
@@ -483,7 +629,7 @@ describe('orphaned closed-tab run routing', () => {
     version: 1,
     last_node_id: 0,
     last_link_id: 0,
-  } as never;
+  } as Workflow;
   const sampleOutput = {
     node: '5',
     output: { images: [{ filename: 'x.png', subfolder: '', type: 'output' }] },
@@ -493,12 +639,14 @@ describe('orphaned closed-tab run routing', () => {
     callbacks.length = 0;
     sockets.length = 0;
     onMessage = undefined;
+    onBinaryMessage = undefined;
     mockConnectWebSocket.mockReset();
     mockGetQueue.mockResolvedValue({ queue_running: [], queue_pending: [] });
     mockGetHistory.mockResolvedValue({});
     mockConnectWebSocket.mockImplementation(
-      (_clientId, handleMessage, onOpen, onClose, onError) => {
+      (_clientId, handleMessage, onOpen, onClose, onError, handleBinaryMessage) => {
         onMessage = handleMessage as (msg: unknown) => void;
+        onBinaryMessage = handleBinaryMessage;
         const socket = { readyState: WebSocket.OPEN, close: vi.fn() } as unknown as WebSocket;
         callbacks.push({ onOpen, onClose, onError });
         sockets.push(socket);
@@ -532,6 +680,8 @@ describe('orphaned closed-tab run routing', () => {
       executingNodePath: null,
       executingPromptId: null,
       progress: 0,
+      latentPreviews: {},
+      latentPreviewByPrompt: {},
     });
     container = document.createElement('div');
     document.body.appendChild(container);
@@ -541,6 +691,8 @@ describe('orphaned closed-tab run routing', () => {
   afterEach(async () => {
     await act(async () => { root.unmount(); });
     container.remove();
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
   });
 
   async function mount() {
@@ -644,6 +796,222 @@ describe('orphaned closed-tab run routing', () => {
     await mount();
     await fire({ type: 'executed', data: { ...sampleOutput, prompt_id: 'desktop-prompt' } });
     expect(useWorkflowStore.getState().promptOutputs['desktop-prompt']).toBeDefined();
+  });
+
+  it('routes Video Oasis side-channel results by the node widget io_id', async () => {
+    const oasisNode: Workflow['nodes'][number] = {
+      id: 9,
+      itemKey: 'root/node:9',
+      type: 'VideoOasisPreview',
+      pos: [0, 0], size: [300, 300], flags: {}, order: 0, mode: 0,
+      inputs: [], outputs: [], properties: {},
+      widgets_values: { video_oasis_ui: JSON.stringify({ io_id: 'oasis-9' }) },
+    };
+    useWorkflowStore.setState({
+      workflow: { ...emptyWorkflow, nodes: [oasisNode] },
+      nodeOutputs: {},
+    });
+    await mount();
+    await fire({
+      type: 'video-oasis/result',
+      data: {
+        io_id: 'oasis-9',
+        results: [{ filename: 'oasis.mp4', subfolder: 'video', type: 'temp' }],
+      },
+    });
+    expect(useWorkflowStore.getState().nodeOutputs['9']).toEqual([
+      expect.objectContaining({ filename: 'oasis.mp4', type: 'temp' }),
+    ]);
+    await fire({
+      type: 'video-oasis/result',
+      data: {
+        io_id: 'oasis-9',
+        results: [{ filename: 'oasis-2.mp4', subfolder: 'video', type: 'temp' }],
+      },
+    });
+    // The volatile output is only the newest arrival (so NodeCard never falls
+    // into a generic multi-video grid); the serialized widget owns the full
+    // scene bar and therefore survives Save/reload.
+    expect(useWorkflowStore.getState().nodeOutputs['9']).toEqual([
+      expect.objectContaining({ filename: 'oasis-2.mp4', type: 'temp' }),
+    ]);
+    const raw = (useWorkflowStore.getState().workflow!.nodes[0]
+      .widgets_values as Record<string, string>).video_oasis_ui;
+    const saved = JSON.parse(raw);
+    expect(saved.preview.history.map((entry: { filename: string }) => entry.filename))
+      .toEqual(['oasis.mp4', 'oasis-2.mp4']);
+    expect(saved.preview.activeIdx).toBe(1);
+  });
+
+  it('buffers out-of-order VHS latent frames and animates the node path prefixes', async () => {
+    vi.useFakeTimers();
+    let blobId = 0;
+    class TestURL extends URL {
+      static createObjectURL() { blobId += 1; return `blob:vhs-${blobId}`; }
+      static revokeObjectURL() {}
+    }
+    vi.stubGlobal('URL', TestURL);
+    useWorkflowStore.setState({
+      promptToSession: { 'p-vhs': 'active' },
+      expandedNodeIdMap: {
+        '50': 'root/node:50',
+        '50:7': 'root/subgraph:sg-video/node:7',
+      },
+      expandedNodePathMap: { '50': '50', '50:7': '50:7' },
+      latentPreviews: {},
+      latentPreviewByPrompt: {},
+    });
+    await mount();
+    await fire({ type: 'executing', data: { node: '50:7', prompt_id: 'p-vhs' } });
+    await fire({ type: 'VHS_latentpreview', data: { id: '50:7', length: 2, rate: 10 } });
+
+    const frame = (index: number) => {
+      const bytes = new Uint8Array(32);
+      const view = new DataView(bytes.buffer);
+      view.setUint32(0, 1, false);
+      view.setUint32(4, 1, false);
+      view.setUint32(8, index, false);
+      const id = new TextEncoder().encode('50:7');
+      bytes[12] = id.length;
+      bytes.set(id, 13);
+      bytes.set([0xff, 0xd8, 0xff, 0xd9], 28);
+      return bytes.buffer;
+    };
+
+    await act(async () => {
+      onBinaryMessage?.(frame(1));
+      vi.advanceTimersByTime(110);
+    });
+    expect(useWorkflowStore.getState().latentPreviews).toEqual({});
+
+    await act(async () => {
+      onBinaryMessage?.(frame(0));
+      vi.advanceTimersByTime(210);
+    });
+    const previews = useWorkflowStore.getState().latentPreviews;
+    expect(previews['root/node:50']).toMatch(/^blob:vhs-/);
+    expect(previews['root/subgraph:sg-video/node:7']).toMatch(/^blob:vhs-/);
+    expect(useWorkflowStore.getState().latentPreviewByPrompt['p-vhs']?.url).toMatch(/^blob:vhs-/);
+  });
+
+  it('keeps VHS timers exclusive across an execution transition and a new sequence', async () => {
+    vi.useFakeTimers();
+    const createdKinds: string[] = [];
+    let blobId = 0;
+    class TestURL extends URL {
+      static createObjectURL(blob: Blob) {
+        const kind = blob.size === 4 ? 'old' : 'new';
+        createdKinds.push(kind);
+        blobId += 1;
+        return `blob:${kind}-${blobId}`;
+      }
+      static revokeObjectURL() {}
+    }
+    vi.stubGlobal('URL', TestURL);
+    useWorkflowStore.setState({
+      promptToSession: { 'p-vhs': 'active' },
+      expandedNodeIdMap: {
+        '7': 'root/node:7',
+        '8': 'root/node:8',
+      },
+      expandedNodePathMap: { '7': '7', '8': '8' },
+      latentPreviews: {},
+      latentPreviewByPrompt: {},
+    });
+    await mount();
+
+    const frame = (nodeId: string, extraByte = false) => {
+      const bytes = new Uint8Array(extraByte ? 33 : 32);
+      const view = new DataView(bytes.buffer);
+      view.setUint32(0, 1, false);
+      view.setUint32(4, 1, false);
+      const id = new TextEncoder().encode(nodeId);
+      bytes[12] = id.length;
+      bytes.set(id, 13);
+      bytes.set([0xff, 0xd8, 0xff, 0xd9], 28);
+      if (extraByte) bytes[32] = 0;
+      return bytes.buffer;
+    };
+
+    await fire({ type: 'executing', data: { node: '7', prompt_id: 'p-vhs' } });
+    await fire({ type: 'VHS_latentpreview', data: { id: '7', length: 1, rate: 10 } });
+    await act(async () => {
+      onBinaryMessage?.(frame('7'));
+      vi.advanceTimersByTime(110);
+    });
+    const oldNodePreview = useWorkflowStore.getState().latentPreviews['root/node:7'];
+    expect(oldNodePreview).toMatch(/^blob:old-/);
+
+    await fire({ type: 'executing', data: { node: '8', prompt_id: 'p-vhs' } });
+    createdKinds.length = 0;
+    await act(async () => { vi.advanceTimersByTime(210); });
+    expect(createdKinds).toEqual([]);
+    expect(useWorkflowStore.getState().latentPreviews['root/node:7']).toBe(oldNodePreview);
+
+    await fire({ type: 'VHS_latentpreview', data: { id: '8', length: 1, rate: 10 } });
+    await act(async () => {
+      onBinaryMessage?.(frame('8', true));
+      createdKinds.length = 0;
+      vi.advanceTimersByTime(510);
+    });
+
+    expect(createdKinds.length).toBeGreaterThan(0);
+    expect(new Set(createdKinds)).toEqual(new Set(['new']));
+    expect(useWorkflowStore.getState().latentPreviews['root/node:7']).toBe(oldNodePreview);
+    const newNodePreview = useWorkflowStore.getState().latentPreviews['root/node:8'];
+    expect(newNodePreview).toMatch(/^blob:new-/);
+    expect(useWorkflowStore.getState().latentPreviewByPrompt['p-vhs']?.url).toMatch(/^blob:new-/);
+
+    // A fresh JSON sequence is independently exclusive, even if a matching
+    // `executing` event is not observed between the two sequence announcements.
+    await fire({ type: 'VHS_latentpreview', data: { id: '7', length: 1, rate: 10 } });
+    await act(async () => {
+      onBinaryMessage?.(frame('7'));
+      createdKinds.length = 0;
+      vi.advanceTimersByTime(510);
+    });
+    expect(createdKinds.length).toBeGreaterThan(0);
+    expect(new Set(createdKinds)).toEqual(new Set(['old']));
+    expect(useWorkflowStore.getState().latentPreviews['root/node:8']).toBe(newNodePreview);
+    expect(useWorkflowStore.getState().latentPreviewByPrompt['p-vhs']?.url).toMatch(/^blob:old-/);
+  });
+
+  it('keeps parked-session VHS latent frames off the active workflow card', async () => {
+    vi.useFakeTimers();
+    let blobId = 0;
+    class TestURL extends URL {
+      static createObjectURL() { blobId += 1; return `blob:parked-${blobId}`; }
+      static revokeObjectURL() {}
+    }
+    vi.stubGlobal('URL', TestURL);
+    useWorkflowStore.setState({
+      promptToSession: { 'p-parked': 'parked' },
+      parkedSessions: {
+        parked: {
+          workflow: emptyWorkflow,
+          expandedNodeIdMap: { '7': 'root/node:7' },
+          expandedNodePathMap: { '7': '7' },
+        } as never,
+      },
+    });
+    await mount();
+    await fire({ type: 'executing', data: { node: '7', prompt_id: 'p-parked' } });
+    await fire({ type: 'VHS_latentpreview', data: { id: '7', length: 1, rate: 10 } });
+    const bytes = new Uint8Array(32);
+    const view = new DataView(bytes.buffer);
+    view.setUint32(0, 1, false);
+    view.setUint32(4, 1, false);
+    bytes[12] = 1;
+    bytes[13] = new TextEncoder().encode('7')[0];
+    bytes.set([0xff, 0xd8, 0xff, 0xd9], 28);
+    await act(async () => {
+      onBinaryMessage?.(bytes.buffer);
+      vi.advanceTimersByTime(110);
+    });
+
+    expect(useWorkflowStore.getState().latentPreviews).toEqual({});
+    expect(useWorkflowStore.getState().latentPreviewByPrompt['p-parked']?.url)
+      .toMatch(/^blob:parked-/);
   });
 
   it('does not raise the global error banner for an orphaned prompt', async () => {

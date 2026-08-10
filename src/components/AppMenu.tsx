@@ -458,6 +458,19 @@ export function AppMenu({
 
   return (
     <>
+    {/* Keep this outside SlidePanel so closing the menu does not destroy a file
+        selection while the browser is still delivering its change event. It
+        also gives automation and accessibility integrations one stable picker
+        for repeated imports. */}
+    <input
+      ref={fileInputRef}
+      type="file"
+      accept=".json,.png,.jpg,.jpeg,.webp,image/png,image/jpeg,image/webp"
+      onChange={handleFileChange}
+      className="hidden"
+      data-workflow-file-input
+      aria-label="Load workflow from device"
+    />
     <SlidePanel open={open} onClose={onClose} side="left" title="ComfyUI Mobile">
       {activeTab === 'menu' && (
         <MainMenuPanel
@@ -470,13 +483,11 @@ export function AppMenu({
           systemStats={systemStats}
           cpuPercent={cpuPercent}
           menuSectionsOpen={menuSectionsOpen}
-          fileInputRef={fileInputRef}
           loadSectionRef={loadSectionRef}
           saveSectionRef={saveSectionRef}
           serverSectionRef={serverSectionRef}
           infoSectionRef={infoSectionRef}
           onDismissError={() => setError(null)}
-          onFileChange={handleFileChange}
           onLoadFromFile={handleLoadFromFile}
           onToggleSection={(section) =>
             setMenuSectionsOpen((prev) => ({ ...prev, [section]: !prev[section] }))

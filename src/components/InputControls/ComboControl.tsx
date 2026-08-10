@@ -117,13 +117,16 @@ export function ComboControl({
   const supportsVideoUpload = useMemo(() => {
     if (supportsImageUpload) return false;
     // Detect video combo widgets: either the widget is named "video" (VHS convention)
-    // or any existing choice has a video file extension
+    // or any existing choice is a *filename* with a video extension. A bare
+    // extension in the choice list (SaveVideo's format combo offers "mp4") is a
+    // container/format selector, not a file picker.
     const widgetName = name.toLowerCase();
     if (widgetName === "video") return true;
     return rawChoices.length > 0 && rawChoices.some((opt) => {
       const s = String(opt);
-      const ext = s.split(".").pop()?.toLowerCase() ?? "";
-      return VIDEO_EXTENSIONS.has(ext);
+      const dot = s.lastIndexOf(".");
+      if (dot <= 0) return false;
+      return VIDEO_EXTENSIONS.has(s.slice(dot + 1).toLowerCase());
     });
   }, [supportsImageUpload, name, rawChoices]);
   const supportsUpload = supportsImageUpload || supportsVideoUpload;

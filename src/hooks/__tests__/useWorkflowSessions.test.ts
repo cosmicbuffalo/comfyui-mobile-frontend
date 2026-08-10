@@ -19,6 +19,20 @@ const anyNodeTypes: NodeTypes = {
   },
 };
 
+const oasisNodeTypes: NodeTypes = {
+  ...anyNodeTypes,
+  VideoOasisPreview: {
+    input: { required: {}, optional: { video_oasis_ui: ['STRING', { default: '{}' }] } },
+    output: [],
+    output_name: [],
+    name: 'VideoOasisPreview',
+    display_name: 'Video Oasis Preview',
+    description: '',
+    python_module: 'ComfyUI-Image-Oasis.video_oasis.preview_node',
+    category: 'video',
+  },
+};
+
 function rootKey(nodeId: number): string {
   return makeLocationPointer({ type: 'node', nodeId, subgraphId: null });
 }
@@ -113,6 +127,28 @@ describe('multi-workflow sessions', () => {
     expect(state.parkedSessions[firstId!]).toBeTruthy();
     expect(state.workflow?.nodes.some((n) => n.id === 2)).toBe(true);
     expect(state.currentFilename).toBe('b.json');
+  });
+
+  it('remints an Oasis io_id when the same saved workflow opens in a second tab', () => {
+    const oasisNode = (id: number) => makeNode(id, {
+      type: 'VideoOasisPreview',
+      widgets_values: {
+        video_oasis_ui: JSON.stringify({ io_id: 'shared-id' }),
+      },
+    });
+    useWorkflowStore.setState({ nodeTypes: oasisNodeTypes });
+    const store = useWorkflowStore.getState();
+    store.loadWorkflow(makeWorkflow([oasisNode(1)]), 'oasis-a.json');
+    const firstSession = useWorkflowStore.getState().activeSessionId!;
+    store.loadWorkflow(makeWorkflow([oasisNode(2)]), 'oasis-b.json');
+
+    const state = useWorkflowStore.getState();
+    const parkedRaw = (state.parkedSessions[firstSession].workflow!.nodes[0]
+      .widgets_values as Record<string, string>).video_oasis_ui;
+    const activeRaw = (state.workflow!.nodes[0]
+      .widgets_values as Record<string, string>).video_oasis_ui;
+    expect(JSON.parse(parkedRaw).io_id).toBe('shared-id');
+    expect(JSON.parse(activeRaw).io_id).not.toBe('shared-id');
   });
 
   it('switching tabs restores the parked workflow and run count losslessly', () => {
