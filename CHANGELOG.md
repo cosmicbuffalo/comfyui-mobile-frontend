@@ -17,6 +17,7 @@ Also new: `npm run smoke:workflow-video`, a targeted real-server check that gene
 ### Fixed
 
 - Closing the app menu no longer cancels a "Load from file" pick that is still in flight — the file dialog now survives the menu closing underneath it
+- Format dropdowns whose options are bare container names (like SaveVideo's `mp4`) no longer show phantom "Upload video from device" / "Browse files" buttons — only combos listing real video filenames (or VHS-style `video` widgets) are treated as file pickers
 
 ## 3.1.1 - 2026-08-09
 
