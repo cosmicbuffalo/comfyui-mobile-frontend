@@ -1,5 +1,23 @@
 # Changelog
 
+## 3.1.2 - 2026-08-10
+
+### Added
+
+**Video previews in the workflow panel**
+
+- **Video outputs play inline on their node card.** SaveVideo and any other node that emits a video now shows a real seekable player — poster frame, tap-to-scrub controls, and muted autoplay when the card is visible — instead of a broken image. Only one preview plays at a time, playback pauses when the card scrolls away or the full-screen viewer opens, and a metadata line shows resolution, frame count, fps, and whether the clip has audio. Batches tile images and tap-to-play videos together
+- **Video Helper Suite input previews.** VHS Load Video / Load Video FFmpeg (including the Path variants), Load Images, and Load Image Path show the same node-sized advanced preview as desktop — rate, frame-cap, and resize settings applied — and Video Combine previews its result. Hidden previews stay hidden, with a "Show video preview" button to reveal them
+- **VHS animated latent previews.** When latent previews are enabled, samplers that support VHS's animated preview protocol show a moving preview on the node card and in the queue while they sample, instead of a single still
+- **Video Oasis preview nodes** restore their scene bar on mobile: every result is kept in a thumbnail playlist with play-once / loop / cycle modes and playback speed, live results append as they arrive, and the selection survives save, tab switches, and reload
+- **Deno Video Compare** gets a full A/B comparison player: slider, side-by-side, difference, and toggle modes with both sides frame-locked to one clock, frame stepping, speed control, loop, fullscreen, and switchable A/B audio
+
+Also new: `npm run smoke:workflow-video`, a targeted real-server check that generates a small model-free video and verifies the inline player end to end.
+
+### Fixed
+
+- Closing the app menu no longer cancels a "Load from file" pick that is still in flight — the file dialog now survives the menu closing underneath it
+
 ## 3.1.1 - 2026-08-09
 
 ### Fixed
