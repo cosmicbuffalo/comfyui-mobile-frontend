@@ -10,6 +10,7 @@ import { queueAndGetEmbeddedWorkflow } from './helpers/queueAndGetEmbeddedWorkfl
 import { queueAndGetPromptRequest } from './helpers/queueAndGetEmbeddedWorkflow';
 import { useWorkflowHiddenStore } from '@/hooks/useWorkflowHidden';
 import { HIDDEN_WORKFLOW_EXTRA_DATA_KEY } from '@/utils/workflowHidden';
+import { useGenerationSettingsStore } from '@/hooks/useGenerationSettings';
 
 function loadFixtureWorkflow(): Workflow {
   const fixturePath = resolve(
@@ -48,6 +49,7 @@ beforeEach(() => {
     errorCycleIndex: 0,
     errorsDismissed: false,
   });
+  useGenerationSettingsStore.setState({ previewMethod: 'none' });
 });
 
 afterEach(() => {
@@ -92,5 +94,80 @@ describe('embed workflow metadata', () => {
     const request = await queueAndGetPromptRequest();
 
     expect(request.extra_data?.[HIDDEN_WORKFLOW_EXTRA_DATA_KEY]).toBe(true);
+  });
+
+  it('mints an Oasis io_id before prompt construction and persists the same routing id', async () => {
+    const workflow: Workflow = {
+      last_node_id: 7,
+      last_link_id: 0,
+      nodes: [{
+        id: 7,
+        type: 'VideoOasisPreview',
+        pos: [0, 0],
+        size: [320, 240],
+        flags: {},
+        order: 0,
+        mode: 0,
+        inputs: [],
+        outputs: [],
+        properties: {},
+        widgets_values: { video_oasis_ui: '{}' },
+      }],
+      links: [],
+      groups: [],
+      config: {},
+      version: 1,
+    };
+    const oasisTypes = {
+      VideoOasisPreview: {
+        input: { required: {}, optional: { video_oasis_ui: ['STRING', { default: '{}' }] } },
+        output: ['VIDEO'],
+        output_node: true,
+        name: 'VideoOasisPreview',
+        display_name: 'Video Oasis Preview',
+        description: '',
+        python_module: 'ComfyUI-Image-Oasis.video_oasis.preview_node',
+        category: 'video',
+      },
+    } as unknown as NodeTypes;
+    useWorkflowStore.getState().setNodeTypes(oasisTypes);
+    useWorkflowStore.getState().loadWorkflow(workflow, 'oasis.json', { fresh: true });
+
+    const request = await queueAndGetPromptRequest();
+    const embedded = (request.extra_data?.extra_pnginfo as { workflow?: Workflow } | undefined)?.workflow as Workflow;
+    const embeddedRaw = (embedded.nodes[0].widgets_values as Record<string, string>).video_oasis_ui;
+    const canonicalRaw = (useWorkflowStore.getState().workflow!.nodes[0].widgets_values as Record<string, string>).video_oasis_ui;
+    const embeddedId = JSON.parse(embeddedRaw).io_id;
+
+    expect(typeof embeddedId).toBe('string');
+    expect(embeddedId.length).toBeGreaterThan(0);
+    expect(JSON.parse(canonicalRaw).io_id).toBe(embeddedId);
+    expect((request.prompt['7'] as { inputs: Record<string, unknown> }).inputs.video_oasis_ui)
+      .toBe(embeddedRaw);
+  });
+
+  it('enables VHS animated latent metadata when mobile latent previews are enabled', async () => {
+    const workflow = loadFixtureWorkflow();
+    useWorkflowStore.getState().setNodeTypes({} as NodeTypes);
+    useWorkflowStore.getState().loadWorkflow(workflow, 'latent-video.json', { fresh: true });
+    useGenerationSettingsStore.setState({ previewMethod: 'latent2rgb' });
+
+    const request = await queueAndGetPromptRequest();
+    const embedded = (request.extra_data?.extra_pnginfo as { workflow?: Workflow } | undefined)?.workflow as Workflow;
+    expect(request.extra_data?.preview_method).toBe('latent2rgb');
+    expect(embedded.extra?.VHS_latentpreview).toBe(true);
+    expect(embedded.extra?.VHS_latentpreviewrate).toBe(0);
+  });
+
+  it('disables imported VHS latent animation when mobile previews are off', async () => {
+    const workflow = { ...loadFixtureWorkflow(), extra: { VHS_latentpreview: true } };
+    useWorkflowStore.getState().setNodeTypes({} as NodeTypes);
+    useWorkflowStore.getState().loadWorkflow(workflow, 'desktop-vhs.json', { fresh: true });
+    useGenerationSettingsStore.setState({ previewMethod: 'none' });
+
+    const request = await queueAndGetPromptRequest();
+    const embedded = (request.extra_data?.extra_pnginfo as { workflow?: Workflow } | undefined)?.workflow as Workflow;
+    expect(request.extra_data?.preview_method).toBeUndefined();
+    expect(embedded.extra?.VHS_latentpreview).toBe(false);
   });
 });

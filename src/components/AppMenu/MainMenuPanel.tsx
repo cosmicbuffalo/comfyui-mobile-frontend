@@ -23,13 +23,11 @@ interface MainMenuPanelProps {
   systemStats: SystemStats | null;
   cpuPercent: number | null;
   menuSectionsOpen: MenuSectionsOpen;
-  fileInputRef: React.RefObject<HTMLInputElement | null>;
   loadSectionRef: React.RefObject<HTMLElement | null>;
   saveSectionRef: React.RefObject<HTMLElement | null>;
   serverSectionRef: React.RefObject<HTMLElement | null>;
   infoSectionRef: React.RefObject<HTMLElement | null>;
   onDismissError: () => void;
-  onFileChange: (event: React.ChangeEvent<HTMLInputElement>) => void;
   onLoadFromFile: () => void;
   onToggleSection: (section: keyof MenuSectionsOpen) => void;
   onOpenRecent: () => void;
@@ -54,13 +52,11 @@ export function MainMenuPanel({
   systemStats,
   cpuPercent,
   menuSectionsOpen,
-  fileInputRef,
   loadSectionRef,
   saveSectionRef,
   serverSectionRef,
   infoSectionRef,
   onDismissError,
-  onFileChange,
   onLoadFromFile,
   onToggleSection,
   onOpenRecent,
@@ -93,9 +89,7 @@ export function MainMenuPanel({
       <MenuLoadSection
         open={menuSectionsOpen.load}
         sectionRef={loadSectionRef}
-        fileInputRef={fileInputRef}
         onToggle={() => onToggleSection('load')}
-        onFileChange={onFileChange}
         onLoadFromFile={onLoadFromFile}
         onOpenRecent={onOpenRecent}
         onOpenUserWorkflows={onOpenUserWorkflows}

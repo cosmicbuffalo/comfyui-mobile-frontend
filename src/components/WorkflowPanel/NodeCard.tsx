@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { WorkflowInput, WorkflowNode } from '@/api/types';
+import type { HistoryOutputImage, WorkflowInput, WorkflowNode } from '@/api/types';
 import { useWorkflowStore, getWidgetDefinitions, getInputWidgetDefinitions, getWidgetIndexForInput, findSeedWidgetIndex, findSeedControlWidgetIndex, resolveSubgraphPlaceholderWidgetDefs, resolveSubgraphPlaceholderInputWidgetDefs, resolveSubgraphProxyWidgetDefs, resolveSubgraphProxyInputWidgetDefs, resolveSubgraphBoundaryWidgetDefs, resolveSubgraphBoundaryInputWidgetDefs, isPlaceholderPromotedConnection } from '@/hooks/useWorkflow';
 import type { LinkedWidgetRoute, ProxyWidgetRoute } from '@/utils/widgetDefinitions';
 import { isSubgraphPlaceholder } from '@/utils/canonicalWorkflowOps';
@@ -15,7 +15,12 @@ import { useConnectionSectionFoldsStore } from '@/hooks/useConnectionSectionFold
 import { useParameterSectionFoldsStore } from '@/hooks/useParameterSectionFolds';
 import { useWorkflowClipboardStore } from '@/hooks/useWorkflowClipboard';
 import { buildNodeClipboardPayload } from '@/utils/workflowClipboard';
-import { getImageUrl, getImagePreviewUrl } from '@/api/client';
+import {
+  getImageUrl,
+  getImagePreviewUrl,
+  getMediaThumbnailUrl,
+  getPlayableVideoUrl,
+} from '@/api/client';
 import { getMediaType } from '@/utils/media';
 import { NodeCardMenu } from './NodeCard/Menu';
 import { SelectionCheckbox } from '@/components/buttons/SelectionCheckbox';
@@ -24,6 +29,7 @@ import { NodeCardErrorPopover } from './NodeCard/ErrorPopover';
 import { NodeCardNote } from './NodeCard/Note';
 import { NodeCardOutputPreview } from './NodeCard/OutputPreview';
 import { NodeCardImageComparer } from './NodeCard/ImageComparer';
+import { DenoVideoCompare } from './NodeCard/DenoVideoCompare';
 import { isGetNode, isSetGetNode, isSetNode } from '@/utils/setGetNodes';
 import { isUninstalledNodeType } from '@/utils/missingNodes';
 import { useCustomNodesManager } from '@/hooks/useCustomNodesManager';
@@ -34,11 +40,17 @@ import { ErrorHighlightBadge } from './NodeCard/ErrorHighlightBadge';
 import { NodeCardConnectionsSection } from './NodeCard/ConnectionsSection';
 import { NodeCardParameters } from './NodeCard/Parameters';
 import { resolveLoadImagePreview } from '@/utils/loadImagePreview';
+import {
+  getRevealFrontendPreviewUpdate,
+  getNodeFrontendPreviewPolicy,
+  getOasisWidgetState,
+  resolveNodeFrontendMediaPreview,
+} from '@/utils/nodeFrontendPreviews';
 import { requireHierarchicalKey } from '@/utils/itemKeys';
 import { hexToRgba } from '@/utils/grouping';
 import { resolveWorkflowColor, themeColors } from '@/theme/colors';
 
-const EMPTY_IMAGES: Array<{ filename: string; subfolder: string; type: string }> = [];
+const EMPTY_IMAGES: HistoryOutputImage[] = [];
 type ImageLike = (typeof EMPTY_IMAGES)[number];
 const EMPTY_DURATION_STATS: Record<string, { avgMs: number; count: number }> = {};
 
@@ -140,7 +152,7 @@ export const NodeCard = memo(function NodeCard({
     [currentWorkflowKey, setPinnedWidget]
   );
   const resolvedImages = nodeImages ?? EMPTY_IMAGES;
-  const [previewImage, setPreviewImage] = useState<ImageLike | null>(null);
+  const [previewMedia, setPreviewMedia] = useState<ImageLike | null>(null);
   const { errorPopoverOpen, setErrorPopoverOpen, resetErrorPopover } = useNodeErrorPopover();
   const openCustomNodesManager = useCustomNodesManager((s) => s.open);
   const noteTextareaRef = useRef<HTMLTextAreaElement>(null);
@@ -190,22 +202,36 @@ export const NodeCard = memo(function NodeCard({
     ? resolvedImages[resolvedImages.length - 1]
     : null;
   const latestKey = latestImage
-    ? `${latestImage.filename}|${latestImage.subfolder}|${latestImage.type}`
+    ? `${latestImage.filename}|${latestImage.subfolder}|${latestImage.type}|${latestImage.cacheToken ?? ''}`
     : null;
-  const previewKey = previewImage
-    ? `${previewImage.filename}|${previewImage.subfolder}|${previewImage.type}`
+  const latestOutputIsVideo = Boolean(
+    latestImage && getMediaType(latestImage.filename) === 'video',
+  );
+  const previewKey = previewMedia
+    ? `${previewMedia.filename}|${previewMedia.subfolder}|${previewMedia.type}|${previewMedia.cacheToken ?? ''}`
     : null;
 
   useEffect(() => {
     if (!latestImage) return;
     if (latestKey === previewKey) return;
+    // Videos load through their own seekable playback + poster endpoints. Do
+    // not gate them behind `new Image()`: that path can decode only a still (or
+    // fail entirely) and was the reason video-output nodes never became an
+    // inline player on iOS.
+    if (latestOutputIsVideo) return;
     // Preload the same WebP preview the inline OutputPreview displays, so the
     // gate reflects (and primes the cache for) the fast image, not the full PNG.
     const nextSrc = getImagePreviewUrl(latestImage.filename, latestImage.subfolder, latestImage.type);
     const img = new Image();
-    img.onload = () => setPreviewImage(latestImage);
+    let cancelled = false;
+    img.onload = () => {
+      if (!cancelled) setPreviewMedia(latestImage);
+    };
     img.src = nextSrc;
-  }, [latestKey, previewKey, latestImage]);
+    return () => {
+      cancelled = true;
+    };
+  }, [latestKey, previewKey, latestImage, latestOutputIsVideo]);
 
   const typeDef = nodeTypes?.[node.type];
   const isPlaceholder = useMemo(
@@ -231,6 +257,7 @@ export const NodeCard = memo(function NodeCard({
   const isLoraManagerNode = isLoraManagerNodeType(node.type);
   const isFastGroupsBypasser = /fast\s+groups/i.test(node.type) && /\(rgthree\)/i.test(node.type);
   const isImageComparer = /image\s*comparer/i.test(node.type);
+  const isDenoVideoCompare = node.type === 'DenoVideoCompare';
   // SetNode/GetNode (KJNodes wireless relays) render a compact relay control in
   // place of their parameters; their real slots still use the connections section.
   const isSetGet = isSetGetNode(node);
@@ -247,7 +274,82 @@ export const NodeCard = memo(function NodeCard({
     if (!isLoadImageNode || !workflow || !nodeTypes) return null;
     return resolveLoadImagePreview(workflow, nodeTypes, node);
   }, [isLoadImageNode, node, nodeTypes, workflow]);
-  const effectivePreviewImage = inputImagePreview ?? previewImage;
+  const frontendMediaPreview = useMemo(
+    () => workflow
+      ? resolveNodeFrontendMediaPreview(workflow, nodeTypes, node)
+      : null,
+    [workflow, nodeTypes, node],
+  );
+  const isOasisMediaPreview = frontendMediaPreview?.source === 'oasis-widget';
+  // Oasis owns a serialized scene-bar playlist. Its volatile node output only
+  // marks a fresh arrival for autoplay; it must not replace that playlist with
+  // the generic batch grid after the second result.
+  const effectivePreviewImage = isOasisMediaPreview
+    ? null
+    : inputImagePreview ?? (latestOutputIsVideo ? latestImage : previewMedia);
+  const frontendPreviewPolicy = useMemo(
+    () => workflow
+      ? getNodeFrontendPreviewPolicy(workflow, nodeTypes, node)
+      : null,
+    [workflow, nodeTypes, node],
+  );
+  const previewSuppressed = frontendPreviewPolicy?.hidden === true;
+  const revealFrontendPreviewUpdate = useMemo(
+    () => workflow
+      ? getRevealFrontendPreviewUpdate(workflow, nodeTypes, node)
+      : null,
+    [workflow, nodeTypes, node],
+  );
+  const effectiveFrontendMediaPreview = useMemo(() => {
+    if (effectivePreviewImage || previewSuppressed || !frontendMediaPreview) return null;
+    return isOasisMediaPreview && resolvedImages.length > 0
+      ? { ...frontendMediaPreview, autoPlay: true }
+      : frontendMediaPreview;
+  }, [
+    effectivePreviewImage,
+    frontendMediaPreview,
+    isOasisMediaPreview,
+    previewSuppressed,
+    resolvedImages.length,
+  ]);
+
+  const handleFrontendPreviewStateChange = useCallback((change: {
+    activeIndex?: number;
+    playMode?: 'off' | 'loop' | 'cycle';
+  }) => {
+    if (!workflow) return;
+    const oasis = getOasisWidgetState(workflow, nodeTypes, node);
+    if (!oasis) return;
+    const currentPreview = oasis.state.preview && typeof oasis.state.preview === 'object'
+      && !Array.isArray(oasis.state.preview)
+      ? oasis.state.preview as Record<string, unknown>
+      : {};
+    const currentUiState = oasis.state.uiState && typeof oasis.state.uiState === 'object'
+      && !Array.isArray(oasis.state.uiState)
+      ? oasis.state.uiState as Record<string, unknown>
+      : {};
+    const next = {
+      ...oasis.state,
+      ...(change.activeIndex === undefined
+        ? {}
+        : { preview: { ...currentPreview, activeIdx: change.activeIndex } }),
+      ...(change.playMode === undefined
+        ? {}
+        : { uiState: { ...currentUiState, playMode: change.playMode } }),
+    };
+    const widgetIndex = getWidgetIndexForInput(
+      workflow,
+      nodeTypes,
+      node,
+      oasis.widgetName,
+    );
+    updateNodeWidget(
+      nodeHierarchicalKey,
+      widgetIndex ?? -1,
+      JSON.stringify(next),
+      oasis.widgetName,
+    );
+  }, [node, nodeHierarchicalKey, nodeTypes, updateNodeWidget, workflow]);
 
   // Unfiltered widget defs — used for proxy route extraction before seed filtering.
   const allResolvedWidgets = useMemo(() => {
@@ -261,11 +363,15 @@ export const NodeCard = memo(function NodeCard({
   }, [nodeTypes, node, isPlaceholder, workflow]);
 
   const widgets = useMemo(() => {
-    if (!isKSampler) return allResolvedWidgets;
-    // Filter seed widgets — for proxy widgets the display name may be "InnerTitle: seed"
     return allResolvedWidgets.filter((widget) => {
       const baseName = widget.name.split(': ').pop() ?? widget.name;
-      return baseName !== 'seed';
+      // These are serialized transport blobs owned by custom desktop DOM
+      // widgets. Showing raw JSON as an editable text field is both confusing
+      // and can break their websocket result routing.
+      if (baseName === 'video_oasis_ui' || baseName === 'ltx23_oasis_ui') return false;
+      // Filter seed widgets — for proxy widgets the display name may be
+      // "InnerTitle: seed".
+      return !isKSampler || baseName !== 'seed';
     });
   }, [allResolvedWidgets, isKSampler]);
 
@@ -282,7 +388,12 @@ export const NodeCard = memo(function NodeCard({
   // A widget overridden by a connection (popped out / wired up) is hidden from
   // the parameters section — its value isn't used while the input is connected.
   const visibleInputWidgets = useMemo(
-    () => inputWidgets.filter((inputWidget) => !inputWidget.connected),
+    () => inputWidgets.filter((inputWidget) => (
+      !inputWidget.connected &&
+      !['video_oasis_ui', 'ltx23_oasis_ui'].includes(
+        inputWidget.name.split(': ').pop() ?? inputWidget.name,
+      )
+    )),
     [inputWidgets]
   );
   const visibleWidgets = useMemo(
@@ -458,14 +569,6 @@ export const NodeCard = memo(function NodeCard({
     [node.outputs]
   );
 
-  const hasImageOutput = node.outputs.some((o) =>
-    String(o.type).toUpperCase() === 'IMAGE'
-  );
-  const isImageOutputNode = Boolean(
-    typeDef?.output_node ||
-    /PreviewImage|SaveImage|SaveAnimatedPNG|SaveAnimatedWEBP|SaveVideo/i.test(node.type)
-  );
-
   // Helper to check if a widget is pinned
   const isWidgetPinned = (widgetIndex: number) => {
     return pinnedWidgetForThisNode?.widgetIndex === widgetIndex;
@@ -496,9 +599,19 @@ export const NodeCard = memo(function NodeCard({
   const totalBookmarkCount = bookmarkedItems.length;
   const canAddNodeBookmark = totalBookmarkCount < 5 || isNodeBookmarked;
 
-  const showComparer = isImageComparer && !!comparerOutput &&
-    (comparerOutput.a.length > 0 || comparerOutput.b.length > 0);
-  const showImagePreview = !showComparer && (hasImageOutput || isImageOutputNode) && !!effectivePreviewImage;
+  const showComparer = Boolean(
+    comparerOutput && (
+      isDenoVideoCompare && comparerOutput.video ||
+      isImageComparer && (comparerOutput.a.length > 0 || comparerOutput.b.length > 0)
+    ),
+  );
+  // Executed media descriptors are stronger evidence than a node's declared
+  // slots. Custom video nodes frequently expose no IMAGE output (and some rely
+  // entirely on a frontend extension), while still publishing a standard
+  // images/gifs/videos payload that the websocket layer has already captured.
+  const showImagePreview = !showComparer && !previewSuppressed && Boolean(
+    effectivePreviewImage || effectiveFrontendMediaPreview,
+  );
   const showTextPreview = typeof nodeTextOutput === 'string' && nodeTextOutput.length > 0;
   const inputConnectionCount = node.inputs?.filter((input) => input.link != null).length ?? 0;
   const outputConnectionCount = node.outputs?.reduce((count, output) => count + (output.links?.length ?? 0), 0) ?? 0;
@@ -508,7 +621,7 @@ export const NodeCard = memo(function NodeCard({
   // A node that produced more than one output is a batch: tile the whole batch
   // instead of just the latest image. The LoadImage input preview stays single.
   const isBatchOutput =
-    !inputImagePreview && (hasImageOutput || isImageOutputNode) && resolvedImages.length > 1;
+    !previewSuppressed && !inputImagePreview && !isOasisMediaPreview && resolvedImages.length > 1;
 
   // The viewer/click target list — the full batch when tiling, else the single
   // gated preview image.
@@ -520,7 +633,7 @@ export const NodeCard = memo(function NodeCard({
         : [];
     return list.map((img) => {
       const { filename, subfolder, type } = img;
-      const src = getImageUrl(filename, subfolder, type);
+      const src = getImageUrl(filename, subfolder, type, img.cacheToken);
       const filePath = subfolder ? `${subfolder}/${filename}` : filename;
       const mediaType = getMediaType(filename);
       return {
@@ -544,10 +657,28 @@ export const NodeCard = memo(function NodeCard({
   // Two-column thumbnails for the batch grid; null in the single-image case.
   const batchTiles = useMemo(() => {
     if (!isBatchOutput) return null;
-    return resolvedImages.map((img) => ({
-      displaySrc: getImagePreviewUrl(img.filename, img.subfolder, img.type),
-      alt: displayName,
-    }));
+    return resolvedImages.map((img) => {
+      const mediaType = getMediaType(img.filename);
+      if (mediaType === 'video') {
+        const src = getImageUrl(img.filename, img.subfolder, img.type, img.cacheToken);
+        return {
+          displaySrc: getPlayableVideoUrl(src),
+          poster: getMediaThumbnailUrl(
+            img.filename,
+            img.subfolder,
+            img.type,
+            img.cacheToken,
+          ),
+          mediaType,
+          alt: displayName,
+        };
+      }
+      return {
+        displaySrc: getImagePreviewUrl(img.filename, img.subfolder, img.type),
+        mediaType,
+        alt: displayName,
+      };
+    });
   }, [isBatchOutput, resolvedImages, displayName]);
 
   useEffect(() => {
@@ -978,7 +1109,8 @@ export const NodeCard = memo(function NodeCard({
                 showImagePreview ||
                 showTextPreview ||
                 !!latentPreviewUrl ||
-                isBatchOutput
+                isBatchOutput ||
+                Boolean(revealFrontendPreviewUpdate)
               }
             />}
             {noteText && (
@@ -994,20 +1126,53 @@ export const NodeCard = memo(function NodeCard({
               />
             )}
 
+            {revealFrontendPreviewUpdate && (
+              <button
+                type="button"
+                className="mb-3 w-full rounded-lg border border-white/15 bg-white/5 px-3 py-2 text-sm text-slate-300"
+                onClick={() => {
+                  const widgetIndex = handleGetWidgetIndexForInput(
+                    revealFrontendPreviewUpdate.widgetName,
+                  );
+                  updateNodeWidget(
+                    nodeHierarchicalKey,
+                    widgetIndex ?? -1,
+                    revealFrontendPreviewUpdate.value,
+                    revealFrontendPreviewUpdate.widgetName,
+                  );
+                }}
+              >
+                Show video preview
+              </button>
+            )}
+
             {showComparer && comparerOutput && (
-              <NodeCardImageComparer
-                show={showComparer}
-                aImages={comparerOutput.a}
-                bImages={comparerOutput.b}
-                displayName={displayName}
-                onOpenViewer={onImageClick}
-              />
+              isDenoVideoCompare && comparerOutput.video ? (
+                <DenoVideoCompare
+                  output={comparerOutput}
+                  displayName={displayName}
+                  onWidgetChange={(widgetName, value) => {
+                    const widgetIndex = handleGetWidgetIndexForInput(widgetName);
+                    if (widgetIndex === null) return;
+                    handleUpdateNodeWidget(widgetIndex, value, widgetName);
+                  }}
+                />
+              ) : (
+                <NodeCardImageComparer
+                  show={showComparer}
+                  aImages={comparerOutput.a}
+                  bImages={comparerOutput.b}
+                  displayName={displayName}
+                  onOpenViewer={onImageClick}
+                />
+              )
             )}
 
             <NodeCardOutputPreview
               show={showImagePreview || showTextPreview || !!latentPreviewUrl || isBatchOutput}
               previewImage={effectivePreviewImage}
               previewImages={batchTiles}
+              frontendPreview={effectiveFrontendMediaPreview}
               latentPreviewUrl={latentPreviewUrl}
               previewText={showTextPreview ? nodeTextOutput : null}
               displayName={displayName}
@@ -1016,6 +1181,12 @@ export const NodeCard = memo(function NodeCard({
               isExecuting={Boolean(isExecuting)}
               overallProgress={overallProgress}
               displayNodeProgress={displayNodeProgress}
+              videoAutoPlay={frontendPreviewPolicy?.autoPlay ?? true}
+              videoLoop={frontendPreviewPolicy?.loop ?? false}
+              videoPlaybackRate={frontendPreviewPolicy?.playbackRate ?? 1}
+              onFrontendPreviewStateChange={isOasisMediaPreview
+                ? handleFrontendPreviewStateChange
+                : undefined}
             />
             </>
             )}

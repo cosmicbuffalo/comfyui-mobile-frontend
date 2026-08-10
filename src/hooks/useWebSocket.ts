@@ -10,6 +10,8 @@ import { useConnectionStatusStore } from './useConnectionStatus';
 import { useNavigationStore } from './useNavigation';
 import { useOutputsStore } from './useOutputs';
 import type { WSMessage, WSStatusMessage, WSProgressMessage, WSExecutingMessage, WSExecutedMessage, HistoryOutputImage } from '@/api/types';
+import type { DenoVideoCompareAudio, DenoVideoCompareMetadata, NodeComparerOutput } from './useWorkflow';
+import { appendOasisPreviewResults } from '@/utils/nodeFrontendPreviews';
 
 // When a run finishes while the user is sitting on the Outputs panel, reload
 // that view if any of the just-saved images belong to the folder/source being
@@ -70,6 +72,172 @@ export function extractTextPreviewFromOutput(output: Record<string, unknown>): s
   };
 
   return findString(output, 0);
+}
+
+/**
+ * Standard ComfyUI video producers are not consistent about the UI bucket they
+ * use: core SaveVideo currently publishes MP4 under `images`, VideoHelperSuite
+ * uses `gifs`, and other nodes use `videos`. Normalize all three in their wire
+ * order and de-duplicate descriptors before the workflow/queue consumers see
+ * them. Filename classification happens at render time, where the actual media
+ * extension is more reliable than the bucket name.
+ */
+export function collectExecutedMediaOutputs(
+  output: Record<string, unknown>,
+  executionCacheToken?: string | number,
+): HistoryOutputImage[] {
+  const media: HistoryOutputImage[] = [];
+  const seen = new Set<string>();
+  for (const key of ['images', 'gifs', 'videos', 'deno_video_preview'] as const) {
+    const candidates = output[key];
+    if (!Array.isArray(candidates)) continue;
+    for (const candidate of candidates) {
+      if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) continue;
+      const descriptor = candidate as Partial<HistoryOutputImage>;
+      if (
+        typeof descriptor.filename !== 'string' ||
+        typeof descriptor.subfolder !== 'string' ||
+        typeof descriptor.type !== 'string'
+      ) continue;
+      const normalized: HistoryOutputImage = {
+        ...(candidate as HistoryOutputImage),
+        ...(key === 'deno_video_preview' && executionCacheToken !== undefined
+          ? { cacheToken: executionCacheToken }
+          : {}),
+      };
+      const identity = `${descriptor.type}/${descriptor.subfolder}/${descriptor.filename}`;
+      if (seen.has(identity)) continue;
+      seen.add(identity);
+      media.push(normalized);
+    }
+  }
+  return media;
+}
+
+function finiteNumber(value: unknown, fallback = 0): number {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : fallback;
+}
+
+function denoAudio(value: unknown): DenoVideoCompareAudio | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const audio = value as Record<string, unknown>;
+  if (typeof audio.filename !== 'string' || !audio.filename) return null;
+  return {
+    filename: audio.filename,
+    channels: Math.max(1, Math.trunc(finiteNumber(audio.channels, 1))),
+    samples: Math.max(0, Math.trunc(finiteNumber(audio.samples))),
+    sample_rate: Math.max(1, Math.trunc(finiteNumber(audio.sample_rate, 44100))),
+    dtype: typeof audio.dtype === 'string' ? audio.dtype : undefined,
+    layout: typeof audio.layout === 'string' ? audio.layout : undefined,
+  };
+}
+
+/** Normalize Deno's encoder-free frame-sequence comparison payload into the
+ * existing node comparer store, retaining its virtual-clock/audio metadata for
+ * the dedicated workflow-card player. */
+export function collectDenoVideoCompareOutput(
+  output: Record<string, unknown>,
+): NodeComparerOutput | null {
+  const list = output.deno_video_compare;
+  if (!Array.isArray(list) || !list[0] || typeof list[0] !== 'object') return null;
+  const meta = list[0] as Record<string, unknown>;
+  const subfolder = typeof meta.subfolder === 'string' ? meta.subfolder : '';
+  const descriptors = (value: unknown): HistoryOutputImage[] => (
+    Array.isArray(value)
+      ? value.filter((filename): filename is string => typeof filename === 'string' && !!filename)
+        .map((filename) => ({ filename, subfolder, type: 'temp' }))
+      : []
+  );
+  const a = descriptors(meta.files_a);
+  const b = descriptors(meta.files_b);
+  const allowedModes = new Set(['Slider', 'Side by Side', 'Difference', 'Toggle']);
+  const mode = allowedModes.has(String(meta.mode))
+    ? String(meta.mode) as DenoVideoCompareMetadata['mode']
+    : 'Slider';
+  const video: DenoVideoCompareMetadata = {
+    mode,
+    splitPosition: Math.max(0.02, Math.min(0.98, finiteNumber(meta.split_position, 0.5))),
+    toggleImage: meta.toggle_image === 'A' ? 'A' : 'B',
+    swapped: Boolean(meta.swap),
+    fps: Math.max(0.01, finiteNumber(meta.fps, 24)),
+    sourceFps: Math.max(0.01, finiteNumber(meta.source_fps, finiteNumber(meta.fps, 24))),
+    duration: Math.max(0, finiteNumber(meta.duration)),
+    frameCount: Math.max(0, Math.trunc(finiteNumber(meta.frame_count, Math.max(a.length, b.length)))),
+    subfolder,
+    haveA: Boolean(meta.have_a) && a.length > 0,
+    haveB: Boolean(meta.have_b) && b.length > 0,
+    aSourceWidth: Math.max(0, Math.trunc(finiteNumber(meta.a_src_w))),
+    aSourceHeight: Math.max(0, Math.trunc(finiteNumber(meta.a_src_h))),
+    bSourceWidth: Math.max(0, Math.trunc(finiteNumber(meta.b_src_w))),
+    bSourceHeight: Math.max(0, Math.trunc(finiteNumber(meta.b_src_h))),
+    aSourceCount: Math.max(0, Math.trunc(finiteNumber(meta.a_count))),
+    bSourceCount: Math.max(0, Math.trunc(finiteNumber(meta.b_count))),
+    audioA: denoAudio(meta.audio_a),
+    audioB: denoAudio(meta.audio_b),
+    error: typeof meta.error === 'string' ? meta.error : undefined,
+  };
+  return { a, b, video };
+}
+
+export type ParsedBinaryPreview =
+  | { kind: 'image'; blob: Blob }
+  | { kind: 'vhs'; nodeId: string; index: number; blob: Blob }
+  | null;
+
+/** Decode stock Comfy preview envelopes and VHS's extended animated-latent
+ * envelope without ever feeding protocol bytes into an image Blob. */
+export function parseBinaryPreviewMessage(data: ArrayBuffer): ParsedBinaryPreview {
+  if (data.byteLength < 8) return null;
+  const view = new DataView(data);
+  const type = view.getUint32(0, false);
+  if (type === 1) {
+    const imageType = view.getUint32(4, false);
+    const bytes = new Uint8Array(data);
+    // Prefer an ordinary Comfy preview when its payload begins with real image
+    // magic. This prevents random JPEG bytes at offset 28 from looking like a
+    // plausible VHS header.
+    const stockJpeg = bytes[8] === 0xff && bytes[9] === 0xd8;
+    const stockPng = bytes[8] === 0x89 && bytes[9] === 0x50;
+    if (stockJpeg || stockPng) {
+      return {
+        kind: 'image',
+        blob: new Blob([data.slice(8)], { type: stockPng ? 'image/png' : 'image/jpeg' }),
+      };
+    }
+    // VHS: [type][imageType][index][16-byte Pascal node id][JPEG].
+    if (data.byteLength > 30 && imageType === 1) {
+      const idLength = view.getUint8(12);
+      const jpegOffset = 28;
+      const jpegHeader = bytes[jpegOffset] === 0xff && bytes[jpegOffset + 1] === 0xd8;
+      if (idLength > 0 && idLength <= 15 && jpegHeader) {
+        const nodeId = new TextDecoder().decode(data.slice(13, 13 + idLength));
+        return {
+          kind: 'vhs',
+          nodeId,
+          index: view.getUint32(8, false),
+          blob: new Blob([data.slice(jpegOffset)], { type: 'image/jpeg' }),
+        };
+      }
+    }
+    const mime = imageType === 2 ? 'image/png' : 'image/jpeg';
+    return { kind: 'image', blob: new Blob([data.slice(8)], { type: mime }) };
+  }
+  if (type === 4) {
+    try {
+      const jsonLen = view.getUint32(4, false);
+      const offset = 8 + jsonLen;
+      if (offset >= data.byteLength) return null;
+      const header = new Uint8Array(data.slice(offset, offset + 4));
+      const mime = header[0] === 0x89 && header[1] === 0x50
+        ? 'image/png'
+        : 'image/jpeg';
+      return { kind: 'image', blob: new Blob([data.slice(offset)], { type: mime }) };
+    } catch {
+      return null;
+    }
+  }
+  return null;
 }
 
 // Only bother the user about a backend outage once it has lasted longer than
@@ -300,6 +468,62 @@ export function useWebSocket() {
     ): string | null =>
       resolveNodeHierarchicalKeysForOutput(rawNodeId, ctx)[0] ?? null;
 
+    type VhsLatentSequence = {
+      frames: Array<Blob | undefined>;
+      displayIndex: number;
+      timer: ReturnType<typeof setInterval>;
+    };
+    const vhsLatentSequences = new Map<string, VhsLatentSequence>();
+    const clearVhsLatentSequences = () => {
+      for (const sequence of vhsLatentSequences.values()) clearInterval(sequence.timer);
+      vhsLatentSequences.clear();
+    };
+    const startVhsLatentSequence = (detail: Record<string, unknown>) => {
+      const rawId = typeof detail.id === 'string' || typeof detail.id === 'number'
+        ? String(detail.id)
+        : '';
+      const length = Math.max(1, Math.min(4096, Math.trunc(finiteNumber(detail.length, 1))));
+      const rate = Math.max(1, Math.min(60, finiteNumber(detail.rate, 8)));
+      if (!rawId) return;
+      // Comfy executes one node at a time, so a new VHS sequence supersedes
+      // every earlier one, even when its node id differs. Leaving an older
+      // interval alive lets it keep racing the new sampler for the prompt's
+      // queue preview (and repeatedly repaint its old workflow card).
+      clearVhsLatentSequences();
+      const sequence = {
+        frames: new Array<Blob | undefined>(length),
+        displayIndex: 0,
+        timer: 0 as unknown as ReturnType<typeof setInterval>,
+      };
+      sequence.timer = setInterval(() => {
+        const frame = sequence.frames[sequence.displayIndex];
+        if (!frame) return;
+        const promptId = executingPromptIdRef.current;
+        const ctx = getSessionContext(promptId);
+        if (ctx.orphaned) return;
+        // Queue previews are global, but workflow-card latent previews belong
+        // only to the foreground session. A parked run must not paint onto an
+        // active card whose numeric/pointer key happens to coincide.
+        if (ctx.sessionId === useWorkflowStore.getState().activeSessionId) {
+          const idParts = rawId.split(':');
+          const routedKeys = new Set<string>();
+          for (let index = 1; index <= idParts.length; index += 1) {
+            const prefix = idParts.slice(0, index).join(':');
+            const key = resolveNodeHierarchicalKey(prefix, ctx);
+            if (key) routedKeys.add(key);
+          }
+          for (const key of routedKeys) {
+            storeActionsRef.current.setLatentPreview(URL.createObjectURL(frame), key);
+          }
+        }
+        if (promptId) {
+          storeActionsRef.current.setQueueLatentPreview(promptId, URL.createObjectURL(frame));
+        }
+        sequence.displayIndex = (sequence.displayIndex + 1) % sequence.frames.length;
+      }, 1000 / rate);
+      vhsLatentSequences.set(rawId, sequence);
+    };
+
     const clearExecutionAfterBackendRestart = (preserveInfiniteLoop = false) => {
       executingPromptIdRef.current = null;
       lastPromptIdRef.current = null;
@@ -348,6 +572,7 @@ export function useWebSocket() {
       }));
       storeActionsRef.current.clearAllLatentPreviews();
       storeActionsRef.current.clearQueueLatentPreviews();
+      clearVhsLatentSequences();
     };
 
     const handleMessage = (data: unknown) => {
@@ -404,6 +629,7 @@ export function useWebSocket() {
               setExecutionState(false, null, null, 0, null, sid);
             }
             storeActionsRef.current.clearAllLatentPreviews();
+            clearVhsLatentSequences();
           }
           break;
         }
@@ -445,6 +671,11 @@ export function useWebSocket() {
           const promptId = execMsg.data.prompt_id;
           const ctx = getSessionContext(promptId);
 
+          // Stop an animated sampler as soon as execution advances. The next
+          // sampler, if it supports VHS animation, starts a fresh sequence from
+          // its own VHS_latentpreview event below.
+          if (nodeId !== null) clearVhsLatentSequences();
+
           if (ctx.orphaned) {
             // The owning tab was closed mid-run. Don't route execution state to
             // any visible workflow; on completion just clean up refs and let the
@@ -476,6 +707,7 @@ export function useWebSocket() {
             if (ctx.sessionId === useWorkflowStore.getState().activeSessionId) {
               storeActionsRef.current.clearAllLatentPreviews();
             }
+            clearVhsLatentSequences();
 
             // Apply control_after_generate for PrimitiveNodes
             storeActionsRef.current.applyControlAfterGenerate(ctx.sessionId);
@@ -563,11 +795,10 @@ export function useWebSocket() {
           // the backend and appear in the Outputs panel via the history fetch.
           if (ctx.orphaned) break;
           const itemKeysForOutput = resolveNodeHierarchicalKeysForOutput(node, ctx);
-          const mediaOutputs = [
-            ...(output.images ?? []),
-            ...(output.gifs ?? []),
-            ...(output.videos ?? []),
-          ];
+          const mediaOutputs = collectExecutedMediaOutputs(
+            output,
+            `${prompt_id}:${node}:${Date.now()}`,
+          );
           if (mediaOutputs.length > 0) {
              // Store for history
              if (!pendingOutputsRef.current[prompt_id]) {
@@ -591,12 +822,91 @@ export function useWebSocket() {
               setNodeComparerOutput(key, { a: comparerA, b: comparerB }, ctx.sessionId);
             });
           }
+          const denoVideoCompare = collectDenoVideoCompareOutput(output);
+          if (denoVideoCompare) {
+            itemKeysForOutput.forEach((key) => {
+              setNodeComparerOutput(key, denoVideoCompare, ctx.sessionId);
+            });
+          }
           const textPreview = extractTextPreviewFromOutput(output as Record<string, unknown>);
           if (textPreview && itemKeysForOutput.length > 0) {
             itemKeysForOutput.forEach((key) => {
               setNodeTextOutput(key, textPreview, ctx.sessionId);
             });
           }
+          break;
+        }
+
+        case 'video-oasis/result': {
+          const ioId = asText(msg.data.io_id);
+          const results = Array.isArray(msg.data.results) ? msg.data.results : [];
+          if (!ioId || results.length === 0) break;
+          const token = `oasis:${ioId}:${Date.now()}`;
+          const descriptors = collectExecutedMediaOutputs({ videos: results })
+            .map((descriptor) => ({ ...descriptor, cacheToken: token }));
+          if (descriptors.length === 0) break;
+          // Oasis's desktop widget appends every result to its serialized scene
+          // bar. Do the same atomically for the active or parked owner, while a
+          // one-item volatile output marks this arrival as eligible to autoplay.
+          // Only one owner consumes an id; duplicate legacy ids are repaired at
+          // load/queue time and must never paint multiple nodes in the meantime.
+          useWorkflowStore.setState((state) => {
+            let consumed = false;
+            let workflow = state.workflow;
+            let nodeOutputs = state.nodeOutputs;
+            if (workflow) {
+              const appended = appendOasisPreviewResults(
+                workflow,
+                state.nodeTypes,
+                ioId,
+                descriptors,
+              );
+              if (appended.target) {
+                consumed = true;
+                workflow = appended.workflow;
+                nodeOutputs = {
+                  ...nodeOutputs,
+                  [String(appended.target.node.id)]: descriptors.slice(-1),
+                };
+              }
+            }
+            let parkedChanged = false;
+            const parkedSessions = { ...state.parkedSessions };
+            if (!consumed) {
+              for (const [sessionId, snapshot] of Object.entries(state.parkedSessions)) {
+                if (!snapshot.workflow) continue;
+                const appended = appendOasisPreviewResults(
+                  snapshot.workflow,
+                  state.nodeTypes,
+                  ioId,
+                  descriptors,
+                );
+                if (!appended.target) continue;
+                parkedChanged = true;
+                consumed = true;
+                parkedSessions[sessionId] = {
+                  ...snapshot,
+                  workflow: appended.workflow,
+                  nodeOutputs: {
+                    ...snapshot.nodeOutputs,
+                    [String(appended.target.node.id)]: descriptors.slice(-1),
+                  },
+                };
+                break;
+              }
+            }
+            if (!consumed) return {};
+            return {
+              ...(workflow !== state.workflow ? { workflow } : {}),
+              ...(nodeOutputs !== state.nodeOutputs ? { nodeOutputs } : {}),
+              ...(parkedChanged ? { parkedSessions } : {}),
+            };
+          });
+          break;
+        }
+
+        case 'VHS_latentpreview': {
+          startVhsLatentSequence(msg.data);
           break;
         }
 
@@ -688,6 +998,7 @@ export function useWebSocket() {
           if (errCtx.sessionId === useWorkflowStore.getState().activeSessionId) {
             storeActionsRef.current.clearAllLatentPreviews();
           }
+          clearVhsLatentSequences();
           // Only clear the errored prompt's outputs. A prompt-id-less error must
           // NOT fall through to the wipe-all branch — that would destroy output
           // routing (promptToSession) for every other open tab.
@@ -790,29 +1101,15 @@ export function useWebSocket() {
     };
 
     const handleBinaryMessage = (data: ArrayBuffer) => {
-      if (data.byteLength < 8) return;
-
-      const view = new DataView(data);
-      const type = view.getUint32(0, false); // big-endian
-
-      if (type === 1) {
-        // Legacy: [type(4B)][imageType(4B)][imageData]
-        const imageType = view.getUint32(4, false);
-        const mime = imageType === 2 ? 'image/png' : 'image/jpeg';
-        const imageData = data.slice(8);
-        dispatchPreviewFrame(new Blob([imageData], { type: mime }));
-      } else if (type === 4) {
-        // Modern: [type(4B)][jsonLen(4B)][JSON metadata][imageData]
-        try {
-          const jsonLen = view.getUint32(4, false);
-          const imageData = data.slice(8 + jsonLen);
-          const header = new Uint8Array(imageData.slice(0, 4));
-          const mime = (header[0] === 0x89 && header[1] === 0x50) ? 'image/png' : 'image/jpeg';
-          dispatchPreviewFrame(new Blob([imageData], { type: mime }));
-        } catch (e) {
-          console.error('[WS] Failed to parse binary type 4 message:', e);
-        }
+      const parsed = parseBinaryPreviewMessage(data);
+      if (!parsed) return;
+      if (parsed.kind === 'image') {
+        dispatchPreviewFrame(parsed.blob);
+        return;
       }
+      const sequence = vhsLatentSequences.get(parsed.nodeId);
+      if (!sequence || parsed.index < 0 || parsed.index >= sequence.frames.length) return;
+      sequence.frames[parsed.index] = parsed.blob;
     };
 
     const connect = () => {
@@ -967,6 +1264,7 @@ export function useWebSocket() {
         wsRef.current.close();
       }
       clearInterval(pollInterval);
+      clearVhsLatentSequences();
     };
   }, []); // Empty dependency array - only run once on mount
 

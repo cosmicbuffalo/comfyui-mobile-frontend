@@ -12,9 +12,7 @@ import { CollapsibleMenuSection } from './CollapsibleMenuSection';
 interface MenuLoadSectionProps {
   open: boolean;
   sectionRef: React.RefObject<HTMLElement | null>;
-  fileInputRef: React.RefObject<HTMLInputElement | null>;
   onToggle: () => void;
-  onFileChange: (event: React.ChangeEvent<HTMLInputElement>) => void;
   onLoadFromFile: () => void;
   onOpenRecent: () => void;
   onOpenUserWorkflows: () => void;
@@ -25,9 +23,7 @@ interface MenuLoadSectionProps {
 export function MenuLoadSection({
   open,
   sectionRef,
-  fileInputRef,
   onToggle,
-  onFileChange,
   onLoadFromFile,
   onOpenRecent,
   onOpenUserWorkflows,
@@ -36,14 +32,6 @@ export function MenuLoadSection({
 }: MenuLoadSectionProps) {
   return (
     <section ref={sectionRef} className="mb-6">
-      <input
-        ref={fileInputRef}
-        type="file"
-        accept=".json,.png,.jpg,.jpeg,.webp,image/png,image/jpeg,image/webp"
-        onChange={onFileChange}
-        className="hidden"
-      />
-
       <button
         type="button"
         onClick={onToggle}

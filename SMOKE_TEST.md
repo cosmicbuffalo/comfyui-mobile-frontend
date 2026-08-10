@@ -18,6 +18,9 @@ npm i -D playwright && npx playwright install chromium
 
 # with ComfyUI running
 npm run smoke
+
+# Targeted, model-free workflow-panel video preview check
+npm run smoke:workflow-video
 ```
 
 Options:
@@ -84,6 +87,26 @@ the input file it materializes — is undone before it exits unless you pass
 Browser-side state is never a concern: Playwright launches a fresh profile each
 time, so the fold state and layout preference it toggles live only in a
 throwaway profile and never reach yours.
+
+## Workflow-panel video preview check
+
+`npm run smoke:workflow-video` imports
+`scripts/fixtures/workflow-video-preview.json` directly into a fresh browser
+profile. The fixture uses only current ComfyUI core nodes — `EmptyImage`,
+`ImageAddNoise`, `CreateVideo`, and `SaveVideo` — so it needs no checkpoint or
+GPU inference. It generates a 320×192, three-second H.264 MP4, verifies that the
+SaveVideo card renders it through the seekable mobile playback endpoint, and
+confirms that metadata decodes and playback time advances.
+
+When Video Helper Suite is installed, the same run then imports a
+`Load Video FFmpeg (Path)` card pointed at that generated file and verifies its
+input-side `/vhs/viewvideo` preview decodes, plays inline, and loops. Use
+`--comfy-root /path/to/ComfyUI` if the repository is not nested under the
+server's `custom_nodes` directory.
+
+The targeted check deletes its generated video and history entry before exit.
+Pass `--keep-output` when invoking the script directly to retain them for manual
+inspection.
 
 **If you interrupt the script mid-run**, its cleanup never executes. Check for
 leftover queued generations and clear them:

@@ -1,0 +1,105 @@
+{
+  "id": "workflow-video-preview-smoke",
+  "revision": 0,
+  "last_node_id": 4,
+  "last_link_id": 3,
+  "nodes": [
+    {
+      "id": 1,
+      "type": "EmptyImage",
+      "pos": [0, 0],
+      "size": [270, 130],
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "inputs": [
+        { "name": "width", "type": "INT", "widget": { "name": "width" }, "link": null },
+        { "name": "height", "type": "INT", "widget": { "name": "height" }, "link": null },
+        { "name": "batch_size", "type": "INT", "widget": { "name": "batch_size" }, "link": null },
+        { "name": "color", "type": "INT", "widget": { "name": "color" }, "link": null }
+      ],
+      "outputs": [
+        { "name": "IMAGE", "type": "IMAGE", "links": [1] }
+      ],
+      "properties": {
+        "cnr_id": "comfy-core",
+        "Node name for S&R": "EmptyImage"
+      },
+      "widgets_values": [320, 192, 24, 2109504]
+    },
+    {
+      "id": 2,
+      "type": "ImageAddNoise",
+      "pos": [0, 220],
+      "size": [270, 130],
+      "flags": {},
+      "order": 1,
+      "mode": 0,
+      "inputs": [
+        { "name": "image", "type": "IMAGE", "link": 1 },
+        { "name": "seed", "type": "INT", "widget": { "name": "seed" }, "link": null },
+        { "name": "strength", "type": "FLOAT", "widget": { "name": "strength" }, "link": null }
+      ],
+      "outputs": [
+        { "name": "IMAGE", "type": "IMAGE", "links": [2] }
+      ],
+      "properties": {
+        "cnr_id": "comfy-core",
+        "Node name for S&R": "ImageAddNoise"
+      },
+      "widgets_values": [424242, "fixed", 0.35]
+    },
+    {
+      "id": 3,
+      "type": "CreateVideo",
+      "pos": [0, 440],
+      "size": [270, 110],
+      "flags": {},
+      "order": 2,
+      "mode": 0,
+      "inputs": [
+        { "name": "images", "type": "IMAGE", "link": 2 },
+        { "name": "audio", "type": "AUDIO", "shape": 7, "link": null },
+        { "name": "fps", "type": "FLOAT", "widget": { "name": "fps" }, "link": null }
+      ],
+      "outputs": [
+        { "name": "VIDEO", "type": "VIDEO", "links": [3] }
+      ],
+      "properties": {
+        "cnr_id": "comfy-core",
+        "Node name for S&R": "CreateVideo"
+      },
+      "widgets_values": [8]
+    },
+    {
+      "id": 4,
+      "type": "SaveVideo",
+      "pos": [0, 650],
+      "size": [380, 280],
+      "flags": {},
+      "order": 3,
+      "mode": 0,
+      "inputs": [
+        { "name": "video", "type": "VIDEO", "link": 3 },
+        { "name": "filename_prefix", "type": "STRING", "widget": { "name": "filename_prefix" }, "link": null },
+        { "name": "format", "type": "COMBO", "widget": { "name": "format" }, "link": null },
+        { "name": "codec", "type": "COMBO", "widget": { "name": "codec" }, "link": null }
+      ],
+      "outputs": [],
+      "properties": {
+        "cnr_id": "comfy-core",
+        "Node name for S&R": "SaveVideo"
+      },
+      "widgets_values": ["video/mobile_workflow_preview_smoke", "mp4", "h264"]
+    }
+  ],
+  "links": [
+    [1, 1, 0, 2, 0, "IMAGE"],
+    [2, 2, 0, 3, 0, "IMAGE"],
+    [3, 3, 0, 4, 0, "VIDEO"]
+  ],
+  "groups": [],
+  "config": {},
+  "extra": {},
+  "version": 0.4
+}

@@ -123,6 +123,10 @@ import {
 } from "@/utils/nodePositioning";
 import { computeTidyWorkflowGeometry } from "@/utils/tidyLayout";
 import { injectMarketingNote, isMarketingNote } from "@/utils/marketingNote";
+import {
+  collectOasisPreviewIoIds,
+  ensureOasisPreviewIoIds,
+} from "@/utils/nodeFrontendPreviews";
 import { getSetGetName, isGetNode, isSetGetNode, isSetNode } from "@/utils/setGetNodes";
 import {
   type ScopeFrame,
@@ -276,16 +280,45 @@ interface SavedWorkflowState {
 }
 
 // Node output images from execution
-interface NodeOutputImage {
-  filename: string;
-  subfolder: string;
-  type: string;
-}
+type NodeOutputImage = HistoryOutputImage;
 
 // Output of an Image Comparer node: the two sides to overlay (`a` vs `b`).
 export interface NodeComparerOutput {
   a: NodeOutputImage[];
   b: NodeOutputImage[];
+  video?: DenoVideoCompareMetadata;
+}
+
+export interface DenoVideoCompareAudio {
+  filename: string;
+  channels: number;
+  samples: number;
+  sample_rate: number;
+  dtype?: string;
+  layout?: string;
+}
+
+export interface DenoVideoCompareMetadata {
+  mode: 'Slider' | 'Side by Side' | 'Difference' | 'Toggle';
+  splitPosition: number;
+  toggleImage: 'A' | 'B';
+  swapped: boolean;
+  fps: number;
+  sourceFps: number;
+  duration: number;
+  frameCount: number;
+  subfolder: string;
+  haveA: boolean;
+  haveB: boolean;
+  aSourceWidth: number;
+  aSourceHeight: number;
+  bSourceWidth: number;
+  bSourceHeight: number;
+  aSourceCount: number;
+  bSourceCount: number;
+  audioA: DenoVideoCompareAudio | null;
+  audioB: DenoVideoCompareAudio | null;
+  error?: string;
 }
 
 // Track where the workflow was loaded from for reload functionality
@@ -4281,9 +4314,20 @@ export const useWorkflowStore = create<WorkflowState>()(
         // Session bookkeeping: decide whether this load opens a new tab or
         // replaces the active one in place (reload/revert callers pass
         // replaceActive).
+        let reservedOasisIdsForLoad: string[] = [];
         {
           const st = get();
           const replaceActive = options?.replaceActive ?? false;
+          // A freshly opened tab must not reuse an io_id owned by a workflow
+          // whose prompt may still be running in another tab. Repair before the
+          // new workflow becomes active, otherwise an id-only Oasis result can
+          // be consumed by the wrong tab during that overlap window.
+          reservedOasisIdsForLoad = [
+            ...(!replaceActive && st.workflow ? [st.workflow] : []),
+            ...Object.values(st.parkedSessions).map((snapshot) => snapshot.workflow),
+          ].flatMap((existingWorkflow) => (
+            collectOasisPreviewIoIds(existingWorkflow, st.nodeTypes)
+          ));
           // Only open a new tab when there's a real current workflow to park.
           // An active session with no workflow (e.g. a freshly reset store)
           // is reused in place rather than spawning an empty tab.
@@ -4370,9 +4414,14 @@ export const useWorkflowStore = create<WorkflowState>()(
           last_link_id: Math.max(workflow.last_link_id ?? 0, maxRootLinkId(workflow)),
           version: workflow.version ?? 0.4,
         };
-        const canonicalWorkflow = canonicalizeWorkflowHierarchicalKeys(
-          normalizedWorkflow,
-          itemKeyByPointer,
+        const canonicalWorkflow = ensureOasisPreviewIoIds(
+          canonicalizeWorkflowHierarchicalKeys(
+            normalizedWorkflow,
+            itemKeyByPointer,
+          ),
+          nodeTypes,
+          undefined,
+          reservedOasisIdsForLoad,
         );
         const workflowKey = buildWorkflowCacheKey(
           normalizedWorkflow,
@@ -6075,7 +6124,25 @@ export const useWorkflowStore = create<WorkflowState>()(
         try {
           await yieldToBrowserPaint();
 
-          let currentWorkflow = sourceWorkflow;
+          // Oasis preview results travel over an io_id-only websocket event.
+          // Desktop's DOM widget normally mints that id, but it never runs in
+          // this frontend, so guarantee a stable id before prompt construction
+          // and persist it into the canonical workflow for event routing.
+          const reservedOasisIds = [
+            ...(isActive ? [] : [state.workflow]),
+            ...Object.entries(state.parkedSessions)
+              .filter(([otherSid]) => isActive || otherSid !== sid)
+              .map(([, snapshot]) => snapshot.workflow),
+          ].flatMap((otherWorkflow) => (
+            collectOasisPreviewIoIds(otherWorkflow, nodeTypes)
+          ));
+          let currentWorkflow = ensureOasisPreviewIoIds(
+            sourceWorkflow,
+            nodeTypes,
+            undefined,
+            reservedOasisIds,
+          );
+          if (currentWorkflow !== sourceWorkflow) writeWorkflow(currentWorkflow);
           let nextSeedLastValues: SeedLastValues = { ...seedLastValues };
 
           // Process seed mode for a single node; mutates seedOverrides and
@@ -6388,6 +6455,19 @@ export const useWorkflowStore = create<WorkflowState>()(
             const metadataWorkflowLabel = queueWorkflowLabel(metadataFilename, metadataSource);
             const hiddenWorkflow = isWorkflowHidden(metadataSource, metadataFilename);
             const previewMethod = useGenerationSettingsStore.getState().previewMethod;
+            // VHS's optional animated latent protocol is enabled through
+            // workflow metadata rather than ComfyUI's preview_method field.
+            // Write both true and false so a desktop-authored workflow cannot
+            // override the mobile user's current latent-preview preference.
+            queuedWorkflow = {
+              ...queuedWorkflow,
+              extra: {
+                ...(queuedWorkflow.extra ?? {}),
+                VHS_latentpreview: previewMethod !== 'none',
+                VHS_latentpreviewrate:
+                  queuedWorkflow.extra?.VHS_latentpreviewrate ?? 0,
+              },
+            };
             const promptRequest: api.PromptQueueRequest = {
               prompt: queuedPrompt,
               client_id: api.clientId,

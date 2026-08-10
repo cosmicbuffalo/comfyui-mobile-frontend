@@ -169,6 +169,17 @@ export interface HistoryOutputImage {
   filename: string;
   subfolder: string;
   type: string;
+  // Per-execution identity for custom nodes that overwrite a stable filename
+  // (notably DenoVideoPreview). It is propagated to preview/playback URLs so a
+  // second run cannot reuse the first run's browser cache entry.
+  cacheToken?: string | number;
+  // Optional metadata emitted by custom video-preview nodes (for example
+  // DenoVideoPreview). Unknown output fields are retained by normalization.
+  frame_rate?: number;
+  width?: number;
+  height?: number;
+  frame_count?: number;
+  has_audio?: boolean;
 }
 
 export interface HistoryOutput {

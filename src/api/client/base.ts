@@ -20,12 +20,19 @@ export async function getNodeTypes(): Promise<NodeTypes> {
   return response.json();
 }
 
-export function getImageUrl(filename: string, subfolder: string, type: string): string {
+export function getImageUrl(
+  filename: string,
+  subfolder: string,
+  type: string,
+  explicitCacheToken?: string | number,
+): string {
   const url = `/view?filename=${encodeURIComponent(filename)}&subfolder=${encodeURIComponent(subfolder)}&type=${encodeURIComponent(type)}`;
   // Append a cache-bust token if this filename was deleted and (possibly) reused
   // by a later generation, so the browser doesn't serve the stale deleted image.
-  const token = getImageCacheToken(filename, subfolder, type);
-  return token ? `${url}&cb=${token}` : url;
+  const token = explicitCacheToken ?? getImageCacheToken(filename, subfolder, type);
+  return token === undefined || token === ''
+    ? url
+    : `${url}&cb=${encodeURIComponent(token)}`;
 }
 
 // Small still image for any output/input media item. For videos, the backend
