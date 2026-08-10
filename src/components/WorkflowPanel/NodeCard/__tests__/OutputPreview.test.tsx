@@ -246,6 +246,43 @@ describe('NodeCardOutputPreview', () => {
     expect(first.getAttribute('aria-pressed')).toBe('true');
   });
 
+  it('follows persisted scene state that changes underneath an unchanged playlist', async () => {
+    const item = (name: string) => ({
+      src: `/mobile/api/video/playable?filename=${name}`,
+      poster: `/mobile/api/thumbnail?filename=${name}`,
+      mediaType: 'video' as const,
+      autoPlay: false,
+      loop: true,
+    });
+    const renderWith = (activeIndex: number, playMode: 'off' | 'loop' | 'cycle') =>
+      root.render(
+        <NodeCardOutputPreview
+          show
+          previewImage={null}
+          frontendPreview={{
+            ...item('second.mp4'),
+            source: 'oasis-widget',
+            playlist: [item('first.mp4'), item('second.mp4')],
+            activeIndex,
+            playMode,
+          }}
+          displayName="Oasis"
+          isExecuting={false}
+          overallProgress={null}
+          displayNodeProgress={0}
+        />
+      );
+
+    await act(async () => renderWith(1, 'loop'));
+    expect(container.querySelector('video')?.getAttribute('src')).toContain('second.mp4');
+
+    // An undo/redo of the serialized widget keeps the playlist identical but
+    // changes the persisted selection and play mode; the UI must follow.
+    await act(async () => renderWith(0, 'cycle'));
+    expect(container.querySelector('video')?.getAttribute('src')).toContain('first.mp4');
+    expect(container.querySelector('button[aria-label="Playback mode: cycle"]')).not.toBeNull();
+  });
+
   it('pauses another workflow preview when a video starts playing', async () => {
     await act(async () => {
       root.render(

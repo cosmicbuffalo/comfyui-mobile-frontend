@@ -200,6 +200,24 @@ function FrontendMediaPlaylist({
   const [playMode, setPlayMode] = useState(preview.playMode);
   const selected: FrontendNodeMediaItem = items[selectedIndex] ?? items[0];
 
+  // Follow persisted widget state that changes underneath an unchanged
+  // playlist (undo/redo of a scene selection). Guarded on the previous prop
+  // value so only an *external* change syncs: a local tap round-trips through
+  // the store and arrives back equal, and must not cancel its own autoplay.
+  const [syncedIndex, setSyncedIndex] = useState(initialIndex);
+  if (syncedIndex !== initialIndex) {
+    setSyncedIndex(initialIndex);
+    if (initialIndex !== selectedIndex) {
+      setSelectedIndex(initialIndex);
+      setAutoPlaySelection(false);
+    }
+  }
+  const [syncedPlayMode, setSyncedPlayMode] = useState(preview.playMode);
+  if (syncedPlayMode !== preview.playMode) {
+    setSyncedPlayMode(preview.playMode);
+    setPlayMode(preview.playMode);
+  }
+
   const select = (index: number, autoPlay = true) => {
     const next = Math.max(0, Math.min(items.length - 1, index));
     setSelectedIndex(next);

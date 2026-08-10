@@ -227,7 +227,9 @@ export function parseBinaryPreviewMessage(data: ArrayBuffer): ParsedBinaryPrevie
     try {
       const jsonLen = view.getUint32(4, false);
       const offset = 8 + jsonLen;
-      if (offset >= data.byteLength) return null;
+      // Require at least the sniffed header: no real image is under 4 bytes,
+      // and a truncated payload must not become a mislabeled Blob.
+      if (offset + 4 > data.byteLength) return null;
       const header = new Uint8Array(data.slice(offset, offset + 4));
       const mime = header[0] === 0x89 && header[1] === 0x50
         ? 'image/png'

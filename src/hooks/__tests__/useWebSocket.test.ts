@@ -524,6 +524,24 @@ describe('parseBinaryPreviewMessage', () => {
     );
   });
 
+  it('decodes a modern JSON-prefixed envelope and rejects a truncated one', () => {
+    const json = new TextEncoder().encode('{"image_type":"PNG"}');
+    const bytes = new Uint8Array(8 + json.length + 4);
+    const view = new DataView(bytes.buffer);
+    view.setUint32(0, 4, false);
+    view.setUint32(4, json.length, false);
+    bytes.set(json, 8);
+    bytes.set([0x89, 0x50, 0x4e, 0x47], 8 + json.length);
+    const parsed = parseBinaryPreviewMessage(bytes.buffer);
+    expect(parsed?.kind).toBe('image');
+    expect(parsed?.blob.type).toBe('image/png');
+
+    // Fewer than 4 payload bytes cannot be an image; the parser must not
+    // wrap them in a mislabeled Blob.
+    const truncated = bytes.slice(0, 8 + json.length + 2);
+    expect(parseBinaryPreviewMessage(truncated.buffer)).toBeNull();
+  });
+
   it('does not mistake ordinary JPEG payload bytes for a VHS envelope', () => {
     const bytes = new Uint8Array(40);
     const view = new DataView(bytes.buffer);
