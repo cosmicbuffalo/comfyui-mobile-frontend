@@ -1,5 +1,29 @@
 # Changelog
 
+## 3.1.3 - 2026-08-11
+
+### Added
+
+**Created and modified dates in the outputs browser**
+
+- **File and folder cards now carry a date.** Every card shows a compact age next to its size ("4 hours ago", "3 days ago"). Folder cards show item count, total size, and age together
+- **Sort by Created or Modified.** The filter sheet's single "Date" choice is now two: Created and Modified, each still reversible. Date section headers and card ages both follow whichever one is active. A caveat worth knowing: Linux does not record a real file creation time, so for content the app has never touched, Created falls back to the earliest timestamp the filesystem exposes and will usually match Modified. The two diverge once an item has been favorited, rejected, hidden, renamed, or moved in-app, at which point its dates are tracked durably
+- **In-app actions count as modifications.** Favoriting, rejecting, renaming, and moving an item bump its modified date — and the modified date of every folder above it — so a folder you just organized sorts to the top.
+
+**Rejects filter, and both status filters can now exclude**
+
+- The filter sheet's favorites toggle is now a pair: **Favorites** and **Rejects**. Each cycles through three states — off, *only* that group, then *everything except* that group — so a second tap on Rejects hides your rejects instead of isolating them, and a third clears it
+- The two combine the way the states themselves do. Switching from "Favorites only" to "Rejects only" turns the first one off, since a file is never both. But once either one is excluding, tapping the other joins it there, so you can hide favorites and rejects at the same time and browse only what you haven't triaged yet
+
+### Fixed
+
+- **Local input paths are restored when a workflow loads.** Load Image widgets that were saved with an opaque `.mi-` alias now show their real input-relative path again, resolved through the alias's hard link
+- Selecting files and running a bulk action (favorite, hide, move, delete, download, bulk process) now leaves selection mode when the action finishes
+- Tighter, more consistent vertical spacing between parameter controls on node cards, and less horizontal padding around the workflow node list
+- Node cards no longer render `control_after_generate` twice when a subgraph promotes a seed and its control widget together — and no longer drop it entirely when the seed input is driven by a link
+- The outputs listing's modified date ignores metadata-only changes such as hard-linking an output into the input folder, `chmod`, and backup restores, which previously could reorder the default listing order
+- Empty folders no longer show a "0 B" size
+
 ## 3.1.2 - 2026-08-10
 
 ### Added

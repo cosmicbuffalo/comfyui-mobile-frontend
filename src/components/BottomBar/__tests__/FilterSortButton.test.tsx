@@ -12,7 +12,7 @@ describe('FilterSortButton', () => {
 
   beforeEach(() => {
     useOutputsStore.setState({
-      filter: { search: '', favoritesOnly: false, type: 'all' },
+      filter: { search: '', favoritesMode: 'off', rejectsMode: 'off', type: 'all' },
       sort: { mode: 'modified' },
     });
     container = document.createElement('div');
@@ -35,20 +35,28 @@ describe('FilterSortButton', () => {
   });
 
   it('lights up for favorites-only', async () => {
-    useOutputsStore.setState({ filter: { search: '', favoritesOnly: true, type: 'all' } });
+    useOutputsStore.setState({ filter: { search: '', favoritesMode: 'only', rejectsMode: 'off', type: 'all' } });
     await render();
     expect(button()?.classList.contains('filter-active')).toBe(true);
     expect(button()?.getAttribute('aria-label')).toBe('Filter and sort (filters applied)');
   });
 
+  it('lights up for rejects-only', async () => {
+    useOutputsStore.setState({
+      filter: { search: '', favoritesMode: 'off', rejectsMode: 'only', type: 'all' },
+    });
+    await render();
+    expect(button()?.classList.contains('filter-active')).toBe(true);
+  });
+
   it('lights up for a type filter', async () => {
-    useOutputsStore.setState({ filter: { search: '', favoritesOnly: false, type: 'video' } });
+    useOutputsStore.setState({ filter: { search: '', favoritesMode: 'off', rejectsMode: 'off', type: 'video' } });
     await render();
     expect(button()?.classList.contains('filter-active')).toBe(true);
   });
 
   it('lights up for an active search', async () => {
-    useOutputsStore.setState({ filter: { search: 'sunset', favoritesOnly: false, type: 'all' } });
+    useOutputsStore.setState({ filter: { search: 'sunset', favoritesMode: 'off', rejectsMode: 'off', type: 'all' } });
     await render();
     expect(button()?.classList.contains('filter-active')).toBe(true);
   });

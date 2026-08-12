@@ -1789,6 +1789,52 @@ describe('useWorkflow editing actions', () => {
     expect(next.workflow?.nodes.find((node) => node.id === 1)?.widgets_values).toEqual([222]);
   });
 
+  it('resolves a local input alias before loading an embedded queue workflow', async () => {
+    const loadImageTypes: NodeTypes = {
+      LoadImage: {
+        input: { required: { image: [['private/photo.png']] } },
+        input_order: { required: ['image'] },
+        output: ['IMAGE', 'MASK'],
+        output_name: ['IMAGE', 'MASK'],
+        name: 'LoadImage',
+        display_name: 'Load Image',
+        description: '',
+        python_module: 'nodes',
+        category: 'image',
+      },
+    };
+    const aliased = makeWorkflow([
+      makeNode(1, {
+        type: 'LoadImage',
+        widgets_values: ['.mi-deadbeef.png', 'image'],
+      }),
+    ], []);
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      expect(String(input)).toBe('/mobile/api/input-aliases/resolve');
+      expect(JSON.parse(String(init?.body))).toEqual({ aliases: ['.mi-deadbeef.png'] });
+      return {
+        ok: true,
+        json: async () => ({
+          resolved: { '.mi-deadbeef.png': 'private/photo.png' },
+        }),
+      };
+    });
+    vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch);
+    useWorkflowStore.setState({ nodeTypes: loadImageTypes });
+
+    useWorkflowStore.getState().loadWorkflow(aliased, 'history-prompt-1.json', {
+      source: { type: 'history', promptId: 'prompt-1' },
+      navigate: false,
+    });
+
+    await vi.waitFor(() => {
+      expect(useWorkflowStore.getState().workflow?.nodes[0].widgets_values)
+        .toEqual(['private/photo.png', 'image']);
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect((aliased.nodes[0].widgets_values as unknown[])[0]).toBe('.mi-deadbeef.png');
+  });
+
   it('preserves collapsed root subgraph placeholder nodes when reloading the same workflow', () => {
     const placeholderNodeId = 7;
     const placeholderItemKey = rootNodeHierarchicalKey(placeholderNodeId);

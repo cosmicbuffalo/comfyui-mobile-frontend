@@ -65,6 +65,35 @@ function reconcileReturnedFileState(
   return Array.from(next);
 }
 
+function touchFileModifiedDates(
+  files: FileItem[],
+  ids: string[],
+  modifiedDate: number,
+): FileItem[] {
+  if (ids.length === 0) return files;
+
+  // A child's state change also changes the contents of every folder above it,
+  // so keep those folder cards in the same modified-date ordering immediately.
+  const touchedIds = new Set<string>();
+  ids.forEach((id) => {
+    let current = id;
+    while (current) {
+      touchedIds.add(current);
+      const separator = current.lastIndexOf('/');
+      if (separator < 0) break;
+      current = current.slice(0, separator);
+    }
+  });
+
+  let changed = false;
+  const next = files.map((file) => {
+    if (!touchedIds.has(file.id)) return file;
+    changed = true;
+    return { ...file, date: modifiedDate, modifiedDate };
+  });
+  return changed ? next : files;
+}
+
 const fileStateMutationTails = new Map<string, Promise<void>>();
 const fileStateHydrationInFlight = new Map<AssetSource, Promise<boolean>>();
 const fileStateMutationVersions = new Map<AssetSource, number>();
@@ -123,10 +152,60 @@ export async function flushFileStateMutations(source?: AssetSource): Promise<voi
   }
 }
 
+/** `only` narrows the listing to that status; `exclude` hides it instead. */
+export type StatusFilterMode = 'off' | 'only' | 'exclude';
+
+export type StatusFilterKey = 'favoritesMode' | 'rejectsMode';
+
 export interface FilterState {
   search: string;
-  favoritesOnly: boolean;
+  favoritesMode: StatusFilterMode;
+  rejectsMode: StatusFilterMode;
   type: 'all' | 'image' | 'video';
+}
+
+export function mergeOutputsFilter(
+  current: FilterState,
+  next: Partial<FilterState>,
+): FilterState {
+  return { ...current, ...next };
+}
+
+const OTHER_STATUS_KEY: Record<StatusFilterKey, StatusFilterKey> = {
+  favoritesMode: 'rejectsMode',
+  rejectsMode: 'favoritesMode',
+};
+
+/**
+ * Advance one status filter a step, honoring how the two interact.
+ *
+ * Each button cycles off → only → exclude → off. The pair constrains that:
+ * favorite and reject are mutually exclusive states on a file, so `only` +
+ * `only` is always an empty listing, and `only` + `exclude` is redundant
+ * (only-favorites already excludes rejects). So turning one on from `off`
+ * clears the other, EXCEPT when the other is excluding — there, the clicked
+ * filter joins it at `exclude`, which is the one genuinely useful pairing:
+ * hide favorites and rejects at once and browse what's left.
+ */
+export function cycleStatusFilter(
+  current: FilterState,
+  key: StatusFilterKey,
+): FilterState {
+  const otherKey = OTHER_STATUS_KEY[key];
+  const other = current[otherKey];
+  const next = { ...current };
+
+  if (current[key] === 'only') {
+    next[key] = 'exclude';
+  } else if (current[key] === 'exclude') {
+    next[key] = 'off';
+  } else if (other === 'exclude') {
+    next[key] = 'exclude';
+  } else {
+    next[key] = 'only';
+    next[otherKey] = 'off';
+  }
+  return next;
 }
 
 // A browsing "tab" within the outputs panel, rendered as its own breadcrumb
@@ -211,6 +290,7 @@ interface OutputsState {
   hydrateFileState: (source?: AssetSource) => Promise<boolean>;
   fetchFiles: () => Promise<void>;
   setFilter: (filter: Partial<FilterState>) => void;
+  cycleStatusFilter: (key: StatusFilterKey) => void;
   setSearchOpen: (open: boolean) => void;
   setSearchDraft: (query: string) => void;
   setSort: (sort: SortState) => void;
@@ -242,6 +322,7 @@ interface OutputsState {
   selectIds: (ids: string[], mode?: 'add' | 'replace') => void;
   deselectIds: (ids: string[]) => void;
   clearSelection: () => void;
+  exitSelectionMode: () => void;
   setSelectionActionOpen: (open: boolean) => void;
   setFilterModalOpen: (open: boolean) => void;
   setNewFolderModalOpen: (open: boolean) => void;
@@ -271,7 +352,8 @@ export const useOutputsStore = create<OutputsState>()(
       showHidden: false,
       filter: {
         search: '',
-        favoritesOnly: false,
+        favoritesMode: 'off',
+        rejectsMode: 'off',
         type: 'all'
       },
       sort: {
@@ -595,7 +677,7 @@ export const useOutputsStore = create<OutputsState>()(
 
       setFilter: (next) => {
         set((s) => {
-          const filter = { ...s.filter, ...next };
+          const filter = mergeOutputsFilter(s.filter, next);
           // Any edit to the search text invalidates an active prompt-search
           // overlay — the results no longer match the visible query and
           // resurrecting them on Enter is the user's call.
@@ -610,6 +692,10 @@ export const useOutputsStore = create<OutputsState>()(
           }
           return { filter };
         });
+      },
+
+      cycleStatusFilter: (key) => {
+        set((s) => ({ filter: cycleStatusFilter(s.filter, key) }));
       },
 
       setSearchOpen: (open) => {
@@ -711,12 +797,19 @@ export const useOutputsStore = create<OutputsState>()(
 
       toggleFavorite: (id) => {
         const exists = get().favorites.includes(id);
+        const modifiedDate = Date.now();
         set((s) => ({
           favorites: exists
             ? s.favorites.filter(p => p !== id)
             : [...s.favorites, id],
           // Favoriting clears rejected — the two states are mutually exclusive.
           rejected: exists ? s.rejected : s.rejected.filter(p => p !== id),
+          files: touchFileModifiedDates(s.files, [id], modifiedDate),
+          promptSearchResults: touchFileModifiedDates(
+            s.promptSearchResults,
+            [id],
+            modifiedDate,
+          ),
         }));
         const { source, path } = splitFileId(id, get().source);
         void queueFileStateMutation(source, path, 'favorite', !exists).catch((err) => {
@@ -725,9 +818,16 @@ export const useOutputsStore = create<OutputsState>()(
       },
 
       favoriteItem: (id) => {
+        const modifiedDate = Date.now();
         set((s) => ({
           favorites: s.favorites.includes(id) ? s.favorites : [...s.favorites, id],
           rejected: s.rejected.filter(p => p !== id),
+          files: touchFileModifiedDates(s.files, [id], modifiedDate),
+          promptSearchResults: touchFileModifiedDates(
+            s.promptSearchResults,
+            [id],
+            modifiedDate,
+          ),
         }));
         const { source, path } = splitFileId(id, get().source);
         void queueFileStateMutation(source, path, 'favorite', true).catch((err) => {
@@ -736,7 +836,16 @@ export const useOutputsStore = create<OutputsState>()(
       },
 
       unfavoriteItem: (id) => {
-        set((s) => ({ favorites: s.favorites.filter(p => p !== id) }));
+        const modifiedDate = Date.now();
+        set((s) => ({
+          favorites: s.favorites.filter(p => p !== id),
+          files: touchFileModifiedDates(s.files, [id], modifiedDate),
+          promptSearchResults: touchFileModifiedDates(
+            s.promptSearchResults,
+            [id],
+            modifiedDate,
+          ),
+        }));
         const { source, path } = splitFileId(id, get().source);
         void queueFileStateMutation(source, path, 'favorite', false).catch((err) => {
           console.warn('Failed to update file favorite:', err);
@@ -745,12 +854,19 @@ export const useOutputsStore = create<OutputsState>()(
 
       toggleRejected: (id) => {
         const exists = get().rejected.includes(id);
+        const modifiedDate = Date.now();
         set((s) => ({
           rejected: exists
             ? s.rejected.filter(p => p !== id)
             : [...s.rejected, id],
           // Rejecting clears favorited — mutually exclusive.
           favorites: exists ? s.favorites : s.favorites.filter(p => p !== id),
+          files: touchFileModifiedDates(s.files, [id], modifiedDate),
+          promptSearchResults: touchFileModifiedDates(
+            s.promptSearchResults,
+            [id],
+            modifiedDate,
+          ),
         }));
         const { source, path } = splitFileId(id, get().source);
         void queueFileStateMutation(source, path, 'reject', !exists).catch((err) => {
@@ -760,7 +876,16 @@ export const useOutputsStore = create<OutputsState>()(
 
       clearRejected: () => {
         const ids = get().rejected;
-        set({ rejected: [] });
+        const modifiedDate = Date.now();
+        set((s) => ({
+          rejected: [],
+          files: touchFileModifiedDates(s.files, ids, modifiedDate),
+          promptSearchResults: touchFileModifiedDates(
+            s.promptSearchResults,
+            ids,
+            modifiedDate,
+          ),
+        }));
         const fallbackSource = get().source;
         ids.forEach((id) => {
           const { source, path } = splitFileId(id, fallbackSource);
@@ -851,6 +976,14 @@ export const useOutputsStore = create<OutputsState>()(
         set({ selectedIds: [], selectionActionOpen: false });
       },
 
+      exitSelectionMode: () => {
+        set({
+          selectionMode: false,
+          selectedIds: [],
+          selectionActionOpen: false,
+        });
+      },
+
       setSelectionActionOpen: (open) => {
         set({ selectionActionOpen: open });
       },
@@ -868,6 +1001,7 @@ export const useOutputsStore = create<OutputsState>()(
       },
 
       addFavorites: (ids) => {
+        const modifiedDate = Date.now();
         set((s) => {
           const next = new Set(s.favorites);
           ids.forEach((id) => next.add(id));
@@ -875,6 +1009,12 @@ export const useOutputsStore = create<OutputsState>()(
           return {
             favorites: Array.from(next),
             rejected: s.rejected.filter((id) => !idSet.has(id)),
+            files: touchFileModifiedDates(s.files, ids, modifiedDate),
+            promptSearchResults: touchFileModifiedDates(
+              s.promptSearchResults,
+              ids,
+              modifiedDate,
+            ),
           };
         });
         // Fire-and-forget: the POST no longer returns an authoritative list to
@@ -891,8 +1031,15 @@ export const useOutputsStore = create<OutputsState>()(
       },
 
       removeFavorites: (ids) => {
+        const modifiedDate = Date.now();
         set((s) => ({
-          favorites: s.favorites.filter((id) => !ids.includes(id))
+          favorites: s.favorites.filter((id) => !ids.includes(id)),
+          files: touchFileModifiedDates(s.files, ids, modifiedDate),
+          promptSearchResults: touchFileModifiedDates(
+            s.promptSearchResults,
+            ids,
+            modifiedDate,
+          ),
         }));
         const fallbackSource = get().source;
         ids.forEach((id) => {
@@ -913,6 +1060,7 @@ export const useOutputsStore = create<OutputsState>()(
           files,
           filter,
           favorites,
+          rejected,
           showHidden,
           sort,
           source: assetSource,
@@ -922,7 +1070,7 @@ export const useOutputsStore = create<OutputsState>()(
         } = get();
 
         const memoKey = [
-          files, filter, favorites, showHidden, sort, assetSource,
+          files, filter, favorites, rejected, showHidden, sort, assetSource,
           currentFolder, promptSearchActive, promptSearchResults,
         ] as const;
         if (
@@ -940,7 +1088,11 @@ export const useOutputsStore = create<OutputsState>()(
         let result: FileItem[];
         if (promptSearchActive) {
           const folderPrefix = currentFolder ? `${currentFolder}/` : '';
-          const folderEntries = new Map<string, { date: number; count: number }>();
+          const folderEntries = new Map<string, {
+            createdDate: number;
+            modifiedDate: number;
+            count: number;
+          }>();
           const directFiles: FileItem[] = [];
 
           for (const file of promptSearchResults) {
@@ -959,12 +1111,14 @@ export const useOutputsStore = create<OutputsState>()(
             } else {
               const childFolderName = sub.slice(0, slashIdx);
               const existing = folderEntries.get(childFolderName);
-              const fileDate = file.date ?? 0;
+              const createdDate = file.createdDate ?? file.date ?? 0;
+              const modifiedDate = file.modifiedDate ?? file.date ?? 0;
               if (existing) {
                 existing.count += 1;
-                if (fileDate > existing.date) existing.date = fileDate;
+                if (createdDate > existing.createdDate) existing.createdDate = createdDate;
+                if (modifiedDate > existing.modifiedDate) existing.modifiedDate = modifiedDate;
               } else {
-                folderEntries.set(childFolderName, { date: fileDate, count: 1 });
+                folderEntries.set(childFolderName, { createdDate, modifiedDate, count: 1 });
               }
             }
           }
@@ -974,7 +1128,9 @@ export const useOutputsStore = create<OutputsState>()(
               id: `${assetSource}/${folderPrefix}${childFolderName}`,
               name: childFolderName,
               type: 'folder' as const,
-              date: info.date,
+              date: info.modifiedDate,
+              createdDate: info.createdDate,
+              modifiedDate: info.modifiedDate,
               matchCount: info.count,
             }),
           );
@@ -995,47 +1151,79 @@ export const useOutputsStore = create<OutputsState>()(
           result = result.filter(f => f.name.toLowerCase().includes(search));
         }
 
-        // Favorites filter. Files must be favorited themselves, but a folder
-        // also survives when a favorite lives anywhere beneath it — the grid
-        // only ever lists one folder at a time, so dropping those folders makes
-        // every nested favorite unreachable. `favorites` holds the whole
-        // favorited set for this source (fetchFiles loads it from the server,
-        // not just the current listing), so descendants are a path walk over
-        // ids. Folders kept only for their contents carry the count, so the
-        // card can say what's inside rather than showing a total item count
-        // that has nothing to do with the filter.
-        if (filter.favoritesOnly) {
-          const nestedFavoriteCounts = new Map<string, number>();
+        // Status-subset filters (favorites / rejects). Files must carry the
+        // state themselves, but a folder also survives when a member lives
+        // anywhere beneath it — the grid only ever lists one folder at a time,
+        // so dropping those folders makes every nested member unreachable. The
+        // `favorites`/`rejected` arrays hold the whole set for this source
+        // (fetchFiles loads them from the server, not just the current
+        // listing), so descendants are a path walk over ids. Folders kept only
+        // for their contents carry the count, so the card can say what's inside
+        // rather than showing a total item count the filter doesn't apply to.
+        //
+        // `keepMatchingFolders` differs per state: a folder can be favorited
+        // itself, but reject is file-only, so a rejects-filtered folder only
+        // survives on its nested count.
+        //
+        // `exclude` is the mirror: drop whatever carries the state, of either
+        // type — a folder that is itself favorited is kept by `only` for being
+        // a member, so excluding has to drop it for the same reason.
+        //
+        // A folder is NOT dropped merely for containing excluded descendants.
+        // The listing has no reliable count of what survives beneath a folder
+        // (server counts and the member ids disagree about hidden items), and
+        // hiding a folder the user could still usefully navigate into would
+        // take unrelated files down with it.
+        const applyStatusFilter = (
+          files: FileItem[],
+          memberIds: string[],
+          countKey: 'favoriteCount' | 'rejectCount',
+          keepMatchingFolders: boolean,
+          mode: StatusFilterMode,
+        ) => {
+          if (mode === 'off') return files;
+          if (mode === 'exclude') {
+            const excludedIds = new Set(memberIds);
+            return files.filter((file) => {
+              if (file.type === 'folder' && !keepMatchingFolders) return true;
+              return !excludedIds.has(file.id);
+            });
+          }
+
+          const nestedCounts = new Map<string, number>();
           const prefix = sourcePrefix(assetSource);
           const folderPrefix = currentFolder ? `${currentFolder}/` : '';
-          for (const favoriteId of favorites) {
-            if (!favoriteId.startsWith(prefix)) continue;
-            const relativePath = favoriteId.slice(prefix.length);
+          for (const memberId of memberIds) {
+            if (!memberId.startsWith(prefix)) continue;
+            const relativePath = memberId.slice(prefix.length);
             if (!relativePath.startsWith(folderPrefix)) continue;
             const sub = relativePath.slice(folderPrefix.length);
             const slashIndex = sub.indexOf('/');
             // No slash ⇒ a file sitting directly in this folder, not nested.
             if (slashIndex === -1) continue;
-            // Don't count what the current view can't reach: a favorite behind a
+            // Don't count what the current view can't reach: a member behind a
             // dot-folder stays invisible while hidden items are off, so counting
             // it would surface a folder that looks empty once entered.
             if (!showHidden && sub.split('/').some((part) => part.startsWith('.'))) continue;
             const childId = `${prefix}${folderPrefix}${sub.slice(0, slashIndex)}`;
-            nestedFavoriteCounts.set(childId, (nestedFavoriteCounts.get(childId) ?? 0) + 1);
+            nestedCounts.set(childId, (nestedCounts.get(childId) ?? 0) + 1);
           }
 
-          const favoriteIds = new Set(favorites);
-          result = result.reduce<FileItem[]>((kept, file) => {
+          const memberIdSet = new Set(memberIds);
+          return files.reduce<FileItem[]>((kept, file) => {
             if (file.type !== 'folder') {
-              if (favoriteIds.has(file.id)) kept.push(file);
+              if (memberIdSet.has(file.id)) kept.push(file);
               return kept;
             }
-            const nested = nestedFavoriteCounts.get(file.id) ?? 0;
-            if (nested > 0) kept.push({ ...file, favoriteCount: nested });
-            else if (favoriteIds.has(file.id)) kept.push(file);
+            const nested = nestedCounts.get(file.id) ?? 0;
+            if (nested > 0) kept.push({ ...file, [countKey]: nested });
+            else if (keepMatchingFolders && memberIdSet.has(file.id)) kept.push(file);
             return kept;
           }, []);
-        }
+        };
+
+        result = applyStatusFilter(result, favorites, 'favoriteCount', true, filter.favoritesMode);
+        result = applyStatusFilter(result, rejected, 'rejectCount', false, filter.rejectsMode);
 
         // Type filter
         if (filter.type !== 'all') {
@@ -1048,8 +1236,14 @@ export const useOutputsStore = create<OutputsState>()(
           result.sort((a, b) => a.name.localeCompare(b.name) * direction);
         } else if (sort.mode.startsWith('size')) {
           result.sort((a, b) => ((a.size ?? 0) - (b.size ?? 0)) * direction);
+        } else if (sort.mode.startsWith('created')) {
+          result.sort((a, b) => (
+            ((a.createdDate ?? a.date ?? 0) - (b.createdDate ?? b.date ?? 0)) * -1 * direction
+          ));
         } else {
-          result.sort((a, b) => ((a.date ?? 0) - (b.date ?? 0)) * -1 * direction);
+          result.sort((a, b) => (
+            ((a.modifiedDate ?? a.date ?? 0) - (b.modifiedDate ?? b.date ?? 0)) * -1 * direction
+          ));
         }
 
         displayedFilesMemo = { key: memoKey, value: result };
@@ -1058,7 +1252,7 @@ export const useOutputsStore = create<OutputsState>()(
     }),
     {
       name: 'outputs-storage',
-      version: 3,
+      version: 5,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       migrate: (persistedState: any, version: number) => {
         if (version === 0) {
@@ -1077,7 +1271,23 @@ export const useOutputsStore = create<OutputsState>()(
           }
         }
         if (persistedState.filter) {
-          persistedState.filter.search = '';
+          const filter = persistedState.filter;
+          filter.search = '';
+          // v5 turned the two boolean status toggles into off/only/exclude
+          // modes. An old `true` only ever meant "only".
+          const STATUS_MODES = ['off', 'only', 'exclude'];
+          if (!STATUS_MODES.includes(filter.favoritesMode)) {
+            filter.favoritesMode = filter.favoritesOnly === true ? 'only' : 'off';
+          }
+          if (!STATUS_MODES.includes(filter.rejectsMode)) {
+            filter.rejectsMode = filter.rejectsOnly === true ? 'only' : 'off';
+          }
+          delete filter.favoritesOnly;
+          delete filter.rejectsOnly;
+          // The pair never both narrows; a stale combination would show nothing.
+          if (filter.favoritesMode === 'only' && filter.rejectsMode === 'only') {
+            filter.rejectsMode = 'off';
+          }
         }
         // Reject state moved to the server in v3. Never hydrate the old
         // client-only list: doing so could briefly expose destructive "delete

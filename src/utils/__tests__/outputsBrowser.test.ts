@@ -4,12 +4,33 @@ import {
   buildBreadcrumbs,
   buildFileSections,
   collapseBreadcrumbs,
+  formatRelativeAge,
   isCrumbHidden,
 } from '@/utils/outputsBrowser';
 
 function file(overrides: Partial<FileItem> & { name: string }): FileItem {
   return { id: overrides.name, type: 'image', ...overrides };
 }
+
+describe('formatRelativeAge', () => {
+  const now = Date.UTC(2026, 7, 11, 20, 0, 0);
+
+  it('uses compact human units from minutes through years', () => {
+    expect(formatRelativeAge(now - 20_000, now)).toBe('just now');
+    expect(formatRelativeAge(now - 1 * 60_000, now)).toBe('1 minute ago');
+    expect(formatRelativeAge(now - 4 * 60 * 60_000, now)).toBe('4 hours ago');
+    expect(formatRelativeAge(now - 3 * 24 * 60 * 60_000, now)).toBe('3 days ago');
+    expect(formatRelativeAge(now - 14 * 24 * 60 * 60_000, now)).toBe('2 weeks ago');
+    expect(formatRelativeAge(now - 90 * 24 * 60 * 60_000, now)).toBe('3 months ago');
+    expect(formatRelativeAge(now - 2 * 365 * 24 * 60 * 60_000, now)).toBe('2 years ago');
+  });
+
+  it('omits unavailable timestamps and treats future clock skew as just now', () => {
+    expect(formatRelativeAge(undefined, now)).toBeNull();
+    expect(formatRelativeAge(0, now)).toBeNull();
+    expect(formatRelativeAge(now + 60_000, now)).toBe('just now');
+  });
+});
 
 describe('buildFileSections', () => {
   const opts = (o: Partial<{ isNameSort: boolean; isSizeSort: boolean; shouldGroupByDate: boolean }>) => ({

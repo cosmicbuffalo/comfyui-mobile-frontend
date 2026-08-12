@@ -6,6 +6,7 @@ import { Dialog } from '@/components/modals/Dialog';
 import { SectionFoldButton } from './SectionFoldButton';
 import { useParameterSectionFoldsStore } from '@/hooks/useParameterSectionFolds';
 import { WidgetControl } from '../../InputControls/WidgetControl';
+import { widgetControlHasTopPadding } from '../../InputControls/widgetControlSpacing';
 import { NumberControl } from '../../InputControls/NumberControl';
 import {
   controlNestedSurfaceClassName,
@@ -190,14 +191,44 @@ export function NodeCardParameters({
   const seedControlValue = seedControlIndex !== null
     ? (resolveWidgetValue ? resolveWidgetValue(seedControlIndex) : widgetValues[seedControlIndex])
     : undefined;
+  const kSamplerSeedIndex = isKSampler && workflowExists && nodeTypesExists
+    ? getWidgetIndexForInput('seed')
+    : null;
+  const seedInputEntry = node.inputs.find(
+    (input) => input.name === 'seed' || input.name === 'noise_seed'
+  );
+  const rendersSpecializedSeedBlock = kSamplerSeedIndex !== null || (
+    !isKSampler &&
+    seedWidgetIndex !== null &&
+    (seedInputEntry?.link ?? null) === null
+  );
   const hasSeedControl = hasSeedControlWidget(node, seedControlValue);
   const hideSeedInputWidget = !isKSampler && seedWidgetIndex !== null && !hasSeedControl;
-  const inputWidgetsToRender = hideSeedInputWidget
-    ? visibleInputWidgets.filter((widget) => widget.name !== 'seed' && widget.name !== 'noise_seed')
-    : visibleInputWidgets;
-  const widgetsToRender = hideSeedInputWidget
-    ? visibleWidgets.filter((widget) => widget.name !== 'seed' && widget.name !== 'noise_seed')
-    : visibleWidgets;
+  const shouldRenderGenericWidget = (widget: WidgetDescriptor) => {
+    // A promoted control_after_generate descriptor is still needed to route
+    // the specialized Seed control back to its inner subgraph node. Once that
+    // control consumes it, do not render the same descriptor again under its
+    // raw proxy label (for example "EasySeed: control_after_generate"). Match
+    // the resolved index rather than the name so another seed/control pair is
+    // not accidentally hidden.
+    //
+    // Gate on the specialized block actually rendering: it bails out when the
+    // seed input is linked, and hiding the descriptor there would drop
+    // control_after_generate from the card entirely.
+    if (
+      rendersSpecializedSeedBlock &&
+      hasSeedControl &&
+      seedControlIndex !== null &&
+      widget.widgetIndex === seedControlIndex
+    ) {
+      return false;
+    }
+    if (!hideSeedInputWidget) return true;
+    const baseName = widget.name.split(': ').pop() ?? widget.name;
+    return baseName !== 'seed' && baseName !== 'noise_seed';
+  };
+  const inputWidgetsToRender = visibleInputWidgets.filter(shouldRenderGenericWidget);
+  const widgetsToRender = visibleWidgets.filter(shouldRenderGenericWidget);
   const showParameters = visibleWidgets.length > 0 || visibleInputWidgets.length > 0;
   // A node that is just a single widget with no other input slots (a
   // primitive-like node) gains nothing from popping its only value out, so the
@@ -666,6 +697,36 @@ export function NodeCardParameters({
     handleWidgetChange(widget)(newValue);
   };
 
+  const firstParameterHasStandardTopPadding = (() => {
+    // This custom block renders before every descriptor-backed parameter.
+    if (isFastGroupsBypasser) return false;
+    if (!showParameters) return false;
+    if (rendersSpecializedSeedBlock) return true;
+
+    if (isCrLoraStackNode) {
+      // Group cards provide their own padded surface. Only a stack consisting
+      // entirely of ungrouped widgets can begin with a standard control.
+      if (crStackGroupedWidgets.groups.length > 0) return false;
+      const firstWidget = crStackGroupedWidgets.ungrouped[0];
+      return firstWidget
+        ? widgetControlHasTopPadding(firstWidget.type, firstWidget.options)
+        : false;
+    }
+
+    const firstWidget = inputWidgetsToRender[0] ?? widgetsToRender[0];
+    if (firstWidget) {
+      return widgetControlHasTopPadding(firstWidget.type, firstWidget.options);
+    }
+
+    // PrimitiveNode can append a synthetic standard combo after its descriptor
+    // list. This is mostly defensive for unusual serialized primitives.
+    if (node.type === 'PrimitiveNode' && widgetValues.length >= 2) {
+      const outputType = String(node.outputs?.[0]?.type).toUpperCase();
+      return outputType === 'INT' || outputType === 'FLOAT';
+    }
+    return false;
+  })();
+
   if (!showParameters && !isFastGroupsBypasser && !showFastGroupConfig) return null;
 
   return (
@@ -684,7 +745,10 @@ export function NodeCardParameters({
           <span className="h-px min-w-0 flex-1 bg-slate-700" aria-hidden="true" />
         </div>
       </div>
-      <Collapsible open={parametersExpanded}>
+      <Collapsible
+        open={parametersExpanded}
+        className={`parameters-section-content ${firstParameterHasStandardTopPadding ? '-mt-2' : ''}`}
+      >
       {isFastGroupsBypasser && (
         <FastGroupsBypasserControls
           node={node}
@@ -696,7 +760,7 @@ export function NodeCardParameters({
       {showParameters && (
         <>
           {isKSampler && workflowExists && nodeTypesExists && (() => {
-            const seedIndex = getWidgetIndexForInput('seed');
+            const seedIndex = kSamplerSeedIndex;
             if (seedIndex === null) return null;
             const seedValue = widgetValues[seedIndex];
             const seedControlIndex = seedIndex + 1;
@@ -706,7 +770,7 @@ export function NodeCardParameters({
             const hideSeedControl = Boolean(noiseSeedInput?.link);
 
             return (
-              <div className="mb-3">
+              <div>
                 <WidgetControl
                   name="seed"
                   type="INT"
@@ -724,6 +788,7 @@ export function NodeCardParameters({
                     options={seedControlChoices}
                     onChange={handleSeedControlChange(seedControlIndex)}
                     isPromoted={isPromotedWidget('control_after_generate')}
+                    compactTrailingControls
                   />
                 )}
               </div>
@@ -736,15 +801,12 @@ export function NodeCardParameters({
             const choices = typeof seedControlValue === 'string' && !baseChoices.includes(seedControlValue)
               ? [...baseChoices, seedControlValue]
               : baseChoices;
-            const seedInputEntry = node.inputs.find(
-              (input) => input.name === 'seed' || input.name === 'noise_seed'
-            );
             if (seedInputEntry?.link != null) return null;
 
             if (hasSeedControl) {
               const controlIndex = seedControlIndex ?? seedIndex + 1;
               return (
-                <div className="mb-3">
+                <div className="seed-control-widget">
                   <WidgetControl
                     name="Seed control"
                     type="COMBO"
@@ -752,6 +814,7 @@ export function NodeCardParameters({
                     options={choices}
                     onChange={handleSeedControlChange(controlIndex)}
                     isPromoted={isPromotedWidget('control_after_generate')}
+                    compactTrailingControls
                   />
                 </div>
               );
@@ -774,7 +837,7 @@ export function NodeCardParameters({
             const hasSeedError = errorInputNames.has('seed') || errorInputNames.has('noise_seed');
 
             return (
-              <div className="mb-3">
+              <div className="seed-value-widget mb-3">
                 <NumberControl
                   name="seed"
                   value={displaySeedValue}
@@ -794,6 +857,7 @@ export function NodeCardParameters({
                     options={baseChoices}
                     onChange={handleSeedModeValue}
                     isPromoted={isPromotedWidget('control_after_generate')}
+                    compactTrailingControls
                   />
                 )}
                 <div className="grid gap-2 mt-2">
@@ -1005,7 +1069,7 @@ export function NodeCardParameters({
             const controlValue = widgetValues[1];
             const controlChoices = ['fixed', 'increment', 'decrement', 'randomize'];
             return (
-              <div className="mb-3">
+              <div className="primitive-control-mode-widget mb-3">
                 <WidgetControl
                   name="Control mode"
                   type="COMBO"
@@ -1014,6 +1078,7 @@ export function NodeCardParameters({
                   onChange={(newValue) => onUpdateNodeWidget(1, newValue)}
                   disabled={isBypassed}
                   isPromoted={isPromotedWidget('control_after_generate')}
+                  compactTrailingControls
                 />
               </div>
             );

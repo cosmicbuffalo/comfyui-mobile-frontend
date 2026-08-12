@@ -32,11 +32,12 @@ interface BulkProcessModalProps {
   open: boolean;
   items: FileItem[];
   onClose: () => void;
+  onComplete?: () => void;
 }
 
 type Step = 'workflow' | 'node' | 'confirm';
 
-export function BulkProcessModal({ open, items, onClose }: BulkProcessModalProps) {
+export function BulkProcessModal({ open, items, onClose, onComplete }: BulkProcessModalProps) {
   const nodeTypes = useWorkflowStore((s) => s.nodeTypes);
   const registerLocalPrompt = useQueueStore((s) => s.registerLocalPrompt);
   const hiddenWorkflowPaths = useWorkflowHiddenStore((s) => s.hidden);
@@ -162,6 +163,7 @@ export function BulkProcessModal({ open, items, onClose }: BulkProcessModalProps
 
     setRunning(false);
     setSummary({ queued, failed, error: failed > 0 ? firstError : undefined });
+    onComplete?.();
   };
 
   const selectedLabel = useMemo(() => {

@@ -61,6 +61,7 @@ interface ComboControlProps {
   isPromoted?: boolean;
   forceModalOpen?: boolean;
   onModalClose?: () => void;
+  compactTrailingControls?: boolean;
 }
 
 export function ComboControl({
@@ -78,6 +79,7 @@ export function ComboControl({
   isPromoted = false,
   forceModalOpen = false,
   onModalClose,
+  compactTrailingControls = false,
 }: ComboControlProps) {
   type SelectOption = ComboSelectOption;
 
@@ -99,6 +101,7 @@ export function ComboControl({
 
   const showModal = forceModalOpen || internalModalOpen;
   const isCoarsePointer = useCoarsePointer();
+  const hasVisiblePin = hasPin && isPinned && Boolean(onTogglePin);
 
   const getOption = (key: string): unknown => {
     if (Array.isArray(options)) return undefined;
@@ -331,7 +334,8 @@ export function ComboControl({
 
   const selectClassName = [
     "rs-container",
-    hasPin ? "rs-has-pin" : "rs-no-pin",
+    hasVisiblePin ? "rs-has-pin" : "rs-no-pin",
+    compactTrailingControls ? "rs-compact-trailing" : "",
     hasError ? "rs-error" : "",
     isPromoted ? "rs-promoted" : "",
     isMissingValue ? "rs-missing" : "",
@@ -498,7 +502,7 @@ export function ComboControl({
   if (useInputBrowser) {
     const browserOpen = forceModalOpen || inputPickerOpen;
     return (
-      <div className={`${containerClass} combo-control-root combo-control-input-browser`}>
+      <div className={`${containerClass} combo-control-root combo-control-input-browser pt-2`}>
         {!hideLabel && (
           <label className={`${controlLabelClassName} mb-1`}>
             <span className="inline-flex items-center gap-1">
@@ -520,12 +524,12 @@ export function ComboControl({
             }
           }}
         >
-          <span className={`truncate min-w-0 flex-1 text-slate-100 ${hasPin ? "pr-16" : "pr-6"}`}>
+          <span className={`truncate min-w-0 flex-1 text-slate-100 ${hasVisiblePin ? "pr-16" : "pr-6"}`}>
             {selectedLabel || valueString || "Select..."}
           </span>
           <span className="absolute right-0 top-0 bottom-0 flex items-center pointer-events-none">
             <span className="px-2 text-slate-400"><ChevronDownIcon className="w-5 h-5" /></span>
-            {hasPin && (
+            {hasVisiblePin && (
               <span className="pointer-events-auto px-2">
                 <PinButton isPinned={isPinned} onToggle={onTogglePin} />
               </span>
@@ -561,7 +565,7 @@ export function ComboControl({
   if (useModalFlow) {
     return (
       <div
-        className={`${containerClass} combo-control-root combo-control-modal`}
+        className={`${containerClass} combo-control-root combo-control-modal pt-2`}
       >
         {!hideLabel && (
           <label className={`${controlLabelClassName} mb-1`}>
@@ -580,13 +584,21 @@ export function ComboControl({
         >
           {isModelMode && selectedOption?.model ? (
             <div
-              className={`min-w-0 flex-1 text-slate-100 ${hasPin ? "pr-16" : "pr-10"}`}
+              className={`min-w-0 flex-1 text-slate-100 ${
+                compactTrailingControls
+                  ? hasVisiblePin ? "pr-13" : "pr-6"
+                  : hasVisiblePin ? "pr-16" : "pr-10"
+              }`}
             >
               <ModelRowContent option={selectedOption} />
             </div>
           ) : (
             <span
-              className={`combo-control-trigger-label truncate min-w-0 flex-1 ${!hasSelection ? "text-slate-500" : "text-slate-100"} ${hasPin ? "pr-16" : "pr-6"}`}
+              className={`combo-control-trigger-label truncate min-w-0 flex-1 ${!hasSelection ? "text-slate-500" : "text-slate-100"} ${
+                compactTrailingControls
+                  ? hasVisiblePin ? "pr-13" : "pr-6"
+                  : hasVisiblePin ? "pr-16" : "pr-6"
+              }`}
               style={
                 hasSelection ? { color: themeColors.text.onDark } : undefined
               }
@@ -596,11 +608,17 @@ export function ComboControl({
           )}
 
           <div className="combo-control-trigger-icons flex items-center absolute right-0 top-0 bottom-0 pointer-events-none">
-            <div className="combo-control-chevron px-2 text-slate-400">
-              <ChevronDownIcon className="w-5 h-5" />
+            <div className={`combo-control-chevron text-slate-400 ${
+              compactTrailingControls
+                ? "flex w-9 items-center justify-center"
+                : "px-2"
+            }`}>
+              <ChevronDownIcon className="h-5 w-5" />
             </div>
-            {hasPin && (
-              <div className="combo-control-pin pointer-events-auto px-2">
+            {hasVisiblePin && (
+              <div className={`combo-control-pin pointer-events-auto ${
+                compactTrailingControls ? "flex w-7 items-center justify-center" : "px-2"
+              }`}>
                 <PinButton
                   isPinned={isPinned}
                   onToggle={onTogglePin}
@@ -782,7 +800,7 @@ export function ComboControl({
 
   return (
     <div
-      className={`${containerClass} combo-control-root combo-control-inline`}
+      className={`${containerClass} combo-control-root combo-control-inline pt-2`}
     >
       {!hideLabel && (
         <label className={`${controlLabelClassName} mb-1`}>
@@ -879,18 +897,24 @@ export function ComboControl({
           noOptionsMessage={() => "No matches"}
         />
         <div className="combo-control-icons absolute right-0 top-0 bottom-0 flex items-center pointer-events-none">
-          <div className="combo-control-chevron px-2 text-slate-400">
-            <ChevronDownIcon className="w-5 h-5" />
+          <div className={`combo-control-chevron text-slate-400 ${
+              compactTrailingControls
+              ? "flex w-9 items-center justify-center"
+              : "px-2"
+          }`}>
+            <ChevronDownIcon className="h-5 w-5" />
           </div>
-          {hasPin && (
-            <div className="combo-control-pin pointer-events-auto px-2">
+          {hasVisiblePin && (
+            <div className={`combo-control-pin pointer-events-auto ${
+              compactTrailingControls ? "flex w-7 items-center justify-center" : "px-2"
+            }`}>
               <PinButton
                 isPinned={isPinned}
                 onToggle={onTogglePin}
               />
             </div>
           )}
-          {!hasPin && <div className="w-3" />}
+          {!hasVisiblePin && !compactTrailingControls && <div className="w-3" />}
         </div>
       </div>
       {isMissingValue && (

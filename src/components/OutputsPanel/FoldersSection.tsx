@@ -1,5 +1,5 @@
 import type { MouseEvent } from 'react';
-import type { FileItem } from '@/api/client';
+import type { FileItem, SortMode } from '@/api/client';
 import { Collapsible } from '@/components/Collapsible';
 import { FoldIcon } from '@/components/FoldIcon';
 import { FileCard } from './FileCard';
@@ -16,6 +16,7 @@ interface OutputsFoldersSectionProps {
   handleMenu: (file: FileItem, event: MouseEvent) => void;
   toggleSelection: (id: string, event: MouseEvent, options?: { range?: boolean }) => void;
   showContextMenus?: boolean;
+  sortMode: SortMode;
 }
 
 export function OutputsFoldersSection({
@@ -29,7 +30,8 @@ export function OutputsFoldersSection({
   handleOpen,
   handleMenu,
   toggleSelection,
-  showContextMenus = true
+  showContextMenus = true,
+  sortMode,
 }: OutputsFoldersSectionProps) {
   if (folders.length === 0) return null;
 
@@ -60,6 +62,7 @@ export function OutputsFoldersSection({
               onMenu={handleMenu}
               onToggleSelection={toggleSelection}
               showContextMenu={showContextMenus}
+              sortMode={sortMode}
             />
           ))}
         </div>

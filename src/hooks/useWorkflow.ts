@@ -37,9 +37,9 @@ import {
   placePastedNodesIntoGroup,
 } from "@/utils/workflowClipboard";
 import {
-  hasRecognizedFilePrefixAliasShape,
+  hasRecognizedPathAliasShape,
   obfuscateQueuedInputPaths,
-  restoreWorkflowFilePrefixes,
+  restoreWorkflowPathAliases,
 } from "@/utils/inputPathAliases";
 import {
   buildWorkflowPromptInputs,
@@ -458,7 +458,7 @@ interface LoadWorkflowOptions {
   source?: WorkflowSource;
   replaceActive?: boolean;
   navigate?: boolean;
-  filePrefixAliasesResolved?: boolean;
+  pathAliasesResolved?: boolean;
 }
 
 // The workflow-content fields that both `unloadWorkflow` and the
@@ -1370,14 +1370,16 @@ function stripNodeWidgetIndexMap(workflow: Workflow, nodeId: number): Workflow {
   const key = String(nodeId);
   let next = workflow;
   if (next.widget_idx_map?.[key]) {
-    const { [key]: _dropped, ...rest } = next.widget_idx_map;
+    const rest = { ...next.widget_idx_map };
+    delete rest[key];
     next = { ...next, widget_idx_map: rest };
   }
   const extraMap = next.extra?.widget_idx_map as
     | Record<string, Record<string, number>>
     | undefined;
   if (extraMap?.[key]) {
-    const { [key]: _dropped, ...rest } = extraMap;
+    const rest = { ...extraMap };
+    delete rest[key];
     next = { ...next, extra: { ...next.extra, widget_idx_map: rest } };
   }
   return next;
@@ -4287,25 +4289,25 @@ export const useWorkflowStore = create<WorkflowState>()(
         }
         const aliasNodeTypes = get().nodeTypes;
         if (
-          !options?.filePrefixAliasesResolved
+          !options?.pathAliasesResolved
           && aliasNodeTypes
-          && hasRecognizedFilePrefixAliasShape(workflow, aliasNodeTypes)
+          && hasRecognizedPathAliasShape(workflow, aliasNodeTypes)
         ) {
-          void restoreWorkflowFilePrefixes(workflow, aliasNodeTypes)
+          void restoreWorkflowPathAliases(workflow, aliasNodeTypes)
             .then((resolvedWorkflow) => {
               get().loadWorkflow(resolvedWorkflow, filename, {
                 ...options,
-                filePrefixAliasesResolved: true,
+                pathAliasesResolved: true,
               });
             })
             .catch((error) => {
-              console.error("Failed to resolve filename prefix aliases:", error);
+              console.error("Failed to resolve workflow path aliases:", error);
               useWorkflowErrorsStore.getState().setError(
-                "Unable to resolve local filename prefix aliases. Loading their opaque values instead.",
+                "Unable to resolve local workflow path aliases. Loading their opaque values instead.",
               );
               get().loadWorkflow(workflow, filename, {
                 ...options,
-                filePrefixAliasesResolved: true,
+                pathAliasesResolved: true,
               });
             });
           return;

@@ -254,6 +254,29 @@ def entry_matches_name_or_path(entry, search, scope_path=''):
     return query in name or query in path
 
 
+def _stat_dates_ms(stat):
+    """Return best-effort (created, modified) timestamps in milliseconds.
+
+    macOS/BSD expose a real birth time. Linux generally does not, so the first
+    observable content/metadata timestamp is the safest creation fallback;
+    taking the earlier of mtime/ctime keeps creation stable across a rename.
+
+    Modified stays on mtime alone. ctime moves for metadata-only operations
+    that are not modifications in any sense the user means — hard-linking an
+    output into input/ (see link_or_copy and mobile_input_aliases), chmod, and
+    above all a backup restore or a non-preserving rsync, which would stamp
+    every file at once and collapse the whole default listing order into a
+    single timestamp. In-app renames and moves still register as changes: they
+    go through mobile_file_state, which layers a durable activity timestamp on
+    top of this value.
+    """
+    mtime = float(stat.st_mtime)
+    ctime = float(stat.st_ctime)
+    birthtime = getattr(stat, 'st_birthtime', None)
+    created = float(birthtime) if isinstance(birthtime, (int, float)) and birthtime > 0 else min(mtime, ctime)
+    return int(created * 1000), int(mtime * 1000)
+
+
 def list_files(base_dir, target_path, *, recursive=False, show_hidden=False,
                search='', start_date=None, end_date=None, dirs_only=False,
                hidden_paths=None):
@@ -283,6 +306,7 @@ def list_files(base_dir, target_path, *, recursive=False, show_hidden=False,
         full_path = os.path.join(root, filename)
         stat = os.stat(full_path)
         mtime_ms = int(stat.st_mtime * 1000)
+        created_ms, modified_ms = _stat_dates_ms(stat)
 
         if start_date and mtime_ms < int(start_date):
             return None
@@ -315,6 +339,8 @@ def list_files(base_dir, target_path, *, recursive=False, show_hidden=False,
             "type": kind,
             "size": stat.st_size,
             "date": mtime_ms,
+            "createdDate": created_ms,
+            "modifiedDate": modified_ms,
             "folder": _rel_fwd(root, base_dir) if root != base_dir else ""
         }
 
@@ -339,7 +365,9 @@ def list_files(base_dir, target_path, *, recursive=False, show_hidden=False,
                 if not show_hidden and _is_manually_hidden_rel_path(rel_path, normalized_hidden_paths):
                     continue
                 try:
-                    mtime_ms = int(os.stat(full_path).st_mtime * 1000)
+                    dir_stat = os.stat(full_path)
+                    mtime_ms = int(dir_stat.st_mtime * 1000)
+                    created_ms, modified_ms = _stat_dates_ms(dir_stat)
                 except OSError:
                     # Dir vanished or is unreadable mid-walk — skip it rather
                     # than failing the whole listing.
@@ -357,6 +385,8 @@ def list_files(base_dir, target_path, *, recursive=False, show_hidden=False,
                     "type": "dir",
                     "path": rel_path,
                     "date": mtime_ms,
+                    "createdDate": created_ms,
+                    "modifiedDate": modified_ms,
                 })
         # The function contract returns a sorted listing; the early return here
         # must honor it too (dirs sorted by path).
@@ -395,9 +425,12 @@ def list_files(base_dir, target_path, *, recursive=False, show_hidden=False,
                     dir_stat = os.stat(full_path)
                     dir_mtime_ms = int(dir_stat.st_mtime * 1000)
                     dir_mtime_ns = dir_stat.st_mtime_ns
+                    dir_created_ms, dir_modified_ms = _stat_dates_ms(dir_stat)
                 except OSError:
                     dir_mtime_ms = 0
                     dir_mtime_ns = 0
+                    dir_created_ms = 0
+                    dir_modified_ms = 0
                 count, total_size = folder_stats(
                     base_dir,
                     full_path,
@@ -411,7 +444,9 @@ def list_files(base_dir, target_path, *, recursive=False, show_hidden=False,
                     "path": rel_path,
                     "count": count,
                     "size": total_size,
-                    "date": dir_mtime_ms
+                    "date": dir_mtime_ms,
+                    "createdDate": dir_created_ms,
+                    "modifiedDate": dir_modified_ms,
                 })
             else:
                 item = process_file(target_path, name)

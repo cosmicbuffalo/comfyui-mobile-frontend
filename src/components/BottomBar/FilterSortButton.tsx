@@ -11,7 +11,10 @@ export function FilterSortButton() {
   const filter = useOutputsStore((s) => s.filter);
   // Anything that HIDES files from the listing counts; sort only reorders what
   // is already there, so a non-default sort deliberately doesn't light this up.
-  const filtered = filter.favoritesOnly || filter.type !== 'all' || Boolean(filter.search);
+  const filtered = filter.favoritesMode !== 'off'
+    || filter.rejectsMode !== 'off'
+    || filter.type !== 'all'
+    || Boolean(filter.search);
 
   return (
     <button

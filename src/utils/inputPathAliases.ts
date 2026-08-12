@@ -3,6 +3,7 @@ import {
   createFilePrefixAliases,
   createInputAliases,
   resolveFilePrefixAliases,
+  resolveInputAliases,
 } from "@/api/client";
 import { getInputWidgetDefinitions, getWidgetDefinitions } from "@/utils/widgetDefinitions";
 
@@ -91,6 +92,37 @@ function collectWorkflowPaths(workflow: Workflow, nodeTypes: NodeTypes, paths: S
   workflow.nodes.forEach((node) => collectNodePaths(node, nodeTypes, paths));
   workflow.definitions?.subgraphs?.forEach((subgraph) => {
     subgraph.nodes.forEach((node) => collectNodePaths(node, nodeTypes, paths));
+  });
+}
+
+function collectNodeInputAliases(
+  node: WorkflowNode,
+  nodeTypes: NodeTypes,
+  aliases: Set<string>,
+): void {
+  if (!isLoadImageType(node.type)) return;
+  if (Array.isArray(node.widgets_values)) {
+    for (const definition of getInputWidgetDefinitions(nodeTypes, node)) {
+      if (!INPUT_KEYS.includes(definition.name as (typeof INPUT_KEYS)[number])) continue;
+      const value = node.widgets_values[definition.widgetIndex];
+      if (typeof value === "string" && isAliasPath(value)) aliases.add(value);
+    }
+    return;
+  }
+  for (const key of INPUT_KEYS) {
+    const value = node.widgets_values?.[key];
+    if (typeof value === "string" && isAliasPath(value)) aliases.add(value);
+  }
+}
+
+function collectWorkflowInputAliases(
+  workflow: Workflow,
+  nodeTypes: NodeTypes,
+  aliases: Set<string>,
+): void {
+  workflow.nodes.forEach((node) => collectNodeInputAliases(node, nodeTypes, aliases));
+  workflow.definitions?.subgraphs?.forEach((subgraph) => {
+    subgraph.nodes.forEach((node) => collectNodeInputAliases(node, nodeTypes, aliases));
   });
 }
 
@@ -305,6 +337,23 @@ export async function obfuscateQueuedInputPaths(
   };
 }
 
+export function hasRecognizedInputAliasShape(workflow: Workflow, nodeTypes: NodeTypes): boolean {
+  const aliases = new Set<string>();
+  collectWorkflowInputAliases(workflow, nodeTypes, aliases);
+  return aliases.size > 0;
+}
+
+export async function restoreWorkflowInputPaths(
+  workflow: Workflow,
+  nodeTypes: NodeTypes,
+): Promise<Workflow> {
+  const aliases = new Set<string>();
+  collectWorkflowInputAliases(workflow, nodeTypes, aliases);
+  if (aliases.size === 0) return workflow;
+  const resolved = await resolveInputAliases(Array.from(aliases));
+  return replaceWorkflowPaths(workflow, nodeTypes, resolved);
+}
+
 export function hasRecognizedFilePrefixAliasShape(workflow: Workflow, nodeTypes: NodeTypes): boolean {
   const aliases = new Set<string>();
   collectWorkflowFilePrefixAliases(workflow, nodeTypes, aliases);
@@ -320,4 +369,17 @@ export async function restoreWorkflowFilePrefixes(
   if (aliases.size === 0) return workflow;
   const resolved = await resolveFilePrefixAliases(Array.from(aliases));
   return replaceWorkflowFilePrefixes(workflow, nodeTypes, resolved);
+}
+
+export function hasRecognizedPathAliasShape(workflow: Workflow, nodeTypes: NodeTypes): boolean {
+  return hasRecognizedInputAliasShape(workflow, nodeTypes)
+    || hasRecognizedFilePrefixAliasShape(workflow, nodeTypes);
+}
+
+export async function restoreWorkflowPathAliases(
+  workflow: Workflow,
+  nodeTypes: NodeTypes,
+): Promise<Workflow> {
+  const inputRestored = await restoreWorkflowInputPaths(workflow, nodeTypes);
+  return restoreWorkflowFilePrefixes(inputRestored, nodeTypes);
 }

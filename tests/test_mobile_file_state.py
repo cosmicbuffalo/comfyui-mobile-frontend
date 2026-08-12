@@ -517,6 +517,83 @@ def test_rename_path_remaps_all_three_states_at_once(tmp_path: Path):
     assert get_paths(str(cache), "output", "reject", str(output)) == ["renamed/other.png"]
 
 
+def test_state_changes_advance_listing_modified_date_even_when_cleared(
+    tmp_path: Path,
+    monkeypatch,
+):
+    cache = tmp_path / "file_state.json"
+    output = tmp_path / "output"
+    output.mkdir()
+    image = output / "image.png"
+    image.write_bytes(b"image")
+    before = list_files(str(output), str(output))[0]
+    activity_time = before["modifiedDate"] + 60_000
+    monkeypatch.setattr(mobile_file_state, "_now_ms", lambda: activity_time)
+
+    assert set_state(str(cache), "output", "favorite", str(output), "image.png", True)
+    assert set_state(str(cache), "output", "favorite", str(output), "image.png", False)
+
+    listing = list_files(str(output), str(output))
+    annotate_listing(str(cache), "output", str(output), listing, set())
+    assert listing[0].get("favorite") is not True
+    assert listing[0]["createdDate"] == before["createdDate"]
+    assert listing[0]["modifiedDate"] == activity_time
+
+
+def test_in_app_rename_preserves_created_and_advances_modified_date(
+    tmp_path: Path,
+    monkeypatch,
+):
+    cache = tmp_path / "file_state.json"
+    output = tmp_path / "output"
+    output.mkdir()
+    original = output / "before.png"
+    original.write_bytes(b"image")
+    before = list_files(str(output), str(output))[0]
+    activity_time = before["modifiedDate"] + 60_000
+    monkeypatch.setattr(mobile_file_state, "_now_ms", lambda: activity_time)
+
+    original.rename(output / "after.png")
+    rename_path(str(cache), "output", "before.png", "after.png", str(output))
+
+    listing = list_files(str(output), str(output))
+    annotate_listing(str(cache), "output", str(output), listing, set())
+    assert listing[0]["createdDate"] == before["createdDate"]
+    assert listing[0]["modifiedDate"] == activity_time
+
+
+def test_in_app_move_advances_both_old_and_new_folder_trees(
+    tmp_path: Path,
+    monkeypatch,
+):
+    cache = tmp_path / "file_state.json"
+    output = tmp_path / "output"
+    old_tree = output / "old" / "deep"
+    new_tree = output / "new"
+    old_tree.mkdir(parents=True)
+    new_tree.mkdir()
+    image = old_tree / "image.png"
+    image.write_bytes(b"image")
+    before = list_files(str(output), str(output))
+    activity_time = max(item["modifiedDate"] for item in before) + 60_000
+    monkeypatch.setattr(mobile_file_state, "_now_ms", lambda: activity_time)
+
+    image.rename(new_tree / "image.png")
+    rename_path(
+        str(cache),
+        "output",
+        "old/deep/image.png",
+        "new/image.png",
+        str(output),
+    )
+
+    listing = list_files(str(output), str(output))
+    annotate_listing(str(cache), "output", str(output), listing, set())
+    by_name = {item["name"]: item for item in listing}
+    assert by_name["old"]["modifiedDate"] == activity_time
+    assert by_name["new"]["modifiedDate"] == activity_time
+
+
 def test_remove_path_drops_all_three_states_at_once(tmp_path: Path):
     cache, output, _folder = _three_state_layout(tmp_path)
 

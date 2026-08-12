@@ -101,7 +101,7 @@ export function NumberControl({
     .join(" ");
 
   return (
-    <div className={`${containerClass ?? ""} number-control-${name}`}>
+    <div className={`${containerClass ?? ""} number-control-${name} pt-2`}>
       {!hideLabel && (
         <label className={`${controlLabelClassName} mb-1`}>
           <span className="inline-flex items-center gap-1">

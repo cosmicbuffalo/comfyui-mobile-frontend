@@ -129,6 +129,12 @@ textarea {
 .rs-no-pin .rs__value-container {
   padding-right: 2.25rem;
 }
+.rs-compact-trailing.rs-has-pin .rs__value-container {
+  padding-right: 4rem;
+}
+.rs-compact-trailing.rs-no-pin .rs__value-container {
+  padding-right: 2.25rem;
+}
 .note-display {
   background-color: #0b1320;
   border-color: #1b2432;

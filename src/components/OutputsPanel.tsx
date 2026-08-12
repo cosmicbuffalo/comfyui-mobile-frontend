@@ -1,6 +1,15 @@
 import { memo, useCallback, useEffect, useMemo, useState, useRef } from 'react';
 import { createPortal } from 'react-dom';
-import { useOutputsStore, MAX_OUTPUTS_TABS, type OutputsTab, type FilterState, type SortState } from '@/hooks/useOutputs';
+import {
+  cycleStatusFilter as cycleStatusFilterState,
+  mergeOutputsFilter,
+  useOutputsStore,
+  MAX_OUTPUTS_TABS,
+  type OutputsTab,
+  type FilterState,
+  type SortState,
+  type StatusFilterKey,
+} from '@/hooks/useOutputs';
 import { useHistoryStore } from '@/hooks/useHistory';
 import { isWorkflowModified, MAX_WORKFLOW_SESSIONS, useWorkflowStore } from '@/hooks/useWorkflow';
 import { useNavigationStore } from '@/hooks/useNavigation';
@@ -84,6 +93,7 @@ export const OutputsPanel = memo(function OutputsPanel({ visible }: { visible: b
   const deselectIds = useOutputsStore((s) => s.deselectIds);
   const toggleSelectionMode = useOutputsStore((s) => s.toggleSelectionMode);
   const setFilter = useOutputsStore((s) => s.setFilter);
+  const cycleStatusFilter = useOutputsStore((s) => s.cycleStatusFilter);
   const setSort = useOutputsStore((s) => s.setSort);
   const setItemHidden = useOutputsStore((s) => s.setItemHidden);
   const setItemsHidden = useOutputsStore((s) => s.setItemsHidden);
@@ -105,7 +115,7 @@ export const OutputsPanel = memo(function OutputsPanel({ visible }: { visible: b
   const promptSearchResults = useOutputsStore((s) => s.promptSearchResults);
   const addFavorites = useOutputsStore((s) => s.addFavorites);
   const removeFavorites = useOutputsStore((s) => s.removeFavorites);
-  const clearSelection = useOutputsStore((s) => s.clearSelection);
+  const exitSelectionMode = useOutputsStore((s) => s.exitSelectionMode);
   const loadWorkflow = useWorkflowStore((s) => s.loadWorkflow);
   const setCurrentPanel = useNavigationStore((s) => s.setCurrentPanel);
   const workflow = useWorkflowStore((s) => s.workflow);
@@ -147,9 +157,16 @@ export const OutputsPanel = memo(function OutputsPanel({ visible }: { visible: b
   // The move picker has its own sort/filter, independent of the main grid's.
   // Sort persists across reopens (session); the filter resets each open.
   const [moveSort, setMoveSort] = useState<SortState>(() => sort);
-  const [moveFilter, setMoveFilter] = useState<FilterState>({ search: '', favoritesOnly: false, type: 'all' });
+  const [moveFilter, setMoveFilter] = useState<FilterState>({
+    search: '',
+    favoritesMode: 'off',
+    rejectsMode: 'off',
+    type: 'all',
+  });
   const setMoveFilterPartial = (partial: Partial<FilterState>) =>
-    setMoveFilter((f) => ({ ...f, ...partial }));
+    setMoveFilter((filter) => mergeOutputsFilter(filter, partial));
+  const cycleMoveStatusFilter = (key: StatusFilterKey) =>
+    setMoveFilter((filter) => cycleStatusFilterState(filter, key));
   const [viewerOpen, setViewerOpen] = useState(false);
   const [viewerImages, setViewerImages] = useState<ViewerImage[]>([]);
   const [viewerIndex, setViewerIndex] = useState(0);
@@ -165,6 +182,10 @@ export const OutputsPanel = memo(function OutputsPanel({ visible }: { visible: b
   // set it (`select`) so a shift+click extends that same action across the
   // range: select-anchor → bulk select, deselect-anchor → bulk deselect.
   const selectionAnchorRef = useRef<SelectionAnchor | null>(null);
+  const completeSelectionOperation = useCallback(() => {
+    exitSelectionMode();
+    selectionAnchorRef.current = null;
+  }, [exitSelectionMode]);
   const [foldersCollapsed, setFoldersCollapsed] = useState(() => {
     const saved = localStorage.getItem(FOLDERS_COLLAPSED_KEY);
     return saved === 'true';
@@ -393,10 +414,14 @@ export const OutputsPanel = memo(function OutputsPanel({ visible }: { visible: b
 
   const isNameSort = sortMode.startsWith('name');
   const isSizeSort = sortMode.startsWith('size');
-  const shouldGroupByDate = filter.favoritesOnly || (!isNameSort && !isSizeSort);
+  const dateField = sortMode.startsWith('created') ? 'createdDate' : 'modifiedDate';
+  // A narrowed status subset spans dates, so it always groups by date; an
+  // excluding filter is still ordinary browsing and keeps the sort's grouping.
+  const hasNarrowedStatus = filter.favoritesMode === 'only' || filter.rejectsMode === 'only';
+  const shouldGroupByDate = hasNarrowedStatus || (!isNameSort && !isSizeSort);
   const fileSections = useMemo(
-    () => buildFileSections(nonFolders, { isNameSort, isSizeSort, shouldGroupByDate }),
-    [nonFolders, shouldGroupByDate, isNameSort, isSizeSort],
+    () => buildFileSections(nonFolders, { isNameSort, isSizeSort, shouldGroupByDate, dateField }),
+    [nonFolders, shouldGroupByDate, isNameSort, isSizeSort, dateField],
   );
 
   const selectableIds = useMemo(() => {
@@ -425,7 +450,7 @@ export const OutputsPanel = memo(function OutputsPanel({ visible }: { visible: b
     // back to a plain toggle.
     selectionAnchorRef.current = null;
   }, [currentFolder, source, sortMode, promptSearchActive,
-      filter.search, filter.type, filter.favoritesOnly]);
+      filter.search, filter.type, filter.favoritesMode, filter.rejectsMode]);
 
   // Grow the budget while the rendered content doesn't fill the viewport (e.g.
   // the first page is shorter than the screen), so there's always something to
@@ -595,7 +620,7 @@ export const OutputsPanel = memo(function OutputsPanel({ visible }: { visible: b
     const targets = resolveSelectionDownloadTargets(selectedIds, displayedById);
     if (targets.length === 0) return;
     setSelectionActionOpen(false);
-    void shareOrDownloadBatch(targets);
+    void shareOrDownloadBatch(targets).finally(completeSelectionOperation);
   };
 
   const handleRenameRequest = () => {
@@ -705,7 +730,7 @@ export const OutputsPanel = memo(function OutputsPanel({ visible }: { visible: b
       // Reconcile history so any queue cards for these files don't go broken.
       await useHistoryStore.getState().removeOutputImages(selectedIds);
       refresh();
-      clearSelection();
+      completeSelectionOperation();
     } catch (err) {
       console.error('Failed to delete selected files:', err);
       window.alert('Failed to delete selected files.');
@@ -722,7 +747,7 @@ export const OutputsPanel = memo(function OutputsPanel({ visible }: { visible: b
     } else {
       addFavorites(selectedIds);
     }
-    setSelectionActionOpen(false);
+    completeSelectionOperation();
   };
 
   // Dot-prefixed items aren't manually toggleable, so the bulk hide action only
@@ -759,8 +784,8 @@ export const OutputsPanel = memo(function OutputsPanel({ visible }: { visible: b
     // Operate on every selected id (which can span folders/tabs), not just the
     // current-folder view — `setItemsHidden` is id/path-based like bulk delete
     // and favorites. Toggle direction follows the visible selection.
-    void setItemsHidden(selectedIds, !selectionAllHidden);
-    clearSelection();
+    void setItemsHidden(selectedIds, !selectionAllHidden)
+      .finally(completeSelectionOperation);
   };
 
   // Distinct folders that open tabs are pointing at (within the current source),
@@ -786,17 +811,26 @@ export const OutputsPanel = memo(function OutputsPanel({ visible }: { visible: b
   // (independent of the main grid). Search results only carry name/date, so
   // size sort is a no-op for them.
   const sortFilterMoveFolders = (folders: FileItem[]) => {
-    const filtered = moveFilter.favoritesOnly
-      ? folders.filter((f) => favorites.includes(f.id))
-      : folders;
+    const favoriteIds = new Set(favorites);
+    const filtered = moveFilter.favoritesMode === 'only'
+      ? folders.filter((f) => favoriteIds.has(f.id))
+      : moveFilter.favoritesMode === 'exclude'
+        ? folders.filter((f) => !favoriteIds.has(f.id))
+        : folders;
     const direction = moveSort.mode.endsWith('-reverse') ? -1 : 1;
     const sorted = [...filtered];
     if (moveSort.mode.startsWith('name')) {
       sorted.sort((a, b) => a.name.localeCompare(b.name) * direction);
     } else if (moveSort.mode.startsWith('size')) {
       sorted.sort((a, b) => ((a.size ?? 0) - (b.size ?? 0)) * direction);
+    } else if (moveSort.mode.startsWith('created')) {
+      sorted.sort((a, b) => (
+        ((a.createdDate ?? a.date ?? 0) - (b.createdDate ?? b.date ?? 0)) * -1 * direction
+      ));
     } else {
-      sorted.sort((a, b) => ((a.date ?? 0) - (b.date ?? 0)) * -1 * direction);
+      sorted.sort((a, b) => (
+        ((a.modifiedDate ?? a.date ?? 0) - (b.modifiedDate ?? b.date ?? 0)) * -1 * direction
+      ));
     }
     return sorted;
   };
@@ -804,7 +838,7 @@ export const OutputsPanel = memo(function OutputsPanel({ visible }: { visible: b
   const moveFoldersSorted = useMemo(
     () => sortFilterMoveFolders(moveFolders.filter((f) => !moveItemIds.includes(f.id))),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [moveFolders, moveItemIds, moveSort.mode, moveFilter.favoritesOnly, favorites]
+    [moveFolders, moveItemIds, moveSort.mode, moveFilter.favoritesMode, favorites]
   );
 
   const moveSearchResults = useMemo(() => {
@@ -814,13 +848,13 @@ export const OutputsPanel = memo(function OutputsPanel({ visible }: { visible: b
       moveSearchDirs.filter((d) => !moveItemIds.includes(d.id) && d.name.toLowerCase().includes(q))
     );
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [moveSearchDirs, moveSearchQuery, moveItemIds, moveSort.mode, moveFilter.favoritesOnly, favorites]);
+  }, [moveSearchDirs, moveSearchQuery, moveItemIds, moveSort.mode, moveFilter.favoritesMode, favorites]);
 
   const moveSearchActive = moveSearchQuery.trim().length > 0;
 
   // The move filter resets on every open (sort is intentionally remembered).
   const resetMoveFilterOnOpen = () =>
-    setMoveFilter({ search: '', favoritesOnly: false, type: 'all' });
+    setMoveFilter({ search: '', favoritesMode: 'off', rejectsMode: 'off', type: 'all' });
 
   const handleMoveSelection = () => {
     if (selectedIds.length === 0) return;
@@ -890,8 +924,7 @@ export const OutputsPanel = memo(function OutputsPanel({ visible }: { visible: b
       await moveFiles(paths, movePath, source);
       refresh();
       if (selectionMode) {
-        clearSelection();
-        toggleSelectionMode();
+        completeSelectionOperation();
       }
     } catch (err) {
       console.error('Failed to move selected files:', err);
@@ -1166,9 +1199,7 @@ export const OutputsPanel = memo(function OutputsPanel({ visible }: { visible: b
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key !== 'Escape') return;
       event.preventDefault();
-      clearSelection();
-      toggleSelectionMode();
-      selectionAnchorRef.current = null;
+      completeSelectionOperation();
     };
 
     document.addEventListener('keydown', handleKeyDown);
@@ -1187,15 +1218,11 @@ export const OutputsPanel = memo(function OutputsPanel({ visible }: { visible: b
     loadNodePickerOpen,
     outputsWorkflowConfirmFile,
     menuTarget,
-    clearSelection,
-    toggleSelectionMode,
+    completeSelectionOperation,
   ]);
 
   const handleSelectionClear = () => {
-    const state = useOutputsStore.getState();
-    state.clearSelection();
-    state.toggleSelectionMode();
-    selectionAnchorRef.current = null;
+    completeSelectionOperation();
   };
 
   const handleMoveFolderClick = (folderName: string) => () => {
@@ -1293,6 +1320,7 @@ export const OutputsPanel = memo(function OutputsPanel({ visible }: { visible: b
             handleOpen={handleOpen}
             handleMenu={handleMenu}
             toggleSelection={handleToggleSelection}
+            sortMode={sortMode}
           />
 
           <OutputsFilesSection
@@ -1309,6 +1337,7 @@ export const OutputsPanel = memo(function OutputsPanel({ visible }: { visible: b
             toggleSelection={stableToggleSelection}
             toggleSectionCollapsed={toggleSectionCollapsed}
             selectIds={selectIds}
+            sortMode={sortMode}
             maxRenderedFiles={visibleCount}
           />
 
@@ -1467,9 +1496,11 @@ export const OutputsPanel = memo(function OutputsPanel({ visible }: { visible: b
                    marked with a leading arrow icon (no highlight). */}
                {moveShortcutFolders.length > 0 && (
                  <div className="shrink-0 border-b border-white/10 py-1">
-                   <div className="px-4 pt-2 pb-1 text-[10px] font-bold uppercase tracking-wide text-slate-500">
-                     Open tab locations
-                   </div>
+                   {moveShortcutFolders.length > 1 && (
+                     <div className="px-4 pt-2 pb-1 text-[10px] font-bold uppercase tracking-wide text-slate-500">
+                       Open tab locations
+                     </div>
+                   )}
                    {moveShortcutFolders.map((folder) => {
                      const isOrigin = (folder ?? null) === (moveOriginPath ?? null);
                      return (
@@ -1479,7 +1510,7 @@ export const OutputsPanel = memo(function OutputsPanel({ visible }: { visible: b
                          className="w-full text-left px-4 py-2.5 text-sm flex items-center gap-2 hover:bg-white/10"
                        >
                          <span className="w-4 shrink-0 flex items-center justify-center">
-                           {isOrigin && <CornerDownRightIcon className="w-4 h-4 text-cyan-300 rotate-90" />}
+                           {isOrigin && <CornerDownRightIcon className="h-4 w-4 translate-y-[3px] rotate-90 text-cyan-300" />}
                          </span>
                          <FolderIcon className="w-4 h-4 shrink-0 text-cyan-300" />
                          <span className="truncate text-slate-200">
@@ -1492,7 +1523,10 @@ export const OutputsPanel = memo(function OutputsPanel({ visible }: { visible: b
                )}
                {/* Destination breadcrumbs — the only highlighted row. Clicking a
                    segment jumps the move navigation there (replaces the old ".."). */}
-               <div className="shrink-0 flex items-center px-4 py-2.5 border-b border-white/10 bg-slate-800">
+               <div className="shrink-0 flex items-center gap-2 px-4 py-2.5 border-b border-white/10 bg-slate-800">
+                 {/* The origin marker points down; its unrotated orientation is
+                     90° counter-clockwise from that and points into the destination. */}
+                 <CornerDownRightIcon className="h-4 w-4 shrink-0 -translate-y-[3px] rotate-0 text-cyan-300" />
                  {renderMoveTrail()}
                </div>
                <div className="flex-1 min-h-0 overflow-y-auto">
@@ -1745,6 +1779,7 @@ export const OutputsPanel = memo(function OutputsPanel({ visible }: { visible: b
          open={bulkProcessItems !== null}
          items={bulkProcessItems ?? []}
          onClose={() => setBulkProcessItems(null)}
+         onComplete={completeSelectionOperation}
        />
        <FilterModal
          open={filterModalOpen}
@@ -1752,6 +1787,7 @@ export const OutputsPanel = memo(function OutputsPanel({ visible }: { visible: b
          filter={movePickerOpen ? moveFilter : filter}
          sort={movePickerOpen ? moveSort : sort}
          onChangeFilter={movePickerOpen ? setMoveFilterPartial : setFilter}
+         onCycleStatusFilter={movePickerOpen ? cycleMoveStatusFilter : cycleStatusFilter}
          onChangeSort={movePickerOpen ? setMoveSort : setSort}
          zIndex={movePickerOpen ? 2500 : 1600}
          hideTypeFilter={movePickerOpen}

@@ -1842,7 +1842,7 @@ export const WorkflowPanel = memo(function WorkflowPanel({
         <div
           id="node-list-container"
           ref={parentRef}
-          className="flex-1 overflow-auto px-4 pt-4 overscroll-contain scroll-container"
+          className="flex-1 overflow-auto px-1 pt-3 overscroll-contain scroll-container"
           style={{ paddingBottom: "10rem" }}
           data-node-list="true"
           onScroll={handleNodeListScroll}
