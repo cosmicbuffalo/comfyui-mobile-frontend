@@ -195,6 +195,7 @@ export function StringControl({
                 <span className={controlLabelClassName} />
               )}
               <TextareaActions
+                allowEdit={!disabled}
                 value={valueString}
                 onChange={handleImmediateChange}
                 textareaRef={textareaRef}
@@ -261,6 +262,7 @@ export function StringControl({
           viewerSidebar={forceModalOpen}
           headerActions={isMultiline ? (
             <TextareaActions
+              allowEdit={!disabled}
               value={valueString}
               onChange={handleImmediateChange}
               textareaRef={textareaRef}
@@ -314,6 +316,7 @@ export function StringControl({
             </label>
           )}
           <TextareaActions
+            allowEdit={!disabled}
             value={valueString}
             onChange={handleImmediateChange}
             textareaRef={textareaRef}

@@ -1,28 +1,32 @@
 # Changelog
 
-## 3.1.3 - 2026-08-11
+## 3.1.3 - 2026-08-12
 
 ### Added
 
-**Created and modified dates in the outputs browser**
+**Dates in the outputs browser**
 
-- **File and folder cards now carry a date.** Every card shows a compact age next to its size ("4 hours ago", "3 days ago"). Folder cards show item count, total size, and age together
-- **Sort by Created or Modified.** The filter sheet's single "Date" choice is now two: Created and Modified, each still reversible. Date section headers and card ages both follow whichever one is active. A caveat worth knowing: Linux does not record a real file creation time, so for content the app has never touched, Created falls back to the earliest timestamp the filesystem exposes and will usually match Modified. The two diverge once an item has been favorited, rejected, hidden, renamed, or moved in-app, at which point its dates are tracked durably
-- **In-app actions count as modifications.** Favoriting, rejecting, renaming, and moving an item bump its modified date — and the modified date of every folder above it — so a folder you just organized sorts to the top.
+- File and folder cards show a compact age ("4 hours ago") alongside their size
+- The filter sheet's single "Date" sort is now **Created** and **Modified**, each reversible; section headers and card ages follow the active one. Linux has no real creation time, so Created matches Modified for anything the app hasn't touched — the two diverge once an item is favorited, rejected, hidden, renamed, or moved in-app
+- Favoriting, rejecting, renaming and moving bump an item's modified date, and that of every folder above it
 
-**Rejects filter, and both status filters can now exclude**
+**Rejects filter, and exclude modes**
 
-- The filter sheet's favorites toggle is now a pair: **Favorites** and **Rejects**. Each cycles through three states — off, *only* that group, then *everything except* that group — so a second tap on Rejects hides your rejects instead of isolating them, and a third clears it
-- The two combine the way the states themselves do. Switching from "Favorites only" to "Rejects only" turns the first one off, since a file is never both. But once either one is excluding, tapping the other joins it there, so you can hide favorites and rejects at the same time and browse only what you haven't triaged yet
+- The favorites toggle is now a pair, **Favorites** and **Rejects**, each cycling off → only → everything-except
+- Switching between the two "only" modes swaps them, since a file is never both. Once either is excluding, tapping the other joins it there, so you can hide both and browse what you haven't triaged
+
+**Wildcard nodes** ([#78](https://github.com/cosmicbuffalo/comfyui-mobile-frontend/issues/78))
+
+- Impact Pack, Inspire Pack and Easy-Use wildcard nodes now behave the way they do on desktop: the "Select to add Wildcard" dropdown lists your server's wildcards and inserts the one you pick, and `populated_text` fills in with the resolved prompt when you queue. Needs ComfyUI-Impact-Pack, which owns the wildcard list
 
 ### Fixed
 
-- **Local input paths are restored when a workflow loads.** Load Image widgets that were saved with an opaque `.mi-` alias now show their real input-relative path again, resolved through the alias's hard link
-- Selecting files and running a bulk action (favorite, hide, move, delete, download, bulk process) now leaves selection mode when the action finishes
-- Tighter, more consistent vertical spacing between parameter controls on node cards, and less horizontal padding around the workflow node list
-- Node cards no longer render `control_after_generate` twice when a subgraph promotes a seed and its control widget together — and no longer drop it entirely when the seed input is driven by a link
-- The outputs listing's modified date ignores metadata-only changes such as hard-linking an output into the input folder, `chmod`, and backup restores, which previously could reorder the default listing order
-- Empty folders no longer show a "0 B" size
+- Load Image widgets saved with an opaque `.mi-` alias show their real input path again
+- Bulk actions (favorite, hide, move, delete, download, bulk process) now leave selection mode when they finish
+- Tighter, more consistent spacing between parameter controls, and a seed value now renders directly above its `control_after_generate`
+- `control_after_generate` no longer renders twice on a subgraph-promoted seed, or disappears when the seed input is linked
+- The modified date ignores metadata-only changes (hard-linking an output into input, `chmod`, backup restores) that could scramble the default listing order
+- Empty folders no longer show "0 B"
 
 ## 3.1.2 - 2026-08-10
 

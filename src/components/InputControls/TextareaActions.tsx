@@ -60,11 +60,15 @@ export function TextareaActions({
   onChange,
   textareaRef,
   className = '',
+  allowEdit = true,
 }: {
   value: string;
   onChange: (next: string) => void;
   textareaRef: RefObject<HTMLTextAreaElement | null>;
   className?: string;
+  /** False on a read-only box (disabled widget, server-populated field): the
+   *  editing actions are dropped, leaving Copy, which still makes sense. */
+  allowEdit?: boolean;
 }) {
   const [copyDone, setCopyDone] = useState(false);
   const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -115,17 +119,21 @@ export function TextareaActions({
         )}
         <span>Copy</span>
       </button>
-      <span className="text-slate-500/60">|</span>
-      <button
-        type="button"
-        className="inline-flex items-center gap-1 px-1 py-0.5 text-red-600"
-        onMouseDown={keepFocus}
-        onClick={handleClearClick}
-        aria-label="Clear text"
-      >
-        <MinusCircleIcon className="w-3.5 h-3.5" />
-        <span>Clear</span>
-      </button>
+      {allowEdit && (
+        <>
+          <span className="text-slate-500/60">|</span>
+          <button
+            type="button"
+            className="textarea-clear-button inline-flex items-center gap-1 px-1 py-0.5 text-red-600"
+            onMouseDown={keepFocus}
+            onClick={handleClearClick}
+            aria-label="Clear text"
+          >
+            <MinusCircleIcon className="w-3.5 h-3.5" />
+            <span>Clear</span>
+          </button>
+        </>
+      )}
     </div>
   );
 }

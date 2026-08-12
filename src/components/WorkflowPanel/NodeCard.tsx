@@ -1,5 +1,14 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { HistoryOutputImage, WorkflowInput, WorkflowNode } from '@/api/types';
+import { useWildcards } from '@/hooks/useWildcards';
+import {
+  appendWildcard,
+  buildWildcardOptions,
+  decorateWildcardPromptWidgets,
+  isWildcardSelectWidget,
+  isWildcardTargetWidget,
+  WILDCARD_SELECT_SENTINEL,
+} from '@/utils/wildcardWidgets';
 import { useWorkflowStore, getWidgetDefinitions, getInputWidgetDefinitions, getWidgetIndexForInput, findSeedWidgetIndex, findSeedControlWidgetIndex, resolveSubgraphPlaceholderWidgetDefs, resolveSubgraphPlaceholderInputWidgetDefs, resolveSubgraphProxyWidgetDefs, resolveSubgraphProxyInputWidgetDefs, resolveSubgraphBoundaryWidgetDefs, resolveSubgraphBoundaryInputWidgetDefs, isPlaceholderPromotedConnection } from '@/hooks/useWorkflow';
 import type { LinkedWidgetRoute, ProxyWidgetRoute } from '@/utils/widgetDefinitions';
 import { isSubgraphPlaceholder } from '@/utils/canonicalWorkflowOps';
@@ -400,6 +409,35 @@ export const NodeCard = memo(function NodeCard({
     () => widgets.filter((widget) => !widget.connected),
     [widgets]
   );
+
+  // Impact-Pack-style "Select to add Wildcard" dropdowns ship with a single
+  // placeholder option and are filled from the browser at run time — desktop
+  // does it in Impact Pack's own JS extension, which we don't run. Route the
+  // list in here, and route a picked value into the node's prompt box below.
+  const wildcardRoute = useMemo(() => {
+    const selector = visibleInputWidgets.find((widget) => isWildcardSelectWidget(widget.options));
+    if (!selector) return null;
+    const target = visibleWidgets.find(isWildcardTargetWidget);
+    if (!target) return null;
+    return { selectorIndex: selector.widgetIndex, targetIndex: target.widgetIndex,
+             targetName: target.inputName };
+  }, [visibleInputWidgets, visibleWidgets]);
+
+  const wildcards = useWildcards(wildcardRoute !== null);
+  const inputWidgetsWithWildcards = useMemo(() => {
+    if (!wildcardRoute) return visibleInputWidgets;
+    const options = buildWildcardOptions(wildcards);
+    return visibleInputWidgets.map((widget) => (
+      widget.widgetIndex === wildcardRoute.selectorIndex ? { ...widget, options } : widget
+    ));
+  }, [visibleInputWidgets, wildcardRoute, wildcards]);
+
+  // The mode combo lives in the input-widget list, so pass both across to work
+  // out whether populated_text is currently server-owned.
+  const widgetsWithWildcardPrompts = useMemo(
+    () => decorateWildcardPromptWidgets(visibleWidgets, visibleInputWidgets),
+    [visibleWidgets, visibleInputWidgets],
+  );
   const noteText = useMemo<string | null>(() => {
     const props = node.properties as Record<string, unknown> | undefined;
     // Note *body* keys only. 'title'/'label' are naming fields, not note content —
@@ -797,35 +835,6 @@ export const NodeCard = memo(function NodeCard({
     [findLinkedSourceNode, updateNodeWidget, updateSubgraphInnerNodeWidget]
   );
 
-  const handleUpdateNodeWidget = useCallback(
-    (widgetIndex: number, value: unknown, widgetName?: string) => {
-      const proxy = proxyRoutes.get(widgetIndex);
-      if (proxy) {
-        updateSubgraphInnerNodeWidget(
-          proxy.subgraphId,
-          proxy.innerNodeId,
-          proxy.innerWidgetIndex,
-          value,
-          proxy.innerWidgetName ?? widgetName,
-        );
-      } else {
-        const linkedSource = linkedSourceRoutes.get(widgetIndex);
-        if (linkedSource && updateLinkedSourceWidget(linkedSource, value)) {
-          return;
-        }
-        updateNodeWidget(nodeHierarchicalKey, widgetIndex, value, widgetName);
-      }
-    },
-    [
-      linkedSourceRoutes,
-      nodeHierarchicalKey,
-      proxyRoutes,
-      updateLinkedSourceWidget,
-      updateNodeWidget,
-      updateSubgraphInnerNodeWidget,
-    ]
-  );
-
   // Resolve a widget value, following promoted/proxy routes to source nodes when needed.
   const resolveWidgetValue = useCallback(
     (widgetIndex: number): unknown => {
@@ -847,6 +856,57 @@ export const NodeCard = memo(function NodeCard({
       return values[widgetIndex];
     },
     [linkedSourceRoutes, node.widgets_values, readLinkedSourceValue, workflow, proxyRoutes]
+  );
+
+  const handleUpdateNodeWidget = useCallback(
+    (widgetIndex: number, value: unknown, widgetName?: string) => {
+      // Picking a wildcard appends it to the prompt box rather than being
+      // stored: that dropdown is a menu, not a value. Its own slot keeps the
+      // placeholder, which is what desktop persists too, so a workflow edited
+      // here round-trips unchanged. Rewriting the target up front rather than
+      // writing directly lets the proxy/linked-source routing below apply to
+      // the prompt box exactly as it would to any other edit.
+      let index = widgetIndex;
+      let nextValue = value;
+      let name = widgetName;
+      if (
+        wildcardRoute
+        && widgetIndex === wildcardRoute.selectorIndex
+        && typeof value === 'string'
+        && value !== WILDCARD_SELECT_SENTINEL
+      ) {
+        index = wildcardRoute.targetIndex;
+        nextValue = appendWildcard(resolveWidgetValue(index), value);
+        name = wildcardRoute.targetName;
+      }
+
+      const proxy = proxyRoutes.get(index);
+      if (proxy) {
+        updateSubgraphInnerNodeWidget(
+          proxy.subgraphId,
+          proxy.innerNodeId,
+          proxy.innerWidgetIndex,
+          nextValue,
+          proxy.innerWidgetName ?? name,
+        );
+      } else {
+        const linkedSource = linkedSourceRoutes.get(index);
+        if (linkedSource && updateLinkedSourceWidget(linkedSource, nextValue)) {
+          return;
+        }
+        updateNodeWidget(nodeHierarchicalKey, index, nextValue, name);
+      }
+    },
+    [
+      linkedSourceRoutes,
+      nodeHierarchicalKey,
+      proxyRoutes,
+      resolveWidgetValue,
+      updateLinkedSourceWidget,
+      updateNodeWidget,
+      updateSubgraphInnerNodeWidget,
+      wildcardRoute,
+    ]
   );
 
   const handleUpdateNodeWidgets = useCallback(
@@ -1087,8 +1147,8 @@ export const NodeCard = memo(function NodeCard({
               isKSampler={isKSampler}
               workflowExists={Boolean(workflow)}
               nodeTypesExists={Boolean(nodeTypes)}
-              visibleInputWidgets={visibleInputWidgets}
-              visibleWidgets={visibleWidgets}
+              visibleInputWidgets={inputWidgetsWithWildcards}
+              visibleWidgets={widgetsWithWildcardPrompts}
               errorInputNames={errorInputNames}
               onUpdateNodeWidget={handleUpdateNodeWidget}
               onUpdateNodeWidgets={handleUpdateNodeWidgets}

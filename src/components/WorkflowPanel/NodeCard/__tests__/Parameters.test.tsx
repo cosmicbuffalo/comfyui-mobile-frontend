@@ -194,11 +194,21 @@ describe('NodeCardParameters seed controls', () => {
       container.querySelectorAll<HTMLElement>('[data-widget-control]'),
       (element) => element.dataset.widgetControl,
     );
+    // The promoted seed is consumed by the specialized block (as a
+    // NumberControl, checked below) rather than repeated in the generic list.
     expect(renderedNames).toEqual([
       'Seed control',
       'OtherSeed: control_after_generate',
-      'EasySeed: seed',
     ]);
+
+    // The seed value renders immediately above the control that steps it.
+    const seedValue = container.querySelector('.number-control-seed');
+    const seedControl = container.querySelector('[data-widget-control="Seed control"]');
+    expect(seedValue).not.toBeNull();
+    expect(seedControl).not.toBeNull();
+    expect(
+      seedValue!.compareDocumentPosition(seedControl!) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
     expect(
       container.querySelector('[data-widget-control="Seed control"]')
         ?.getAttribute('data-compact-trailing-controls'),

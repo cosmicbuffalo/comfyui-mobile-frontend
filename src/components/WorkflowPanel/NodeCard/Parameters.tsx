@@ -51,6 +51,9 @@ interface WidgetDescriptor {
   value: unknown;
   options?: Record<string, unknown> | unknown[];
   connected?: boolean;
+  /** Set by the card for widgets the server owns (e.g. a wildcard node's
+   *  populated_text while it is in populate mode), which render read-only. */
+  disabled?: boolean;
 }
 
 interface RenderWidgetDescriptor extends WidgetDescriptor {
@@ -220,6 +223,16 @@ export function NodeCardParameters({
       hasSeedControl &&
       seedControlIndex !== null &&
       widget.widgetIndex === seedControlIndex
+    ) {
+      return false;
+    }
+    // The specialized block renders the seed value itself when it also renders
+    // the control, so the generic list must not repeat it.
+    if (
+      rendersSpecializedSeedBlock &&
+      hasSeedControl &&
+      seedWidgetIndex !== null &&
+      widget.widgetIndex === seedWidgetIndex
     ) {
       return false;
     }
@@ -803,10 +816,34 @@ export function NodeCardParameters({
               : baseChoices;
             if (seedInputEntry?.link != null) return null;
 
+            const seedWidget = visibleInputWidgets.find((widget) =>
+              widget.name === 'seed' || widget.name === 'noise_seed'
+            );
+            const seedOptions = (seedWidget?.options ?? {}) as Record<string, unknown>;
+            const min = typeof seedOptions.min === 'number' ? seedOptions.min : undefined;
+            const max = typeof seedOptions.max === 'number' ? seedOptions.max : undefined;
+            const step = typeof seedOptions.step === 'number' ? seedOptions.step : undefined;
+            const rawSeedValue = Number((resolveWidgetValue ? resolveWidgetValue(seedIndex) : widgetValues[seedIndex]) ?? 0);
+
             if (hasSeedControl) {
               const controlIndex = seedControlIndex ?? seedIndex + 1;
+              // The node's own control_after_generate drives the seed, so pair
+              // the two: the value sits directly above the control that steps
+              // it, the way desktop orders them. Without this the seed stayed
+              // down in the generic widget list, detached from its control.
               return (
                 <div className="seed-control-widget">
+                  <NumberControl
+                    name="seed"
+                    value={rawSeedValue}
+                    onChange={handleSeedValueChange(seedIndex)}
+                    disabled={isBypassed}
+                    min={min}
+                    max={max}
+                    step={step}
+                    hasError={errorInputNames.has('seed') || errorInputNames.has('noise_seed')}
+                    isPromoted={isPromotedWidget('seed')}
+                  />
                   <WidgetControl
                     name="Seed control"
                     type="COMBO"
@@ -820,14 +857,6 @@ export function NodeCardParameters({
               );
             }
 
-            const seedWidget = visibleInputWidgets.find((widget) =>
-              widget.name === 'seed' || widget.name === 'noise_seed'
-            );
-            const seedOptions = (seedWidget?.options ?? {}) as Record<string, unknown>;
-            const min = typeof seedOptions.min === 'number' ? seedOptions.min : undefined;
-            const max = typeof seedOptions.max === 'number' ? seedOptions.max : undefined;
-            const step = typeof seedOptions.step === 'number' ? seedOptions.step : undefined;
-            const rawSeedValue = Number((resolveWidgetValue ? resolveWidgetValue(seedIndex) : widgetValues[seedIndex]) ?? 0);
             const specialMode = getSpecialSeedMode(rawSeedValue);
             const seedMode = storedSeedMode ?? specialMode ?? 'fixed';
             // Display the special seed value (-1/-2/-3) directly when in a
@@ -1034,7 +1063,7 @@ export function NodeCardParameters({
                       value={widget.value}
                       options={widget.options}
                       onChange={handleWidgetChange(widget)}
-                      disabled={isBypassed}
+                      disabled={isBypassed || widget.disabled === true}
                       isPinned={canPinWidget(widget.type, widget.name) ? isWidgetPinned(widget.widgetIndex) : false}
                       onTogglePin={canPinWidget(widget.type, widget.name) ? () => toggleWidgetPin(widget.widgetIndex, widget.name, widget.type, widget.options, widget.inputName) : undefined}
                       hasError={hasWidgetError(widget)}
