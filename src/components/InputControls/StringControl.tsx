@@ -174,10 +174,13 @@ export function StringControl({
 
   if (useModalFlow) {
     return (
-      <div className={containerClass}>
+      // The top padding sits on the container so it applies to the multiline
+      // and single-line branches alike — widgetControlHasTopPadding promises
+      // every labelled standard control carries it.
+      <div className={`${containerClass} ${!hideLabel ? 'pt-2' : ''}`}>
         {isMultiline ? (
           <>
-            <div className="flex items-center justify-between mb-1 min-h-[18px]">
+            <div className="string-control-label-container flex items-center justify-between mb-1 min-h-[18px]">
               {!hideLabel ? (
                 <label className={controlLabelClassName}>
                   <span className="inline-flex items-center gap-1">
@@ -192,6 +195,7 @@ export function StringControl({
                 <span className={controlLabelClassName} />
               )}
               <TextareaActions
+                allowEdit={!disabled}
                 value={valueString}
                 onChange={handleImmediateChange}
                 textareaRef={textareaRef}
@@ -258,6 +262,7 @@ export function StringControl({
           viewerSidebar={forceModalOpen}
           headerActions={isMultiline ? (
             <TextareaActions
+              allowEdit={!disabled}
               value={valueString}
               onChange={handleImmediateChange}
               textareaRef={textareaRef}
@@ -297,8 +302,8 @@ export function StringControl({
 
   if (isMultiline) {
     return (
-      <div className={`${containerClass} group`} data-textarea-root="true">
-        <div className="flex items-center justify-between mb-1 min-h-[18px]" data-textarea-header="true">
+      <div className={`${containerClass} group ${!hideLabel ? 'pt-2' : ''}`} data-textarea-root="true">
+        <div className="string-control-label-container flex items-center justify-between mb-1 min-h-[18px]" data-textarea-header="true">
           {!hideLabel && (
             <label className={controlLabelClassName}>
               <span className="inline-flex items-center gap-1">
@@ -311,6 +316,7 @@ export function StringControl({
             </label>
           )}
           <TextareaActions
+            allowEdit={!disabled}
             value={valueString}
             onChange={handleImmediateChange}
             textareaRef={textareaRef}
@@ -339,7 +345,7 @@ export function StringControl({
   }
 
   return (
-    <div className={containerClass}>
+    <div className={`${containerClass} ${!hideLabel ? 'pt-2' : ''}`}>
       {!hideLabel && (
         <label className={`${controlLabelClassName} mb-1`}>
           <span className="inline-flex items-center gap-1">

@@ -2,6 +2,36 @@ import type { AssetSource, FileItem } from '@/api/client';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
+/** Compact age text for file/folder metadata: "just now", "4 hours ago", etc. */
+export function formatRelativeAge(timestamp?: number, now = Date.now()): string | null {
+  if (typeof timestamp !== 'number' || !Number.isFinite(timestamp) || timestamp <= 0) {
+    return null;
+  }
+
+  const elapsedMs = Math.max(0, now - timestamp);
+  const minuteMs = 60 * 1000;
+  const hourMs = 60 * minuteMs;
+  const weekMs = 7 * DAY_MS;
+  const monthMs = 30 * DAY_MS;
+  const yearMs = 365 * DAY_MS;
+
+  if (elapsedMs < minuteMs) return 'just now';
+
+  const [value, unit] = elapsedMs < hourMs
+    ? [Math.floor(elapsedMs / minuteMs), 'minute'] as const
+    : elapsedMs < DAY_MS
+      ? [Math.floor(elapsedMs / hourMs), 'hour'] as const
+      : elapsedMs < weekMs
+        ? [Math.floor(elapsedMs / DAY_MS), 'day'] as const
+        : elapsedMs < 5 * weekMs
+          ? [Math.floor(elapsedMs / weekMs), 'week'] as const
+          : elapsedMs < yearMs
+            ? [Math.floor(elapsedMs / monthMs), 'month'] as const
+            : [Math.floor(elapsedMs / yearMs), 'year'] as const;
+
+  return `${value} ${unit}${value === 1 ? '' : 's'} ago`;
+}
+
 /** Human-friendly date-section label: "Today" / "Yesterday" / locale date. */
 export function formatDateLabel(timestamp?: number): string {
   if (!timestamp) return 'Unknown date';
@@ -28,9 +58,14 @@ export interface FileSection {
  */
 export function buildFileSections(
   nonFolders: FileItem[],
-  opts: { isNameSort: boolean; isSizeSort: boolean; shouldGroupByDate: boolean },
+  opts: {
+    isNameSort: boolean;
+    isSizeSort: boolean;
+    shouldGroupByDate: boolean;
+    dateField?: 'createdDate' | 'modifiedDate';
+  },
 ): FileSection[] {
-  const { isNameSort, isSizeSort, shouldGroupByDate } = opts;
+  const { isNameSort, isSizeSort, shouldGroupByDate, dateField = 'modifiedDate' } = opts;
 
   const pushGrouped = (keyOf: (file: FileItem) => { key: string; label: string }): FileSection[] => {
     const sections: FileSection[] = [];
@@ -66,10 +101,13 @@ export function buildFileSections(
     return [{ key: 'all', label: 'All files', files: nonFolders }];
   }
 
-  return pushGrouped((file) => ({
-    key: file.date ? new Date(file.date).toISOString().slice(0, 10) : 'unknown',
-    label: formatDateLabel(file.date),
-  }));
+  return pushGrouped((file) => {
+    const timestamp = file[dateField] ?? file.date;
+    return {
+      key: timestamp ? new Date(timestamp).toISOString().slice(0, 10) : 'unknown',
+      label: formatDateLabel(timestamp),
+    };
+  });
 }
 
 export interface Crumb {

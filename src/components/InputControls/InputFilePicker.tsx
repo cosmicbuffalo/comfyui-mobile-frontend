@@ -414,6 +414,7 @@ export function InputFilePicker({
 
           <OutputsFoldersSection
             folders={folders}
+            sortMode={sortMode}
             foldersCollapsed={foldersCollapsed}
             toggleFoldersCollapsed={() => setFoldersCollapsed((current) => !current)}
             selectionMode={false}
@@ -443,6 +444,7 @@ export function InputFilePicker({
             }))}
             selectIds={noop}
             showContextMenus={false}
+            sortMode={sortMode}
           />
 
           {isLoading && <div className="py-8 text-center text-sm text-slate-400">Loading...</div>}

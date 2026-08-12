@@ -1,4 +1,4 @@
-import { type FilterState, type SortState } from '@/hooks/useOutputs';
+import { type FilterState, type SortState, type StatusFilterKey } from '@/hooks/useOutputs';
 import type { SortMode } from '@/api/client';
 import { OptionSection } from './OptionSection';
 import { FavoritesSection } from './FavoritesSection';
@@ -10,6 +10,8 @@ interface FilterModalProps {
   filter: FilterState;
   sort: SortState;
   onChangeFilter: (filter: Partial<FilterState>) => void;
+  /** Advance one status filter through off → only → exclude → off. */
+  onCycleStatusFilter: (key: StatusFilterKey) => void;
   onChangeSort: (sort: SortState) => void;
   zIndex?: number;
   /** Hide the File Type section (e.g. the move picker, which lists folders). */
@@ -17,32 +19,42 @@ interface FilterModalProps {
 }
 
 export function FilterModal({
-  open, onClose, filter, sort, onChangeFilter, onChangeSort, zIndex = 1600,
-  hideTypeFilter = false
+  open, onClose, filter, sort, onChangeFilter, onCycleStatusFilter, onChangeSort,
+  zIndex = 1600, hideTypeFilter = false
 }: FilterModalProps) {
   if (!open) return null;
 
   // Derived state for UI - handle potential undefined mode from old persisted state
   const mode = sort?.mode || 'modified';
-  const currentField = mode.includes('name') ? 'name' : mode.includes('size') ? 'size' : 'date';
+  const currentField = mode.startsWith('name')
+    ? 'name'
+    : mode.startsWith('size')
+      ? 'size'
+      : mode.startsWith('created')
+        ? 'created'
+        : 'modified';
   const currentOrder = (() => {
     const isReverse = mode.endsWith('reverse');
-    if (currentField === 'date') {
+    if (currentField === 'created' || currentField === 'modified') {
       return isReverse ? 'asc' : 'desc';
     }
     return isReverse ? 'desc' : 'asc';
   })();
 
   // Helper to change sort
-  const handleSortChange = (field: 'name' | 'date' | 'size', order: 'asc' | 'desc') => {
+  const handleSortChange = (
+    field: 'name' | 'size' | 'created' | 'modified',
+    order: 'asc' | 'desc',
+  ) => {
     let mode: SortMode;
     if (field === 'name') {
       // API: 'name' = A-Z, 'name-reverse' = Z-A
       mode = order === 'asc' ? 'name' : 'name-reverse';
     } else if (field === 'size') {
       mode = order === 'asc' ? 'size' : 'size-reverse';
+    } else if (field === 'created') {
+      mode = order === 'desc' ? 'created' : 'created-reverse';
     } else {
-      // API: 'modified' = newest first, 'modified-reverse' = oldest first
       mode = order === 'desc' ? 'modified' : 'modified-reverse';
     }
     onChangeSort({ mode });
@@ -77,10 +89,13 @@ export function FilterModal({
             />
           )}
           <FavoritesSection
-            checked={filter.favoritesOnly}
-            onChange={(favoritesOnly) => onChangeFilter({ favoritesOnly })}
+            favoritesMode={filter.favoritesMode}
+            rejectsMode={filter.rejectsMode}
+            onCycleFavorites={() => onCycleStatusFilter('favoritesMode')}
+            onCycleRejects={() => onCycleStatusFilter('rejectsMode')}
+            showRejects={!hideTypeFilter}
           />
-          <OptionSection<'name' | 'date' | 'size'>
+          <OptionSection<'name' | 'size' | 'created' | 'modified'>
             idPrefix="sort-group"
             title="Sort By"
             items={[
@@ -90,14 +105,19 @@ export function FilterModal({
                 suffix: currentField === 'name' ? (currentOrder === 'asc' ? ' ↓' : ' ↑') : undefined
               },
               {
-                value: 'date',
-                label: 'Date',
-                suffix: currentField === 'date' ? (currentOrder === 'desc' ? ' ↓' : ' ↑') : undefined
-              },
-              {
                 value: 'size',
                 label: 'Size',
                 suffix: currentField === 'size' ? (currentOrder === 'desc' ? ' ↓' : ' ↑') : undefined
+              },
+              {
+                value: 'created',
+                label: 'Created',
+                suffix: currentField === 'created' ? (currentOrder === 'desc' ? ' ↓' : ' ↑') : undefined
+              },
+              {
+                value: 'modified',
+                label: 'Modified',
+                suffix: currentField === 'modified' ? (currentOrder === 'desc' ? ' ↓' : ' ↑') : undefined
               }
             ]}
             selectedValue={currentField}

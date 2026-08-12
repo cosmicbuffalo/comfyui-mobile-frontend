@@ -1,0 +1,33 @@
+{
+  "id": "workflow-wildcard-picker-smoke",
+  "revision": 0,
+  "last_node_id": 1,
+  "last_link_id": 0,
+  "nodes": [
+    {
+      "id": 1,
+      "type": "ImpactWildcardProcessor",
+      "pos": [0, 0],
+      "size": [400, 300],
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [{ "name": "STRING", "type": "STRING", "links": null }],
+      "properties": { "Node name for S&R": "ImpactWildcardProcessor" },
+      "widgets_values": [
+        "a landscape",
+        "",
+        "populate",
+        1,
+        "fixed",
+        "Select the Wildcard to add to the text"
+      ]
+    }
+  ],
+  "links": [],
+  "groups": [],
+  "config": {},
+  "extra": {},
+  "version": 0.4
+}

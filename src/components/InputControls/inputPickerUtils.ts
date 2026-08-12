@@ -14,7 +14,12 @@ export function projectInputSearchResults(
   source: AssetSource = "input",
 ): FileItem[] {
   const folderPrefix = folder ? `${folder}/` : "";
-  const folders = new Map<string, { date: number; count: number }>();
+  const folders = new Map<string, {
+    date: number;
+    createdDate: number;
+    modifiedDate: number;
+    count: number;
+  }>();
   const directFiles: FileItem[] = [];
 
   for (const file of results) {
@@ -30,12 +35,20 @@ export function projectInputSearchResults(
 
     const name = remainder.slice(0, slashIndex);
     const existing = folders.get(name);
-    const date = file.date ?? 0;
+    const createdDate = file.createdDate ?? file.date ?? 0;
+    const modifiedDate = file.modifiedDate ?? file.date ?? 0;
     if (existing) {
       existing.count += 1;
-      existing.date = Math.max(existing.date, date);
+      existing.date = Math.max(existing.date, modifiedDate);
+      existing.createdDate = Math.max(existing.createdDate, createdDate);
+      existing.modifiedDate = Math.max(existing.modifiedDate, modifiedDate);
     } else {
-      folders.set(name, { date, count: 1 });
+      folders.set(name, {
+        date: modifiedDate,
+        createdDate,
+        modifiedDate,
+        count: 1,
+      });
     }
   }
 
@@ -45,6 +58,8 @@ export function projectInputSearchResults(
       name,
       type: "folder" as const,
       date: info.date,
+      createdDate: info.createdDate,
+      modifiedDate: info.modifiedDate,
       matchCount: info.count,
     })),
     ...directFiles,
@@ -58,8 +73,14 @@ export function sortInputPickerFiles(files: FileItem[], mode: SortMode): FileIte
     result.sort((a, b) => a.name.localeCompare(b.name) * direction);
   } else if (mode.startsWith("size")) {
     result.sort((a, b) => ((a.size ?? 0) - (b.size ?? 0)) * direction);
+  } else if (mode.startsWith("created")) {
+    result.sort((a, b) => (
+      ((a.createdDate ?? a.date ?? 0) - (b.createdDate ?? b.date ?? 0)) * -1 * direction
+    ));
   } else {
-    result.sort((a, b) => ((a.date ?? 0) - (b.date ?? 0)) * -1 * direction);
+    result.sort((a, b) => (
+      ((a.modifiedDate ?? a.date ?? 0) - (b.modifiedDate ?? b.date ?? 0)) * -1 * direction
+    ));
   }
   return result;
 }

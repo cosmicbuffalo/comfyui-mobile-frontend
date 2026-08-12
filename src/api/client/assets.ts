@@ -79,6 +79,21 @@ export async function createInputAliases(paths: string[]): Promise<Record<string
   return data.aliases ?? {};
 }
 
+export async function resolveInputAliases(aliases: string[]): Promise<Record<string, string>> {
+  if (aliases.length === 0) return {};
+  const response = await fetch('/mobile/api/input-aliases/resolve', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ aliases }),
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({}));
+    throw new Error(error.error || 'Failed to resolve input aliases');
+  }
+  const data = await response.json() as { resolved?: Record<string, string> };
+  return data.resolved ?? {};
+}
+
 export async function createFilePrefixAliases(prefixes: string[]): Promise<Record<string, string>> {
   if (prefixes.length === 0) return {};
   const response = await fetch('/mobile/api/file-prefix-aliases', {
@@ -117,6 +132,8 @@ export interface FileItem {
   previewUrl?: string;
   fullUrl?: string;
   date?: number;
+  createdDate?: number;
+  modifiedDate?: number;
   size?: number;
   // Only populated for synthetic folder entries surfaced by the prompt-search
   // projection — counts descendant files in this folder that match the
@@ -127,6 +144,9 @@ export interface FileItem {
   // favorites nested beneath them, so the card can say "N favorites inside"
   // instead of a total item count the filter doesn't apply to.
   favoriteCount?: number;
+  // Only populated while the rejects filter is on, for folders containing
+  // rejected descendants. Keeps nested rejects reachable from the current view.
+  rejectCount?: number;
   // Only populated for folder entries during normal navigation — recursive
   // count of all descendant files (computed server-side). Drives the folder
   // subtitle and the top-bar item total for the focused location.
@@ -144,7 +164,15 @@ export interface FileItem {
 }
 
 export type AssetSource = 'output' | 'input' | 'temp';
-export type SortMode = 'modified' | 'modified-reverse' | 'name' | 'name-reverse' | 'size' | 'size-reverse';
+export type SortMode =
+  | 'created'
+  | 'created-reverse'
+  | 'modified'
+  | 'modified-reverse'
+  | 'name'
+  | 'name-reverse'
+  | 'size'
+  | 'size-reverse';
 
 // Mobile Files API - browse output/input directories
 interface MobileFileItem {
@@ -153,6 +181,8 @@ interface MobileFileItem {
   type: 'image' | 'video' | 'dir';
   size?: number;
   date: number;
+  createdDate?: number;
+  modifiedDate?: number;
   folder?: string;
   count?: number; // for directories
   hidden?: boolean; // effectively hidden (self or inherited); only present when showHidden
@@ -206,7 +236,9 @@ export async function getRecursiveFolders(
       id: `${source}/${f.path}`,
       name: f.name,
       type: 'folder' as const,
-      date: f.date,
+      date: f.modifiedDate ?? f.date,
+      createdDate: f.createdDate ?? f.date,
+      modifiedDate: f.modifiedDate ?? f.date,
       hidden: f.hidden,
       hiddenSelf: f.hiddenSelf,
     }));
@@ -243,7 +275,9 @@ export async function searchUserImagesByPrompt(
       type: f.type as 'image' | 'video',
       previewUrl: `/mobile/api/thumbnail?filename=${encodeURIComponent(f.name)}&subfolder=${encodeURIComponent(folderPath)}&source=${source}`,
       fullUrl: `/view?filename=${encodeURIComponent(f.name)}&type=${source}&subfolder=${encodeURIComponent(folderPath)}`,
-      date: f.date,
+      date: f.modifiedDate ?? f.date,
+      createdDate: f.createdDate ?? f.date,
+      modifiedDate: f.modifiedDate ?? f.date,
       size: f.size,
       hidden: f.hidden,
       hiddenSelf: f.hiddenSelf,
@@ -289,7 +323,9 @@ export async function getUserImages(
         id: `${mode}/${f.path}`,
         name: f.name,
         type: 'folder' as const,
-        date: f.date,
+        date: f.modifiedDate ?? f.date,
+        createdDate: f.createdDate ?? f.date,
+        modifiedDate: f.modifiedDate ?? f.date,
         size: f.size,
         count: f.count,
         hidden: f.hidden,
@@ -306,7 +342,9 @@ export async function getUserImages(
       type: f.type as 'image' | 'video',
       previewUrl: `/mobile/api/thumbnail?filename=${encodeURIComponent(f.name)}&subfolder=${encodeURIComponent(folder)}&source=${mode}`,
       fullUrl: `/view?filename=${encodeURIComponent(f.name)}&type=${mode}&subfolder=${encodeURIComponent(folder)}`,
-      date: f.date,
+      date: f.modifiedDate ?? f.date,
+      createdDate: f.createdDate ?? f.date,
+      modifiedDate: f.modifiedDate ?? f.date,
       size: f.size,
       hidden: f.hidden,
       hiddenSelf: f.hiddenSelf,

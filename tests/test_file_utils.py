@@ -283,8 +283,41 @@ class TestNonRecursiveListing:
         assert "type" in file_entry
         assert "size" in file_entry
         assert "date" in file_entry
+        assert "createdDate" in file_entry
+        assert "modifiedDate" in file_entry
         assert file_entry["type"] == "image"
         assert file_entry["size"] > 0
+        assert file_entry["createdDate"] <= file_entry["modifiedDate"]
+
+    def test_rename_leaves_both_stat_dates_alone(self, tmp_path):
+        # An on-disk rename touches ctime but not mtime. Neither date should
+        # move: in-app renames get their "modified" bump from the durable
+        # activity layer in mobile_file_state, not from stat.
+        original = tmp_path / "original.png"
+        original.write_bytes(b"image")
+        before = next(r for r in list_files(str(tmp_path), str(tmp_path)) if r["name"] == "original.png")
+
+        renamed = tmp_path / "renamed.png"
+        original.rename(renamed)
+        after = next(r for r in list_files(str(tmp_path), str(tmp_path)) if r["name"] == "renamed.png")
+
+        assert after["createdDate"] == before["createdDate"]
+        assert after["modifiedDate"] == before["modifiedDate"]
+
+    def test_metadata_only_changes_do_not_advance_modified(self, tmp_path):
+        # Hard-linking an output into input/ and chmod both bump ctime. A
+        # backup restore does it to every file at once, which would otherwise
+        # flatten the entire default listing order into one timestamp.
+        image = tmp_path / "photo.png"
+        image.write_bytes(b"image")
+        before = next(r for r in list_files(str(tmp_path), str(tmp_path)) if r["name"] == "photo.png")
+
+        os.link(str(image), str(tmp_path / "linked.png"))
+        os.chmod(str(image), 0o600)
+        after = next(r for r in list_files(str(tmp_path), str(tmp_path)) if r["name"] == "photo.png")
+
+        assert after["modifiedDate"] == before["modifiedDate"]
+        assert after["createdDate"] == before["createdDate"]
 
 
 class TestRecursiveListing:

@@ -342,7 +342,7 @@ export function NodeCardOutputPreview({
     : null;
 
   return (
-    <div className="mb-3">
+    <div className="output-preview mb-3">
       <div className="text-xs text-slate-500 mb-1.5 uppercase tracking-wide">
         Output Preview
       </div>

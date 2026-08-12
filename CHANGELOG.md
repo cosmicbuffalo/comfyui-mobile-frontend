@@ -1,5 +1,33 @@
 # Changelog
 
+## 3.1.3 - 2026-08-12
+
+### Added
+
+**Dates in the outputs browser**
+
+- File and folder cards show a compact age ("4 hours ago") alongside their size
+- The filter sheet's single "Date" sort is now **Created** and **Modified**, each reversible; section headers and card ages follow the active one. Linux has no real creation time, so Created matches Modified for anything the app hasn't touched — the two diverge once an item is favorited, rejected, hidden, renamed, or moved in-app
+- Favoriting, rejecting, renaming and moving bump an item's modified date, and that of every folder above it
+
+**Rejects filter, and exclude modes**
+
+- The favorites toggle is now a pair, **Favorites** and **Rejects**, each cycling off → only → everything-except
+- Switching between the two "only" modes swaps them, since a file is never both. Once either is excluding, tapping the other joins it there, so you can hide both and browse what you haven't triaged
+
+**Wildcard nodes** ([#78](https://github.com/cosmicbuffalo/comfyui-mobile-frontend/issues/78))
+
+- Impact Pack, Inspire Pack and Easy-Use wildcard nodes now behave the way they do on desktop: the "Select to add Wildcard" dropdown lists your server's wildcards and inserts the one you pick, and `populated_text` fills in with the resolved prompt when you queue. Needs ComfyUI-Impact-Pack, which owns the wildcard list
+
+### Fixed
+
+- Load Image widgets saved with an opaque `.mi-` alias show their real input path again
+- Bulk actions (favorite, hide, move, delete, download, bulk process) now leave selection mode when they finish
+- Tighter, more consistent spacing between parameter controls, and a seed value now renders directly above its `control_after_generate`
+- `control_after_generate` no longer renders twice on a subgraph-promoted seed, or disappears when the seed input is linked
+- The modified date ignores metadata-only changes (hard-linking an output into input, `chmod`, backup restores) that could scramble the default listing order
+- Empty folders no longer show "0 B"
+
 ## 3.1.2 - 2026-08-10
 
 ### Added

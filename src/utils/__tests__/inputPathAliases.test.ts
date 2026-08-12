@@ -4,17 +4,23 @@ import {
   createFilePrefixAliases,
   createInputAliases,
   resolveFilePrefixAliases,
+  resolveInputAliases,
 } from "@/api/client";
 import {
   hasRecognizedFilePrefixAliasShape,
+  hasRecognizedInputAliasShape,
+  hasRecognizedPathAliasShape,
   obfuscateQueuedInputPaths,
   obfuscateWorkflowInputPaths,
   restoreWorkflowFilePrefixes,
+  restoreWorkflowInputPaths,
+  restoreWorkflowPathAliases,
 } from "@/utils/inputPathAliases";
 
 vi.mock("@/api/client", () => ({
   createInputAliases: vi.fn(),
   createFilePrefixAliases: vi.fn(),
+  resolveInputAliases: vi.fn(),
   resolveFilePrefixAliases: vi.fn(),
 }));
 
@@ -82,6 +88,9 @@ beforeEach(() => {
   });
   vi.mocked(createFilePrefixAliases).mockResolvedValue({
     "private/client/portrait": "mp-deadbeef",
+  });
+  vi.mocked(resolveInputAliases).mockResolvedValue({
+    ".mi-deadbeef.png": "private/photo.png",
   });
   vi.mocked(resolveFilePrefixAliases).mockResolvedValue({
     "mp-deadbeef": "private/client/portrait",
@@ -174,6 +183,53 @@ describe("input path aliases", () => {
     expect(createInputAliases).not.toHaveBeenCalled();
   });
 
+  it("restores recognized input aliases without mutating the loaded workflow", async () => {
+    const aliased: Workflow = {
+      ...workflow,
+      nodes: workflow.nodes.map((node) => node.id === 1
+        ? { ...node, widgets_values: [".mi-deadbeef.png", "image"] }
+        : node),
+    };
+
+    expect(hasRecognizedInputAliasShape(aliased, nodeTypes)).toBe(true);
+    const restored = await restoreWorkflowInputPaths(aliased, nodeTypes);
+
+    expect((restored.nodes[0].widgets_values as unknown[])[0]).toBe("private/photo.png");
+    expect((aliased.nodes[0].widgets_values as unknown[])[0]).toBe(".mi-deadbeef.png");
+  });
+
+  it("restores record-shaped input widgets inside subgraphs", async () => {
+    const aliasedNode = {
+      ...workflow.nodes[0],
+      widgets_values: { image: ".mi-deadbeef.png", upload: "image" },
+    };
+    const nested: Workflow = {
+      ...workflow,
+      nodes: [workflow.nodes[1]],
+      definitions: {
+        subgraphs: [{ id: "image-loader", nodes: [aliasedNode], links: [] }],
+      },
+    };
+
+    const restored = await restoreWorkflowInputPaths(nested, nodeTypes);
+    const values = restored.definitions?.subgraphs?.[0].nodes[0].widgets_values as Record<string, unknown>;
+
+    expect(values.image).toBe("private/photo.png");
+  });
+
+  it("keeps unknown or stale input aliases usable", async () => {
+    vi.mocked(resolveInputAliases).mockResolvedValueOnce({});
+    const aliased: Workflow = {
+      ...workflow,
+      nodes: [{ ...workflow.nodes[0], widgets_values: [".mi-deadbeef.png", "image"] }],
+    };
+
+    const restored = await restoreWorkflowInputPaths(aliased, nodeTypes);
+
+    expect(restored).toBe(aliased);
+    expect((restored.nodes[0].widgets_values as unknown[])[0]).toBe(".mi-deadbeef.png");
+  });
+
   it("restores recognized filename prefix aliases for locally loaded workflows", async () => {
     const aliased: Workflow = {
       ...workflow,
@@ -183,6 +239,21 @@ describe("input path aliases", () => {
     };
     expect(hasRecognizedFilePrefixAliasShape(aliased, nodeTypes)).toBe(true);
     const restored = await restoreWorkflowFilePrefixes(aliased, nodeTypes);
+    expect((restored.nodes[1].widgets_values as unknown[])[0]).toBe("private/client/portrait");
+  });
+
+  it("restores input and filename-prefix aliases in one load preflight", async () => {
+    const aliased: Workflow = {
+      ...workflow,
+      nodes: workflow.nodes.map((node) => node.id === 1
+        ? { ...node, widgets_values: [".mi-deadbeef.png", "image"] }
+        : { ...node, widgets_values: ["mp-deadbeef"] }),
+    };
+
+    expect(hasRecognizedPathAliasShape(aliased, nodeTypes)).toBe(true);
+    const restored = await restoreWorkflowPathAliases(aliased, nodeTypes);
+
+    expect((restored.nodes[0].widgets_values as unknown[])[0]).toBe("private/photo.png");
     expect((restored.nodes[1].widgets_values as unknown[])[0]).toBe("private/client/portrait");
   });
 });

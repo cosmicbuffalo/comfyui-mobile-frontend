@@ -1,7 +1,7 @@
 {
   "name": "comfyui-mobile-frontend",
   "private": true,
-  "version": "3.1.2",
+  "version": "3.1.3",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -10,7 +10,8 @@
     "preview": "vite preview",
     "test": "vitest run",
     "smoke": "node scripts/smoke-test.mjs",
-    "smoke:workflow-video": "node scripts/workflow-video-preview-smoke.mjs"
+    "smoke:workflow-video": "node scripts/workflow-video-preview-smoke.mjs",
+    "smoke:wildcards": "node scripts/wildcard-picker-smoke.mjs"
   },
   "dependencies": {
     "react": "^19.2.0",

@@ -34,7 +34,7 @@ _STATE_FLAG = {"favorite": "favorite", "reject": "rejected", "hidden": "hiddenSe
 
 
 def _empty_cache() -> dict[str, Any]:
-    return {"version": 2, "updatedAt": _now_ms(), "states": {}}
+    return {"version": 3, "updatedAt": _now_ms(), "states": {}, "activity": {}}
 
 
 def _normalize_path(value: Any) -> str | None:
@@ -50,6 +50,81 @@ def _normalize_path(value: Any) -> str | None:
     if any(seg == ".." for seg in parts):
         return None
     return "/".join(parts) or None
+
+
+def _stat_created_ms(stat: os.stat_result) -> int:
+    birthtime = getattr(stat, "st_birthtime", None)
+    if isinstance(birthtime, (int, float)) and birthtime > 0:
+        return int(birthtime * 1000)
+    return int(min(stat.st_mtime, stat.st_ctime) * 1000)
+
+
+def _clean_activity(raw: Any) -> dict[str, dict[str, dict[str, int]]]:
+    cleaned: dict[str, dict[str, dict[str, int]]] = {}
+    if not isinstance(raw, dict):
+        return cleaned
+    for source, entries in raw.items():
+        if not isinstance(source, str) or not isinstance(entries, dict):
+            continue
+        source_entries: dict[str, dict[str, int]] = {}
+        for raw_path, raw_entry in entries.items():
+            path = _normalize_path(raw_path)
+            if not path or not isinstance(raw_entry, dict):
+                continue
+            entry: dict[str, int] = {}
+            for field in ("createdAt", "modifiedAt", "device", "inode"):
+                value = raw_entry.get(field)
+                if isinstance(value, int) and value >= 0:
+                    entry[field] = value
+            if isinstance(entry.get("modifiedAt"), int):
+                source_entries[path] = entry
+        if source_entries:
+            cleaned[source] = source_entries
+    return cleaned
+
+
+def _touch_activity(
+    cache: dict[str, Any],
+    source: str,
+    path: str,
+    modified_at: int,
+    stat: os.stat_result | None = None,
+) -> None:
+    normalized = _normalize_path(path)
+    if not normalized:
+        return
+    source_activity = cache.setdefault("activity", {}).setdefault(source, {})
+    previous = source_activity.get(normalized, {})
+    entry = dict(previous) if isinstance(previous, dict) else {}
+    entry["modifiedAt"] = max(int(entry.get("modifiedAt", 0)), int(modified_at))
+    if stat is not None:
+        entry.setdefault("createdAt", _stat_created_ms(stat))
+        entry["device"] = int(stat.st_dev)
+        entry["inode"] = int(stat.st_ino)
+    source_activity[normalized] = entry
+
+
+def _touch_activity_with_ancestors(
+    cache: dict[str, Any],
+    source: str,
+    base_dir: str,
+    path: str,
+    modified_at: int,
+    stat: os.stat_result | None = None,
+) -> None:
+    normalized = _normalize_path(path)
+    if not normalized:
+        return
+    _touch_activity(cache, source, normalized, modified_at, stat)
+    parts = normalized.split("/")
+    for index in range(1, len(parts)):
+        ancestor = "/".join(parts[:index])
+        ancestor_path = _full_path(base_dir, ancestor)
+        try:
+            ancestor_stat = os.stat(ancestor_path) if ancestor_path else None
+        except OSError:
+            ancestor_stat = None
+        _touch_activity(cache, source, ancestor, modified_at, ancestor_stat)
 
 
 def _full_path(base_dir: str | None, rel_path: str) -> str | None:
@@ -228,9 +303,10 @@ def _load(cache_path: str) -> dict[str, Any]:
 
     updated_at = data.get("updatedAt")
     return {
-        "version": 2,
+        "version": 3,
         "updatedAt": updated_at if isinstance(updated_at, int) else _now_ms(),
         "states": states,
+        "activity": _clean_activity(data.get("activity")),
     }
 
 
@@ -666,6 +742,14 @@ def set_state(cache_path: str, source: str, state: str, base_dir: str, path: str
     elif not os.path.isdir(target):
         return False
 
+    activity_stat = stable_stat
+    if activity_stat is None:
+        try:
+            activity_stat = os.stat(target)
+        except OSError:
+            return False
+    activity_now = _now_ms()
+
     with _LOCK:
         cache = _load(cache_path)
         source_states = cache["states"].setdefault(source, {})
@@ -703,6 +787,14 @@ def set_state(cache_path: str, source: str, state: str, base_dir: str, path: str
         _prune_empty(source_states)
         if not source_states:
             cache["states"].pop(source, None)
+        _touch_activity_with_ancestors(
+            cache,
+            source,
+            base_dir,
+            normalized,
+            activity_now,
+            activity_stat,
+        )
         _save(cache_path, cache)
     return True
 
@@ -845,13 +937,31 @@ def remove_path(
                     source_states[state] = kept
                 else:
                     source_states.pop(state, None)
+        source_activity = cache.get("activity", {}).get(source, {})
+        removed_activity = [
+            activity_path
+            for activity_path in source_activity
+            if activity_path == normalized or activity_path.startswith(prefix)
+        ]
+        for activity_path in removed_activity:
+            source_activity.pop(activity_path, None)
+        if removed_activity:
+            changed = True
+            if not source_activity:
+                cache.get("activity", {}).pop(source, None)
         if changed:
             if not source_states:
                 cache["states"].pop(source, None)
             _save(cache_path, cache)
 
 
-def rename_path(cache_path: str, source: str, old_path: str, new_path: str) -> None:
+def rename_path(
+    cache_path: str,
+    source: str,
+    old_path: str,
+    new_path: str,
+    base_dir: str | None = None,
+) -> None:
     """Remap a path (and descendants) across ALL three states on an in-app
     move/rename, so the fast path (size+mtime, no hash) keeps hitting."""
     old = _normalize_path(old_path)
@@ -859,6 +969,7 @@ def rename_path(cache_path: str, source: str, old_path: str, new_path: str) -> N
     if not old or not new or old == new:
         return
     prefix = old + "/"
+    activity_now = _now_ms()
     with _LOCK:
         cache = _load(cache_path)
         source_states = cache["states"].get(source, {})
@@ -872,6 +983,54 @@ def rename_path(cache_path: str, source: str, old_path: str, new_path: str) -> N
                 elif isinstance(entry_path, str) and entry_path.startswith(prefix):
                     entry["path"] = new + entry_path[len(old):]
                     changed = True
+        source_activity = cache.setdefault("activity", {}).setdefault(source, {})
+        remapped_activity: dict[str, dict[str, int]] = {}
+        for activity_path, activity in list(source_activity.items()):
+            if activity_path == old:
+                remapped_activity[new] = dict(activity)
+                source_activity.pop(activity_path, None)
+                changed = True
+            elif activity_path.startswith(prefix):
+                remapped_activity[new + activity_path[len(old):]] = dict(activity)
+                source_activity.pop(activity_path, None)
+                changed = True
+        source_activity.update(remapped_activity)
+
+        target_stat = None
+        if base_dir:
+            target = _full_path(base_dir, new)
+            try:
+                target_stat = os.stat(target) if target else None
+            except OSError:
+                target_stat = None
+            _touch_activity_with_ancestors(
+                cache,
+                source,
+                base_dir,
+                new,
+                activity_now,
+                target_stat,
+            )
+            # Moving something changes both its former and current parent.
+            old_parent = old.rsplit("/", 1)[0] if "/" in old else None
+            if old_parent:
+                old_parent_path = _full_path(base_dir, old_parent)
+                try:
+                    old_parent_stat = os.stat(old_parent_path) if old_parent_path else None
+                except OSError:
+                    old_parent_stat = None
+                _touch_activity_with_ancestors(
+                    cache,
+                    source,
+                    base_dir,
+                    old_parent,
+                    activity_now,
+                    old_parent_stat,
+                )
+            changed = True
+        else:
+            _touch_activity(cache, source, new, activity_now)
+            changed = True
         if changed:
             _save(cache_path, cache)
 
@@ -925,6 +1084,28 @@ def _entry_is_a_move(candidate: dict[str, Any], rel: str, base_dir: str) -> bool
     if not isinstance(recorded, str) or recorded == rel:
         return True
     return _verify_entry(dict(candidate), base_dir) is None
+
+
+def _apply_activity_dates(
+    item: dict[str, Any],
+    activity: dict[str, Any] | None,
+    stat: os.stat_result,
+) -> None:
+    if not isinstance(activity, dict):
+        return
+    device = activity.get("device")
+    inode = activity.get("inode")
+    if isinstance(device, int) and isinstance(inode, int):
+        if device != int(stat.st_dev) or inode != int(stat.st_ino):
+            # A different item reused this path; it must not inherit the old
+            # item's created/activity timestamps.
+            return
+    created_at = activity.get("createdAt")
+    if isinstance(created_at, int) and created_at > 0:
+        item["createdDate"] = created_at
+    modified_at = activity.get("modifiedAt")
+    if isinstance(modified_at, int) and modified_at > 0:
+        item["modifiedDate"] = max(int(item.get("modifiedDate") or 0), modified_at)
 
 
 def _lookup_and_match(
@@ -1059,6 +1240,10 @@ def annotate_listing(
     with _LOCK:
         cache = _load(cache_path)
         source_states = cache["states"].get(source, {})
+        source_activity = {
+            path: dict(entry)
+            for path, entry in cache.get("activity", {}).get(source, {}).items()
+        }
         by_path: dict[str, dict[str, Any]] = {}
         by_size: dict[str, dict[int, list[dict[str, Any]]]] = {}
         for state in STATES:
@@ -1084,6 +1269,14 @@ def annotate_listing(
             continue
 
         if item.get("type") == "dir":
+            activity = source_activity.get(rel)
+            if activity is not None:
+                full_path = os.path.abspath(os.path.join(base, rel))
+                try:
+                    if os.path.commonpath([base, full_path]) == base:
+                        _apply_activity_dates(item, activity, os.stat(full_path))
+                except (OSError, ValueError):
+                    pass
             for state in STATES:
                 entry = by_path[state].get(rel)
                 if entry and entry.get("kind") == "dir":
@@ -1102,6 +1295,8 @@ def annotate_listing(
             stat = os.stat(full_path)
         except (OSError, ValueError):
             continue
+
+        _apply_activity_dates(item, source_activity.get(rel), stat)
 
         for state in STATES:
             result = _lookup_and_match(

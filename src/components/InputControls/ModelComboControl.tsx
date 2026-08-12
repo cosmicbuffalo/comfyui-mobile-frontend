@@ -21,6 +21,7 @@ type ModelComboControlProps = ComponentProps<typeof ComboControl> & {
 export function ModelComboControl({
   modelKind,
   options,
+  compactTrailingControls,
   ...rest
 }: ModelComboControlProps) {
   const modelLookup = useModelMetadataLookup(modelKind);
@@ -29,5 +30,11 @@ export function ModelComboControl({
     : Array.isArray(options)
       ? { options, modelLookup }
       : { ...((options as Record<string, unknown>) ?? {}), modelLookup };
-  return <ComboControl {...rest} options={comboOptions} />;
+  return (
+    <ComboControl
+      {...rest}
+      options={comboOptions}
+      compactTrailingControls={compactTrailingControls ?? (modelKind !== null)}
+    />
+  );
 }

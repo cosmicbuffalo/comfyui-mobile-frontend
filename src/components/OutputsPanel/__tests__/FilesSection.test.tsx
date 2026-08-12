@@ -50,6 +50,7 @@ describe('OutputsFilesSection incremental rendering', () => {
           toggleSelection={() => {}}
           toggleSectionCollapsed={() => {}}
           selectIds={() => {}}
+          sortMode="modified"
           maxRenderedFiles={maxRenderedFiles}
           {...extra}
         />,

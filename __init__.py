@@ -973,6 +973,21 @@ def setup_mobile_route():
         except Exception as e:
             return web.json_response({"error": str(e)}, status=500)
 
+    async def api_resolve_input_aliases(request):
+        try:
+            data = await request.json()
+            aliases = data.get('aliases')
+            if not isinstance(aliases, list):
+                return web.json_response({"error": "Invalid aliases"}, status=400)
+            resolved = _mobile_input_aliases.resolve_aliases(
+                INPUT_ALIASES_CACHE_PATH,
+                folder_paths.get_input_directory(),
+                aliases,
+            )
+            return web.json_response({"resolved": resolved})
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=500)
+
     async def api_create_file_prefix_aliases(request):
         try:
             data = await request.json()
@@ -1040,7 +1055,13 @@ def setup_mobile_route():
                     shutil.move(src_path, target)
                     # Keep hidden state attached to the item across the move.
                     new_rel = os.path.relpath(target, os.path.abspath(base_dir))
-                    _mobile_file_state.rename_path(FILE_STATE_CACHE_PATH, asset_source, rel, new_rel)
+                    _mobile_file_state.rename_path(
+                        FILE_STATE_CACHE_PATH,
+                        asset_source,
+                        rel,
+                        new_rel,
+                        base_dir,
+                    )
 
             loop = asyncio.get_event_loop()
             await loop.run_in_executor(None, _move_all)
@@ -1143,7 +1164,13 @@ def setup_mobile_route():
             os.rename(src_path, dst_path)
             # Keep hidden state attached to the item across the rename.
             new_rel = os.path.relpath(dst_path, os.path.abspath(base_dir))
-            _mobile_file_state.rename_path(FILE_STATE_CACHE_PATH, source, path, new_rel)
+            _mobile_file_state.rename_path(
+                FILE_STATE_CACHE_PATH,
+                source,
+                path,
+                new_rel,
+                base_dir,
+            )
             return web.json_response({"success": True})
         except Exception as e:
             return web.json_response({"error": str(e)}, status=500)
@@ -1595,6 +1622,7 @@ def setup_mobile_route():
     mobile_app.router.add_get('/api/files/favorites', api_get_file_favorites)
     mobile_app.router.add_post('/api/files/favorites', api_set_file_favorite)
     mobile_app.router.add_post('/api/input-aliases', api_create_input_aliases)
+    mobile_app.router.add_post('/api/input-aliases/resolve', api_resolve_input_aliases)
     mobile_app.router.add_post('/api/file-prefix-aliases', api_create_file_prefix_aliases)
     mobile_app.router.add_post('/api/file-prefix-aliases/resolve', api_resolve_file_prefix_aliases)
     mobile_app.router.add_get('/api/thumbnail', api_get_thumbnail)

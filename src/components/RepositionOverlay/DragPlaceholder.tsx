@@ -15,7 +15,7 @@ export function DragPlaceholder({
     <div
       key={`placeholder-${containerKey}-${indexLabel}-${targetKey}`}
       data-reposition-placeholder="true"
-      className="mb-3"
+      className="reposition-drag-placeholder mb-3"
       style={{ height: `${height}px` }}
     />
   );

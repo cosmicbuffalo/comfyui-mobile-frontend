@@ -119,4 +119,139 @@ describe('FileCard selection clicks', () => {
       { range: true },
     );
   });
+
+  it('shows count, total size, and the active folder date metadata', async () => {
+    const now = Date.now();
+    const folder: FileItem = {
+      id: 'output/renders',
+      name: 'renders',
+      type: 'folder',
+      count: 12,
+      size: 2048,
+      createdDate: now - 3 * 24 * 60 * 60_000,
+      modifiedDate: now - 2 * 60 * 60_000,
+    };
+
+    await act(async () => {
+      root.render(
+        <FileCard
+          file={folder}
+          viewMode="list"
+          selectionMode={false}
+          isSelected={false}
+          isFavorited={false}
+          onNavigateFolder={() => {}}
+          onOpen={() => {}}
+          onMenu={() => {}}
+          onToggleSelection={() => {}}
+          sortMode="modified"
+        />,
+      );
+    });
+
+    const metadata = container.querySelector('.folder-metadata');
+    expect(metadata?.textContent).toContain('12 items');
+    expect(metadata?.textContent).toContain('2.0 KB');
+    expect(metadata?.textContent).toContain('2 hours ago');
+
+    await act(async () => {
+      root.render(
+        <FileCard
+          file={folder}
+          viewMode="list"
+          selectionMode={false}
+          isSelected={false}
+          isFavorited={false}
+          onNavigateFolder={() => {}}
+          onOpen={() => {}}
+          onMenu={() => {}}
+          onToggleSelection={() => {}}
+          sortMode="created"
+        />,
+      );
+    });
+    expect(container.querySelector('.folder-metadata')?.textContent)
+      .toContain('3 days ago');
+  });
+
+  it('shows size and the active date metadata for files in list view', async () => {
+    const now = Date.now();
+    const file: FileItem = {
+      id: 'output/render.png',
+      name: 'render.png',
+      type: 'image',
+      size: 4096,
+      createdDate: now - 4 * 24 * 60 * 60_000,
+      modifiedDate: now - 3 * 60 * 60_000,
+    };
+
+    await act(async () => {
+      root.render(
+        <FileCard
+          file={file}
+          viewMode="list"
+          selectionMode={false}
+          isSelected={false}
+          isFavorited={false}
+          onNavigateFolder={() => {}}
+          onOpen={() => {}}
+          onMenu={() => {}}
+          onToggleSelection={() => {}}
+          sortMode="modified"
+        />,
+      );
+    });
+
+    const metadata = container.querySelector('.file-metadata');
+    expect(metadata?.textContent).toContain('4.0 KB');
+    expect(metadata?.textContent).toContain('3 hours ago');
+
+    await act(async () => {
+      root.render(
+        <FileCard
+          file={file}
+          viewMode="list"
+          selectionMode={false}
+          isSelected={false}
+          isFavorited={false}
+          onNavigateFolder={() => {}}
+          onOpen={() => {}}
+          onMenu={() => {}}
+          onToggleSelection={() => {}}
+          sortMode="created"
+        />,
+      );
+    });
+    expect(container.querySelector('.file-metadata')?.textContent)
+      .toContain('4 days ago');
+  });
+
+  it('shows nested reject counts instead of unfiltered folder totals', async () => {
+    await act(async () => {
+      root.render(
+        <FileCard
+          file={{
+            id: 'output/review',
+            name: 'review',
+            type: 'folder',
+            count: 20,
+            size: 4096,
+            rejectCount: 3,
+          }}
+          viewMode="list"
+          selectionMode={false}
+          isSelected={false}
+          isFavorited={false}
+          onNavigateFolder={() => {}}
+          onOpen={() => {}}
+          onMenu={() => {}}
+          onToggleSelection={() => {}}
+          sortMode="modified"
+        />,
+      );
+    });
+
+    expect(container.querySelector('.folder-reject-count')?.textContent).toBe('3 rejects inside');
+    expect(container.querySelector('.folder-metadata')).toBeNull();
+  });
 });

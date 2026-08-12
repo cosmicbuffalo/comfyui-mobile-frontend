@@ -791,7 +791,8 @@ export function rebuildDynamicComboNode(
   // before the active-definition walk below, which would otherwise honor it.
   let properties = node.properties;
   if (properties && '__lm_widget_ids' in properties) {
-    const { __lm_widget_ids: _stale, ...rest } = properties;
+    const rest = { ...properties };
+    delete rest.__lm_widget_ids;
     properties = rest;
   }
 

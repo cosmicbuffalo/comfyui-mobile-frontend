@@ -1,5 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { FILE_STATE_REQUEST_TIMEOUT_MS, loadFileState, setFileState } from '../assets';
+import {
+  FILE_STATE_REQUEST_TIMEOUT_MS,
+  loadFileState,
+  resolveInputAliases,
+  setFileState,
+} from '../assets';
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -107,5 +112,37 @@ describe('setFileState', () => {
     mockFetch({ ok: false, status: 400, jsonBody: { error: 'bad request' } });
 
     await expect(setFileState('output', 'a.png', 'favorite', true)).rejects.toThrow('bad request');
+  });
+});
+
+describe('resolveInputAliases', () => {
+  it('POSTs aliases and returns the resolved input paths', async () => {
+    const fetchMock = mockFetch({
+      jsonBody: { resolved: { '.mi-deadbeef.png': 'private/photo.png' } },
+    });
+
+    const result = await resolveInputAliases(['.mi-deadbeef.png']);
+
+    expect(fetchMock).toHaveBeenCalledWith('/mobile/api/input-aliases/resolve', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ aliases: ['.mi-deadbeef.png'] }),
+    });
+    expect(result).toEqual({ '.mi-deadbeef.png': 'private/photo.png' });
+  });
+
+  it('does not call the backend for an empty alias list', async () => {
+    const fetchMock = mockFetch({ jsonBody: { resolved: {} } });
+
+    await expect(resolveInputAliases([])).resolves.toEqual({});
+
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('surfaces the backend error message', async () => {
+    mockFetch({ ok: false, status: 500, jsonBody: { error: 'alias cache unavailable' } });
+
+    await expect(resolveInputAliases(['.mi-deadbeef.png']))
+      .rejects.toThrow('alias cache unavailable');
   });
 });

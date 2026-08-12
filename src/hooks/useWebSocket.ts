@@ -9,6 +9,7 @@ import { useGenerationSettingsStore } from './useGenerationSettings';
 import { useConnectionStatusStore } from './useConnectionStatus';
 import { useNavigationStore } from './useNavigation';
 import { useOutputsStore } from './useOutputs';
+import { applyImpactNodeFeedback, parseImpactNodeFeedback } from '@/utils/impactNodeFeedback';
 import type { WSMessage, WSStatusMessage, WSProgressMessage, WSExecutingMessage, WSExecutedMessage, HistoryOutputImage } from '@/api/types';
 import type { DenoVideoCompareAudio, DenoVideoCompareMetadata, NodeComparerOutput } from './useWorkflow';
 import { appendOasisPreviewResults } from '@/utils/nodeFrontendPreviews';
@@ -1047,6 +1048,18 @@ export function useWebSocket() {
 
         case 'lora_registry_refresh': {
           registerLoraManagerNodes?.();
+          break;
+        }
+
+        case 'impact-node-feedback': {
+          // Impact Pack echoing a widget value it rewrote server-side at queue
+          // time — most visibly the wildcard processor's resolved prompt.
+          const feedback = parseImpactNodeFeedback(msg.data);
+          if (!feedback) break;
+          const { workflow, nodeTypes } = useWorkflowStore.getState();
+          if (!workflow) break;
+          const next = applyImpactNodeFeedback(workflow, nodeTypes, feedback);
+          if (next) useWorkflowStore.setState({ workflow: next });
           break;
         }
 

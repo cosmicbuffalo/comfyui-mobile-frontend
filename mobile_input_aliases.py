@@ -173,3 +173,46 @@ def ensure_aliases(cache_path: str, input_dir: str, paths: list[str]) -> dict[st
             cache["updatedAt"] = _now_ms()
             _save(cache_path, cache)
         return result
+
+
+def resolve_aliases(
+    cache_path: str,
+    input_dir: str,
+    aliases_to_resolve: list[str],
+) -> dict[str, str]:
+    """Resolve live aliases back to their current input-relative source paths.
+
+    An alias can outlive its original path because it is a hard link. Only
+    return a source path while both names still exist and refer to the same
+    file; otherwise callers should keep using the still-functional alias.
+    """
+    with _LOCK:
+        aliases = _load(cache_path)["aliases"]
+
+    resolved: dict[str, str] = {}
+    for alias in aliases_to_resolve:
+        if (
+            not isinstance(alias, str)
+            or "/" in alias
+            or "\\" in alias
+            or not alias.startswith(ALIAS_PREFIX)
+        ):
+            continue
+        entry = aliases.get(alias)
+        if not isinstance(entry, dict):
+            continue
+        source_path = _normalize_path(entry.get("sourcePath"))
+        if not source_path:
+            continue
+        try:
+            alias_path = _resolve_input_path(input_dir, alias)
+            source_abs = _resolve_input_path(input_dir, source_path)
+            if (
+                os.path.isfile(alias_path)
+                and os.path.isfile(source_abs)
+                and os.path.samefile(alias_path, source_abs)
+            ):
+                resolved[alias] = source_path
+        except (OSError, ValueError):
+            continue
+    return resolved

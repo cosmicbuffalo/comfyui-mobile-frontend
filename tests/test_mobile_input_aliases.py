@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from mobile_input_aliases import ALIAS_PREFIX, ensure_aliases, migrate_legacy_cache
+from mobile_input_aliases import ALIAS_PREFIX, ensure_aliases, migrate_legacy_cache, resolve_aliases
 
 
 def test_creates_stable_hard_link_without_copying_data(tmp_path: Path):
@@ -60,6 +60,57 @@ def test_old_workflow_path_keeps_using_alias_after_original_moves(tmp_path: Path
 
     assert second == first
     assert os.path.samefile(moved, input_dir / first)
+
+
+def test_resolves_live_alias_to_source_path(tmp_path: Path):
+    input_dir = tmp_path / "input"
+    input_dir.mkdir()
+    source = input_dir / "private" / "photo.png"
+    source.parent.mkdir()
+    source.write_bytes(b"image-data")
+    cache = tmp_path / "aliases.json"
+    alias = ensure_aliases(str(cache), str(input_dir), ["private/photo.png"])["private/photo.png"]
+
+    assert resolve_aliases(str(cache), str(input_dir), [alias, ".mi-unknown.png"]) == {
+        alias: "private/photo.png"
+    }
+
+
+def test_does_not_resolve_stale_source_path_while_alias_still_works(tmp_path: Path):
+    input_dir = tmp_path / "input"
+    input_dir.mkdir()
+    source = input_dir / "private" / "photo.png"
+    source.parent.mkdir()
+    source.write_bytes(b"image-data")
+    cache = tmp_path / "aliases.json"
+    alias = ensure_aliases(str(cache), str(input_dir), ["private/photo.png"])["private/photo.png"]
+
+    moved = input_dir / "moved" / "renamed.png"
+    moved.parent.mkdir()
+    source.rename(moved)
+
+    assert resolve_aliases(str(cache), str(input_dir), [alias]) == {}
+    assert os.path.isfile(input_dir / alias)
+
+
+def test_resolves_updated_source_path_after_alias_is_reused(tmp_path: Path):
+    input_dir = tmp_path / "input"
+    input_dir.mkdir()
+    source = input_dir / "private" / "photo.png"
+    source.parent.mkdir()
+    source.write_bytes(b"image-data")
+    cache = tmp_path / "aliases.json"
+    alias = ensure_aliases(str(cache), str(input_dir), ["private/photo.png"])["private/photo.png"]
+
+    moved = input_dir / "moved" / "renamed.png"
+    moved.parent.mkdir()
+    source.rename(moved)
+    reused = ensure_aliases(str(cache), str(input_dir), ["moved/renamed.png"])["moved/renamed.png"]
+
+    assert reused == alias
+    assert resolve_aliases(str(cache), str(input_dir), [alias]) == {
+        alias: "moved/renamed.png"
+    }
 
 
 def test_rejects_missing_and_traversing_paths(tmp_path: Path):

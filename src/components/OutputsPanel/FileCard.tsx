@@ -1,11 +1,12 @@
 import { memo, useEffect, useState, type MouseEvent } from 'react';
-import type { FileItem } from '@/api/client';
+import type { FileItem, SortMode } from '@/api/client';
 import {
   FolderIcon, CheckIcon,
   HeartIcon, RejectedIcon, VideoCameraIcon, EyeOffIcon
 } from '@/components/icons';
 import { ContextMenuButton } from '@/components/buttons/ContextMenuButton';
 import { formatBytes } from '@/utils/formatBytes';
+import { formatRelativeAge } from '@/utils/outputsBrowser';
 
 interface SelectionClickOptions {
   range?: boolean;
@@ -23,6 +24,7 @@ interface FileCardProps {
   onMenu: (file: FileItem, e: MouseEvent) => void;
   onToggleSelection: (id: string, event: MouseEvent, options?: SelectionClickOptions) => void;
   showContextMenu?: boolean;
+  sortMode?: SortMode;
 }
 
 function SelectionBadge({
@@ -69,7 +71,8 @@ function FileCardComponent({
   onOpen,
   onMenu,
   onToggleSelection,
-  showContextMenu = true
+  showContextMenu = true,
+  sortMode,
 }: FileCardProps) {
   const isFolder = file.type === 'folder';
   const isHiddenFolder = isFolder && file.name.startsWith('.');
@@ -77,7 +80,60 @@ function FileCardComponent({
   // only render at all while "show hidden" is on, so this signals their state.
   const isHidden = file.hidden || file.name.startsWith('.');
   const folderIconClass = isHiddenFolder ? 'text-slate-500' : 'text-cyan-300';
+  const metadataDateKind = sortMode?.startsWith('created') ? 'created' : 'modified';
+  const metadataDate = metadataDateKind === 'created'
+    ? (file.createdDate ?? file.date)
+    : (file.modifiedDate ?? file.date);
+  const relativeAge = formatRelativeAge(metadataDate);
   const [previewError, setPreviewError] = useState(false);
+
+  const folderMetadata = isFolder && typeof file.count === 'number' ? (
+    <div className="folder-metadata flex min-w-0 items-center gap-x-1 overflow-hidden whitespace-nowrap text-xs text-slate-400">
+      <span className="shrink-0">{file.count} {file.count === 1 ? 'item' : 'items'}</span>
+      {typeof file.size === 'number' && file.size > 0 && (
+        <>
+          <span className="shrink-0" aria-hidden="true">·</span>
+          <span className="shrink-0">{formatBytes(file.size)}</span>
+        </>
+      )}
+      {relativeAge && typeof metadataDate === 'number' && (
+        <>
+          <span className="shrink-0" aria-hidden="true">·</span>
+          <time
+            className="min-w-0 truncate"
+            dateTime={new Date(metadataDate).toISOString()}
+            title={new Date(metadataDate).toLocaleString()}
+          >
+            {relativeAge}
+          </time>
+        </>
+      )}
+    </div>
+  ) : null;
+
+  const fileMetadata = !isFolder && (
+    typeof file.size === 'number' || (relativeAge && typeof metadataDate === 'number')
+  ) ? (
+    <div className="file-metadata flex min-w-0 items-center gap-x-1 overflow-hidden whitespace-nowrap text-xs text-slate-400">
+      {typeof file.size === 'number' && (
+        <span className="shrink-0">{formatBytes(file.size)}</span>
+      )}
+      {relativeAge && typeof metadataDate === 'number' && (
+        <>
+          {typeof file.size === 'number' && (
+            <span className="shrink-0" aria-hidden="true">·</span>
+          )}
+          <time
+            className="min-w-0 truncate"
+            dateTime={new Date(metadataDate).toISOString()}
+            title={new Date(metadataDate).toLocaleString()}
+          >
+            {relativeAge}
+          </time>
+        </>
+      )}
+    </div>
+  ) : null;
 
   /* eslint-disable react-hooks/set-state-in-effect */
   useEffect(() => {
@@ -142,13 +198,14 @@ function FileCardComponent({
             <div className="folder-favorite-count text-xs text-red-400">
               {file.favoriteCount} {file.favoriteCount === 1 ? 'favorite' : 'favorites'} inside
             </div>
-          ) : isFolder && typeof file.count === 'number' ? (
-            <div className="text-xs text-slate-400">
-              {file.count} {file.count === 1 ? 'item' : 'items'}
-              {typeof file.size === 'number' && file.size > 0 && ` · ${formatBytes(file.size)}`}
+          ) : isFolder && typeof file.rejectCount === 'number' ? (
+            <div className="folder-reject-count text-xs text-rose-300">
+              {file.rejectCount} {file.rejectCount === 1 ? 'reject' : 'rejects'} inside
             </div>
-          ) : !isFolder && typeof file.size === 'number' ? (
-            <div className="text-xs text-slate-400">{formatBytes(file.size)}</div>
+          ) : isFolder && typeof file.count === 'number' ? (
+            folderMetadata
+          ) : !isFolder ? (
+            fileMetadata
           ) : null}
         </div>
         <div className="file-actions-container flex items-center gap-2 text-slate-300">
@@ -195,11 +252,12 @@ function FileCardComponent({
               <span className="folder-favorite-count text-xs text-red-400">
                 {file.favoriteCount} {file.favoriteCount === 1 ? 'favorite' : 'favorites'}
               </span>
-            ) : typeof file.count === 'number' ? (
-              <span className="text-xs text-slate-400">
-                {file.count} {file.count === 1 ? 'item' : 'items'}
-                {typeof file.size === 'number' && file.size > 0 && ` · ${formatBytes(file.size)}`}
+            ) : typeof file.rejectCount === 'number' ? (
+              <span className="folder-reject-count text-xs text-rose-300">
+                {file.rejectCount} {file.rejectCount === 1 ? 'reject' : 'rejects'}
               </span>
+            ) : typeof file.count === 'number' ? (
+              <div className="flex justify-center">{folderMetadata}</div>
             ) : null}
           </div>
         ) : file.previewUrl && !previewError ? (

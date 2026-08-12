@@ -1,5 +1,5 @@
 import { useMemo, type MouseEvent } from 'react';
-import type { FileItem } from '@/api/client';
+import type { FileItem, SortMode } from '@/api/client';
 import { Collapsible } from '@/components/Collapsible';
 import { FoldIcon } from '@/components/FoldIcon';
 import { FileCard } from './FileCard';
@@ -22,6 +22,9 @@ interface OutputsFilesSectionProps {
   toggleSectionCollapsed: (key: string, sectionElement: HTMLElement | null) => void;
   selectIds: (ids: string[]) => void;
   showContextMenus?: boolean;
+  /** Decides whether each card's date metadata reads created or modified, so
+   *  the cards agree with the date section headers above them. */
+  sortMode: SortMode;
   /** Cap on the total number of FileCards rendered across all sections, so a
    *  huge folder doesn't mount thousands of cards at once. The parent grows this
    *  on scroll. Section headers/counts/select-all still reflect the full data. */
@@ -43,6 +46,7 @@ export function OutputsFilesSection({
   toggleSectionCollapsed,
   selectIds,
   showContextMenus = true,
+  sortMode,
   maxRenderedFiles
 }: OutputsFilesSectionProps) {
   // O(1) membership for the per-card selected/favorited checks, so rendering n
@@ -126,6 +130,7 @@ export function OutputsFilesSection({
                     onMenu={handleMenu}
                     onToggleSelection={toggleSelection}
                     showContextMenu={showContextMenus}
+                    sortMode={sortMode}
                   />
                 ))}
               </div>
@@ -145,6 +150,7 @@ export function OutputsFilesSection({
                     onMenu={handleMenu}
                     onToggleSelection={toggleSelection}
                     showContextMenu={showContextMenus}
+                    sortMode={sortMode}
                   />
                 ))}
               </div>

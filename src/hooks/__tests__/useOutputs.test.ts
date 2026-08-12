@@ -46,7 +46,7 @@ beforeEach(async () => {
     source: 'output',
     currentFolder: null,
     files: [],
-    filter: { search: '', favoritesOnly: false, type: 'all' },
+    filter: { search: '', favoritesMode: 'off', rejectsMode: 'off', type: 'all' },
     sort: { mode: 'modified' },
     favorites: [],
     rejected: [],
@@ -86,7 +86,7 @@ describe('getDisplayedFiles', () => {
   it('filters by search term', () => {
     useOutputsStore.setState({
       files,
-      filter: { search: 'alpha', favoritesOnly: false, type: 'all' }
+      filter: { search: 'alpha', favoritesMode: 'off', rejectsMode: 'off', type: 'all' }
     });
     const result = useOutputsStore.getState().getDisplayedFiles();
     expect(result).toHaveLength(1);
@@ -96,7 +96,7 @@ describe('getDisplayedFiles', () => {
   it('search is case-insensitive', () => {
     useOutputsStore.setState({
       files,
-      filter: { search: 'BETA', favoritesOnly: false, type: 'all' }
+      filter: { search: 'BETA', favoritesMode: 'off', rejectsMode: 'off', type: 'all' }
     });
     const result = useOutputsStore.getState().getDisplayedFiles();
     expect(result).toHaveLength(1);
@@ -107,7 +107,7 @@ describe('getDisplayedFiles', () => {
     useOutputsStore.setState({
       files,
       favorites: ['a.png'],
-      filter: { search: '', favoritesOnly: true, type: 'all' }
+      filter: { search: '', favoritesMode: 'only', rejectsMode: 'off', type: 'all' }
     });
     const result = useOutputsStore.getState().getDisplayedFiles();
     expect(result).toHaveLength(1);
@@ -132,7 +132,7 @@ describe('getDisplayedFiles', () => {
           'output/album/day-one/first.png',
           'output/album/day-two/second.png',
         ],
-        filter: { search: '', favoritesOnly: true, type: 'all' },
+        filter: { search: '', favoritesMode: 'only', rejectsMode: 'off', type: 'all' },
       });
       const result = useOutputsStore.getState().getDisplayedFiles();
       expect(result.map((f) => f.id).sort()).toEqual(['output/album', 'output/loose.png']);
@@ -143,7 +143,7 @@ describe('getDisplayedFiles', () => {
       useOutputsStore.setState({
         files: listing,
         favorites: ['output/empty'],
-        filter: { search: '', favoritesOnly: true, type: 'all' },
+        filter: { search: '', favoritesMode: 'only', rejectsMode: 'off', type: 'all' },
       });
       const result = useOutputsStore.getState().getDisplayedFiles();
       expect(result.map((f) => f.id)).toEqual(['output/empty']);
@@ -157,7 +157,7 @@ describe('getDisplayedFiles', () => {
       useOutputsStore.setState({
         files: listing,
         favorites: ['output/album/.private/secret.png'],
-        filter: { search: '', favoritesOnly: true, type: 'all' },
+        filter: { search: '', favoritesMode: 'only', rejectsMode: 'off', type: 'all' },
       });
       expect(useOutputsStore.getState().getDisplayedFiles()).toHaveLength(0);
 
@@ -172,7 +172,7 @@ describe('getDisplayedFiles', () => {
         files: [makeFile({ id: 'output/album/day-one', name: 'day-one', type: 'folder', count: 3 })],
         currentFolder: 'album',
         favorites: ['output/album/day-one/first.png', 'output/other/elsewhere.png'],
-        filter: { search: '', favoritesOnly: true, type: 'all' },
+        filter: { search: '', favoritesMode: 'only', rejectsMode: 'off', type: 'all' },
       });
       const result = useOutputsStore.getState().getDisplayedFiles();
       expect(result.map((f) => f.id)).toEqual(['output/album/day-one']);
@@ -180,10 +180,131 @@ describe('getDisplayedFiles', () => {
     });
   });
 
+  it('filters to rejects and keeps folders containing nested rejects', () => {
+    useOutputsStore.setState({
+      files: [
+        makeFile({ id: 'output/album', name: 'album', type: 'folder', count: 8 }),
+        makeFile({ id: 'output/loose.png', name: 'loose.png' }),
+        makeFile({ id: 'output/plain.png', name: 'plain.png' }),
+      ],
+      rejected: [
+        'output/album/day-one/bad.png',
+        'output/album/day-two/worse.png',
+        'output/loose.png',
+      ],
+      filter: { search: '', favoritesMode: 'off', rejectsMode: 'only', type: 'all' },
+    });
+
+    const result = useOutputsStore.getState().getDisplayedFiles();
+    expect(result.map((file) => file.id).sort()).toEqual(['output/album', 'output/loose.png']);
+    expect(result.find((file) => file.id === 'output/album')?.rejectCount).toBe(2);
+  });
+
+  describe('status filter cycling', () => {
+    const modes = () => {
+      const { favoritesMode, rejectsMode } = useOutputsStore.getState().filter;
+      return [favoritesMode, rejectsMode];
+    };
+    const click = (key: 'favoritesMode' | 'rejectsMode') =>
+      useOutputsStore.getState().cycleStatusFilter(key);
+
+    it('cycles one button off → only → exclude → off', () => {
+      expect(modes()).toEqual(['off', 'off']);
+      click('rejectsMode');
+      expect(modes()).toEqual(['off', 'only']);
+      click('rejectsMode');
+      expect(modes()).toEqual(['off', 'exclude']);
+      click('rejectsMode');
+      expect(modes()).toEqual(['off', 'off']);
+    });
+
+    it('switches between the two narrowed subsets rather than stacking them', () => {
+      click('favoritesMode');
+      expect(modes()).toEqual(['only', 'off']);
+      click('rejectsMode');
+      // only + only is always an empty listing, so the previous one turns off.
+      expect(modes()).toEqual(['off', 'only']);
+      click('favoritesMode');
+      expect(modes()).toEqual(['only', 'off']);
+    });
+
+    it('joins the other filter at exclude so both can be hidden at once', () => {
+      click('favoritesMode');
+      click('favoritesMode');
+      expect(modes()).toEqual(['exclude', 'off']);
+      // Skips `only`, which would be redundant against an excluding partner.
+      click('rejectsMode');
+      expect(modes()).toEqual(['exclude', 'exclude']);
+    });
+
+    it('drops one side of exclude-both without disturbing the other', () => {
+      click('favoritesMode');
+      click('favoritesMode');
+      click('rejectsMode');
+      expect(modes()).toEqual(['exclude', 'exclude']);
+
+      click('favoritesMode');
+      expect(modes()).toEqual(['off', 'exclude']);
+      // And back again, since the partner is still excluding.
+      click('favoritesMode');
+      expect(modes()).toEqual(['exclude', 'exclude']);
+    });
+  });
+
+  it('excludes the status subset while leaving folders navigable', () => {
+    useOutputsStore.setState({
+      files: [
+        makeFile({ id: 'output/keep.png', name: 'keep.png' }),
+        makeFile({ id: 'output/nope.png', name: 'nope.png' }),
+        makeFile({ id: 'output/album', name: 'album', type: 'folder', count: 4 }),
+      ],
+      rejected: ['output/nope.png', 'output/album/inner.png'],
+      filter: { search: '', favoritesMode: 'off', rejectsMode: 'exclude', type: 'all' },
+    });
+
+    const result = useOutputsStore.getState().getDisplayedFiles();
+    expect(result.map((file) => file.id).sort()).toEqual(['output/album', 'output/keep.png']);
+    // Excluding never annotates folders with a subset count.
+    expect(result.find((file) => file.id === 'output/album')?.rejectCount).toBeUndefined();
+  });
+
+  it('excludes favorites and rejects together', () => {
+    useOutputsStore.setState({
+      files: [
+        makeFile({ id: 'output/plain.png', name: 'plain.png' }),
+        makeFile({ id: 'output/loved.png', name: 'loved.png' }),
+        makeFile({ id: 'output/nope.png', name: 'nope.png' }),
+      ],
+      favorites: ['output/loved.png'],
+      rejected: ['output/nope.png'],
+      filter: { search: '', favoritesMode: 'exclude', rejectsMode: 'exclude', type: 'all' },
+    });
+
+    const result = useOutputsStore.getState().getDisplayedFiles();
+    expect(result.map((file) => file.id)).toEqual(['output/plain.png']);
+  });
+
+  it('drops a folder that is itself favorited when excluding favorites', () => {
+    useOutputsStore.setState({
+      files: [
+        makeFile({ id: 'output/loved-folder', name: 'loved-folder', type: 'folder', count: 3 }),
+        makeFile({ id: 'output/plain-folder', name: 'plain-folder', type: 'folder', count: 3 }),
+      ],
+      // A folder can be favorited but never rejected, so only the favorites
+      // side of exclude has a folder to drop.
+      favorites: ['output/loved-folder'],
+      rejected: [],
+      filter: { search: '', favoritesMode: 'exclude', rejectsMode: 'off', type: 'all' },
+    });
+
+    const result = useOutputsStore.getState().getDisplayedFiles();
+    expect(result.map((file) => file.id)).toEqual(['output/plain-folder']);
+  });
+
   it('filters by type', () => {
     useOutputsStore.setState({
       files,
-      filter: { search: '', favoritesOnly: false, type: 'video' }
+      filter: { search: '', favoritesMode: 'off', rejectsMode: 'off', type: 'video' }
     });
     const result = useOutputsStore.getState().getDisplayedFiles();
     expect(result).toHaveLength(1);
@@ -194,7 +315,7 @@ describe('getDisplayedFiles', () => {
     const withFolder = [...files, makeFile({ id: 'folder1', name: 'folder1', type: 'folder' })];
     useOutputsStore.setState({
       files: withFolder,
-      filter: { search: '', favoritesOnly: false, type: 'video' }
+      filter: { search: '', favoritesMode: 'off', rejectsMode: 'off', type: 'video' }
     });
     const result = useOutputsStore.getState().getDisplayedFiles();
     const types = result.map(f => f.type);
@@ -237,6 +358,21 @@ describe('getDisplayedFiles', () => {
     const dates = useOutputsStore.getState().getDisplayedFiles().map(f => f.date);
     expect(dates).toEqual([1, 2, 3]);
   });
+
+  it('sorts independently by created and modified dates', () => {
+    const dated = [
+      makeFile({ id: 'a.png', createdDate: 10, modifiedDate: 300 }),
+      makeFile({ id: 'b.png', createdDate: 30, modifiedDate: 100 }),
+      makeFile({ id: 'c.png', createdDate: 20, modifiedDate: 200 }),
+    ];
+    useOutputsStore.setState({ files: dated, sort: { mode: 'created' } });
+    expect(useOutputsStore.getState().getDisplayedFiles().map((file) => file.id))
+      .toEqual(['b.png', 'c.png', 'a.png']);
+
+    useOutputsStore.setState({ sort: { mode: 'modified' } });
+    expect(useOutputsStore.getState().getDisplayedFiles().map((file) => file.id))
+      .toEqual(['a.png', 'c.png', 'b.png']);
+  });
 });
 
 describe('markItemHiddenLocally', () => {
@@ -269,6 +405,25 @@ describe('markItemHiddenLocally', () => {
 
 describe('favorite/reject mutual exclusivity', () => {
   const ID = 'output/a.png';
+
+  it('immediately updates modified dates for the changed file and its folders', () => {
+    const nowSpy = vi.spyOn(Date, 'now').mockReturnValue(999);
+    useOutputsStore.setState({
+      files: [
+        makeFile({ id: 'output/album', type: 'folder', modifiedDate: 10 }),
+        makeFile({ id: 'output/album/a.png', modifiedDate: 20 }),
+        makeFile({ id: 'output/other', type: 'folder', modifiedDate: 30 }),
+      ],
+    });
+
+    useOutputsStore.getState().toggleRejected('output/album/a.png');
+
+    const byId = new Map(useOutputsStore.getState().files.map((item) => [item.id, item]));
+    expect(byId.get('output/album')).toMatchObject({ date: 999, modifiedDate: 999 });
+    expect(byId.get('output/album/a.png')).toMatchObject({ date: 999, modifiedDate: 999 });
+    expect(byId.get('output/other')?.modifiedDate).toBe(30);
+    nowSpy.mockRestore();
+  });
 
   it('favoriteItem is idempotent and never duplicates', () => {
     const { favoriteItem } = useOutputsStore.getState();
@@ -624,7 +779,7 @@ describe('persistence', () => {
     localStorage.removeItem('outputs-storage');
     useOutputsStore.getState().setFilter({
       search: 'sample scene',
-      favoritesOnly: true,
+      favoritesMode: 'only',
       type: 'video',
     });
 
@@ -633,7 +788,8 @@ describe('persistence', () => {
     const persisted = JSON.parse(raw!);
     expect(persisted.state.filter).toEqual({
       search: '',
-      favoritesOnly: true,
+      favoritesMode: 'only',
+      rejectsMode: 'off',
       type: 'video',
     });
   });
@@ -694,6 +850,20 @@ describe('selection', () => {
     useOutputsStore.getState().clearSelection();
     expect(useOutputsStore.getState().selectedIds).toEqual([]);
     expect(useOutputsStore.getState().selectionActionOpen).toBe(false);
+  });
+
+  it('exitSelectionMode clears the selection and leaves selection mode off', () => {
+    useOutputsStore.setState({
+      selectionMode: true,
+      selectedIds: ['a', 'b'],
+      selectionActionOpen: true,
+    });
+    useOutputsStore.getState().exitSelectionMode();
+    expect(useOutputsStore.getState()).toMatchObject({
+      selectionMode: false,
+      selectedIds: [],
+      selectionActionOpen: false,
+    });
   });
 });
 

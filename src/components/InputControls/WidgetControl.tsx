@@ -32,6 +32,7 @@ interface WidgetControlProps {
   compact?: boolean;
   forceModalOpen?: boolean;
   onModalClose?: () => void;
+  compactTrailingControls?: boolean;
   seedMode?: "fixed" | "randomize" | "increment" | "decrement";
   onSeedModeChange?: (
     mode: "fixed" | "randomize" | "increment" | "decrement",
@@ -63,6 +64,7 @@ export function WidgetControl({
   compact = false,
   forceModalOpen = false,
   onModalClose,
+  compactTrailingControls,
   seedMode,
   onSeedModeChange,
   hasPin,
@@ -125,6 +127,7 @@ export function WidgetControl({
     isPromoted,
     forceModalOpen,
     onModalClose,
+    compactTrailingControls,
     containerClass: controlContainerClass,
     hasPin: resolvedHasPin,
     isPinned,

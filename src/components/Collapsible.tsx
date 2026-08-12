@@ -52,7 +52,7 @@ export function Collapsible({ open, children, className }: CollapsibleProps) {
         }
       }}
     >
-      <div className={`min-h-0 ${clip ? 'overflow-hidden' : 'overflow-visible'} ${className ?? ''}`}>
+      <div className={`min-h-0 min-w-0 ${clip ? 'overflow-hidden' : 'overflow-visible'} ${className ?? ''}`}>
         {children}
       </div>
     </div>

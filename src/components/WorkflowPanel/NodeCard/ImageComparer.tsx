@@ -180,7 +180,7 @@ export function NodeCardImageComparer({
     const onlySrc = aSrc ?? bSrc;
     if (!onlySrc) return null;
     return (
-      <div className="mb-3">
+      <div className="image-comparer-fallback mb-3">
         <div className="text-xs text-slate-500 mb-1.5 uppercase tracking-wide">
           Image Comparer
         </div>
@@ -197,7 +197,7 @@ export function NodeCardImageComparer({
   }
 
   return (
-    <div className="mb-3">
+    <div className="image-comparer mb-3">
       <div className="text-xs text-slate-500 mb-1.5 uppercase tracking-wide">
         Image Comparer
       </div>
