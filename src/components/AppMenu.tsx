@@ -11,7 +11,6 @@ import { TemplatesPanel } from './AppMenu/TemplatesPanel';
 import { UserWorkflowsPanel } from './AppMenu/UserWorkflowsPanel';
 import { RecentWorkflowsPanel } from './AppMenu/RecentWorkflowsPanel';
 import { GenerationSettingsPanel } from './AppMenu/GenerationSettingsPanel';
-import { LanguagePanel } from './AppMenu/LanguagePanel';
 import { CustomNodesManagerModal } from './CustomNodesManagerModal';
 import { getDisplayName } from './AppMenu/userWorkflowHelpers';
 import { isWorkflowModified, useWorkflowStore } from '@/hooks/useWorkflow';
@@ -45,7 +44,7 @@ interface AppMenuProps {
   onClose: () => void;
 }
 
-type TabType = 'menu' | 'userWorkflows' | 'recent' | 'templates' | 'save' | 'pasteJson' | 'aboutLegend' | 'generationSettings' | 'language';
+type TabType = 'menu' | 'userWorkflows' | 'recent' | 'templates' | 'save' | 'pasteJson' | 'aboutLegend' | 'generationSettings';
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
@@ -506,7 +505,6 @@ export function AppMenu({
           onRestartServer={handleRestartServer}
           onOpenGenerationSettings={() => setActiveTab('generationSettings')}
           onOpenCustomNodes={() => { setCustomNodesInitialFilter(''); setCustomNodesInitialSearch(''); setCustomNodesOpen(true); }}
-          onOpenLanguage={() => setActiveTab('language')}
         />
       )}
       {activeTab === 'userWorkflows' && (
@@ -567,9 +565,6 @@ export function AppMenu({
       )}
       {activeTab === 'generationSettings' && (
         <GenerationSettingsPanel onBack={() => setActiveTab('menu')} />
-      )}
-      {activeTab === 'language' && (
-        <LanguagePanel onBack={() => setActiveTab('menu')} />
       )}
     </SlidePanel>
     {/* Rendered OUTSIDE SlidePanel (which unmounts its children when the menu is
