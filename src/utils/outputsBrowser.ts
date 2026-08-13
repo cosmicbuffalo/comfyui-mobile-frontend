@@ -1,4 +1,5 @@
 import type { AssetSource, FileItem } from '@/api/client';
+import { t } from '@/i18n';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -15,7 +16,7 @@ export function formatRelativeAge(timestamp?: number, now = Date.now()): string 
   const monthMs = 30 * DAY_MS;
   const yearMs = 365 * DAY_MS;
 
-  if (elapsedMs < minuteMs) return 'just now';
+  if (elapsedMs < minuteMs) return t('just now');
 
   const [value, unit] = elapsedMs < hourMs
     ? [Math.floor(elapsedMs / minuteMs), 'minute'] as const
@@ -29,19 +30,22 @@ export function formatRelativeAge(timestamp?: number, now = Date.now()): string 
             ? [Math.floor(elapsedMs / monthMs), 'month'] as const
             : [Math.floor(elapsedMs / yearMs), 'year'] as const;
 
-  return `${value} ${unit}${value === 1 ? '' : 's'} ago`;
+  const unitKey = value === 1
+    ? `{count} ${unit} ago`
+    : `{count} ${unit}s ago`;
+  return t(unitKey, { count: value });
 }
 
 /** Human-friendly date-section label: "Today" / "Yesterday" / locale date. */
 export function formatDateLabel(timestamp?: number): string {
-  if (!timestamp) return 'Unknown date';
+  if (!timestamp) return t('Unknown date');
   const now = new Date();
   const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
   const date = new Date(timestamp);
   const dateStart = new Date(date.getFullYear(), date.getMonth(), date.getDate());
   const diffDays = Math.round((todayStart.getTime() - dateStart.getTime()) / DAY_MS);
-  if (diffDays === 0) return 'Today';
-  if (diffDays === 1) return 'Yesterday';
+  if (diffDays === 0) return t('Today');
+  if (diffDays === 1) return t('Yesterday');
   return date.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
 }
 
@@ -98,7 +102,7 @@ export function buildFileSections(
   }
 
   if (!shouldGroupByDate) {
-    return [{ key: 'all', label: 'All files', files: nonFolders }];
+    return [{ key: 'all', label: t('All files'), files: nonFolders }];
   }
 
   return pushGrouped((file) => {
@@ -122,7 +126,7 @@ export interface DisplayCrumb extends Crumb {
 
 /** Build the breadcrumb trail (root + each folder segment) for a browse location. */
 export function buildBreadcrumbs(source: AssetSource, folder: string | null): Crumb[] {
-  const rootName = source === 'output' ? 'Outputs' : source === 'input' ? 'Inputs' : 'Temp';
+  const rootName = source === 'output' ? t('Outputs') : source === 'input' ? t('Inputs') : t('Temp');
   const crumbs: Crumb[] = [{ name: rootName, path: null }];
   if (folder) {
     const parts = folder.split('/');

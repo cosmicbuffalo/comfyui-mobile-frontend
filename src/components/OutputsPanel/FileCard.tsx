@@ -6,6 +6,7 @@ import {
 } from '@/components/icons';
 import { ContextMenuButton } from '@/components/buttons/ContextMenuButton';
 import { formatBytes } from '@/utils/formatBytes';
+import { useI18n } from '@/i18n';
 import { formatRelativeAge } from '@/utils/outputsBrowser';
 
 interface SelectionClickOptions {
@@ -74,6 +75,7 @@ function FileCardComponent({
   showContextMenu = true,
   sortMode,
 }: FileCardProps) {
+  const { t } = useI18n();
   const isFolder = file.type === 'folder';
   const isHiddenFolder = isFolder && file.name.startsWith('.');
   // Dimmed when the item is hidden (dot-prefixed or manually marked). Such items
@@ -224,7 +226,7 @@ function FileCardComponent({
           ) : showContextMenu ? (
             <ContextMenuButton
               onClick={handleMenuButtonClick}
-              ariaLabel="File options"
+              ariaLabel={t('File options')}
               buttonSize={8}
               iconSize={5}
             />
@@ -295,7 +297,7 @@ function FileCardComponent({
           <div className="file-menu-trigger-container absolute top-2 right-2 flex flex-col items-center gap-2 text-white">
             <ContextMenuButton
               onClick={handleMenuButtonClick}
-              ariaLabel="File options"
+              ariaLabel={t('File options')}
               buttonSize={8}
               iconSize={6}
             />

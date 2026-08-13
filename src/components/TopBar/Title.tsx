@@ -1,4 +1,5 @@
 import { EyeOffIcon } from '@/components/icons';
+import { useI18n } from '@/i18n';
 
 interface TopBarTitleProps {
   title: string;
@@ -23,6 +24,7 @@ export function TopBarTitle({
   onTap,
   isHidden = false,
 }: TopBarTitleProps) {
+  const { t } = useI18n();
   return (
     <div id="top-bar-title-container" className="grid h-11 w-full min-w-0 grid-rows-[1.75rem_1rem] px-2 text-center cursor-pointer" onClick={onTap}>
       <h1 id="top-bar-title" className="flex h-7 w-full min-w-0 items-center justify-center overflow-hidden text-base font-semibold leading-7 text-slate-100">
@@ -44,7 +46,7 @@ export function TopBarTitle({
         {mode === 'workflow'
           ? (hasWorkflow ? nodeCountLabel : ' ')
           : mode === 'queue'
-            ? `${historyLength} ${historyLength === 1 ? 'run' : 'runs'}${pendingLength > 0 ? ` (${pendingLength} pending)` : ''}`
+            ? `${t('{count} run', { count: historyLength })}${pendingLength > 0 ? ` ${t('({count} pending)', { count: pendingLength })}` : ''}`
             : ' '}
       </p>
     </div>

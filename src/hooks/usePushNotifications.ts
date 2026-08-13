@@ -5,6 +5,7 @@ import {
   removeSubscription,
   sendTestPush,
 } from '@/api/client';
+import { t, useI18n } from '@/i18n';
 
 const SW_URL = '/mobile/sw.js';
 const SW_SCOPE = '/mobile/';
@@ -47,6 +48,7 @@ export interface PushState {
 }
 
 export function usePushNotifications(): PushState {
+  const { locale } = useI18n();
   const supported =
     typeof navigator !== 'undefined' &&
     'serviceWorker' in navigator &&
@@ -79,7 +81,7 @@ export function usePushNotifications(): PushState {
     return () => {
       cancelled = true;
     };
-  }, [supported]);
+  }, [supported, locale]);
 
   const enable = useCallback(async () => {
     if (!supported) return;
@@ -89,13 +91,13 @@ export function usePushNotifications(): PushState {
       const result = await Notification.requestPermission();
       setPermission(result);
       if (result !== 'granted') {
-        setError(result === 'denied' ? 'Notifications are blocked in browser settings.' : 'Notification permission was not granted.');
+        setError(result === 'denied' ? t('Notifications are blocked in browser settings.') : t('Notification permission was not granted.'));
         return;
       }
 
       const config = await getPushConfig();
       if (!config.enabled || !config.vapidPublicKey) {
-        setError(config.reason || 'Push is not available on the server (is pywebpush installed?).');
+        setError(config.reason || t('Push is not available on the server (is pywebpush installed?).'));
         return;
       }
 
@@ -112,14 +114,14 @@ export function usePushNotifications(): PushState {
           applicationServerKey: urlBase64ToUint8Array(config.vapidPublicKey) as BufferSource,
         }));
 
-      await sendSubscription(subscription);
+      await sendSubscription(subscription, locale);
       setSubscribed(true);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to enable notifications.');
+      setError(err instanceof Error ? err.message : t('Failed to enable notifications.'));
     } finally {
       setBusy(false);
     }
-  }, [supported]);
+  }, [supported, locale]);
 
   const disable = useCallback(async () => {
     if (!supported) return;
@@ -134,7 +136,7 @@ export function usePushNotifications(): PushState {
       }
       setSubscribed(false);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to disable notifications.');
+      setError(err instanceof Error ? err.message : t('Failed to disable notifications.'));
     } finally {
       setBusy(false);
     }
@@ -146,10 +148,10 @@ export function usePushNotifications(): PushState {
     try {
       const result = await sendTestPush();
       if (result.sent === 0) {
-        setError('No notification was delivered. Make sure notifications are enabled on this device.');
+        setError(t('No notification was delivered. Make sure notifications are enabled on this device.'));
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to send test notification.');
+      setError(err instanceof Error ? err.message : t('Failed to send test notification.'));
     } finally {
       setBusy(false);
     }

@@ -5,6 +5,7 @@ import type { ItemStatus, UnifiedItem } from './types';
 import { ArrowRightIcon, CopyIcon, DownloadIcon, EyeIcon, EyeOffIcon, ProgressRingWithTrack, ReloadIcon, TrashIcon, WorkflowIcon, XMarkIcon } from '@/components/icons';
 import { useQueueStore } from '@/hooks/useQueue';
 import { ContextMenuBuilder } from '@/components/menus/ContextMenuBuilder';
+import { useI18n } from '@/i18n';
 
 function waitForPaint(): Promise<void> {
   return new Promise((resolve) => {
@@ -61,6 +62,7 @@ export function QueueImageMenu({
   onReenqueue,
   getBatchSources
 }: QueueImageMenuProps) {
+  const { t } = useI18n();
   const promptId = menuState?.promptId ?? '';
   const [loadingWorkflow, setLoadingWorkflow] = useState(false);
   const [loadWorkflowProgress, setLoadWorkflowProgress] = useState(0);
@@ -75,10 +77,10 @@ export function QueueImageMenu({
       : [];
   const canDownload = batchSources.length > 0 || Boolean(menuState?.imageSrc);
   const removeLabel = status === 'running'
-    ? 'Stop'
+    ? t('Stop')
     : status === 'pending'
-      ? 'Cancel'
-      : 'Delete';
+      ? t('Cancel')
+      : t('Delete');
 
   const handleLoadWorkflowClick = async () => {
     if (!menuState?.workflow || !menuState.promptId || loadingWorkflow) return;
@@ -155,7 +157,7 @@ export function QueueImageMenu({
         items={[
           {
             key: 'go-to-open-workflow',
-            label: 'Go to open workflow',
+            label: t('Go to open workflow'),
             icon: <ArrowRightIcon className="w-4 h-4 rotate-180" />,
             onClick: handleGoToOpenWorkflowClick,
             disabled: loadingWorkflow,
@@ -163,7 +165,7 @@ export function QueueImageMenu({
           },
           {
             key: 'load-workflow',
-            label: 'Load workflow',
+            label: t('Load workflow'),
             icon: <WorkflowIcon className="w-4 h-4" />,
             onClick: handleLoadWorkflowClick,
             disabled: !menuState.workflow,
@@ -176,7 +178,7 @@ export function QueueImageMenu({
           },
           {
             key: 'copy-workflow',
-            label: 'Copy workflow',
+            label: t('Copy workflow'),
             icon: <CopyIcon className="w-4 h-4" />,
             onClick: handleCopyWorkflowClick,
             disabled: !menuState.workflow || loadingWorkflow
@@ -184,8 +186,8 @@ export function QueueImageMenu({
           {
             key: 'download',
             label: batchSources.length > 1
-              ? 'Download batch'
-              : 'Download',
+              ? t('Download batch')
+              : t('Download'),
             icon: <DownloadIcon className="w-4 h-4" />,
             onClick: handleDownloadClick,
             disabled: loadingWorkflow,
@@ -193,7 +195,7 @@ export function QueueImageMenu({
           },
           {
             key: 'toggle-images',
-            label: queueItemHideImages ? 'Show images' : 'Hide images',
+            label: queueItemHideImages ? t('Show images') : t('Hide images'),
             icon: queueItemHideImages
               ? <EyeIcon className="w-4 h-4" />
               : <EyeOffIcon className="w-4 h-4" />,
@@ -203,7 +205,7 @@ export function QueueImageMenu({
           },
           {
             key: 're-enqueue',
-            label: 'Re-enqueue',
+            label: t('Re-enqueue'),
             icon: <ReloadIcon className="w-4 h-4" />,
             onClick: handleReenqueueClick,
             disabled: loadingWorkflow,

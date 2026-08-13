@@ -1,3 +1,5 @@
+import { t } from '@/i18n';
+
 export function formatRelativeDate(timestamp: number): string {
   const now = new Date();
   const date = new Date(timestamp * 1000);
@@ -9,7 +11,7 @@ export function formatRelativeDate(timestamp: number): string {
   const yy = String(date.getFullYear()).slice(-2);
   const dateStr = `${mm}/${dd}/${yy}`;
 
-  if (diffDays === 0) return `${dateStr} (Today)`;
-  if (diffDays === 1) return `${dateStr} (Yesterday)`;
-  return `${dateStr} (${diffDays} days ago)`;
+  if (diffDays === 0) return t('{date} (Today)', { date: dateStr });
+  if (diffDays === 1) return t('{date} (Yesterday)', { date: dateStr });
+  return t('{date} ({count} days ago)', { date: dateStr, count: diffDays });
 }

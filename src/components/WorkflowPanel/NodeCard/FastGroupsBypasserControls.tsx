@@ -14,6 +14,7 @@ import {
   normalizeHexColor
 } from '@/utils/colorUtils';
 import { requireHierarchicalKey } from '@/utils/itemKeys';
+import { useI18n } from '@/i18n';
 import {
   controlLabelClassName,
   controlModalFocusClassName,
@@ -101,6 +102,7 @@ export function FastGroupsBypasserControls({
   showFastGroupConfig,
   setShowFastGroupConfig
 }: FastGroupsBypasserControlsProps) {
+  const { t } = useI18n();
   const workflow = useWorkflowStore((state) => state.workflow);
   const scopeStack = useWorkflowStore((state) => state.scopeStack);
   const mobileLayout = useWorkflowStore((state) => state.mobileLayout);
@@ -446,24 +448,24 @@ export function FastGroupsBypasserControls({
       {showFastGroupConfig && (
         <Dialog
           onClose={() => setShowFastGroupConfig(false)}
-          title="Edit bypasser config"
+          title={t('Edit bypasser config')}
           description={(
             <div className="mt-3 space-y-3 text-left">
               <label className="block">
                 <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-400">
-                  Match colors
+                  {t('Match colors')}
                 </div>
                 <input
                   type="text"
                   value={fastGroupDraft.matchColors}
                   onChange={(event) => setFastGroupDraft((current) => ({ ...current, matchColors: event.target.value }))}
                   className={fieldClassName}
-                  placeholder="Green, Yellow, #8A8"
+                  placeholder={t('Green, Yellow, #8A8')}
                 />
               </label>
               <label className="block">
                 <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-400">
-                  Match title
+                  {t('Match title')}
                 </div>
                 <input
                   type="text"
@@ -475,44 +477,44 @@ export function FastGroupsBypasserControls({
               </label>
               <label className="block">
                 <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-400">
-                  Sort
+                  {t('Sort')}
                 </div>
                 <select
                   value={fastGroupDraft.sort}
                   onChange={(event) => setFastGroupDraft((current) => ({ ...current, sort: event.target.value }))}
                   className={fieldClassName}
                 >
-                  <option value="position">Position</option>
-                  <option value="alphanumeric">Alphanumeric</option>
-                  <option value="custom alphabet">Custom alphabet</option>
+                  <option value="position">{t('Position')}</option>
+                  <option value="alphanumeric">{t('Alphanumeric')}</option>
+                  <option value="custom alphabet">{t('Custom alphabet')}</option>
                 </select>
               </label>
               <label className="block">
                 <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-400">
-                  Custom alphabet
+                  {t('Custom alphabet')}
                 </div>
                 <input
                   type="text"
                   value={fastGroupDraft.customSortAlphabet}
                   onChange={(event) => setFastGroupDraft((current) => ({ ...current, customSortAlphabet: event.target.value }))}
                   className={fieldClassName}
-                  placeholder="ABCDEF or A,B,C"
+                  placeholder={t('ABCDEF or A,B,C')}
                 />
               </label>
               <label className="block">
                 <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-400">
-                  Toggle restriction
+                  {t('Toggle restriction')}
                 </div>
                 <input
                   type="text"
                   value={fastGroupDraft.toggleRestriction}
                   onChange={(event) => setFastGroupDraft((current) => ({ ...current, toggleRestriction: event.target.value }))}
                   className={fieldClassName}
-                  placeholder="default"
+                  placeholder={t('default')}
                 />
               </label>
               <label className={`flex items-center justify-between px-3 py-2 text-slate-100 ${controlNestedSurfaceClassName}`}>
-                <span className={`${controlLabelClassName} text-slate-100`}>Show all graphs</span>
+                <span className={`${controlLabelClassName} text-slate-100`}>{t('Show all graphs')}</span>
                 <input
                   type="checkbox"
                   className="h-4 w-4 accent-cyan-500"
@@ -521,7 +523,7 @@ export function FastGroupsBypasserControls({
                 />
               </label>
               <label className={`flex items-center justify-between px-3 py-2 text-slate-100 ${controlNestedSurfaceClassName}`}>
-                <span className={`${controlLabelClassName} text-slate-100`}>Show nav</span>
+                <span className={`${controlLabelClassName} text-slate-100`}>{t('Show nav')}</span>
                 <input
                   type="checkbox"
                   className="h-4 w-4 accent-cyan-500"
@@ -533,12 +535,12 @@ export function FastGroupsBypasserControls({
           )}
           actions={[
             {
-              label: 'Cancel',
+              label: t('Cancel'),
               onClick: () => setShowFastGroupConfig(false),
               variant: 'secondary',
             },
             {
-              label: 'Confirm',
+              label: t('Confirm'),
               onClick: applyFastGroupConfig,
               variant: 'primary',
               className: isBypassed ? 'cursor-not-allowed opacity-60' : undefined,

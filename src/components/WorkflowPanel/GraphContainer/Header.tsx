@@ -25,6 +25,7 @@ import { SelectionCheckbox } from '@/components/buttons/SelectionCheckbox';
 import { useWorkflowSelectionStore } from '@/hooks/useWorkflowSelection';
 import { resolveWorkflowColor, themeColors, workflowColorPickerOptions } from "@/theme/colors";
 import { hexToRgba } from "@/utils/grouping";
+import { useI18n } from "@/i18n";
 
 type GraphContainerType = "group" | "subgraph";
 
@@ -104,6 +105,7 @@ export function GraphContainerHeader({
   selectionKey,
   selectionMemberKeys,
 }: GraphContainerHeaderProps) {
+  const { t } = useI18n();
   const selectionMode = useWorkflowSelectionStore((s) => s.selectionMode);
   const isContainerSelected = useWorkflowSelectionStore((s) =>
     selectionKey ? s.selectedKeys.includes(selectionKey) : false,
@@ -346,7 +348,7 @@ export function GraphContainerHeader({
       {showSelectionCheckbox ? (
         <SelectionCheckbox
           selected={isContainerSelected}
-          ariaLabel={isContainerSelected ? 'Deselect group' : 'Select group'}
+          ariaLabel={isContainerSelected ? t('Deselect group') : t('Select group')}
           onClick={(event) => {
             event.stopPropagation();
             if (selectionKey) toggleSelectionKey(selectionKey, selectionMemberKeys ?? []);
@@ -389,7 +391,7 @@ export function GraphContainerHeader({
                     key={`${key}-${index}`}
                     type="button"
                     title={label}
-                    aria-label={`Set color: ${label}`}
+                  aria-label={t('Set color: {label}', { label })}
                     className={`w-9 aspect-square rounded-full transition-transform active:scale-95 ${
                       isSelected ? "ring-2 ring-offset-1 ring-cyan-300 ring-offset-slate-900" : ""
                     }`}
@@ -418,7 +420,7 @@ export function GraphContainerHeader({
               items={[
                 {
                   key: 'edit-label',
-                  label: 'Edit label',
+                  label: t('Edit label'),
                   icon: <EditIcon className="w-4 h-4" />,
                   onClick: (event) => {
                     event.stopPropagation();
@@ -429,7 +431,7 @@ export function GraphContainerHeader({
                 },
                 {
                   key: 'change-color',
-                  label: 'Change color',
+                  label: t('Change color'),
                   icon: (
                     <span
                       className="inline-block w-3 h-3 rounded-full"
@@ -463,7 +465,7 @@ export function GraphContainerHeader({
                 },
                 {
                   key: 'toggle-bookmark',
-                  label: isBookmarked ? "Remove bookmark" : "Bookmark",
+                  label: isBookmarked ? t("Remove bookmark") : t("Bookmark"),
                   icon: <BookmarkIconSvg className="w-4 h-4 text-amber-500" />,
                   onClick: (event) => {
                     event.stopPropagation();
@@ -474,7 +476,7 @@ export function GraphContainerHeader({
                 },
                 {
                   key: 'select-group',
-                  label: 'Select',
+                  label: t('Select'),
                   icon: <CheckIcon className="w-4 h-4" />,
                   onClick: (event) => {
                     event.stopPropagation();
@@ -488,7 +490,7 @@ export function GraphContainerHeader({
                 },
                 {
                   key: 'add-node',
-                  label: 'Add node',
+                  label: t('Add node'),
                   icon: <PlusIcon className="w-4 h-4" />,
                   onClick: (event) => {
                     event.stopPropagation();
@@ -499,7 +501,7 @@ export function GraphContainerHeader({
                 {
                   key: 'fold-all',
                   label: foldAllLabel,
-                  icon: foldAllLabel === "Fold all"
+                  icon: foldAllLabel === t("Fold all")
                     ? <CaretRightIcon className="w-4 h-4" />
                     : <CaretDownIcon className="w-4 h-4" />,
                   onClick: (event) => {
@@ -507,11 +509,11 @@ export function GraphContainerHeader({
                     onToggleFoldAll();
                     closeMenu();
                   },
-                  hidden: isCollapsed && foldAllLabel === "Unfold all"
+                  hidden: isCollapsed && foldAllLabel === t("Unfold all")
                 },
                 {
                   key: 'bypass-all',
-                  label: 'Bypass all nodes',
+                  label: t('Bypass all nodes'),
                   icon: <BypassToggleIcon isBypassed className="w-4 h-4" />,
                   onClick: (event) => {
                     event.stopPropagation();
@@ -522,7 +524,7 @@ export function GraphContainerHeader({
                 },
                 {
                   key: 'unbypass-all',
-                  label: 'Engage all nodes',
+                  label: t('Engage all nodes'),
                   icon: <BypassToggleIcon isBypassed={false} className="w-4 h-4" />,
                   onClick: (event) => {
                     event.stopPropagation();
@@ -533,7 +535,7 @@ export function GraphContainerHeader({
                 },
                 {
                   key: 'show-hidden-nodes',
-                  label: 'Show hidden nodes',
+                  label: t('Show hidden nodes'),
                   icon: <EyeOffIcon className="w-4 h-4" />,
                   onClick: (event) => {
                     event.stopPropagation();
@@ -544,7 +546,7 @@ export function GraphContainerHeader({
                 },
                 {
                   key: 'hide-container',
-                  label: `Hide ${containerType}`,
+                  label: containerType === 'group' ? t('Hide group') : t('Hide subgraph'),
                   icon: <EyeOffIcon className="w-4 h-4" />,
                   onClick: (event) => {
                     event.stopPropagation();
@@ -554,7 +556,7 @@ export function GraphContainerHeader({
                 },
                 {
                   key: 'copy-container',
-                  label: `Copy ${containerType}`,
+                  label: containerType === 'group' ? t('Copy group') : t('Copy subgraph'),
                   icon: <ClipboardIcon className="w-4 h-4" />,
                   onClick: (event) => {
                     event.stopPropagation();
@@ -564,7 +566,7 @@ export function GraphContainerHeader({
                 },
                 {
                   key: 'paste-into-container',
-                  label: pasteSummary ? `Paste ${pasteSummary} here` : 'Paste here',
+                  label: pasteSummary ? t('Paste {summary} here', { summary: pasteSummary }) : t('Paste here'),
                   icon: <ClipboardDownloadIcon className="w-4 h-4" />,
                   onClick: (event) => {
                     event.stopPropagation();
@@ -575,7 +577,7 @@ export function GraphContainerHeader({
                 },
                 {
                   key: 'move-container',
-                  label: `Move ${containerType}`,
+                  label: containerType === 'group' ? t('Move group') : t('Move subgraph'),
                   icon: <MoveUpDownIcon className="w-4 h-4" />,
                   onClick: (event) => {
                     event.stopPropagation();
@@ -585,7 +587,7 @@ export function GraphContainerHeader({
                 },
                 {
                   key: 'delete-container',
-                  label: `Delete ${containerType}`,
+                  label: containerType === 'group' ? t('Delete group') : t('Delete subgraph'),
                   icon: <TrashIcon className="w-4 h-4" />,
                   color: 'danger',
                   onClick: (event) => {

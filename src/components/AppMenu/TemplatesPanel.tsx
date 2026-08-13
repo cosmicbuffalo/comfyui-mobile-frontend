@@ -6,6 +6,7 @@ import { MenuSubPageHeader } from './MenuSubPageHeader';
 import { MenuErrorNotice } from './MenuErrorNotice';
 import type { WorkflowTemplates } from '@/api/client';
 import { useTemplateFavoritesStore, templateFavoriteKey } from '@/hooks/useTemplateFavorites';
+import { useI18n } from '@/i18n';
 import {
   menuInputClassName,
   menuMutedTextClassName,
@@ -31,6 +32,7 @@ export function TemplatesPanel({
   onDismissError,
   onLoadTemplate,
 }: TemplatesPanelProps) {
+  const { t } = useI18n();
   const [search, setSearch] = useState('');
   const [favoritesOnly, setFavoritesOnly] = useState(false);
   const favorites = useTemplateFavoritesStore((s) => s.favorites);
@@ -54,7 +56,7 @@ export function TemplatesPanel({
 
   return (
     <div className="flex flex-col h-full">
-      <MenuSubPageHeader title="Templates" onBack={onBack} />
+      <MenuSubPageHeader title={t('Templates')} onBack={onBack} />
       <MenuErrorNotice error={error} onDismiss={onDismissError} />
 
       {!loading && hasTemplates && (
@@ -63,7 +65,7 @@ export function TemplatesPanel({
             <SearchBar
               value={search}
               onChange={setSearch}
-              placeholder="Search"
+              placeholder={t('Search')}
               inputClassName={menuInputClassName}
             />
           </div>
@@ -71,7 +73,7 @@ export function TemplatesPanel({
             type="button"
             onClick={() => setFavoritesOnly((v) => !v)}
             aria-pressed={favoritesOnly}
-            aria-label={favoritesOnly ? 'Show all' : 'Show bookmarks only'}
+            aria-label={favoritesOnly ? t('Show all') : t('Show bookmarks only')}
             className={`w-9 self-stretch flex items-center justify-center rounded-lg transition-colors ${
               favoritesOnly
                 ? 'bg-amber-500/20 text-amber-500'
@@ -92,10 +94,10 @@ export function TemplatesPanel({
           <LoadingSpinner />
         </div>
       ) : !hasTemplates ? (
-        <p className={`${menuMutedTextClassName} text-center py-8`}>No templates available</p>
+        <p className={`${menuMutedTextClassName} text-center py-8`}>{t('No templates available')}</p>
       ) : filteredEntries.length === 0 ? (
         <p className={`${menuMutedTextClassName} text-center py-8`}>
-          {favoritesOnly && !search.trim() ? 'No bookmarked templates' : 'No matching templates'}
+          {favoritesOnly && !search.trim() ? t('No bookmarked templates') : t('No matching templates')}
         </p>
       ) : (
         <div className="space-y-4 overflow-y-auto flex-1">
@@ -126,7 +128,7 @@ export function TemplatesPanel({
                         type="button"
                         onClick={() => toggleFavorite(favKey)}
                         aria-pressed={isBookmarked}
-                        aria-label={isBookmarked ? 'Remove bookmark' : 'Bookmark'}
+                        aria-label={isBookmarked ? t('Remove bookmark') : t('Bookmark')}
                         className={`w-9 h-9 mr-2 flex items-center justify-center rounded-lg shrink-0 transition-colors hover:bg-white/10 ${
                           isBookmarked ? 'text-amber-500' : 'text-slate-400'
                         }`}

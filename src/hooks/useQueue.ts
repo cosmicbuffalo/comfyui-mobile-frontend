@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
+import { t } from '@/i18n';
 import * as api from '@/api/client';
 import type { HistoryOutputImage } from '@/api/types';
 import type { QueuePromptMetadata } from '@/api/client';
@@ -333,7 +334,7 @@ export const useQueueStore = create<QueueState>()(
           });
         } catch (err) {
           console.error('Failed to clear queue:', err);
-          set({ actionError: 'Failed to cancel pending generations' });
+          set({ actionError: t('Failed to cancel pending generations') });
         }
       },
 
@@ -363,7 +364,7 @@ export const useQueueStore = create<QueueState>()(
           });
         } catch (err) {
           console.error('Failed to delete queue item:', err);
-          set({ actionError: 'Failed to cancel the queued generation' });
+          set({ actionError: t('Failed to cancel the queued generation') });
         }
       },
 
@@ -372,7 +373,7 @@ export const useQueueStore = create<QueueState>()(
           await api.interruptExecution();
         } catch (err) {
           console.error('Failed to interrupt execution:', err);
-          set({ actionError: 'Failed to interrupt the running generation' });
+          set({ actionError: t('Failed to interrupt the running generation') });
         }
       },
 

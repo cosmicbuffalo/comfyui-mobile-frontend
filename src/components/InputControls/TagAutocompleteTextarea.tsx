@@ -14,6 +14,7 @@ import {
   useAutocompleteStore,
 } from '@/hooks/useAutocompleteStore';
 import { getVisualViewportFrame } from '@/hooks/useVisualViewportFrame';
+import { useI18n } from '@/i18n';
 import { getCaretCoordinates } from '@/utils/caretCoordinates';
 import { computeDropdownPlacement } from '@/utils/dropdownPlacement';
 
@@ -71,6 +72,7 @@ export function TagAutocompleteTextarea({
   style,
   autoFocus,
 }: TagAutocompleteTextareaProps) {
+  const { t } = useI18n();
   const active = useAutocompleteStore(selectAutocompleteActive);
   const dataStatus = useAutocompleteStore((s) => s.dataStatus);
   const getSuggestions = useAutocompleteStore((s) => s.getSuggestions);
@@ -309,7 +311,7 @@ export function TagAutocompleteTextarea({
           >
             <button
               type="button"
-              aria-label="Dismiss autocomplete"
+              aria-label={t("Dismiss autocomplete")}
               className="absolute -right-3 -top-3 z-10 flex h-7 w-7 items-center justify-center rounded-full border border-white/15 bg-slate-800 text-slate-300 shadow-md hover:bg-slate-700 hover:text-white"
               onMouseDown={(e) => {
                 // Keep the textarea focused; the tap should only close the list.

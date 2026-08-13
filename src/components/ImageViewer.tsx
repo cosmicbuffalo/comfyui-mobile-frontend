@@ -14,6 +14,7 @@ import { deleteFile, type FileItem } from '@/api/client';
 import { shareOrDownloadFile } from '@/utils/downloads';
 import { Dialog } from '@/components/modals/Dialog';
 import { UseImageModal } from '@/components/modals/UseImageModal';
+import { useI18n } from '@/i18n';
 import {
   loadWorkflowFromFile,
   resolveFilePath,
@@ -38,6 +39,7 @@ function sleep(ms: number): Promise<void> {
 }
 
 export function ImageViewer({ onClose }: ImageViewerProps) {
+  const { t } = useI18n();
   const open = useImageViewerStore((s) => s.viewerOpen);
   const images = useImageViewerStore((s) => s.viewerImages);
   const index = useImageViewerStore((s) => s.viewerIndex);
@@ -214,8 +216,8 @@ export function ImageViewer({ onClose }: ImageViewerProps) {
   }, [open, followQueueActive, followQueueLiveItems, followQueueFinishedHistoryItems, followFinishOrder, history]);
 
   const followQueueViewerImages = useMemo(
-    () => buildOutputPreferredViewerImages(followQueueItems, { alt: 'Generation' }),
-    [followQueueItems],
+    () => buildOutputPreferredViewerImages(followQueueItems, { alt: t('Generation') }),
+    [followQueueItems, t],
   );
 
   // Jump trigger: the newest followed output (index 0 of the merged list above).
@@ -380,7 +382,7 @@ export function ImageViewer({ onClose }: ImageViewerProps) {
       }
     } catch (err) {
       console.error('Failed to delete file:', err);
-      window.alert('Failed to delete file.');
+      window.alert(t('Failed to delete file.'));
     } finally {
       setDeleteTarget(null);
     }
@@ -537,7 +539,7 @@ export function ImageViewer({ onClose }: ImageViewerProps) {
         showLoadingPlaceholder={showLoadingPlaceholder}
         loadingPreviewSrc={loadingPreviewSrc}
         loadingProgress={displayProgress}
-        loadingLabel={isGenerating ? `${displayProgress}%` : 'Waiting for output'}
+        loadingLabel={isGenerating ? `${displayProgress}%` : t('Waiting for output')}
         loadWorkflowProgress={loadWorkflowProgress}
         initialScale={initialScale}
         initialTranslate={initialTranslate}
@@ -549,16 +551,16 @@ export function ImageViewer({ onClose }: ImageViewerProps) {
           fullscreen
           background="translucent"
           onClose={() => setLoadWorkflowTarget(null)}
-          title="Unsaved changes"
-          description="Are you sure you want to load this workflow? You have unsaved changes."
+          title={t('Unsaved changes')}
+          description={t('Are you sure you want to load this workflow? You have unsaved changes.')}
           actions={[
             {
-              label: 'Cancel',
+              label: t('Cancel'),
               onClick: () => setLoadWorkflowTarget(null),
               variant: 'secondary'
             },
             {
-              label: 'Continue',
+              label: t('Continue'),
               autoFocus: true,
               onClick: () => {
                 void (async () => {
@@ -585,16 +587,16 @@ export function ImageViewer({ onClose }: ImageViewerProps) {
           fullscreen
           background="translucent"
           onClose={() => setDeleteTarget(null)}
-          title="Delete file?"
+          title={t('Delete file?')}
           description={`This will permanently delete "${deleteTarget.file.name}" from the server. This cannot be undone.`}
           actions={[
             {
-              label: 'Cancel',
+              label: t('Cancel'),
               onClick: () => setDeleteTarget(null),
               variant: 'secondary'
             },
             {
-              label: 'Delete',
+              label: t('Delete'),
               autoFocus: true,
               onClick: () => { void handleDeleteConfirm(); },
               variant: 'danger'

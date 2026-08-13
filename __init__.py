@@ -1467,9 +1467,10 @@ def setup_mobile_route():
             body = await request.json()
             # Accept either {subscription: {...}} or the raw PushSubscription JSON.
             subscription = body.get("subscription") if isinstance(body, dict) else None
+            locale = body.get("locale") if isinstance(body, dict) else None
             if subscription is None and isinstance(body, dict) and "endpoint" in body:
                 subscription = body
-            if not _mobile_web_push.add_subscription(subscription):
+            if not _mobile_web_push.add_subscription(subscription, locale):
                 return web.json_response({"error": "invalid_subscription"}, status=400)
             return web.json_response({"ok": True, "subscriptions": _mobile_web_push.subscription_count()})
         except Exception as e:
@@ -1491,10 +1492,7 @@ def setup_mobile_route():
             if not _mobile_web_push.is_available():
                 return web.json_response({"error": "push_unavailable"}, status=503)
             loop = asyncio.get_event_loop()
-            result = await loop.run_in_executor(
-                None, _mobile_web_push.send_to_all,
-                "Test notification", "Push notifications are working \U0001f389", {"test": True},
-            )
+            result = await loop.run_in_executor(None, _mobile_web_push.send_test)
             return web.json_response(result)
         except Exception as e:
             return web.json_response({"error": str(e)}, status=500)

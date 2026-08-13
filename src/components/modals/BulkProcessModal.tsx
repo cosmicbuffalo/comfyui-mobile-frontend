@@ -27,6 +27,7 @@ import {
   isHiddenWorkflowPath,
   isManuallyHiddenWorkflowPath,
 } from '@/components/AppMenu/userWorkflowHelpers';
+import { useI18n } from '@/i18n';
 
 interface BulkProcessModalProps {
   open: boolean;
@@ -38,6 +39,7 @@ interface BulkProcessModalProps {
 type Step = 'workflow' | 'node' | 'confirm';
 
 export function BulkProcessModal({ open, items, onClose, onComplete }: BulkProcessModalProps) {
+  const { t } = useI18n();
   const nodeTypes = useWorkflowStore((s) => s.nodeTypes);
   const registerLocalPrompt = useQueueStore((s) => s.registerLocalPrompt);
   const hiddenWorkflowPaths = useWorkflowHiddenStore((s) => s.hidden);
@@ -79,13 +81,13 @@ export function BulkProcessModal({ open, items, onClose, onComplete }: BulkProce
     setListError(null);
     listUserWorkflows()
       .then((files) => setWorkflowFiles(files.filter((f) => f.type === 'file')))
-      .catch((err) => setListError(err instanceof Error ? err.message : 'Failed to list workflows'))
+      .catch((err) => setListError(err instanceof Error ? err.message : t('Failed to list workflows')))
       .finally(() => setListLoading(false));
-  }, [open]);
+  }, [open, t]);
 
   const handleSelectWorkflow = async (file: UserDataFile) => {
     if (!nodeTypes) {
-      setWorkflowWarning('Node definitions are still loading — try again in a moment.');
+      setWorkflowWarning(t('Node definitions are still loading — try again in a moment.'));
       return;
     }
     setWorkflowBusy(true);
@@ -114,7 +116,7 @@ export function BulkProcessModal({ open, items, onClose, onComplete }: BulkProce
         setStep('node');
       }
     } catch (err) {
-      setWorkflowWarning(err instanceof Error ? err.message : 'Failed to load workflow.');
+      setWorkflowWarning(err instanceof Error ? err.message : t('Failed to load workflow.'));
     } finally {
       setWorkflowBusy(false);
     }
@@ -143,7 +145,7 @@ export function BulkProcessModal({ open, items, onClose, onComplete }: BulkProce
         const hideCopiedInput = Boolean(item.hidden || selectedWorkflowHidden);
         const imageValue = await resolveInputPathForFile(item, source, { hideCopiedInput });
         const clone = cloneWithImage(selectedWorkflow, nodeTypes, selectedTarget, imageValue);
-        if (!clone) throw new Error('Could not set the image on the chosen node.');
+        if (!clone) throw new Error(t('Could not set the image on the chosen node.'));
         const prompt = buildPromptFromWorkflow(clone, nodeTypes);
         const response = await queuePrompt({
           prompt,
@@ -193,7 +195,7 @@ export function BulkProcessModal({ open, items, onClose, onComplete }: BulkProce
               className="text-cyan-300 hover:text-cyan-200 text-xs"
               onClick={() => setStep('workflow')}
             >
-              ‹ Back
+              ‹ {t('Back')}
             </button>
           )}
           {step === 'confirm' && !running && !summary && (
@@ -206,27 +208,29 @@ export function BulkProcessModal({ open, items, onClose, onComplete }: BulkProce
             </button>
           )}
           <span>
-            {step === 'workflow' && 'Bulk process — pick a workflow'}
-            {step === 'node' && 'Pick a Load Image node'}
-            {step === 'confirm' && 'Confirm bulk process'}
+            {step === 'workflow' && t('Bulk process — pick a workflow')}
+            {step === 'node' && t('Pick a Load Image node')}
+            {step === 'confirm' && t('Confirm bulk process')}
           </span>
         </div>
 
         <div className="px-4 pt-3 text-xs text-slate-400">
-          {items.length} image{items.length === 1 ? '' : 's'} selected
+          {items.length === 1
+            ? t('{count} image selected', { count: items.length })
+            : t('{count} images selected', { count: items.length })}
         </div>
 
         {/* Step: workflow picker */}
         {step === 'workflow' && (
           <div className="max-h-[50vh] overflow-y-auto">
             {listLoading && (
-              <div className="px-4 py-3 text-sm text-slate-400">Loading workflows…</div>
+              <div className="px-4 py-3 text-sm text-slate-400">{t('Loading workflows…')}</div>
             )}
             {listError && (
               <div className="px-4 py-3 text-sm text-red-400">{listError}</div>
             )}
             {!listLoading && !listError && workflowFiles.length === 0 && (
-              <div className="px-4 py-3 text-sm text-slate-400">No saved workflows found.</div>
+              <div className="px-4 py-3 text-sm text-slate-400">{t('No saved workflows found.')}</div>
             )}
             {workflowFiles.map((file) => (
               <button
@@ -237,7 +241,7 @@ export function BulkProcessModal({ open, items, onClose, onComplete }: BulkProce
               >
                 <span className="flex-1 text-slate-100 truncate">{getDisplayName(file.name)}</span>
                 {workflowBusy && selectedFilename === file.name && (
-                  <span className="text-xs text-slate-400">Loading…</span>
+                  <span className="text-xs text-slate-400">{t('Loading…')}</span>
                 )}
               </button>
             ))}
@@ -260,7 +264,7 @@ export function BulkProcessModal({ open, items, onClose, onComplete }: BulkProce
                   <span className="text-slate-400">#{target.node.id}</span>
                   <span className="flex-1 text-slate-100 truncate">{label}</span>
                   {target.subgraphId && (
-                    <span className="text-xs text-slate-500">subgraph</span>
+                    <span className="text-xs text-slate-500">{t('subgraph')}</span>
                   )}
                 </button>
               );
@@ -274,27 +278,31 @@ export function BulkProcessModal({ open, items, onClose, onComplete }: BulkProce
             {!summary ? (
               <>
                 <p>
-                  Queue <span className="font-semibold">{items.length}</span> run
-                  {items.length === 1 ? '' : 's'} of{' '}
-                  <span className="font-semibold">
-                    {selectedFilename ? getDisplayName(selectedFilename) : 'workflow'}
-                  </span>
-                  , one per selected image, into{' '}
-                  <span className="font-semibold">{selectedLabel || 'the Load Image node'}</span>.
+                  {items.length === 1
+                    ? t('Queue {count} run of {workflow}, one per selected image, into {node}.', {
+                        count: items.length,
+                        workflow: selectedFilename ? getDisplayName(selectedFilename) : t('workflow'),
+                        node: selectedLabel || t('the Load Image node'),
+                      })
+                    : t('Queue {count} runs of {workflow}, one per selected image, into {node}.', {
+                        count: items.length,
+                        workflow: selectedFilename ? getDisplayName(selectedFilename) : t('workflow'),
+                        node: selectedLabel || t('the Load Image node'),
+                      })}
                 </p>
                 {running && (
                   <p className="mt-3 text-xs text-slate-400">
-                    Queued {progress} / {items.length}…
+                    {t('Queued {count} / {total}…', { count: progress, total: items.length })}
                   </p>
                 )}
               </>
             ) : (
               <p>
-                Queued <span className="font-semibold">{summary.queued}</span> of {items.length}
+                {t('Queued {count} of {total}', { count: summary.queued, total: items.length })}
                 {summary.failed > 0 && (
                   <>
                     {' '}
-                    — <span className="text-red-400">{summary.failed} failed</span>
+                    — <span className="text-red-400">{t('{count} failed', { count: summary.failed })}</span>
                     {summary.error ? ` (${summary.error})` : ''}
                   </>
                 )}
@@ -318,14 +326,14 @@ export function BulkProcessModal({ open, items, onClose, onComplete }: BulkProce
                 onClick={onClose}
                 disabled={running}
               >
-                Cancel
+                {t('Cancel')}
               </button>
               <button
                 className="px-3 py-2 text-sm font-medium text-slate-900 bg-cyan-300 hover:bg-cyan-200 rounded-lg disabled:opacity-60"
                 onClick={handleRun}
                 disabled={running}
               >
-                {running ? 'Queuing…' : 'Run'}
+                {running ? t('Queuing…') : t('Run')}
               </button>
             </>
           ) : (
@@ -334,7 +342,7 @@ export function BulkProcessModal({ open, items, onClose, onComplete }: BulkProce
               onClick={onClose}
               disabled={running}
             >
-              {summary ? 'Done' : 'Close'}
+              {summary ? t('Done') : t('Close')}
             </button>
           )}
         </div>

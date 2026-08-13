@@ -43,6 +43,7 @@ import { isGetNode, isSetGetNode, isSetNode } from '@/utils/setGetNodes';
 import { isUninstalledNodeType } from '@/utils/missingNodes';
 import { useCustomNodesManager } from '@/hooks/useCustomNodesManager';
 import { useSetGetNameEditStore } from '@/hooks/useSetGetNameEdit';
+import { useI18n } from '@/i18n';
 import { NodeCardHeader } from './NodeCard/Header';
 import { DeleteNodeModal } from '@/components/modals/DeleteNodeModal';
 import { ErrorHighlightBadge } from './NodeCard/ErrorHighlightBadge';
@@ -84,6 +85,7 @@ export const NodeCard = memo(function NodeCard({
   onMoveNode,
   onEnterSubgraph,
 }: NodeCardProps) {
+  const { t } = useI18n();
   const nodeTypes = useWorkflowStore((s) => s.nodeTypes);
   const workflow = useWorkflowStore((s) => s.workflow);
   const updateNodeWidget = useWorkflowStore((s) => s.updateNodeWidget);
@@ -1053,7 +1055,7 @@ export const NodeCard = memo(function NodeCard({
         rightSlot={selectionMode ? (
           <SelectionCheckbox
             selected={isNodeSelected}
-            ariaLabel={isNodeSelected ? 'Deselect' : 'Select'}
+            ariaLabel={isNodeSelected ? t('Deselect') : t('Select')}
             onClick={(event) => {
               event.stopPropagation();
               toggleSelectionKey(nodeHierarchicalKey);
@@ -1125,9 +1127,9 @@ export const NodeCard = memo(function NodeCard({
           <div id={`node-content-${node.id}`} className={`node-expanded-content ${isBypassed ? 'opacity-60 grayscale' : ''}`}>
             {isMissingNode ? (
               <div className="missing-node-body px-2 py-3 text-center">
-                <div className="text-sm font-semibold text-red-300">Missing Node</div>
+                <div className="text-sm font-semibold text-red-300">{t('Missing Node')}</div>
                 <div className="mt-0.5 font-mono text-xs text-slate-400 [overflow-wrap:anywhere]">{node.type}</div>
-                <div className="mt-1 text-xs text-slate-500">Not installed — tap the red icon to install.</div>
+                <div className="mt-1 text-xs text-slate-500">{t('Not installed — tap the red icon to install.')}</div>
               </div>
             ) : (
             <>

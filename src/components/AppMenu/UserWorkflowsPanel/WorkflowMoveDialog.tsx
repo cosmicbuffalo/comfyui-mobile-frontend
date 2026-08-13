@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { ChevronLeftBoldIcon, FolderIcon } from '@/components/icons';
 import { Dialog } from '@/components/modals/Dialog';
 import { type UserDataFile } from '@/api/client';
+import { useI18n } from '@/i18n';
 import {
   getRelativePath,
   getDirectChildren,
@@ -21,6 +22,7 @@ export function WorkflowMoveDialog({
   onMove: (destinationDirectory: string) => void;
   onClose: () => void;
 }) {
+  const { t } = useI18n();
   const [destinationDirectory, setDestinationDirectory] = useState('');
   const destinationFolderPath = destinationDirectory
     ? `workflows/${destinationDirectory}`
@@ -37,16 +39,16 @@ export function WorkflowMoveDialog({
     destinationDirectory,
     userWorkflows,
   );
-  const destinationLabel = destinationDirectory || 'My Workflows';
+  const destinationLabel = destinationDirectory || t('My Workflows');
 
   return (
     <Dialog
       size="md"
-      title={`Move ${target.type === 'directory' ? 'folder' : 'workflow'}`}
+      title={target.type === 'directory' ? t('Move folder') : t('Move workflow')}
       description={
         <div className="mt-2 space-y-2">
           <div className="rounded-lg border border-white/10 bg-slate-950/60 px-3 py-2">
-            <div className="text-xs text-slate-400">Destination</div>
+            <div className="text-xs text-slate-400">{t('Destination')}</div>
             <div className="mt-0.5 truncate font-medium text-slate-100">
               {destinationLabel}
             </div>
@@ -58,7 +60,7 @@ export function WorkflowMoveDialog({
               className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-slate-300 hover:bg-white/10 hover:text-slate-100"
             >
               <ChevronLeftBoldIcon className="h-4 w-4" />
-              <span>Parent folder</span>
+              <span>{t('Parent folder')}</span>
             </button>
           )}
           <div className="max-h-64 space-y-1 overflow-y-auto">
@@ -78,21 +80,21 @@ export function WorkflowMoveDialog({
             })}
             {childFolders.length === 0 && (
               <p className="px-3 py-4 text-center text-xs text-slate-500">
-                No subfolders
+                {t('No subfolders')}
               </p>
             )}
           </div>
           {!canMove && (
             <p className="text-xs text-slate-500">
-              Choose a different folder without an item of the same name.
+              {t('Choose a different folder without an item of the same name.')}
             </p>
           )}
         </div>
       }
       actions={[
-        { label: 'Cancel', variant: 'secondary', onClick: onClose },
+        { label: t('Cancel'), variant: 'secondary', onClick: onClose },
         {
-          label: 'Move here',
+          label: t('Move here'),
           variant: 'primary',
           disabled: !canMove,
           onClick: () => onMove(destinationDirectory),

@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
+import { t } from '@/i18n';
 import * as api from '@/api/client';
 import type { FileItem, AssetSource, SortMode } from '@/api/client';
 
@@ -746,7 +747,7 @@ export const useOutputsStore = create<OutputsState>()(
           // Distinguish "the search failed" from "no matches".
           set({
             promptSearchLoading: false,
-            promptSearchError: (err as Error).message || 'Prompt search failed',
+            promptSearchError: (err as Error).message || t('Prompt search failed'),
           });
         }
       },

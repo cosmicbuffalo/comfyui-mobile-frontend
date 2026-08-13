@@ -5,6 +5,7 @@ import { useRecentWorkflowsStore, type RecentWorkflowEntry } from '@/hooks/useRe
 import { getDisplayName } from './userWorkflowHelpers';
 import { formatRelativeDate } from './formatRelativeDate';
 import { getFileWorkflowAvailability } from '@/api/client';
+import { t as globalT, useI18n } from '@/i18n';
 import {
   menuMutedTextClassName,
   menuSmallIconClassName,
@@ -27,13 +28,13 @@ function getSourceLabel(entry: RecentWorkflowEntry): string | null {
   if (!entry.source) return null;
   switch (entry.source.type) {
     case 'user': return null;
-    case 'template': return 'Template';
-    case 'history': return 'History';
+    case 'template': return globalT('Template');
+    case 'history': return globalT('History');
     case 'file':
       switch (entry.source.assetSource) {
-        case 'input': return 'Input';
-        case 'temp': return 'Temp';
-        default: return 'Output';
+        case 'input': return globalT('Input');
+        case 'temp': return globalT('Temp');
+        default: return globalT('Output');
       }
     case 'other': return null;
   }
@@ -65,6 +66,7 @@ export function RecentWorkflowsPanel({
   onLoadTemplate,
   onLoadFileWorkflow,
 }: RecentWorkflowsPanelProps) {
+  const { t } = useI18n();
   const entries = useRecentWorkflowsStore((s) => s.entries);
   const clearEntries = useRecentWorkflowsStore((s) => s.clearEntries);
 
@@ -128,14 +130,14 @@ export function RecentWorkflowsPanel({
   return (
     <div className="flex flex-col h-full">
       <MenuSubPageHeader
-        title="Recent"
+        title={t('Recent')}
         onBack={onBack}
         rightElement={entries.length > 0 ? (
           <button
             onClick={clearEntries}
             className="text-xs font-semibold text-red-300"
           >
-            Clear
+            {t('Clear')}
           </button>
         ) : undefined}
       />
@@ -143,7 +145,7 @@ export function RecentWorkflowsPanel({
       {entries.length === 0 ? (
         <div className={`flex flex-col items-center justify-center py-12 ${menuMutedTextClassName}`}>
           <ClockIcon className="w-10 h-10 mb-3 text-slate-600" />
-          <p className="text-sm">No recent workflows</p>
+          <p className="text-sm">{t('No recent workflows')}</p>
         </div>
       ) : (
         <div className="space-y-2 overflow-y-auto flex-1">
@@ -175,7 +177,7 @@ export function RecentWorkflowsPanel({
                     {unavailable.has(i) && (
                       <>
                         <span className="text-slate-600">&middot;</span>
-                        <span className="text-red-300">File missing</span>
+                        <span className="text-red-300">{t('File missing')}</span>
                       </>
                     )}
                   </div>

@@ -18,6 +18,7 @@ import {
   getSpecialSeedMode,
   useWorkflowStore
 } from '@/hooks/useWorkflow';
+import { useI18n } from '@/i18n';
 import { RGTHREE_SEED_NODE_TYPE, hasSeedControlWidget } from '@/utils/seedUtils';
 import { useLoraManagerStore } from '@/hooks/useLoraManager';
 import { useSeedStore } from '@/hooks/useSeed';
@@ -115,6 +116,7 @@ export function NodeCardParameters({
   unfoldNonce,
   hasOutputsBelow = false
 }: NodeCardParametersProps) {
+  const { t } = useI18n();
   const widgetValues = Array.isArray(node.widgets_values) ? node.widgets_values : [];
   const nodeTypes = useWorkflowStore((state) => state.nodeTypes);
   const popWidgetToPrimitive = useWorkflowStore((state) => state.popWidgetToPrimitive);
@@ -746,13 +748,13 @@ export function NodeCardParameters({
     <div className={`node-parameters ${hasOutputsBelow ? 'mb-2' : ''}`}>
       <div className="parameters-section-header grid grid-cols-[1fr_auto_1fr] items-center gap-2 mb-1.5 text-xs uppercase tracking-wide text-slate-500">
         <div className="flex min-w-0 items-center gap-2">
-          <span className="shrink-0">Parameters</span>
+          <span className="shrink-0">{t('Parameters')}</span>
           <span className="h-px min-w-0 flex-1 bg-slate-700" aria-hidden="true" />
         </div>
         <SectionFoldButton
           expanded={parametersExpanded}
           onToggle={() => toggleParametersCollapsed(node.itemKey ?? '')}
-          label="parameters"
+          label={t('parameters')}
         />
         <div className="flex min-w-0 items-center gap-2">
           <span className="h-px min-w-0 flex-1 bg-slate-700" aria-hidden="true" />
@@ -795,7 +797,7 @@ export function NodeCardParameters({
                 />
                 {seedControlIndex < widgetValues.length && !hideSeedControl && (
                   <WidgetControl
-                    name="Control mode"
+                    name={t('Control mode')}
                     type="COMBO"
                     value={seedControlValue}
                     options={seedControlChoices}
@@ -845,7 +847,7 @@ export function NodeCardParameters({
                     isPromoted={isPromotedWidget('seed')}
                   />
                   <WidgetControl
-                    name="Seed control"
+                    name={t('Seed control')}
                     type="COMBO"
                     value={seedControlValue}
                     options={choices}
@@ -880,7 +882,7 @@ export function NodeCardParameters({
                 />
                 {!isRgthreeSeedNode && (
                   <WidgetControl
-                    name="Seed control"
+                    name={t('Seed control')}
                     type="COMBO"
                     value={seedMode}
                     options={baseChoices}
@@ -967,7 +969,7 @@ export function NodeCardParameters({
                                 className={`w-full py-2 rounded-lg text-sm font-semibold transition-colors ${enabled ? 'bg-cyan-500 text-slate-950' : 'bg-slate-700 text-slate-200'} ${isBypassed ? 'opacity-60 cursor-not-allowed' : ''}`}
                                 disabled={isBypassed}
                               >
-                                {enabled ? 'Enabled' : 'Disabled'}
+                                {enabled ? t('Enabled') : t('Disabled')}
                               </button>
                             );
                           })()}
@@ -978,9 +980,9 @@ export function NodeCardParameters({
                               const widgetOptions = applyCrLoraComboDisplayOptions(widget);
                               const displayName = (() => {
                                 const base = groupMeta?.base ?? '';
-                                if (base.includes('lora_name')) return 'Selected LoRA';
-                                if (base.includes('model_weight')) return 'Model Strength';
-                                if (base.includes('clip_weight')) return 'Clip Strength';
+                                if (base.includes('lora_name')) return t('Selected LoRA');
+                                if (base.includes('model_weight')) return t('Model Strength');
+                                if (base.includes('clip_weight')) return t('Clip Strength');
                                 return widget.name;
                               })();
                               // Widget is renamed for display ("Selected LoRA"), so
@@ -1072,8 +1074,8 @@ export function NodeCardParameters({
                         <button
                           type="button"
                           onClick={(e) => { e.preventDefault(); e.stopPropagation(); setPopOutTarget(widget); }}
-                          aria-label={`Pop "${widget.name}" out into a connected input node`}
-                          title="Pop out into a connected input node"
+                          aria-label={t('Pop "{name}" out into a connected input node', { name: widget.name })}
+                          title={t('Pop out into a connected input node')}
                           className="widget-popout-button inline-flex items-center gap-0.5 text-slate-400 hover:text-cyan-300 active:scale-95"
                         >
                           {/* A dotted circle (the new connection the value pops
@@ -1100,7 +1102,7 @@ export function NodeCardParameters({
             return (
               <div className="primitive-control-mode-widget mb-3">
                 <WidgetControl
-                  name="Control mode"
+                  name={t('Control mode')}
                   type="COMBO"
                   value={controlValue}
                   options={controlChoices}
@@ -1118,11 +1120,11 @@ export function NodeCardParameters({
       {popOutTarget && (
         <Dialog
           onClose={() => setPopOutTarget(null)}
-          title="Pop out into an input node?"
-          description={`This creates a new primitive node for "${popOutTarget.name}" directly above this node and connects it to the input. The current value is kept.`}
+          title={t('Pop out into an input node?')}
+          description={t('This creates a new primitive node for "{name}" directly above this node and connects it to the input. The current value is kept.', { name: popOutTarget.name })}
           actions={[
-            { label: 'Cancel', onClick: () => setPopOutTarget(null), variant: 'secondary' },
-            { label: 'Pop out', onClick: confirmPopOut, variant: 'primary', autoFocus: true },
+            { label: t('Cancel'), onClick: () => setPopOutTarget(null), variant: 'secondary' },
+            { label: t('Pop out'), onClick: confirmPopOut, variant: 'primary', autoFocus: true },
           ]}
         />
       )}

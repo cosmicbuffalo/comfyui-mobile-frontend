@@ -51,6 +51,7 @@ import {
 import { fuzzyMatch, normalizeTypes } from "@/utils/workflowSearch";
 import { useErrorBadges } from "./WorkflowPanel/useErrorBadges";
 import { useExecutionFollower } from "./WorkflowPanel/useExecutionFollower";
+import { useI18n } from "@/i18n";
 
 export const WorkflowPanel = memo(function WorkflowPanel({
   visible,
@@ -63,6 +64,7 @@ export const WorkflowPanel = memo(function WorkflowPanel({
     enableFollowQueue?: boolean,
   ) => void;
 }) {
+  const { t } = useI18n();
   const workflow = useWorkflowStore((s) => s.workflow);
   const executingNodePath = useWorkflowStore((s) => s.executingNodePath);
   const connectionHighlightModes = useWorkflowStore(
@@ -1544,7 +1546,7 @@ export const WorkflowPanel = memo(function WorkflowPanel({
         // item.children, but nodeCount/bypassedNodeCount remain accurate.
         const hasBypassedNodes = item.bypassedNodeCount > 0;
         const hasEngagedNodes = item.bypassedNodeCount < item.nodeCount;
-        const foldAllLabel = hasExpandedChildren ? "Fold all" : "Unfold all";
+        const foldAllLabel = hasExpandedChildren ? t("Fold all") : t("Unfold all");
         const handleFoldAll = () => {
           if (!hasExpandedChildren) {
             setItemCollapsed(groupHierarchicalKey, false);
@@ -1832,7 +1834,7 @@ export const WorkflowPanel = memo(function WorkflowPanel({
                 value={searchQuery}
                 onChange={setSearchQuery}
                 onClear={handleClearSearch}
-                placeholder="Search nodes..."
+                placeholder={t("Search nodes...")}
                 inputClassName="comfy-input border-white/10 bg-slate-950/80 text-slate-100 placeholder:text-slate-500 focus:ring-cyan-400"
               />
             </div>
@@ -1949,8 +1951,8 @@ export const WorkflowPanel = memo(function WorkflowPanel({
           className="pointer-events-none absolute inset-0 z-[1400] flex items-center justify-center bg-slate-950/70 backdrop-blur-[1px]"
         >
           <div className="m-4 flex flex-col items-center gap-1 rounded-2xl border-2 border-dashed border-cyan-400/70 px-8 py-6 text-center">
-            <span className="text-sm font-semibold text-cyan-200">Drop to load workflow</span>
-            <span className="text-xs text-slate-400">Workflow .json or an image with an embedded workflow</span>
+            <span className="text-sm font-semibold text-cyan-200">{t('Drop to load workflow')}</span>
+            <span className="text-xs text-slate-400">{t('Workflow .json or an image with an embedded workflow')}</span>
           </div>
         </div>
       )}
@@ -2029,7 +2031,7 @@ export const WorkflowPanel = memo(function WorkflowPanel({
               <button
                 type="button"
                 className="w-10 h-10 rounded-full border border-white/10 bg-slate-900/70 text-slate-300 shadow-sm backdrop-blur-sm flex items-center justify-center select-none"
-                aria-label="Cycle bookmarks"
+                aria-label={t("Cycle bookmarks")}
                 onClick={handleBookmarkCycleClick}
               >
                 <CaretDownIcon className="w-4 h-4" />

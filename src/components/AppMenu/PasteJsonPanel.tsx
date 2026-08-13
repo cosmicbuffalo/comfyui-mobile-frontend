@@ -1,6 +1,7 @@
 import { TextareaActions } from '../InputControls/TextareaActions';
 import { MenuSubPageHeader } from './MenuSubPageHeader';
 import { MenuErrorNotice } from './MenuErrorNotice';
+import { useI18n } from '@/i18n';
 import {
   menuInputClassName,
   menuMutedTextClassName,
@@ -27,19 +28,20 @@ export function PasteJsonPanel({
   onChangeJson,
   onLoad,
 }: PasteJsonPanelProps) {
+  const { t } = useI18n();
   return (
     <div className="flex flex-col h-full">
-      <MenuSubPageHeader title="Paste JSON" onBack={onBack} />
+      <MenuSubPageHeader title={t('Paste JSON')} onBack={onBack} />
       <MenuErrorNotice error={error} onDismiss={onDismissError} />
 
       <div className="flex-1 flex flex-col space-y-4">
         <p className={`text-sm ${menuMutedTextClassName}`}>
-          Paste your workflow JSON below.
+          {t('Paste your workflow JSON below.')}
         </p>
         <div className="group" data-textarea-root="true">
           <div className="flex items-center justify-between mb-1" data-textarea-header="true">
             <div className={`text-xs ${menuMutedTextClassName} uppercase tracking-wide`}>
-              Workflow JSON
+              {t('Workflow JSON')}
             </div>
             <TextareaActions
               value={pastedJson}
@@ -62,14 +64,14 @@ export function PasteJsonPanel({
             onClick={onBack}
             className={`flex-1 ${menuSecondaryButtonClassName}`}
           >
-            Cancel
+            {t('Cancel')}
           </button>
           <button
             onClick={onLoad}
             disabled={!pastedJson.trim()}
             className={`flex-1 ${menuPrimaryButtonClassName}`}
           >
-            Load
+            {t('Load')}
           </button>
         </div>
       </div>

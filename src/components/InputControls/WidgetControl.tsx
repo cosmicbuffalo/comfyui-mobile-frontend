@@ -16,6 +16,7 @@ import {
   controlNestedSurfaceClassName,
   controlToggleButtonClassName,
 } from "./controlStyles";
+import { useI18n } from "@/i18n";
 
 interface WidgetControlProps {
   name: string;
@@ -75,6 +76,7 @@ export function WidgetControl({
   labelAccessory,
   modelKind,
 }: WidgetControlProps) {
+  const { t } = useI18n();
   const [modalOpen, setModalOpen] = useState(false);
 
   const handleOpenModal = () => {
@@ -150,7 +152,7 @@ export function WidgetControl({
     if (isString) return <StringControl {...controlProps} />;
     return (
       <div className="unsupported-widget-type text-xs text-slate-400 italic">
-        Unsupported: {type}
+        {t('Unsupported: {type}', { type })}
       </div>
     );
   };
@@ -181,7 +183,7 @@ export function WidgetControl({
             />
           </button>
           <span className="lm-lora-header-label text-sm font-semibold text-cyan-300 uppercase tracking-wider">
-            Toggle All Loras
+            {t('Toggle All Loras')}
           </span>
         </div>
       </div>
@@ -253,7 +255,7 @@ export function WidgetControl({
             className={`lm-lora-enabled-button flex-1 py-2 text-sm ${controlToggleButtonClassName({ active: loraActive, disabled })}`}
             disabled={disabled}
           >
-            {loraActive ? "Enabled" : "Disabled"}
+            {loraActive ? t("Enabled") : t("Disabled")}
           </button>
           <button
             type="button"
@@ -261,7 +263,7 @@ export function WidgetControl({
             className={`lm-lora-remove-button flex-1 ${controlDangerButtonClassName}`}
             disabled={disabled}
           >
-            Remove
+            {t('Remove')}
           </button>
         </div>
 
@@ -288,7 +290,7 @@ export function WidgetControl({
                 name=""
                 hideLabel
                 value={loraValue.name}
-                options={{ placeholder: "LoRA name" }}
+                options={{ placeholder: t("LoRA name") }}
                 onChange={(val) => handleEntryChange({ name: String(val) })}
                 disabled={disabled}
                 hasPin={false}
@@ -300,7 +302,7 @@ export function WidgetControl({
         <div className="lm-lora-strengths flex flex-col gap-2">
           <NumberControl
             containerClass="space-y-0"
-            name={showClip ? "Model strength" : "Strength"}
+            name={showClip ? t("Model strength") : t("Strength")}
             value={Number(loraValue.strength)}
             options={{ min: -10, max: 10, step: 0.01 }}
             onChange={(val) => handleEntryChange({ strength: val })}
@@ -311,7 +313,7 @@ export function WidgetControl({
           {showClip && (
             <NumberControl
               containerClass="space-y-0"
-              name="Clip strength"
+              name={t("Clip strength")}
               value={Number(loraValue.clipStrength ?? loraValue.strength)}
               options={{ min: -10, max: 10, step: 0.01 }}
               onChange={(val) => handleEntryChange({ clipStrength: val })}
@@ -326,7 +328,7 @@ export function WidgetControl({
             className={`lm-lora-clip-toggle ${controlGhostButtonClassName}`}
             disabled={disabled}
           >
-            {showClip ? "Hide clip strength" : "Separate clip strength"}
+            {showClip ? t("Hide clip strength") : t("Separate clip strength")}
           </button>
         </div>
       </div>
@@ -388,7 +390,7 @@ export function WidgetControl({
         <div className="tw-word-header flex items-center justify-between gap-3">
           <div className="min-w-0">
             <div className="text-sm font-semibold text-slate-100 break-words">
-              {triggerValue.text || "Trigger Word"}
+              {triggerValue.text || t("Trigger Word")}
             </div>
           </div>
           <button
@@ -399,14 +401,14 @@ export function WidgetControl({
             className={`tw-word-toggle px-3 py-1.5 text-xs ${controlToggleButtonClassName({ active: triggerValue.active, disabled })}`}
             disabled={disabled}
           >
-            {triggerValue.active ? "Enabled" : "Disabled"}
+            {triggerValue.active ? t("Enabled") : t("Disabled")}
           </button>
         </div>
 
         {allowStrength && (
           <NumberControl
             containerClass="space-y-0"
-            name="Strength"
+            name={t("Strength")}
             value={Number(triggerValue.strength ?? 1)}
             options={{ min: 0, max: 10, step: 0.01 }}
             onChange={(val) => handleEntryChange({ strength: val })}
@@ -474,7 +476,7 @@ export function WidgetControl({
             className={`power-lora-enabled-button flex-1 py-2 text-sm ${controlToggleButtonClassName({ active: loraValue.on, disabled, radius: "lg" })}`}
             disabled={disabled}
           >
-            {loraValue.on ? "Enabled" : "Disabled"}
+            {loraValue.on ? t("Enabled") : t("Disabled")}
           </button>
           <button
             type="button"
@@ -482,7 +484,7 @@ export function WidgetControl({
             className={`power-lora-remove-button flex-1 ${controlDangerButtonClassName}`}
             disabled={disabled}
           >
-            Remove
+            {t('Remove')}
           </button>
         </div>
 
@@ -504,7 +506,7 @@ export function WidgetControl({
 
         <div className="power-lora-strengths flex flex-col">
           <label className="block text-sm font-medium text-slate-300 ml-1">
-            {showSeparate ? "Model strength" : "Strength"}
+            {showSeparate ? t("Model strength") : t("Strength")}
           </label>
           <div className="power-lora-strength-row flex items-center gap-3">
             <div className="power-lora-strength-input flex-grow">
@@ -551,7 +553,7 @@ export function WidgetControl({
     const handlePowerLoraAddClick = () => {
       onChange({
         on: true,
-        lora: "None",
+        lora: t("None"),
         strength: 1.0,
         model_strength: 1.0,
         clip_strength: 1.0,
@@ -624,7 +626,7 @@ export function WidgetControl({
             <div
               id={`widget-error-icon-${name}`}
               className="text-red-500"
-              title="Error in this input"
+              title={t("Error in this input")}
             >
               <WarningTriangleIcon className="w-3.5 h-3.5" />
             </div>
@@ -649,10 +651,10 @@ export function WidgetControl({
           className="value-display flex-1 truncate text-sm font-medium text-slate-100"
         >
           {isCombo
-            ? value || "Select..."
+            ? value || t("Select...")
             : value !== undefined && value !== null
               ? String(value)
-              : "Empty"}
+              : t("Empty")}
         </div>
       </div>
 

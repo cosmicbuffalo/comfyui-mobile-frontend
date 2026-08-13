@@ -3,6 +3,7 @@ import { ModalFrame } from '@/components/modals/ModalFrame';
 import { useWorkflowSelectionStore } from '@/hooks/useWorkflowSelection';
 import { useWorkflowStore } from '@/hooks/useWorkflow';
 import { appChromeIconButtonClassName, chromeBarButtonClassName } from '@/components/chromeStyles';
+import { useI18n } from '@/i18n';
 
 /**
  * Bottom-bar control shown in place of the queue button while workflow select
@@ -11,6 +12,7 @@ import { appChromeIconButtonClassName, chromeBarButtonClassName } from '@/compon
  * with the selected count once items are chosen (tap to open the bulk-ops menu).
  */
 export function WorkflowSelectionButton() {
+  const { t } = useI18n();
   const selectedKeys = useWorkflowSelectionStore((s) => s.selectedKeys);
   const actionMenuOpen = useWorkflowSelectionStore((s) => s.actionMenuOpen);
   const setActionMenuOpen = useWorkflowSelectionStore((s) => s.setActionMenuOpen);
@@ -41,7 +43,7 @@ export function WorkflowSelectionButton() {
       <button
         onClick={handleButtonClick}
         className={`${chromeBarButtonClassName} ${appChromeIconButtonClassName}`}
-        aria-label={hasSelection ? 'Selection actions' : 'Exit select mode'}
+        aria-label={hasSelection ? t('Selection actions') : t('Exit select mode')}
       >
         <div
           className={`flex h-6 min-w-6 items-center justify-center rounded-full border-2 px-1 shadow-sm ${
@@ -61,35 +63,35 @@ export function WorkflowSelectionButton() {
       {actionMenuOpen && (
         <ModalFrame onClose={() => setActionMenuOpen(false)} zIndex={1800}>
           <div className="border-b border-white/10 px-4 py-3 text-sm font-semibold text-slate-100">
-            {count} selected
+            {t('{count} selected', { count })}
           </div>
           <button
             className="flex w-full items-center gap-2 px-4 py-3 text-left text-sm text-slate-200 hover:bg-white/10"
             onClick={() => runAndExit(copySelectedItems)}
           >
             <CopyIcon className="h-4 w-4 text-slate-400" />
-            Copy
+            {t('Copy')}
           </button>
           <button
             className="flex w-full items-center gap-2 px-4 py-3 text-left text-sm text-slate-200 hover:bg-white/10"
             onClick={() => runAndExit(createGroupFromItems)}
           >
             <PlusIcon className="h-4 w-4 text-cyan-300" />
-            Create group
+            {t('Create group')}
           </button>
           <button
             className="flex w-full items-center gap-2 px-4 py-3 text-left text-sm text-red-400 hover:bg-red-500/10"
             onClick={() => runAndExit(deleteSelectedItems)}
           >
             <TrashIcon className="h-4 w-4" />
-            Delete
+            {t('Delete')}
           </button>
           <button
             className="flex w-full items-center gap-2 px-4 py-3 text-left text-sm text-slate-400 hover:bg-white/10"
             onClick={exitSelectionMode}
           >
             <NoEntryIcon className="h-4 w-4 text-slate-400" />
-            Cancel selection
+            {t('Cancel selection')}
           </button>
         </ModalFrame>
       )}

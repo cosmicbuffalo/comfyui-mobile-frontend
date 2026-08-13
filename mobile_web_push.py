@@ -23,6 +23,61 @@ import folder_paths
 
 _LOG_PREFIX = "[\033[34mMobile Push\033[0m]"
 
+# Localized notification copy, keyed by the locale the frontend sent when it
+# subscribed (falls back to English). Kept in sync with the frontend's
+# supported locales in src/i18n/locales.ts.
+_PUSH_MESSAGES = {
+    "en": {
+        "render_complete_title": "Render complete",
+        "render_complete_body": "Your generation finished with {outputs} output(s).",
+        "render_complete_body_empty": "Your generation finished.",
+        "generation_failed_title": "Generation failed",
+        "generation_failed_body": "A generation errored on your ComfyUI server.",
+        "test_title": "Test notification",
+        "test_body": "Push notifications are working \U0001f389",
+    },
+    "zh-CN": {
+        "render_complete_title": "生成完成",
+        "render_complete_body": "你的生成已完成，共 {outputs} 个输出。",
+        "render_complete_body_empty": "你的生成已完成。",
+        "generation_failed_title": "生成失败",
+        "generation_failed_body": "你的 ComfyUI 服务器上有一个生成任务出错。",
+        "test_title": "测试通知",
+        "test_body": "推送通知工作正常 \U0001f389",
+    },
+    "zh-TW": {
+        "render_complete_title": "生成完成",
+        "render_complete_body": "你的生成已完成，共 {outputs} 個輸出。",
+        "render_complete_body_empty": "你的生成已完成。",
+        "generation_failed_title": "生成失敗",
+        "generation_failed_body": "你的 ComfyUI 伺服器上有一個生成任務出錯。",
+        "test_title": "測試通知",
+        "test_body": "推播通知運作正常 \U0001f389",
+    },
+    "ja": {
+        "render_complete_title": "生成が完了しました",
+        "render_complete_body": "生成が完了しました（出力 {outputs} 件）。",
+        "render_complete_body_empty": "生成が完了しました。",
+        "generation_failed_title": "生成に失敗しました",
+        "generation_failed_body": "ComfyUI サーバーで生成中にエラーが発生しました。",
+        "test_title": "テスト通知",
+        "test_body": "プッシュ通知は正常に動作しています \U0001f389",
+    },
+    "ko": {
+        "render_complete_title": "생성 완료",
+        "render_complete_body": "생성이 완료되었습니다（출력 {outputs}개）。",
+        "render_complete_body_empty": "생성이 완료되었습니다.",
+        "generation_failed_title": "생성 실패",
+        "generation_failed_body": "ComfyUI 서버에서 생성 중 오류가 발생했습니다.",
+        "test_title": "테스트 알림",
+        "test_body": "푸시 알림이 정상 작동 중입니다 \U0001f389",
+    },
+}
+
+
+def _messages_for(locale):
+    return _PUSH_MESSAGES.get(locale, _PUSH_MESSAGES["en"])
+
 # pywebpush / cryptography are optional — if the dep isn't installed the node
 # must still load, with the push endpoints reporting themselves unavailable.
 try:
@@ -162,16 +217,21 @@ def _endpoint_of(subscription) -> str:
     return ""
 
 
-def add_subscription(subscription) -> bool:
+def add_subscription(subscription, locale=None) -> bool:
     """Store a PushSubscription ({endpoint, keys:{p256dh, auth}}). Idempotent —
-    keyed by endpoint, so re-subscribing the same browser updates in place."""
+    keyed by endpoint, so re-subscribing the same browser updates in place.
+    `locale` (optional) is remembered so completion notifications can be sent
+    in the user's language."""
     endpoint = _endpoint_of(subscription)
     keys = subscription.get("keys") if isinstance(subscription, dict) else None
     if not endpoint or not isinstance(keys, dict) or "p256dh" not in keys or "auth" not in keys:
         return False
     with _lock:
         subs = _load_subscriptions()
-        subs[endpoint] = subscription
+        stored = dict(subscription)
+        if isinstance(locale, str) and locale:
+            stored["locale"] = locale
+        subs[endpoint] = stored
         _save_subscriptions()
     return True
 
@@ -247,19 +307,75 @@ def send_to_all(title: str, body: str, data=None) -> dict:
     return {"sent": sent, "pruned": len(dead), "total": len(subs)}
 
 
+def _send_grouped(build_payload, data=None) -> dict:
+    """Fan out one notification per locale group so each subscription receives
+    copy in its own language. `build_payload(locale)` returns (title, body).
+    Blocking — call via loop.run_in_executor from async code."""
+    if not _PUSH_AVAILABLE:
+        return {"sent": 0, "pruned": 0, "total": 0}
+    with _lock:
+        vapid = _load_or_create_vapid()
+        subs = dict(_load_subscriptions())  # snapshot; send outside the lock
+    if not subs:
+        return {"sent": 0, "pruned": 0, "total": 0}
+
+    groups = {}
+    for endpoint, subscription in subs.items():
+        locale = subscription.get("locale") if isinstance(subscription, dict) else None
+        groups.setdefault(locale or "en", []).append((endpoint, subscription))
+
+    sent = 0
+    dead = []
+    for locale, group in groups.items():
+        title, body = build_payload(locale)
+        payload = {"title": title, "body": body}
+        if data:
+            payload["data"] = data
+        payload_json = json.dumps(payload)
+        for endpoint, subscription in group:
+            result = _send_one(subscription, payload_json, vapid["vapid_obj"])
+            if result == "ok":
+                sent += 1
+            elif result == "gone":
+                dead.append(endpoint)
+
+    if dead:
+        with _lock:
+            current = _load_subscriptions()
+            for endpoint in dead:
+                current.pop(endpoint, None)
+            _save_subscriptions()
+
+    return {"sent": sent, "pruned": len(dead), "total": len(subs)}
+
+
 def send_completion(prompt_id: str, status: str, outputs: int,
                     image_url: str = None, click_url: str = None) -> dict:
     """Build + send the 'generation finished' notification. image_url (optional)
     is shown in the notification; click_url is opened when it's tapped."""
-    if status == "error":
-        title = "Generation failed"
-        body = "A generation errored on your ComfyUI server."
-    else:
-        title = "Render complete"
-        body = f"Your generation finished with {outputs} output(s)." if outputs else "Your generation finished."
     data = {"prompt_id": prompt_id, "status": status}
     if image_url:
         data["image"] = image_url
     if click_url:
         data["url"] = click_url
-    return send_to_all(title, body, data=data)
+
+    def build_payload(locale):
+        messages = _messages_for(locale)
+        if status == "error":
+            return messages["generation_failed_title"], messages["generation_failed_body"]
+        if outputs:
+            body = messages["render_complete_body"].format(outputs=outputs)
+        else:
+            body = messages["render_complete_body_empty"]
+        return messages["render_complete_title"], body
+
+    return _send_grouped(build_payload, data=data)
+
+
+def send_test() -> dict:
+    """Send a test notification in each subscriber's language."""
+    def build_payload(locale):
+        messages = _messages_for(locale)
+        return messages["test_title"], messages["test_body"]
+
+    return _send_grouped(build_payload, data={"test": True})

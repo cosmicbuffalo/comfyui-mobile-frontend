@@ -5,6 +5,7 @@ import { useNavigationStore } from '@/hooks/useNavigation';
 import type { RefObject } from 'react';
 import { CheckIcon, ClipboardIcon, CloseIcon } from '@/components/icons';
 import { copyTextToClipboard } from '@/utils/clipboard';
+import { useI18n } from '@/i18n';
 
 // Cap how much of a single error renders inline; the rest is available via Copy.
 const ERROR_TEXT_CLAMP_LINES = 6;
@@ -50,6 +51,7 @@ export function NodeCardErrorPopover({
   anchorRef,
   onClose
 }: NodeCardErrorPopoverProps) {
+  const { t } = useI18n();
   const handleCloseClick = (event: React.MouseEvent<HTMLButtonElement>) => {
     event.stopPropagation();
     onClose();
@@ -125,7 +127,11 @@ export function NodeCardErrorPopover({
     >
       <div id={`error-popover-header-${nodeId}`} className="popover-header shrink-0 flex items-center justify-between gap-2 px-3 py-2 border-b border-red-500/40 bg-red-600">
         <span id={`error-popover-title-${nodeId}`} className="popover-title text-sm font-semibold text-white">
-          {isMissing ? 'Missing Node' : `${errors.length} ${errors.length === 1 ? 'Error' : 'Errors'}`}
+          {isMissing
+            ? t('Missing Node')
+            : errors.length === 1
+              ? t('{count} Error', { count: errors.length })
+              : t('{count} Errors', { count: errors.length })}
         </span>
         <div className="flex items-center gap-1 shrink-0">
           {!isMissing && (
@@ -133,17 +139,17 @@ export function NodeCardErrorPopover({
             type="button"
             onClick={handleCopyClick}
             className="flex items-center gap-1 h-6 px-1.5 text-xs font-medium text-red-100 hover:text-white rounded"
-            aria-label="Copy error to clipboard"
+            aria-label={t('Copy error to clipboard')}
           >
             {copied ? <CheckIcon className="w-3.5 h-3.5" /> : <ClipboardIcon className="w-3.5 h-3.5" />}
-            <span>{copied ? 'Copied' : 'Copy'}</span>
+            <span>{copied ? t('Copied') : t('Copy')}</span>
           </button>
           )}
           <button
             type="button"
             onClick={handleCloseClick}
             className="w-6 h-6 flex items-center justify-center text-red-100 hover:text-white rounded"
-            aria-label="Close"
+            aria-label={t('Close')}
           >
             <CloseIcon className="w-4 h-4" />
           </button>

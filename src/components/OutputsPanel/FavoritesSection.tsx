@@ -1,4 +1,5 @@
 import type { StatusFilterMode } from '@/hooks/useOutputs';
+import { useI18n } from '@/i18n';
 
 interface FavoritesSectionProps {
   favoritesMode: StatusFilterMode;
@@ -34,14 +35,15 @@ function FilterToggle({
   onCycle: () => void;
   tone: 'cyan' | 'rose';
 }) {
+  const { t } = useI18n();
   // The label states what the listing is doing right now, since a tri-state
   // button can't say it through pressed-ness alone. Struck-through styling
   // reinforces the excluded reading for anyone who skims rather than reads.
   const label = mode === 'only'
-    ? `${noun} only`
+    ? t('{noun} only', { noun: t(noun) })
     : mode === 'exclude'
-      ? `No ${noun.toLowerCase()}`
-      : noun;
+      ? t('No {noun}', { noun: t(noun).toLowerCase() })
+      : t(noun);
 
   return (
     <button
@@ -66,12 +68,13 @@ export function FavoritesSection({
   onCycleRejects,
   showRejects = true,
 }: FavoritesSectionProps) {
+  const { t } = useI18n();
   return (
     <div className={showRejects ? 'grid grid-cols-2 gap-2' : undefined}>
       <FilterToggle
         id="favorites-toggle-button"
         mode={favoritesMode}
-        noun="Favorites"
+        noun={t('Favorites')}
         onCycle={onCycleFavorites}
         tone="cyan"
       />
@@ -79,7 +82,7 @@ export function FavoritesSection({
         <FilterToggle
           id="rejects-toggle-button"
           mode={rejectsMode}
-          noun="Rejects"
+          noun={t('Rejects')}
           onCycle={onCycleRejects}
           tone="rose"
         />

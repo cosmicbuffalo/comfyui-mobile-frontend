@@ -12,27 +12,11 @@ import {
 import { NotificationsSettings } from './NotificationsSettings';
 import { useAutocompleteStore } from '@/hooks/useAutocompleteStore';
 import { useEffect, type ReactNode } from 'react';
+import { LOCALES, LOCALE_LABELS, useI18n } from '@/i18n';
 
 interface GenerationSettingsPanelProps {
   onBack: () => void;
 }
-
-const previewMethodOptions: Array<{
-  value: Exclude<PreviewMethod, 'none'>;
-  label: string;
-  description: string;
-}> = [
-  {
-    value: 'latent2rgb',
-    label: 'Fast',
-    description: 'Approximate latent2rgb previews',
-  },
-  {
-    value: 'taesd',
-    label: 'Accurate',
-    description: 'Higher quality TAESD previews',
-  },
-];
 
 interface PreferenceSectionProps {
   label: string;
@@ -82,6 +66,7 @@ function PreferenceSection({
 }
 
 export function GenerationSettingsPanel({ onBack }: GenerationSettingsPanelProps) {
+  const { t, locale, setLocale } = useI18n();
   const infiniteModeEnabled = useGenerationSettingsStore((s) => s.infiniteModeEnabled);
   const setInfiniteModeEnabled = useGenerationSettingsStore((s) => s.setInfiniteModeEnabled);
   const previewMethod = useGenerationSettingsStore((s) => s.previewMethod);
@@ -116,6 +101,22 @@ export function GenerationSettingsPanel({ onBack }: GenerationSettingsPanelProps
   }, [ensureAutocompleteInit]);
 
   const previewEnabled = previewMethod !== 'none';
+  const previewMethodOptions: Array<{
+    value: Exclude<PreviewMethod, 'none'>;
+    label: string;
+    description: string;
+  }> = [
+    {
+      value: 'latent2rgb',
+      label: t('Fast'),
+      description: t('Approximate latent2rgb previews'),
+    },
+    {
+      value: 'taesd',
+      label: t('Accurate'),
+      description: t('Higher quality TAESD previews'),
+    },
+  ];
 
   return (
     // Solid, full-height background so the area below the cards stays opaque
@@ -123,18 +124,47 @@ export function GenerationSettingsPanel({ onBack }: GenerationSettingsPanelProps
     // -m-4 bleeds over the slide panel's p-4; min-h calc(100%+2rem) + p-4 makes
     // the fill span the full padding box (all four edges) while keeping insets.
     <div className="flex flex-col min-h-[calc(100%+2rem)] -m-4 p-4 bg-slate-950">
-      <MenuSubPageHeader title="Preferences" onBack={onBack} />
+      <MenuSubPageHeader title={t('Preferences')} onBack={onBack} />
 
       <div className="space-y-4">
+        <div className={menuPanelDivideClassName}>
+          <div className="flex items-center justify-between px-4 py-3">
+            <div className={`text-sm ${menuTextClassName}`}>{t('Language')}</div>
+          </div>
+          <div className="px-4 pb-3">
+            <div className="flex flex-wrap gap-2" role="radiogroup" aria-label={t('Language')}>
+              {LOCALES.map((option) => {
+                const isActive = locale === option;
+                return (
+                  <button
+                    key={option}
+                    type="button"
+                    role="radio"
+                    aria-checked={isActive}
+                    onClick={() => setLocale(option)}
+                    className={`rounded-lg border px-3 py-1.5 text-sm transition-colors focus:outline-none focus:ring-2 focus:ring-cyan-400 ${
+                      isActive
+                        ? 'border-cyan-400 bg-cyan-500 text-slate-950 shadow-sm'
+                        : 'border-white/10 bg-slate-950/70 text-slate-100 hover:bg-slate-800/95'
+                    }`}
+                  >
+                    {LOCALE_LABELS[option]}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+
         <PreferenceSection
-          label="Fast image previews"
-          description="Load lightweight WebP previews instead of full-size originals. Turn off if images look wrong. Downloads always use the original."
+          label={t('Fast image previews')}
+          description={t('Load lightweight WebP previews instead of full-size originals. Turn off if images look wrong. Downloads always use the original.')}
           checked={webpPreviewEnabled}
           onToggle={() => setWebpPreviewEnabled(!webpPreviewEnabled)}
         />
 
         <PreferenceSection
-          label="Show latent previews"
+          label={t('Show latent previews')}
           checked={previewEnabled}
           onToggle={() => setPreviewMethod(previewEnabled ? 'none' : 'latent2rgb')}
         >
@@ -142,14 +172,14 @@ export function GenerationSettingsPanel({ onBack }: GenerationSettingsPanelProps
           {previewEnabled && (
             <div className="px-4 py-3">
               <div className="flex items-start justify-between gap-3">
-                <div className={`text-sm ${menuTextClassName}`}>Method</div>
+                <div className={`text-sm ${menuTextClassName}`}>{t('Method')}</div>
                 <div className={`text-xs ${menuMutedTextClassName} mt-0.5`}>
                   {previewMethod === 'latent2rgb'
-                    ? 'Fast approximate preview'
-                    : 'Higher quality, slightly slower'}
+                    ? t('Fast approximate preview')
+                    : t('Higher quality, slightly slower')}
                 </div>
               </div>
-              <div className="mt-3 grid grid-cols-2 gap-2" role="radiogroup" aria-label="Latent preview method">
+              <div className="mt-3 grid grid-cols-2 gap-2" role="radiogroup" aria-label={t('Latent preview method')}>
                 {previewMethodOptions.map((option) => {
                   const isActive = previewMethod === option.value;
                   return (
@@ -178,55 +208,55 @@ export function GenerationSettingsPanel({ onBack }: GenerationSettingsPanelProps
         </PreferenceSection>
 
         <PreferenceSection
-          label="Restore lost queue after restart"
-          description="Automatically re-enqueue pending jobs this device saw if ComfyUI restarts and loses them."
+          label={t('Restore lost queue after restart')}
+          description={t('Automatically re-enqueue pending jobs this device saw if ComfyUI restarts and loses them.')}
           checked={autoRestoreLostQueueJobs}
           onToggle={() => setAutoRestoreLostQueueJobs(!autoRestoreLostQueueJobs)}
         />
 
         <PreferenceSection
-          label="Alias filepaths in embedded metadata"
-          description="Hide input paths and output filename prefixes in shared workflow metadata."
+          label={t('Alias filepaths in embedded metadata')}
+          description={t('Hide input paths and output filename prefixes in shared workflow metadata.')}
           checked={obfuscateSharedInputPaths}
           onToggle={() => setObfuscateSharedInputPaths(!obfuscateSharedInputPaths)}
         />
 
         <PreferenceSection
-          label="Credit comfyui-mobile-frontend in workflows"
-          description="Embed a hidden note linking this project into the workflow saved with your outputs. Never shown in the app."
+          label={t('Credit comfyui-mobile-frontend in workflows')}
+          description={t('Embed a hidden note linking this project into the workflow saved with your outputs. Never shown in the app.')}
           checked={marketingNoteEnabled}
           onToggle={() => setMarketingNoteEnabled(!marketingNoteEnabled)}
         />
 
         <PreferenceSection
-          label="Enable infinite mode"
+          label={t('Enable infinite mode')}
           checked={infiniteModeEnabled}
           onToggle={() => setInfiniteModeEnabled(!infiniteModeEnabled)}
         />
 
         <PreferenceSection
-          label="Hide bottom bar when viewer is idle"
-          description="Fade the bottom bar with the image viewer controls after a few seconds without interaction."
+          label={t('Hide bottom bar when viewer is idle')}
+          description={t('Fade the bottom bar with the image viewer controls after a few seconds without interaction.')}
           checked={hideBottomBarWhenViewerIdle}
           onToggle={() => setHideBottomBarWhenViewerIdle(!hideBottomBarWhenViewerIdle)}
         />
 
         <PreferenceSection
-          label="Follow into subgraphs"
-          description="Navigate into subgraph scopes when following execution"
+          label={t('Follow into subgraphs')}
+          description={t('Navigate into subgraph scopes when following execution')}
           checked={followIntoSubgraphs}
           onToggle={() => setFollowIntoSubgraphs(!followIntoSubgraphs)}
         />
 
         {autocompleteAvailable && (
           <PreferenceSection
-            label="Tag autocomplete"
+            label={t('Tag autocomplete')}
             description={
               autocompletePlus && autocompleteCustomScripts
-                ? 'Suggest Danbooru tags, your custom words, LoRAs, and embeddings while typing prompts. Powered by the detected ComfyUI-Autocomplete-Plus and ComfyUI-Custom-Scripts nodes.'
+                ? t('Suggest Danbooru tags, your custom words, LoRAs, and embeddings while typing prompts. Powered by the detected ComfyUI-Autocomplete-Plus and ComfyUI-Custom-Scripts nodes.')
                 : autocompleteCustomScripts
-                  ? 'Suggest your custom word list, LoRAs, and embeddings while typing prompts. Powered by the detected ComfyUI-Custom-Scripts node.'
-                  : 'Suggest Danbooru tags, LoRAs, and embeddings while typing prompts. Powered by the detected ComfyUI-Autocomplete-Plus node.'
+                  ? t('Suggest your custom word list, LoRAs, and embeddings while typing prompts. Powered by the detected ComfyUI-Custom-Scripts node.')
+                  : t('Suggest Danbooru tags, LoRAs, and embeddings while typing prompts. Powered by the detected ComfyUI-Autocomplete-Plus node.')
             }
             checked={autocompleteEnabled}
             onToggle={() => void setAutocompleteEnabled(!autocompleteEnabled)}
@@ -234,7 +264,7 @@ export function GenerationSettingsPanel({ onBack }: GenerationSettingsPanelProps
         )}
 
         <div className="pt-2">
-          <div className={menuSectionHeaderClassName}>Notifications</div>
+          <div className={menuSectionHeaderClassName}>{t('Notifications')}</div>
           <NotificationsSettings />
         </div>
       </div>

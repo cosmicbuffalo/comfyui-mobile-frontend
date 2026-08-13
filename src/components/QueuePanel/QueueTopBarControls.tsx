@@ -10,10 +10,12 @@ import {
   QUEUE_REJECT_SOURCES,
   rejectedIdsForSources,
 } from '@/utils/deleteRejectedOutputs';
+import { useI18n } from '@/i18n';
 import { Dialog } from '@/components/modals/Dialog';
 import { QueueTopBarMenu } from './QueueTopBarMenu';
 
 export function QueueTopBarControls() {
+  const { t } = useI18n();
   const [menuOpen, setMenuOpen] = useState(false);
   const [clearHistoryConfirmOpen, setClearHistoryConfirmOpen] = useState(false);
   const [cancelPendingConfirmOpen, setCancelPendingConfirmOpen] = useState(false);
@@ -50,16 +52,16 @@ export function QueueTopBarControls() {
       {cancelPendingConfirmOpen && createPortal(
         <Dialog
           onClose={() => setCancelPendingConfirmOpen(false)}
-          title="Cancel all pending?"
-          description="This removes every queued generation that hasn't started yet. The currently running generation keeps going."
+          title={t('Cancel all pending?')}
+          description={t("This removes every queued generation that hasn't started yet. The currently running generation keeps going.")}
           actions={[
             {
-              label: 'Keep queue',
+              label: t('Keep queue'),
               onClick: () => setCancelPendingConfirmOpen(false),
               variant: 'secondary'
             },
             {
-              label: 'Cancel all pending',
+              label: t('Cancel all pending'),
               onClick: () => {
                 void (async () => {
                   await clearQueue();
@@ -79,12 +81,12 @@ export function QueueTopBarControls() {
           description="This permanently deletes the files marked as rejected from your server's output folder and removes them from the queue. This can't be undone."
           actions={[
             {
-              label: 'Cancel',
+              label: t('Cancel'),
               onClick: () => setDeleteRejectedConfirmOpen(false),
               variant: 'secondary'
             },
             {
-              label: 'Delete rejected',
+              label: t('Delete rejected'),
               onClick: () => {
                 void (async () => {
                   await deleteRejectedOutputs(QUEUE_REJECT_SOURCES);
@@ -100,16 +102,16 @@ export function QueueTopBarControls() {
       {clearHistoryConfirmOpen && createPortal(
         <Dialog
           onClose={() => setClearHistoryConfirmOpen(false)}
-          title="Clear history?"
-          description="This will permanently remove all completed generations from history. Generated files will still be present in your server's output folder."
+          title={t('Clear history?')}
+          description={t("This will permanently remove all completed generations from history. Generated files will still be present in your server's output folder.")}
           actions={[
             {
-              label: 'Cancel',
+              label: t('Cancel'),
               onClick: () => setClearHistoryConfirmOpen(false),
               variant: 'secondary'
             },
             {
-              label: 'Clear history',
+              label: t('Clear history'),
               onClick: () => {
                 void (async () => {
                   await clearHistory();

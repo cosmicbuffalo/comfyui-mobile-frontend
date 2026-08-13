@@ -20,6 +20,7 @@ import { obfuscateWorkflowInputPaths } from '@/utils/inputPathAliases';
 import { readWorkflowFromFile } from '@/utils/workflowFromFile';
 import { useNoWorkflowImageModal } from '@/hooks/useNoWorkflowImageModal';
 import { useCustomNodesManager } from '@/hooks/useCustomNodesManager';
+import { t as globalT, useI18n } from '@/i18n';
 import type { CustomNodeFilterValue } from '@/utils/customNodesManager';
 import type { Workflow } from '@/api/types';
 import {
@@ -74,15 +75,16 @@ async function waitForServerToReturn(timeoutMs = 45000): Promise<void> {
     await sleep(1000);
   }
 
-  throw new Error('ComfyUI did not come back online in time.');
+  throw new Error(globalT('ComfyUI did not come back online in time.'));
 }
 
 function ServerRestartOverlay() {
+  const { t } = useI18n();
   return (
     <BackendStatusOverlay
-      eyebrow="Server Restart"
-      title="Restarting ComfyUI"
-      message="Waiting for the backend to come back online. The app will refresh automatically as soon as it reconnects."
+      eyebrow={t('Server Restart')}
+      title={t('Restarting ComfyUI')}
+      message={t('Waiting for the backend to come back online. The app will refresh automatically as soon as it reconnects.')}
     />
   );
 }
@@ -91,6 +93,7 @@ export function AppMenu({
   open,
   onClose
 }: AppMenuProps) {
+  const { t } = useI18n();
   const loadWorkflow = useWorkflowStore((s) => s.loadWorkflow);
   const workflow = useWorkflowStore((s) => s.workflow);
   const currentFilename = useWorkflowStore((s) => s.currentFilename);
@@ -266,7 +269,7 @@ export function AppMenu({
       onClose();
       vibrate(10);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load workflow');
+      setError(err instanceof Error ? err.message : t('Failed to load workflow'));
     } finally {
       setLoading(false);
     }
@@ -281,7 +284,7 @@ export function AppMenu({
       onClose();
       vibrate(10);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load template');
+      setError(err instanceof Error ? err.message : t('Failed to load template'));
     } finally {
       setLoading(false);
     }
@@ -307,7 +310,7 @@ export function AppMenu({
       onClose();
       vibrate(10);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load workflow from file');
+      setError(err instanceof Error ? err.message : t('Failed to load workflow from file'));
     } finally {
       setLoading(false);
     }
@@ -327,11 +330,11 @@ export function AppMenu({
       store.setSavingSessionId(savingId);
       let workflowForPersistence = getWorkflowForPersistence(workflow);
       if (!workflowForPersistence) {
-        throw new Error('Unable to save: embedded workflow is unavailable.');
+        throw new Error(t('Unable to save: embedded workflow is unavailable.'));
       }
       if (useGenerationSettingsStore.getState().obfuscateSharedInputPaths) {
         const nodeTypes = useWorkflowStore.getState().nodeTypes;
-        if (!nodeTypes) throw new Error('Unable to hide input paths: node definitions are unavailable.');
+        if (!nodeTypes) throw new Error(t('Unable to hide input paths: node definitions are unavailable.'));
         workflowForPersistence = await obfuscateWorkflowInputPaths(workflowForPersistence, nodeTypes);
       }
       await saveUserWorkflow(finalFilename, workflowForPersistence);
@@ -340,7 +343,7 @@ export function AppMenu({
       onClose();
       vibrate(10);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to save workflow');
+      setError(err instanceof Error ? err.message : t('Failed to save workflow'));
     } finally {
       setLoading(false);
       // Only clear if this save still owns the spinner — a newer save started
@@ -368,7 +371,7 @@ export function AppMenu({
     if (saveFilenameInput.trim()) {
       performSave(saveFilenameInput);
     } else {
-      setError('Please enter a filename.');
+      setError(t('Please enter a filename.'));
     }
   };
 
@@ -377,19 +380,19 @@ export function AppMenu({
 
     let workflowForPersistence = getWorkflowForPersistence(workflow);
     if (!workflowForPersistence) {
-      setError('Unable to download: embedded workflow is unavailable.');
+      setError(t('Unable to download: embedded workflow is unavailable.'));
       return;
     }
     if (useGenerationSettingsStore.getState().obfuscateSharedInputPaths) {
       const nodeTypes = useWorkflowStore.getState().nodeTypes;
       if (!nodeTypes) {
-        setError('Unable to hide input paths: node definitions are unavailable.');
+        setError(t('Unable to hide input paths: node definitions are unavailable.'));
         return;
       }
       try {
         workflowForPersistence = await obfuscateWorkflowInputPaths(workflowForPersistence, nodeTypes);
       } catch (err) {
-        setError(err instanceof Error ? err.message : 'Unable to hide input paths.');
+        setError(err instanceof Error ? err.message : t('Unable to hide input paths.'));
         return;
       }
     }
@@ -414,17 +417,17 @@ export function AppMenu({
 
       // Validate basic structure
       if (!data.nodes || !Array.isArray(data.nodes)) {
-        throw new Error('Invalid workflow: missing nodes array');
+        throw new Error(t('Invalid workflow: missing nodes array'));
       }
 
       const timestamp = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-      loadWorkflow(data, `Pasted workflow (${timestamp})`);
+      loadWorkflow(data, t('Pasted workflow ({timestamp})', { timestamp }));
       setError(null);
       onClose();
       vibrate(10);
       setPastedJson('');
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to parse JSON');
+      setError(err instanceof Error ? err.message : t('Failed to parse JSON'));
     }
   };
 
@@ -452,7 +455,7 @@ export function AppMenu({
     } catch (err) {
       setRestartingServer(false);
       useConnectionStatusStore.getState().setServerRestarting(false);
-      setError(err instanceof Error ? err.message : 'Failed to restart server');
+      setError(err instanceof Error ? err.message : t('Failed to restart server'));
     }
   };
 
@@ -469,9 +472,9 @@ export function AppMenu({
       onChange={handleFileChange}
       className="hidden"
       data-workflow-file-input
-      aria-label="Load workflow from device"
+      aria-label={t('Load workflow from device')}
     />
-    <SlidePanel open={open} onClose={onClose} side="left" title="ComfyUI Mobile">
+    <SlidePanel open={open} onClose={onClose} side="left" title={t('ComfyUI Mobile')}>
       {activeTab === 'menu' && (
         <MainMenuPanel
           error={error}
@@ -580,12 +583,12 @@ export function AppMenu({
         // Above the menu SlidePanel (z-2300), covering the whole viewport.
         zIndex={2700}
         fullscreen
-        title="Restart ComfyUI?"
-        description="This will interrupt any running jobs and briefly disconnect the mobile UI."
+        title={t('Restart ComfyUI?')}
+        description={t('This will interrupt any running jobs and briefly disconnect the mobile UI.')}
         actions={[
-          { label: 'Cancel', onClick: () => setRestartConfirmOpen(false) },
+          { label: t('Cancel'), onClick: () => setRestartConfirmOpen(false) },
           {
-            label: 'Restart',
+            label: t('Restart'),
             variant: 'danger',
             autoFocus: true,
             onClick: () => { void performServerRestart(); },

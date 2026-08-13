@@ -1,4 +1,5 @@
 import type { PanelMode } from '@/hooks/useNavigation';
+import { t } from '@/i18n';
 
 export interface TopBarPanelNavigationItem {
   panel: PanelMode;
@@ -12,11 +13,16 @@ export interface TopBarPanelNavigationConfig {
   right: TopBarPanelNavigationItem[];
 }
 
-const panelLabels: Record<PanelMode, string> = {
-  outputs: 'Outputs',
-  workflow: 'Workflow',
-  queue: 'Queue',
-};
+function getPanelLabel(panel: PanelMode): string {
+  switch (panel) {
+    case 'outputs':
+      return t('Outputs');
+    case 'workflow':
+      return t('Workflow');
+    case 'queue':
+      return t('Queue');
+  }
+}
 
 const panelOrder: PanelMode[] = ['outputs', 'workflow', 'queue'];
 
@@ -26,7 +32,7 @@ export function getTopBarPanelNavigation(mode: PanelMode): TopBarPanelNavigation
     const targetIndex = panelOrder.indexOf(panel);
     return {
       panel,
-      label: panelLabels[panel],
+      label: getPanelLabel(panel),
       direction: targetIndex < currentIndex ? 'left' : 'right',
       jumps: Math.abs(targetIndex - currentIndex) as 1 | 2,
     };

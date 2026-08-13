@@ -38,6 +38,7 @@ import { SearchBar } from '@/components/SearchBar';
 import { MediaViewer } from '@/components/ImageViewer/MediaViewer';
 import { UseImageModal } from '@/components/modals/UseImageModal';
 import { BulkProcessModal } from '@/components/modals/BulkProcessModal';
+import { useI18n } from '@/i18n';
 import { ModalFrame } from '@/components/modals/ModalFrame';
 import { Dialog } from '@/components/modals/Dialog';
 import {
@@ -58,6 +59,7 @@ const STICKY_SECTION_TOP = -16;
 const OUTPUTS_RENDER_PAGE = 60;
 
 export const OutputsPanel = memo(function OutputsPanel({ visible }: { visible: boolean }) {
+  const { t } = useI18n();
   // Fine-grained selectors: a bare useOutputsStore() destructure would
   // re-render this whole panel on every store write, even while hidden.
   const source = useOutputsStore((s) => s.source);
@@ -666,7 +668,7 @@ export const OutputsPanel = memo(function OutputsPanel({ visible }: { visible: b
 
   const requestLoadWorkflowFromFile = (file: FileItem, options?: { closeViewer?: boolean }) => {
     if (file.type === 'folder') {
-      window.alert('Workflow metadata is not available for folders.');
+      window.alert(t('Workflow metadata is not available for folders.'));
       return;
     }
     if (isDirty && !canOpenWorkflowInNewTab) {
@@ -712,7 +714,7 @@ export const OutputsPanel = memo(function OutputsPanel({ visible }: { visible: b
       deleteOnCompleteRef.current = null;
     } catch (err) {
       console.error('Failed to delete file:', err);
-      window.alert('Failed to delete file.');
+      window.alert(t('Failed to delete file.'));
     } finally {
       setDeleteTarget(null);
     }
@@ -733,7 +735,7 @@ export const OutputsPanel = memo(function OutputsPanel({ visible }: { visible: b
       completeSelectionOperation();
     } catch (err) {
       console.error('Failed to delete selected files:', err);
-      window.alert('Failed to delete selected files.');
+      window.alert(t('Failed to delete selected files.'));
     } finally {
       setDeleteSelectionOpen(false);
     }
@@ -896,7 +898,7 @@ export const OutputsPanel = memo(function OutputsPanel({ visible }: { visible: b
       closeRenameModal();
     } catch (err) {
       console.error('Failed to rename item:', err);
-      window.alert('Failed to rename item.');
+      window.alert(t('Failed to rename item.'));
     }
   };
 
@@ -928,7 +930,7 @@ export const OutputsPanel = memo(function OutputsPanel({ visible }: { visible: b
       }
     } catch (err) {
       console.error('Failed to move selected files:', err);
-      window.alert('Failed to move selected files.');
+      window.alert(t('Failed to move selected files.'));
     } finally {
       closeMoveModal();
     }
@@ -953,7 +955,7 @@ export const OutputsPanel = memo(function OutputsPanel({ visible }: { visible: b
       setMoveFolders(result.filter((item) => item.type === 'folder'));
     } catch (err) {
       console.error('Failed to create folder:', err);
-      window.alert('Failed to create folder.');
+      window.alert(t('Failed to create folder.'));
     } finally {
       setMoveLoading(false);
     }
@@ -970,7 +972,7 @@ export const OutputsPanel = memo(function OutputsPanel({ visible }: { visible: b
       refresh();
     } catch (err) {
       console.error('Failed to create folder:', err);
-      window.alert('Failed to create folder.');
+      window.alert(t('Failed to create folder.'));
     }
   };
 
@@ -1060,7 +1062,7 @@ export const OutputsPanel = memo(function OutputsPanel({ visible }: { visible: b
                 tabs.length < MAX_OUTPUTS_TABS && (
                   <button
                     onClick={addTab}
-                    aria-label="Open a new tab"
+                    aria-label={t('Open a new tab')}
                     className="shrink-0 w-6 h-6 flex items-center justify-center rounded-md text-slate-300 hover:text-slate-100 hover:bg-white/10"
                   >
                     <PlusIcon className="w-4 h-4" />
@@ -1069,7 +1071,7 @@ export const OutputsPanel = memo(function OutputsPanel({ visible }: { visible: b
               ) : (
                 <button
                   onClick={() => closeTab(tab.id)}
-                  aria-label="Close tab"
+                  aria-label={t('Close tab')}
                   className="shrink-0 w-6 h-6 flex items-center justify-center rounded-md text-slate-400 hover:text-slate-100 hover:bg-white/10"
                 >
                   <MinusIcon className="w-4 h-4" />
@@ -1263,7 +1265,7 @@ export const OutputsPanel = memo(function OutputsPanel({ visible }: { visible: b
                inputRef={searchInputRef}
                value={searchDraft}
                onChange={setSearchDraft}
-               placeholder="Search outputs..."
+               placeholder={t('Search outputs...')}
                inputClassName="border-white/10 bg-slate-950/80 text-slate-100 placeholder:text-slate-500 focus:ring-cyan-400"
                showClearButton={false}
                className="flex-1 min-w-0"
@@ -1343,21 +1345,21 @@ export const OutputsPanel = memo(function OutputsPanel({ visible }: { visible: b
 
           {isLoading && (
             <div id="outputs-loading-indicator" className="py-4 flex justify-center">
-              <span className="text-slate-400 text-sm">Loading...</span>
+              <span className="text-slate-400 text-sm">{t('Loading...')}</span>
             </div>
           )}
 
           {!isLoading && error && (
             <div id="outputs-error-message" className="text-center py-8">
               <div className="text-rose-300 text-sm mb-3">
-                Couldn&apos;t load outputs: {error}
+                {t("Couldn't load outputs: {error}", { error })}
               </div>
               <button
                 type="button"
                 className="px-4 py-2 rounded-lg bg-slate-800 text-slate-100 text-sm border border-white/10 active:bg-slate-700"
                 onClick={() => refresh()}
               >
-                Retry
+                {t('Retry')}
               </button>
             </div>
           )}
@@ -1365,10 +1367,10 @@ export const OutputsPanel = memo(function OutputsPanel({ visible }: { visible: b
           {!isLoading && !error && displayedFiles.length === 0 && (
              <div id="outputs-empty-message" className="text-center text-slate-400 py-8">
                {currentFolder
-                 ? 'No images in this folder'
+                 ? t('No images in this folder')
                  : source === 'output'
-                   ? 'No generated images yet'
-                   : 'No imported images'}
+                   ? t('No generated images yet')
+                   : t('No imported images')}
              </div>
           )}
        </div>
@@ -1395,7 +1397,7 @@ export const OutputsPanel = memo(function OutputsPanel({ visible }: { visible: b
           zIndex={1800}
         >
              <div className="px-4 py-3 text-sm font-semibold text-slate-100 border-b border-white/10">
-               {selectedIds.length} selected
+               {t('{count} selected', { count: selectedIds.length })}
              </div>
              <button
                className="w-full text-left px-4 py-3 text-sm text-slate-200 hover:bg-white/10 flex items-center gap-2"
@@ -1404,21 +1406,21 @@ export const OutputsPanel = memo(function OutputsPanel({ visible }: { visible: b
                {selectedIds.every((id) => favorites.includes(id))
                  ? <BookmarkOutlineIcon className="w-4 h-4" />
                  : <BookmarkIconSvg className="w-4 h-4" />}
-               {selectedIds.every((id) => favorites.includes(id)) ? 'Unfavorite' : 'Favorite'}
+               {selectedIds.every((id) => favorites.includes(id)) ? t('Unfavorite') : t('Favorite')}
              </button>
              <button
                className="w-full text-left px-4 py-3 text-sm text-slate-200 hover:bg-white/10 flex items-center gap-2"
                onClick={handleMoveSelection}
              >
                <FolderIcon className="w-4 h-4 text-cyan-300" />
-               Move
+               {t('Move')}
              </button>
              <button
                className="w-full text-left px-4 py-3 text-sm text-slate-200 hover:bg-white/10 flex items-center gap-2"
                onClick={handleDownloadSelection}
              >
                <DownloadDeviceIcon className="w-4 h-4 text-slate-400" />
-               Download
+               {t('Download')}
              </button>
              {selectionImageItems.length > 0 && (
                <button
@@ -1426,7 +1428,7 @@ export const OutputsPanel = memo(function OutputsPanel({ visible }: { visible: b
                  onClick={handleBulkProcess}
                >
                  <QueueStackIcon className="w-4 h-4 text-cyan-300" />
-                 Bulk process
+                 {t('Bulk process')}
                </button>
              )}
              {selectionHideTargets.length > 0 && (
@@ -1437,7 +1439,7 @@ export const OutputsPanel = memo(function OutputsPanel({ visible }: { visible: b
                  {selectionAllHidden
                    ? <EyeIcon className="w-4 h-4 text-slate-400" />
                    : <EyeOffIcon className="w-4 h-4 text-slate-400" />}
-                 {selectionAllHidden ? 'Unhide' : 'Hide'}
+                 {selectionAllHidden ? t('Unhide') : t('Hide')}
                </button>
              )}
              <button
@@ -1445,7 +1447,7 @@ export const OutputsPanel = memo(function OutputsPanel({ visible }: { visible: b
                onClick={handleBulkDeleteRequest}
              >
                <TrashIcon className="w-4 h-4" />
-               Delete
+               {t('Delete')}
              </button>
              <button
                className="w-full text-left px-4 py-3 text-sm text-slate-400 hover:bg-white/10"
@@ -1470,7 +1472,9 @@ export const OutputsPanel = memo(function OutputsPanel({ visible }: { visible: b
                onClick={(event) => event.stopPropagation()}
              >
                <div className="shrink-0 px-4 py-3 text-sm font-semibold text-slate-100 border-b border-white/10">
-                 Move {moveItemIds.length} item{moveItemIds.length === 1 ? '' : 's'} to...
+                 {moveItemIds.length === 1
+                   ? t('Move {count} item to...', { count: moveItemIds.length })
+                   : t('Move {count} items to...', { count: moveItemIds.length })}
                </div>
                {/* Folder search + filter/sort, above the tab-location shortcuts.
                    Searches folders nested under the current move location. */}
@@ -1478,14 +1482,14 @@ export const OutputsPanel = memo(function OutputsPanel({ visible }: { visible: b
                  <SearchBar
                    value={moveSearchQuery}
                    onChange={setMoveSearchQuery}
-                   placeholder="Search folders..."
+                   placeholder={t('Search folders...')}
                    inputClassName="border-white/10 bg-slate-950/80 text-slate-100 placeholder:text-slate-500 focus:ring-cyan-400"
                    className="flex-1 min-w-0"
                  />
                  <button
                    type="button"
                    onClick={() => setFilterModalOpen(true)}
-                   aria-label="Filter and sort"
+                   aria-label={t('Filter and sort')}
                    className="shrink-0 w-9 h-9 flex items-center justify-center rounded-lg text-slate-300 hover:text-slate-100 hover:bg-white/10"
                  >
                    <FunnelArrowsIcon className="w-5 h-5" />
@@ -1498,7 +1502,7 @@ export const OutputsPanel = memo(function OutputsPanel({ visible }: { visible: b
                  <div className="shrink-0 border-b border-white/10 py-1">
                    {moveShortcutFolders.length > 1 && (
                      <div className="px-4 pt-2 pb-1 text-[10px] font-bold uppercase tracking-wide text-slate-500">
-                       Open tab locations
+                       {t('Open tab locations')}
                      </div>
                    )}
                    {moveShortcutFolders.map((folder) => {
@@ -1514,7 +1518,7 @@ export const OutputsPanel = memo(function OutputsPanel({ visible }: { visible: b
                          </span>
                          <FolderIcon className="w-4 h-4 shrink-0 text-cyan-300" />
                          <span className="truncate text-slate-200">
-                           {folder || (source === 'output' ? 'Outputs' : source === 'input' ? 'Inputs' : 'Temp')}
+                           {folder || (source === 'output' ? t('Outputs') : source === 'input' ? t('Inputs') : t('Temp'))}
                          </span>
                        </button>
                      );
@@ -1533,10 +1537,10 @@ export const OutputsPanel = memo(function OutputsPanel({ visible }: { visible: b
                  {moveSearchActive ? (
                    <>
                      {moveSearchLoading && moveSearchResults.length === 0 && (
-                       <div className="px-4 py-3 text-sm text-slate-400">Searching…</div>
+                       <div className="px-4 py-3 text-sm text-slate-400">{t('Searching…')}</div>
                      )}
                      {!moveSearchLoading && moveSearchResults.length === 0 && (
-                       <div className="px-4 py-3 text-sm text-slate-400">No matching folders</div>
+                       <div className="px-4 py-3 text-sm text-slate-400">{t('No matching folders')}</div>
                      )}
                      {moveSearchResults.map((folder) => {
                        const relPath = folder.id.startsWith(`${source}/`) ? folder.id.slice(source.length + 1) : folder.id;
@@ -1566,10 +1570,10 @@ export const OutputsPanel = memo(function OutputsPanel({ visible }: { visible: b
                  ) : (
                    <>
                      {moveLoading && (
-                       <div className="px-4 py-3 text-sm text-slate-400">Loading folders...</div>
+                       <div className="px-4 py-3 text-sm text-slate-400">{t('Loading folders...')}</div>
                      )}
                      {!moveLoading && moveFoldersSorted.length === 0 && (
-                       <div className="px-4 py-3 text-sm text-slate-400">No folders</div>
+                       <div className="px-4 py-3 text-sm text-slate-400">{t('No folders')}</div>
                      )}
                      {!moveLoading && moveFoldersSorted.map((folder) => {
                        const folderHidden = Boolean(folder.hidden);
@@ -1583,7 +1587,11 @@ export const OutputsPanel = memo(function OutputsPanel({ visible }: { visible: b
                            {folderHidden && <EyeOffIcon className="w-3.5 h-3.5 shrink-0 text-slate-400" />}
                            <span className={`min-w-0 flex-1 truncate ${folderHidden ? 'italic text-slate-400' : 'text-slate-200'}`}>{folder.name}</span>
                            {typeof folder.count === 'number' && (
-                             <span className="shrink-0 text-xs text-slate-400">{folder.count} {folder.count === 1 ? 'item' : 'items'}</span>
+                             <span className="shrink-0 text-xs text-slate-400">
+                               {folder.count === 1
+                                 ? t('{count} item', { count: folder.count })
+                                 : t('{count} items', { count: folder.count })}
+                             </span>
                            )}
                          </button>
                        );
@@ -1598,7 +1606,7 @@ export const OutputsPanel = memo(function OutputsPanel({ visible }: { visible: b
                    <input
                      value={newFolderName}
                      onChange={(event) => setNewFolderName(event.target.value)}
-                     placeholder="New folder"
+                     placeholder={t('New folder')}
                      data-swipe-nav-ignore="true"
                      className="flex-1 min-w-0 border border-white/10 bg-slate-950/80 text-slate-100 placeholder:text-slate-500 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-cyan-400"
                    />
@@ -1607,7 +1615,7 @@ export const OutputsPanel = memo(function OutputsPanel({ visible }: { visible: b
                      onClick={handleCreateFolder}
                      disabled={!newFolderNameValid}
                    >
-                     Create
+                     {t('Create')}
                    </button>
                  </div>
                </div>
@@ -1616,14 +1624,14 @@ export const OutputsPanel = memo(function OutputsPanel({ visible }: { visible: b
                    className="px-3 py-2 text-sm font-medium text-slate-300 hover:bg-white/10 rounded-lg"
                    onClick={closeMoveModal}
                  >
-                   Cancel
+                   {t('Cancel')}
                  </button>
                  <button
                    className={`px-3 py-2 text-sm font-semibold rounded-lg ${movePath !== moveOriginPath ? 'text-slate-950 bg-cyan-500 hover:bg-cyan-400' : 'text-slate-500 bg-slate-800 cursor-not-allowed'}`}
                    onClick={submitMove}
                    disabled={movePath === moveOriginPath}
                  >
-                   Submit
+                   {t('Submit')}
                  </button>
                </div>
              </div>
@@ -1634,20 +1642,20 @@ export const OutputsPanel = memo(function OutputsPanel({ visible }: { visible: b
          <Dialog
            fullscreen={viewerOpen}
            onClose={closeDeleteModal}
-           title="Delete file?"
+           title={t('Delete file?')}
            description={
              deleteTarget.type === 'folder'
-               ? `This will permanently delete the folder "${deleteTarget.name}" and all of its contents from the server. This cannot be undone.`
-               : `This will permanently delete "${deleteTarget.name}" from the server. This cannot be undone.`
+               ? t('This will permanently delete the folder "{name}" and all of its contents from the server. This cannot be undone.', { name: deleteTarget.name })
+               : t('This will permanently delete "{name}" from the server. This cannot be undone.', { name: deleteTarget.name })
            }
            actions={[
              {
-               label: 'Cancel',
+               label: t('Cancel'),
                onClick: closeDeleteModal,
                variant: 'secondary'
              },
              {
-               label: 'Delete',
+               label: t('Delete'),
                autoFocus: true,
                onClick: confirmDelete,
                variant: 'danger'
@@ -1658,24 +1666,32 @@ export const OutputsPanel = memo(function OutputsPanel({ visible }: { visible: b
        {deleteSelectionOpen && (
          <Dialog
            onClose={() => setDeleteSelectionOpen(false)}
-           title="Delete selection?"
+           title={t('Delete selection?')}
            description={(() => {
              const { files, folders } = selectionDeleteCounts;
-             const fileLabel = `${files} file${files === 1 ? '' : 's'}`;
-             const folderLabel = `${folders} folder${folders === 1 ? '' : 's'}`;
+             const fileLabel = files === 1
+               ? t('{count} file', { count: files })
+               : t('{count} files', { count: files });
+             const folderLabel = folders === 1
+               ? t('{count} folder', { count: folders })
+               : t('{count} folders', { count: folders });
              const target =
-               folders === 0 ? fileLabel : files === 0 ? folderLabel : `${fileLabel} and ${folderLabel}`;
-             return `This will permanently delete ${target} from the server${folders > 0 ? `, including all contents of the selected folder${folders === 1 ? '' : 's'}` : ''}. This cannot be undone.`;
+               folders === 0 ? fileLabel : files === 0 ? folderLabel : t('{file} and {folder}', { file: fileLabel, folder: folderLabel });
+             return folders === 0
+               ? t('This will permanently delete {target} from the server. This cannot be undone.', { target })
+               : folders === 1
+                 ? t('This will permanently delete {target} from the server, including all contents of the selected folder. This cannot be undone.', { target })
+                 : t('This will permanently delete {target} from the server, including all contents of the selected folders. This cannot be undone.', { target });
            })()}
            zIndex={1800}
            actions={[
              {
-               label: 'Cancel',
+               label: t('Cancel'),
                onClick: () => setDeleteSelectionOpen(false),
                variant: 'secondary'
              },
              {
-               label: 'Delete',
+               label: t('Delete'),
                autoFocus: true,
                onClick: confirmDeleteSelection,
                variant: 'danger'
@@ -1690,16 +1706,16 @@ export const OutputsPanel = memo(function OutputsPanel({ visible }: { visible: b
          >
           <div className="p-4">
             <div className="text-slate-100 text-base font-semibold">
-              Rename {renameTarget.type === 'folder' ? 'folder' : 'file'}
+              {renameTarget.type === 'folder' ? t('Rename folder') : t('Rename file')}
             </div>
             <div className="text-slate-400 text-sm mt-1 truncate">
-              Current: {renameTarget.name}
+              {t('Current: {name}', { name: renameTarget.name })}
             </div>
             <input
               value={renameValue}
               onChange={(event) => setRenameValue(event.target.value)}
               onKeyDown={(event) => { if (event.key === 'Enter') void confirmRename(); }}
-              placeholder={renameTarget.type === 'folder' ? 'Folder name' : 'File name'}
+              placeholder={renameTarget.type === 'folder' ? t('Folder name') : t('File name')}
               data-swipe-nav-ignore="true"
               className="mt-3 w-full border border-white/10 bg-slate-950/80 text-slate-100 placeholder:text-slate-500 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-cyan-400"
               autoFocus
@@ -1740,7 +1756,7 @@ export const OutputsPanel = memo(function OutputsPanel({ visible }: { visible: b
               value={createFolderName}
               onChange={(event) => setCreateFolderName(event.target.value)}
               onKeyDown={(event) => { if (event.key === 'Enter') handleCreateNewFolder(); }}
-              placeholder="Folder name"
+              placeholder={t('Folder name')}
               data-swipe-nav-ignore="true"
               className="mt-3 w-full border border-white/10 bg-slate-950/80 text-slate-100 placeholder:text-slate-500 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-cyan-400"
               autoFocus
@@ -1796,16 +1812,16 @@ export const OutputsPanel = memo(function OutputsPanel({ visible }: { visible: b
          <Dialog
            fullscreen={viewerOpen}
            onClose={handleOutputsWorkflowCancel}
-           title="Unsaved changes"
-           description="Are you sure you want to load this workflow? You have unsaved changes."
+           title={t('Unsaved changes')}
+           description={t('Are you sure you want to load this workflow? You have unsaved changes.')}
            actions={[
              {
-               label: 'Cancel',
+               label: t('Cancel'),
                onClick: handleOutputsWorkflowCancel,
                variant: 'secondary'
              },
              {
-               label: 'Continue',
+               label: t('Continue'),
                onClick: () => { void handleOutputsWorkflowConfirm(); },
                variant: 'danger'
              }

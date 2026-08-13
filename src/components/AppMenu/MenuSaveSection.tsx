@@ -1,4 +1,5 @@
 import { CaretDownIcon, SaveAsIcon, SaveDiskIcon } from '@/components/icons';
+import { useI18n } from '@/i18n';
 import type { Workflow } from '@/api/types';
 import { getDisplayName } from './userWorkflowHelpers';
 import {
@@ -35,6 +36,7 @@ export function MenuSaveSection({
   onSave,
   onOpenSaveAs,
 }: MenuSaveSectionProps) {
+  const { t } = useI18n();
   return (
     <section ref={sectionRef} className="mb-6">
       <button
@@ -43,7 +45,7 @@ export function MenuSaveSection({
         className={menuSectionHeaderClassName}
         aria-expanded={open}
       >
-        <span>Save Workflow</span>
+        <span>{t('Save Workflow')}</span>
         <CaretDownIcon className={`${menuChevronClassName} ${open ? 'rotate-0' : '-rotate-90'}`} />
       </button>
       <CollapsibleMenuSection open={open}>
@@ -56,7 +58,7 @@ export function MenuSaveSection({
             >
               <SaveDiskIcon className={`${menuIconClassName} shrink-0`} />
               <span className={`${menuTextClassName} flex-1 truncate`}>
-                Save {getDisplayName(currentFilename)}
+                {t('Save {name}', { name: getDisplayName(currentFilename) })}
               </span>
             </button>
           )}
@@ -67,7 +69,7 @@ export function MenuSaveSection({
             className={menuSurfaceButtonClassName}
           >
             <SaveAsIcon className={menuIconClassName} />
-            <span className={`${menuTextClassName} flex-1 truncate`}>Save As...</span>
+            <span className={`${menuTextClassName} flex-1 truncate`}>{t('Save As...')}</span>
             <span className={menuArrowClassName}>&rarr;</span>
           </button>
         </div>
