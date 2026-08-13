@@ -1,5 +1,6 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { useT } from '@/i18n';
 import type { Workflow, WorkflowInput, WorkflowOutput } from '@/api/types';
 import { getScopedWorkflowView } from '@/utils/canonicalWorkflowOps';
 import { useWorkflowStore } from '@/hooks/useWorkflow';
@@ -55,6 +56,7 @@ export const ConnectionButton = memo(function ConnectionButton({
   hideLabel = false,
   isRequired = false
 }: ConnectionButtonProps) {
+  const t = useT();
   // The store keeps the canonical workflow model in `workflow`, with root nodes
   // at the top level and nested nodes in `definitions.subgraphs`.
   const workflow = useWorkflowStore((s) => s.workflow);
@@ -507,7 +509,7 @@ export const ConnectionButton = memo(function ConnectionButton({
       autoFocus
       type="text"
       defaultValue={ownNode ? getSetGetName(ownNode) ?? '' : ''}
-      placeholder="set name"
+      placeholder={t('set name')}
       onClick={(event) => event.stopPropagation()}
       onBlur={(event) => {
         if (ownNode?.itemKey) renameSetGetNode(ownNode.itemKey, event.target.value);
@@ -576,7 +578,7 @@ export const ConnectionButton = memo(function ConnectionButton({
                   <div className="px-3 py-1">
                     <div className="flex items-center gap-2">
                       <div className="h-px flex-1 bg-white/10" />
-                      <span className="text-[10px] text-slate-400">(via bypassed)</span>
+                      <span className="text-[10px] text-slate-400">{t('(via bypassed)')}</span>
                       <div className="h-px flex-1 bg-white/10" />
                     </div>
                   </div>

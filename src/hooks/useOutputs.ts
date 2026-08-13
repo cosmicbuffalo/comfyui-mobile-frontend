@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import * as api from '@/api/client';
 import type { FileItem, AssetSource, SortMode } from '@/api/client';
+import { t } from '@/i18n';
 
 function getVisibleParentPath(path: string | null): string | null {
   if (!path) return null;
@@ -746,7 +747,7 @@ export const useOutputsStore = create<OutputsState>()(
           // Distinguish "the search failed" from "no matches".
           set({
             promptSearchLoading: false,
-            promptSearchError: (err as Error).message || 'Prompt search failed',
+            promptSearchError: (err as Error).message || t('Prompt search failed'),
           });
         }
       },
@@ -928,7 +929,11 @@ export const useOutputsStore = create<OutputsState>()(
         // deleted in another tab looks like.
         const failure = results.find((result): result is Error => result instanceof Error);
         if (failure) {
-          set({ error: `Could not ${hidden ? 'hide' : 'unhide'} every item: ${failure.message}` });
+          set({
+            error: hidden
+              ? t('Could not hide every item: {message}', { message: failure.message })
+              : t('Could not unhide every item: {message}', { message: failure.message }),
+          });
         }
         get().refresh();
       },

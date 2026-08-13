@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { DownloadDeviceIcon } from '@/components/icons';
+import { useT } from '@/i18n';
 import { OverlayCircleButton } from './OverlayCircleButton';
 
 interface DownloadButtonProps {
@@ -29,6 +30,7 @@ export function DownloadButton({
   onClick,
   onLoadingChange,
 }: DownloadButtonProps) {
+  const t = useT();
   const [loading, setLoading] = useState(false);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // The re-entrancy guard has to be a ref, not `loading`: state doesn't update
@@ -78,7 +80,7 @@ export function DownloadButton({
     }, SYNC_SPINNER_MS);
   };
 
-  const ariaLabel = loading ? 'Downloading…' : 'Download';
+  const ariaLabel = loading ? t('Downloading…') : t('Download');
 
   return (
     <OverlayCircleButton

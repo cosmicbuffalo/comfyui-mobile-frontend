@@ -1,4 +1,5 @@
 import type { extractMetadata } from "@/utils/metadata";
+import { useT } from "@/i18n";
 
 interface MediaViewerMetadataProps {
   isVideo: boolean;
@@ -17,6 +18,7 @@ export function MediaViewerMetadata({
   metadata,
   durationLabel,
 }: MediaViewerMetadataProps) {
+  const t = useT();
   if (!showMetadataToggle) return null;
 
   return (
@@ -32,39 +34,39 @@ export function MediaViewerMetadata({
     >
       {metadataIsLoading ? (
         <div className="px-1.5 py-0.5 bg-black/50 text-white text-[10px] rounded backdrop-blur-sm">
-          Loading metadata...
+          {t('Loading metadata...')}
         </div>
       ) : metadata ? (
         <>
           {metadata.model && (
             <div className="px-1.5 py-0.5 bg-black/50 text-white text-[10px] rounded backdrop-blur-sm">
-              model: {metadata.model}
+              {t('model: {value}', { value: metadata.model })}
             </div>
           )}
           {metadata.sampler && (
             <div className="px-1.5 py-0.5 bg-black/50 text-white text-[10px] rounded backdrop-blur-sm">
-              sampler: {metadata.sampler}
+              {t('sampler: {value}', { value: metadata.sampler })}
             </div>
           )}
           {metadata.steps && (
             <div className="px-1.5 py-0.5 bg-black/50 text-white text-[10px] rounded backdrop-blur-sm">
-              steps: {metadata.steps}
+              {t('steps: {value}', { value: metadata.steps })}
             </div>
           )}
           {metadata.cfg && (
             <div className="px-1.5 py-0.5 bg-black/50 text-white text-[10px] rounded backdrop-blur-sm">
-              cfg: {metadata.cfg}
+              {t('cfg: {value}', { value: metadata.cfg })}
             </div>
           )}
           {durationLabel && (
             <div className="px-1.5 py-0.5 bg-black/50 text-white text-[10px] rounded backdrop-blur-sm">
-              time: {durationLabel}
+              {t('time: {value}', { value: durationLabel })}
             </div>
           )}
         </>
       ) : (
         <div className="px-1.5 py-0.5 bg-black/50 text-white text-[10px] rounded backdrop-blur-sm">
-          No metadata found
+          {t('No metadata found')}
         </div>
       )}
     </div>

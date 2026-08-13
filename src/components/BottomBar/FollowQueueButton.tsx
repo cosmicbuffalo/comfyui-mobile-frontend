@@ -1,6 +1,7 @@
 import { useCallback, useMemo } from "react";
 import { ProgressRing, QueueStackIcon } from "@/components/icons";
 import { appChromeIconButtonClassName, chromeBarButtonClassName } from "@/components/chromeStyles";
+import { useT } from '@/i18n';
 
 interface FollowQueueButtonProps {
   viewerOpen: boolean;
@@ -21,6 +22,7 @@ export function FollowQueueButton({
   onToggleFollowQueue,
   onOpenFollowQueue,
 }: FollowQueueButtonProps) {
+  const t = useT();
   const handleClick = useCallback(() => {
     if (viewerOpen) {
       onToggleFollowQueue?.();
@@ -30,9 +32,9 @@ export function FollowQueueButton({
   }, [viewerOpen, onToggleFollowQueue, onOpenFollowQueue]);
 
   const ariaLabel = useMemo(() => {
-    if (!viewerOpen) return "Open image viewer";
-    return followQueue ? "Disable follow queue" : "Enable follow queue";
-  }, [viewerOpen, followQueue]);
+    if (!viewerOpen) return t('Open image viewer');
+    return followQueue ? t('Disable follow queue') : t('Enable follow queue');
+  }, [viewerOpen, followQueue, t]);
 
   const buttonClassName = useMemo(() => {
     if (!viewerOpen) return appChromeIconButtonClassName;

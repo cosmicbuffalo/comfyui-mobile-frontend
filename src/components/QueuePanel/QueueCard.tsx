@@ -36,6 +36,7 @@ import {
   reportVideoAutoplayRejection,
   reportVideoPlaybackIssue,
 } from '@/utils/mediaDiagnostics';
+import { t, useT } from '@/i18n';
 
 const IMAGE_RETRY_DELAYS_MS = [300, 900] as const;
 
@@ -134,6 +135,7 @@ function QueueMediaEntry({
   onToggleReject,
   onMediaReady,
 }: QueueMediaEntryProps) {
+  const t = useT();
   const { img, index, isPreview } = entry;
   const isLatent = Boolean(entry.rawSrc);
   // The latent preview is a streamed blob: URL, not a server file or video.
@@ -346,7 +348,7 @@ function QueueMediaEntry({
         <div className={`absolute left-2 z-10 rounded bg-black/60 px-2 py-1 text-xs font-semibold text-white backdrop-blur-sm shadow-sm ${
           shouldShowRunningProgress ? 'top-14' : 'top-2'
         }`}>
-          {isLatent ? 'LATENT' : 'PREVIEW'}
+          {isLatent ? t('LATENT') : t('PREVIEW')}
         </div>
       )}
       {showDurationLabel && (
@@ -372,14 +374,14 @@ function QueueMediaEntry({
           style={mediaElementStyle}
           onClick={isVideo ? onMediaClick(src, index, isTopDoneItem) : undefined}
         >
-          {isVideo ? 'Video preview unavailable' : 'Image unavailable'}
+          {isVideo ? t('Video preview unavailable') : t('Image unavailable')}
         </div>
       ) : isVideo && !videoActive ? (
         <>
           <img
             ref={imgRef}
             src={displaySrc}
-            alt="Generation video poster"
+            alt={t('Generation video poster')}
             className="w-full h-auto block"
             style={mediaElementStyle}
             loading="lazy"
@@ -447,7 +449,7 @@ function QueueMediaEntry({
               type="button"
               className="absolute inset-0 flex items-center justify-center bg-black/35 text-white"
               onClick={onReplay(src)}
-              aria-label="Replay video"
+              aria-label={t('Replay video')}
             >
               <span className="flex h-12 w-12 items-center justify-center rounded-full bg-black/60 text-2xl">
                 ↻
@@ -459,7 +461,7 @@ function QueueMediaEntry({
         <img
           ref={imgRef}
           src={displaySrc}
-          alt="Generation"
+          alt={t('Generation')}
           className="w-full h-auto block"
           style={mediaElementStyle}
           loading="lazy"
@@ -524,10 +526,10 @@ function QueueMediaEntry({
         <div className={`absolute right-2 flex flex-col-reverse items-end gap-1 pointer-events-none ${
           favorited ? 'bottom-10' : 'bottom-2'
         }`}>
-          {metadata.model && <div className="px-1.5 py-0.5 bg-black/50 text-white text-[10px] rounded backdrop-blur-sm">model: {metadata.model}</div>}
-          {metadata.sampler && <div className="px-1.5 py-0.5 bg-black/50 text-white text-[10px] rounded backdrop-blur-sm">sampler: {metadata.sampler}</div>}
-          {metadata.steps && <div className="px-1.5 py-0.5 bg-black/50 text-white text-[10px] rounded backdrop-blur-sm">steps: {metadata.steps}</div>}
-          {metadata.cfg && <div className="px-1.5 py-0.5 bg-black/50 text-white text-[10px] rounded backdrop-blur-sm">cfg: {metadata.cfg}</div>}
+          {metadata.model && <div className="px-1.5 py-0.5 bg-black/50 text-white text-[10px] rounded backdrop-blur-sm">{t('model: {model}', { model: metadata.model })}</div>}
+          {metadata.sampler && <div className="px-1.5 py-0.5 bg-black/50 text-white text-[10px] rounded backdrop-blur-sm">{t('sampler: {sampler}', { sampler: metadata.sampler })}</div>}
+          {metadata.steps && <div className="px-1.5 py-0.5 bg-black/50 text-white text-[10px] rounded backdrop-blur-sm">{t('steps: {steps}', { steps: metadata.steps })}</div>}
+          {metadata.cfg && <div className="px-1.5 py-0.5 bg-black/50 text-white text-[10px] rounded backdrop-blur-sm">{t('cfg: {cfg}', { cfg: metadata.cfg })}</div>}
         </div>
       )}
     </div>
@@ -588,7 +590,7 @@ function sessionDisplayLabel(
 ): string {
   if (filename) return getDisplayName(filename);
   if (source && source.type === 'template') return source.templateName;
-  return 'Untitled';
+  return t('Untitled');
 }
 
 function getPreferredOutputFilename(images: HistoryOutputImage[]): string | null {
@@ -623,6 +625,7 @@ function QueueCardComponent({
   onReleaseQueueVideoPlayback,
   onMediaReady,
 }: QueueCardProps) {
+  const t = useT();
   const previewVisibility = useQueueStore((s) => s.previewVisibility);
   const previewVisibilityDefault = useQueueStore((s) => s.previewVisibilityDefault);
   const showQueueMetadata = useQueueStore((s) => s.showQueueMetadata);
@@ -995,8 +998,8 @@ function QueueCardComponent({
   const hasCompleted = isDone || completionDurationSeconds !== undefined;
   const success = historyData ? historyData.success !== false : true;
   const donePlaceholderMessage = isFailedDoneItem
-    ? historyData?.errorMessage || 'Execution failed'
-    : 'No images saved';
+    ? historyData?.errorMessage || t('Execution failed')
+    : t('No images saved');
   const donePlaceholderClass = isFailedDoneItem
     ? 'text-sm text-red-600 px-4 text-center'
     : 'text-sm';
@@ -1014,10 +1017,10 @@ function QueueCardComponent({
       displaySrc: isVideoFilename(img.filename)
         ? undefined
         : getQueueImagePreviewUrl(img.filename, img.subfolder, img.type),
-      alt: 'Generation',
+      alt: t('Generation'),
       mediaType: getMediaType(img.filename)
     }))
-  ), [visibleImages]);
+  ), [visibleImages, t]);
   const queueViewerImages = useMemo(() => (
     isRunning ? cardViewerImages : viewerImages
   ), [cardViewerImages, isRunning, viewerImages]);
@@ -1135,10 +1138,12 @@ function QueueCardComponent({
         img,
         index,
         isPreview,
-        label: `${isPreview ? 'Preview' : 'Output'} #${labelIndex}`,
+        label: isPreview
+          ? t('Preview #{n}', { n: labelIndex })
+          : t('Output #{n}', { n: labelIndex }),
       };
     });
-  }, [fullWidthMediaEntries, hasCompleted]);
+  }, [fullWidthMediaEntries, hasCompleted, t]);
 
   // Recency: capture the latent's seq at the moment a new real media entry
   // arrives, synchronously during render so the switch is immediate (an effect
@@ -1163,9 +1168,9 @@ function QueueCardComponent({
       isPreview: true,
       isLatent: true,
       rawSrc: latentUrl,
-      label: 'Latent',
+      label: t('Latent'),
     };
-  }, [latentUrl]);
+  }, [latentUrl, t]);
 
   // Latent appended last so it sits at the end of the thumbnail tab bar; the bar
   // appears whenever there's more than one entry (e.g. a latent + a real preview).
@@ -1542,7 +1547,7 @@ function QueueCardComponent({
         <div className="mx-auto w-full rounded-lg bg-slate-950/45 px-2.5 py-1.5 shadow-sm backdrop-blur-[2px]">
           <div className="mb-1 flex min-w-0 items-center justify-between gap-2 text-[10px] leading-none">
             <span className="min-w-0 truncate font-semibold text-slate-100">
-              {executingNodeLabel || 'Running'}
+              {executingNodeLabel || t('Running')}
             </span>
             <span className="shrink-0 font-semibold text-cyan-200">{overallProgress}%</span>
           </div>
@@ -1564,7 +1569,7 @@ function QueueCardComponent({
       ) : (
         <div className="mx-auto flex w-full items-center gap-2 rounded-lg bg-slate-950/45 px-2.5 py-1.5 text-[10px] font-semibold text-cyan-200 shadow-sm backdrop-blur-[2px]">
           <div className="h-3 w-3 shrink-0 animate-spin rounded-full border-2 border-cyan-500/25 border-t-cyan-300" />
-          <span>Generating...</span>
+          <span>{t('Generating...')}</span>
         </div>
       )}
     </div>
@@ -1637,7 +1642,7 @@ function QueueCardComponent({
           {isGenerating && <span className="w-2 h-2 bg-cyan-300 rounded-full animate-pulse" />}
           {wasAutoRestored && (
             <span className="rounded border border-cyan-300/30 bg-cyan-400/15 px-1.5 py-0.5 text-[10px] font-bold text-cyan-200">
-              AUTO-RESTORED
+              {t('AUTO-RESTORED')}
             </span>
           )}
           {isRunning && isActuallyRunning && overallProgress != null && (
@@ -1681,7 +1686,7 @@ function QueueCardComponent({
           {(isRunning || isPending || isDone) && (
             <ContextMenuButton
               onClick={handleOpenMenuClick}
-              ariaLabel="Image options"
+              ariaLabel={t('Image options')}
               buttonSize={7}
               iconSize={4}
             />
@@ -1854,7 +1859,7 @@ function QueueCardComponent({
             ) : isRunning ? null : (
               <div className={placeholderClass} style={{ minHeight: '100px' }}>
                 <LoadingSpinner size="lg" color="gray" />
-                <span className="text-xs mt-2 opacity-40">Waiting to start...</span>
+                <span className="text-xs mt-2 opacity-40">{t('Waiting to start...')}</span>
               </div>
             )}
           </div>

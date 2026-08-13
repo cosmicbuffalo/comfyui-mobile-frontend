@@ -16,19 +16,19 @@ describe('formatRelativeAge', () => {
   const now = Date.UTC(2026, 7, 11, 20, 0, 0);
 
   it('uses compact human units from minutes through years', () => {
-    expect(formatRelativeAge(now - 20_000, now)).toBe('just now');
-    expect(formatRelativeAge(now - 1 * 60_000, now)).toBe('1 minute ago');
-    expect(formatRelativeAge(now - 4 * 60 * 60_000, now)).toBe('4 hours ago');
-    expect(formatRelativeAge(now - 3 * 24 * 60 * 60_000, now)).toBe('3 days ago');
-    expect(formatRelativeAge(now - 14 * 24 * 60 * 60_000, now)).toBe('2 weeks ago');
-    expect(formatRelativeAge(now - 90 * 24 * 60 * 60_000, now)).toBe('3 months ago');
-    expect(formatRelativeAge(now - 2 * 365 * 24 * 60 * 60_000, now)).toBe('2 years ago');
+    expect(formatRelativeAge(now - 20_000, now)).toBe('刚刚');
+    expect(formatRelativeAge(now - 1 * 60_000, now)).toBe('1 分钟前');
+    expect(formatRelativeAge(now - 4 * 60 * 60_000, now)).toBe('4 小时前');
+    expect(formatRelativeAge(now - 3 * 24 * 60 * 60_000, now)).toBe('3 天前');
+    expect(formatRelativeAge(now - 14 * 24 * 60 * 60_000, now)).toBe('2 周前');
+    expect(formatRelativeAge(now - 90 * 24 * 60 * 60_000, now)).toBe('3 个月前');
+    expect(formatRelativeAge(now - 2 * 365 * 24 * 60 * 60_000, now)).toBe('2 年前');
   });
 
   it('omits unavailable timestamps and treats future clock skew as just now', () => {
     expect(formatRelativeAge(undefined, now)).toBeNull();
     expect(formatRelativeAge(0, now)).toBeNull();
-    expect(formatRelativeAge(now + 60_000, now)).toBe('just now');
+    expect(formatRelativeAge(now + 60_000, now)).toBe('刚刚');
   });
 });
 
@@ -45,7 +45,7 @@ describe('buildFileSections', () => {
     const sections = buildFileSections(files, opts({ isNameSort: true }));
     expect(sections.map((s) => s.key)).toEqual(['A', 'B']);
     expect(sections[0].files).toHaveLength(2);
-    expect(sections[0].label).toBe('Starting with A');
+    expect(sections[0].label).toBe('以 A 开头');
   });
 
   it('groups by rounded size when size-sorting', () => {
@@ -61,7 +61,7 @@ describe('buildFileSections', () => {
     const files = [file({ name: 'a' }), file({ name: 'b' })];
     const sections = buildFileSections(files, opts({ shouldGroupByDate: false }));
     expect(sections).toHaveLength(1);
-    expect(sections[0]).toMatchObject({ key: 'all', label: 'All files' });
+    expect(sections[0]).toMatchObject({ key: 'all', label: '全部文件' });
     expect(sections[0].files).toHaveLength(2);
   });
 
@@ -80,7 +80,7 @@ describe('buildFileSections', () => {
 describe('buildBreadcrumbs', () => {
   it('starts with a source-specific root and one crumb per folder segment', () => {
     expect(buildBreadcrumbs('output', 'a/b/c')).toEqual([
-      { name: 'Outputs', path: null },
+      { name: '输出', path: null },
       { name: 'a', path: 'a' },
       { name: 'b', path: 'a/b' },
       { name: 'c', path: 'a/b/c' },
@@ -88,8 +88,8 @@ describe('buildBreadcrumbs', () => {
   });
 
   it('uses Inputs/Temp root names', () => {
-    expect(buildBreadcrumbs('input', null)[0].name).toBe('Inputs');
-    expect(buildBreadcrumbs('temp', null)[0].name).toBe('Temp');
+    expect(buildBreadcrumbs('input', null)[0].name).toBe('输入');
+    expect(buildBreadcrumbs('temp', null)[0].name).toBe('临时');
   });
 });
 

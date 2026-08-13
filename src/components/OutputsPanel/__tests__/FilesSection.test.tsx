@@ -91,7 +91,7 @@ describe('OutputsFilesSection incremental rendering', () => {
     const selectIds = vi.fn();
     await renderWith(4, { selectionMode: true, selectIds });
     const selectAllButtons = Array.from(container.querySelectorAll('button')).filter(
-      (b) => b.textContent === 'Select all',
+      (b) => b.textContent === '全选',
     );
     // Section 2's "Select all" — only 'd' is rendered, but it must select both.
     selectAllButtons[1]?.dispatchEvent(new MouseEvent('click', { bubbles: true }));

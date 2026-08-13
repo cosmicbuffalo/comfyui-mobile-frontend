@@ -3,6 +3,7 @@ import type { FileItem, SortMode } from '@/api/client';
 import { Collapsible } from '@/components/Collapsible';
 import { FoldIcon } from '@/components/FoldIcon';
 import { FileCard } from './FileCard';
+import { useT } from '@/i18n';
 
 const OUTPUTS_GRID_TEMPLATE_COLUMNS =
   'repeat(auto-fill, minmax(min(200px, calc((100% - 1rem) / 2)), 1fr))';
@@ -49,6 +50,7 @@ export function OutputsFilesSection({
   sortMode,
   maxRenderedFiles
 }: OutputsFilesSectionProps) {
+  const t = useT();
   // O(1) membership for the per-card selected/favorited checks, so rendering n
   // cards is O(n) instead of O(n²) (a `.includes()` per card on every selection
   // toggle was the hot path on large folders).
@@ -106,7 +108,7 @@ export function OutputsFilesSection({
                 className="text-[10px] font-bold uppercase text-cyan-300 hover:text-cyan-200"
                 onClick={() => selectIds(section.files.map((file) => file.id))}
               >
-                Select all
+                {t('Select all')}
               </button>
             )}
           </div>

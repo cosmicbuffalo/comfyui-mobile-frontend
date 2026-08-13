@@ -2,8 +2,10 @@ import { useEffect } from 'react';
 import { useWorkflowStore } from '@/hooks/useWorkflow';
 import { useQueueStore } from '@/hooks/useQueue';
 import { appChromePrimaryButtonClassName, appChromePrimaryButtonDisabledClassName } from '@/components/chromeStyles';
+import { useT } from '@/i18n';
 
 export function RunButton() {
+  const t = useT();
   const workflow = useWorkflowStore((s) => s.workflow);
   const runCount = useWorkflowStore((s) => s.runCount);
   const infiniteLoop = useWorkflowStore((s) => s.infiniteLoop);
@@ -65,7 +67,7 @@ export function RunButton() {
         disabled={isStopping}
         className="flex-1 py-3 px-6 rounded-xl font-semibold text-lg min-h-[48px] transition-all bg-red-500 text-white active:bg-red-600 disabled:opacity-70"
       >
-        {isStopping ? 'Stopping...' : 'Stop'}
+        {isStopping ? t('Stopping...') : t('Stop')}
       </button>
     );
   }
@@ -77,7 +79,7 @@ export function RunButton() {
       aria-busy={isLoading}
       // The visible "Queueing..." label is desktop-only (see below), so on a
       // phone the button would otherwise have no accessible name while loading.
-      aria-label={isLoading ? 'Queueing...' : undefined}
+      aria-label={isLoading ? t('Queueing...') : undefined}
       className={
         `flex-1 py-3 px-6 rounded-xl font-semibold text-lg min-h-[48px] transition-all `
         + (canRun && !isLoading
@@ -95,9 +97,9 @@ export function RunButton() {
           // full label only appears at the desktop breakpoint (lg / 1024px, see
           // DESKTOP_MIN_WIDTH). This avoids the jarring Run -> Queueing... text
           // swap on small screens.
-          <span className="hidden lg:inline">Queueing...</span>
+          <span className="hidden lg:inline">{t('Queueing...')}</span>
         ) : (
-          'Run'
+          t('Run')
         )}
       </span>
     </button>

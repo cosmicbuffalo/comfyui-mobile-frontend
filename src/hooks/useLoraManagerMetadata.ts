@@ -10,6 +10,7 @@ import {
   type LoraManagerPrefix,
   type ModelLookup,
 } from "@/api/loraManagerClient";
+import { t } from "@/i18n";
 
 type PrefixStatus = "idle" | "loading" | "ready" | "error";
 
@@ -312,7 +313,7 @@ export const useLoraManagerMetadataStore = create<LoraManagerMetadataState>(
           // State is already reset in the finally above; record the abort so
           // the menu can say the refresh ended partway instead of silently
           // flipping back to idle.
-          set({ refreshError: "Metadata refresh stopped partway — check the connection and run it again." });
+          set({ refreshError: t("Metadata refresh stopped partway — check the connection and run it again.") });
         });
       },
     };

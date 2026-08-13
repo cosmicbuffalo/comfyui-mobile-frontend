@@ -39,14 +39,14 @@ describe('ComboControl video upload detection', () => {
   };
 
   const uploadButton = () => Array.from(container.querySelectorAll('button'))
-    .find((button) => button.textContent?.includes('Upload video from device'));
+    .find((button) => button.textContent?.includes('从设备上传视频'));
 
   it('does not treat a bare container-format choice as a video file picker', () => {
     // SaveVideo's format combo offers ["auto", "mp4"]; "mp4" is a container
     // name, not a filename, and must not sprout upload/browse controls.
     render('format', ['auto', 'mp4'], 'auto');
     expect(uploadButton()).toBeUndefined();
-    expect(container.textContent).not.toContain('Browse files');
+    expect(container.textContent).not.toContain('浏览文件');
   });
 
   it('still offers uploads for combos listing real video filenames', () => {

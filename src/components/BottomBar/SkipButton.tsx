@@ -3,8 +3,10 @@ import { useWorkflowStore } from '@/hooks/useWorkflow';
 import { useQueueStore } from '@/hooks/useQueue';
 import { SkipForwardIcon } from '@/components/icons';
 import { chromeBarButtonClassName } from '@/components/chromeStyles';
+import { useT } from '@/i18n';
 
 export function SkipButton() {
+  const t = useT();
   const infiniteLoop = useWorkflowStore((s) => s.infiniteLoop);
   const isExecuting = useWorkflowStore((s) => s.isExecuting);
   const isLoading = useWorkflowStore((s) => s.isLoading);
@@ -39,9 +41,9 @@ export function SkipButton() {
     <button
       onClick={handleSkip}
       disabled={isSkipping}
-      title="Skip to next iteration"
+      title={t('Skip to next iteration')}
       className={`${chromeBarButtonClassName} bg-cyan-500/15 border border-cyan-400/30 text-cyan-300 active:bg-cyan-500/25 disabled:opacity-70`}
-      aria-label="Skip to next iteration"
+      aria-label={t('Skip to next iteration')}
     >
       <SkipForwardIcon className="w-6 h-6" />
     </button>

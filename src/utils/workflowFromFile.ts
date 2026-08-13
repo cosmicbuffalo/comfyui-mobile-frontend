@@ -1,4 +1,5 @@
 import type { Workflow } from '@/api/types';
+import { t } from '@/i18n';
 import {
   extractWorkflowFromImageFile,
   isWorkflowImageFile,
@@ -50,16 +51,16 @@ export async function readWorkflowFromFile(file: File): Promise<WorkflowFileResu
     try {
       const data = JSON.parse(await file.text());
       if (!validateWorkflowShape(data)) {
-        return { kind: 'invalid', message: 'Invalid workflow: missing nodes array' };
+        return { kind: 'invalid', message: t('Invalid workflow: missing nodes array') };
       }
       return { kind: 'workflow', workflow: data, filename: file.name };
     } catch (err) {
       return {
         kind: 'invalid',
-        message: err instanceof Error ? err.message : 'Failed to read workflow file',
+        message: err instanceof Error ? err.message : t('Failed to read workflow file'),
       };
     }
   }
 
-  return { kind: 'invalid', message: 'Unsupported file type. Drop a workflow .json or an image.' };
+  return { kind: 'invalid', message: t('Unsupported file type. Drop a workflow .json or an image.') };
 }

@@ -95,7 +95,7 @@ describe('QueueTopBarMenu folding', () => {
     });
 
     const foldAll = Array.from(container.querySelectorAll('button')).find(
-      (button) => button.textContent?.includes('Fold All'),
+      (button) => button.textContent?.includes('全部折叠'),
     );
     expect(foldAll).toBeDefined();
     await act(async () => {

@@ -14,6 +14,7 @@ import { requireHierarchicalKey } from '@/utils/itemKeys';
 import { appChromeIconButtonBareClassName } from '@/components/chromeStyles';
 import { useWorkflowHiddenStore } from '@/hooks/useWorkflowHidden';
 import { isHiddenWorkflowPath, isManuallyHiddenWorkflowPath } from '@/components/AppMenu/userWorkflowHelpers';
+import { useT } from '@/i18n';
 
 interface WorkflowTopBarMenuProps {
   open: boolean;
@@ -45,6 +46,7 @@ export function WorkflowTopBarMenu({
   onOpenWorkflowActions,
   onReloadWorkflow
 }: WorkflowTopBarMenuProps) {
+  const t = useT();
   const workflow = useWorkflowStore((s) => s.workflow);
   const scopeStack = useWorkflowStore((s) => s.scopeStack);
   const nodeTypes = useWorkflowStore((s) => s.nodeTypes);
@@ -338,7 +340,7 @@ export function WorkflowTopBarMenu({
       <ContextMenuButton
         buttonRef={buttonRef}
         onClick={onToggle}
-        ariaLabel="Workflow options"
+        ariaLabel={t('Workflow options')}
         className={`transition-colors ${appChromeIconButtonBareClassName}`}
       />
       {!open ? null : (
@@ -351,88 +353,88 @@ export function WorkflowTopBarMenu({
             items={[
               {
                 key: 'go-to-queue',
-                label: 'Go to queue',
+                label: t('Go to queue'),
                 icon: <ArrowRightIcon className="w-3 h-3" />,
                 onClick: handleGoToQueueClick
               },
               {
                 key: 'go-to-outputs',
-                label: 'Go to outputs',
+                label: t('Go to outputs'),
                 icon: <ArrowRightIcon className="w-3 h-3 rotate-180" />,
                 onClick: handleGoToOutputsClick
               },
               {
                 key: 'search',
-                label: 'Search',
+                label: t('Search'),
                 icon: <SearchIcon className="w-4 h-4" />,
                 onClick: handleSearchClick,
                 hidden: searchOpen
               },
               {
                 key: 'add-node',
-                label: 'Add node',
+                label: t('Add node'),
                 icon: <PlusIcon className="w-4 h-4" />,
                 onClick: handleAddNodeClick,
                 hidden: !hasWorkflow
               },
               {
                 key: 'add-group',
-                label: 'Add group',
+                label: t('Add group'),
                 icon: <PlusIcon className="w-4 h-4" />,
                 onClick: handleAddGroupClick,
                 hidden: !hasWorkflow
               },
               {
                 key: 'select',
-                label: 'Select',
+                label: t('Select'),
                 icon: <CheckIcon className="w-4 h-4" />,
                 onClick: () => { enterSelectionMode(); closeMenu(); },
                 hidden: !hasWorkflow
               },
               {
                 key: 'paste-here',
-                label: clipboardSummary ? `Paste ${clipboardSummary} here` : 'Paste here',
+                label: clipboardSummary ? t('Paste {summary} here', { summary: clipboardSummary }) : t('Paste here'),
                 icon: <ClipboardDownloadIcon className="w-4 h-4" />,
                 onClick: handlePasteHereClick,
                 hidden: !hasWorkflow || !clipboardSummary
               },
               {
                 key: 'hide-show',
-                label: 'Hide / Show',
+                label: t('Hide / Show'),
                 icon: <EyeIcon className="w-4 h-4" />,
                 onClick: () => { setVisibilityModalOpen(true); closeMenu(); }
               },
               {
                 key: 'fold-all',
-                label: 'Fold all',
+                label: t('Fold all'),
                 icon: <CaretRightIcon className="w-6 h-6 -ml-1" />,
                 onClick: handleFoldAllClick,
                 hidden: !hasUnfoldedVisibleItem
               },
               {
                 key: 'unfold-all',
-                label: 'Unfold all',
+                label: t('Unfold all'),
                 icon: <CaretDownIcon className="w-6 h-6 -ml-1" />,
                 onClick: handleUnfoldAllClick,
                 hidden: !hasFoldedVisibleItem
               },
               {
                 key: 'clear-bookmarks',
-                label: 'Clear bookmarks',
+                label: t('Clear bookmarks'),
                 icon: <TrashIcon className="w-4 h-4" />,
                 onClick: handleClearBookmarksClick,
                 hidden: bookmarkedItems.length === 0
               },
               {
                 key: 'reload-workflow',
-                label: 'Reload workflow',
+                label: t('Reload workflow'),
                 icon: <ReloadIcon className="w-4 h-4" />,
                 onClick: handleReloadWorkflowClick,
                 hidden: !canReload
               },
               {
                 key: 'workflow-actions',
-                label: 'Workflow actions',
+                label: t('Workflow actions'),
                 icon: <WorkflowIcon className="w-4 h-4" />,
                 onClick: () => {
                   onOpenWorkflowActions();
@@ -441,21 +443,21 @@ export function WorkflowTopBarMenu({
               },
               {
                 key: 'collapse-set-get',
-                label: 'Collapse Set/Get nodes',
+                label: t('Collapse Set/Get nodes'),
                 icon: <FunnelArrowsIcon className="w-4 h-4" />,
                 onClick: handleCollapseSetGetClick,
                 hidden: !hasSetGetNodes
               },
               {
                 key: 'undo',
-                label: 'Undo',
+                label: t('Undo'),
                 icon: <UndoIcon className="w-4 h-4" />,
                 onClick: handleUndoClick,
                 hidden: !canUndo
               },
               {
                 key: 'redo',
-                label: 'Redo',
+                label: t('Redo'),
                 icon: <RedoIcon className="w-4 h-4" />,
                 onClick: handleRedoClick,
                 hidden: !canRedo
@@ -476,7 +478,7 @@ export function WorkflowTopBarMenu({
             onClick={(event) => event.stopPropagation()}
           >
             <div className="px-4 py-3 text-sm font-semibold text-slate-100 border-b border-white/10">
-              Hide / Show
+              {t('Hide / Show')}
             </div>
             <div className="max-h-[50vh] overflow-y-auto">
               <ContextMenuBuilder
@@ -485,8 +487,8 @@ export function WorkflowTopBarMenu({
                   {
                     key: 'static-nodes',
                     label: hiddenStaticCount < staticNodeCount
-                      ? `Hide static nodes (${staticNodeCount})`
-                      : `Show static nodes (${staticNodeCount})`,
+                      ? t('Hide static nodes ({count})', { count: staticNodeCount })
+                      : t('Show static nodes ({count})', { count: staticNodeCount }),
                     icon: hiddenStaticCount < staticNodeCount
                       ? <EyeOffIcon className="w-4 h-4" />
                       : <EyeIcon className="w-4 h-4" />,
@@ -508,8 +510,8 @@ export function WorkflowTopBarMenu({
                   {
                     key: 'bypassed-nodes',
                     label: hiddenBypassedCount > 0
-                      ? `Show bypassed nodes (${bypassedNodeCount})`
-                      : `Hide bypassed nodes (${bypassedNodeCount})`,
+                      ? t('Show bypassed nodes ({count})', { count: bypassedNodeCount })
+                      : t('Hide bypassed nodes ({count})', { count: bypassedNodeCount }),
                     icon: hiddenBypassedCount > 0
                       ? <EyeIcon className="w-4 h-4" />
                       : <EyeOffIcon className="w-4 h-4" />,
@@ -530,7 +532,7 @@ export function WorkflowTopBarMenu({
                   },
                   {
                     key: 'toggle-connection-buttons',
-                    label: connectionButtonsVisible ? 'Hide connection buttons' : 'Show connection buttons',
+                    label: connectionButtonsVisible ? t('Hide connection buttons') : t('Show connection buttons'),
                     icon: connectionButtonsVisible
                       ? <EyeOffIcon className="w-4 h-4" />
                       : <EyeIcon className="w-4 h-4" />,
@@ -538,14 +540,14 @@ export function WorkflowTopBarMenu({
                   },
                   {
                     key: 'show-all-hidden',
-                    label: 'Show all hidden nodes',
+                    label: t('Show all hidden nodes'),
                     icon: <EyeIcon className="w-4 h-4" />,
                     onClick: handleShowAllHiddenClick,
                     hidden: !showAllHiddenNodesButton
                   },
                   {
                     key: 'toggle-workflow-hidden',
-                    label: workflowIsHidden ? 'Unhide this workflow' : 'Hide this workflow',
+                    label: workflowIsHidden ? t('Unhide this workflow') : t('Hide this workflow'),
                     icon: workflowIsHidden
                       ? <EyeIcon className="w-4 h-4" />
                       : <EyeOffIcon className="w-4 h-4" />,
@@ -563,7 +565,7 @@ export function WorkflowTopBarMenu({
                 className="px-3 py-2 text-sm font-medium text-slate-300 hover:bg-white/10 rounded-lg"
                 onClick={() => setVisibilityModalOpen(false)}
               >
-                Cancel
+                {t('Cancel')}
               </button>
             </div>
           </div>

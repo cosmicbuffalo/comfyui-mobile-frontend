@@ -2,6 +2,8 @@
 // the VAPID public key from the backend; we hand the resulting subscription back
 // to the node, which sends notifications on generation completion.
 
+import { t } from '@/i18n';
+
 export interface PushConfig {
   enabled: boolean;
   vapidPublicKey?: string;
@@ -17,7 +19,7 @@ export interface PushSendResult {
 
 export async function getPushConfig(): Promise<PushConfig> {
   const response = await fetch('/mobile/api/push/config');
-  if (!response.ok) throw new Error('Failed to fetch push config');
+  if (!response.ok) throw new Error(t('Failed to fetch push config'));
   return response.json();
 }
 
@@ -27,7 +29,7 @@ export async function sendSubscription(subscription: PushSubscription): Promise<
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ subscription: subscription.toJSON() }),
   });
-  if (!response.ok) throw new Error('Failed to register subscription');
+  if (!response.ok) throw new Error(t('Failed to register subscription'));
   return response.json();
 }
 
@@ -41,7 +43,7 @@ export async function removeSubscription(endpoint: string): Promise<void> {
 
 export async function sendTestPush(): Promise<PushSendResult> {
   const response = await fetch('/mobile/api/push/test', { method: 'POST' });
-  if (!response.ok) throw new Error('Failed to send test notification');
+  if (!response.ok) throw new Error(t('Failed to send test notification'));
   return response.json();
 }
 
@@ -56,13 +58,13 @@ export interface AppTarget {
 
 export async function getAppTargets(): Promise<{ targets: AppTarget[] }> {
   const response = await fetch('/mobile/api/push/app-targets');
-  if (!response.ok) throw new Error('Failed to fetch app targets');
+  if (!response.ok) throw new Error(t('Failed to fetch app targets'));
   return response.json();
 }
 
 export async function sendAppTestPush(): Promise<PushSendResult> {
   const response = await fetch('/mobile/api/push/app-test', { method: 'POST' });
-  if (!response.ok) throw new Error('Failed to send test notification');
+  if (!response.ok) throw new Error(t('Failed to send test notification'));
   return response.json();
 }
 
@@ -76,7 +78,7 @@ export interface PushPreferences {
 
 export async function getPushPreferences(): Promise<PushPreferences> {
   const response = await fetch('/mobile/api/push/preferences');
-  if (!response.ok) throw new Error('Failed to fetch notification preferences');
+  if (!response.ok) throw new Error(t('Failed to fetch notification preferences'));
   return response.json();
 }
 
@@ -86,6 +88,6 @@ export async function setPushPreferences(updates: Partial<PushPreferences>): Pro
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(updates),
   });
-  if (!response.ok) throw new Error('Failed to save notification preferences');
+  if (!response.ok) throw new Error(t('Failed to save notification preferences'));
   return response.json();
 }

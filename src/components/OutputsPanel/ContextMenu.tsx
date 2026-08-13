@@ -3,6 +3,7 @@ import type { CSSProperties } from 'react';
 import type { FileItem } from '@/api/client';
 import { CheckIcon, HeartIcon, HeartOutlineIcon, DownloadDeviceIcon, EyeIcon, EyeOffIcon, FolderIcon, WorkflowIcon, ThickArrowRightIcon, TrashIcon, EditIcon } from '@/components/icons';
 import { ContextMenuBuilder } from '@/components/menus/ContextMenuBuilder';
+import { useT } from '@/i18n';
 
 interface OutputsContextMenuProps {
   menuTarget: { file: FileItem } | null;
@@ -37,11 +38,12 @@ export function OutputsContextMenu({
   handleDownload,
   handleDeleteRequest
 }: OutputsContextMenuProps) {
+  const t = useT();
   if (!menuTarget) return null;
   const menuItems = [
     {
       key: 'favorite',
-      label: favorites.includes(menuTarget.file.id) ? 'Unfavorite' : 'Favorite',
+      label: favorites.includes(menuTarget.file.id) ? t('Unfavorite') : t('Favorite'),
       icon: favorites.includes(menuTarget.file.id)
         ? <HeartIcon className="w-4 h-4 text-red-500" />
         : <HeartOutlineIcon className="w-4 h-4" />,
@@ -49,25 +51,25 @@ export function OutputsContextMenu({
     },
     {
       key: 'select',
-      label: 'Select',
+      label: t('Select'),
       icon: <CheckIcon className="w-4 h-4" />,
       onClick: () => handleSelectSingle()
     },
     {
       key: 'move',
-      label: 'Move',
+      label: t('Move'),
       icon: <FolderIcon className="w-4 h-4" />,
       onClick: () => handleMoveSingle()
     },
     {
       key: 'rename',
-      label: 'Rename',
+      label: t('Rename'),
       icon: <EditIcon className="w-4 h-4" />,
       onClick: () => handleRenameRequest()
     },
     {
       key: 'hide',
-      label: menuTarget.file.hiddenSelf ? 'Unhide' : 'Hide',
+      label: menuTarget.file.hiddenSelf ? t('Unhide') : t('Hide'),
       icon: menuTarget.file.hiddenSelf
         ? <EyeIcon className="w-4 h-4" />
         : <EyeOffIcon className="w-4 h-4" />,
@@ -78,28 +80,28 @@ export function OutputsContextMenu({
     },
     {
       key: 'load-workflow',
-      label: 'Load workflow',
+      label: t('Load workflow'),
       icon: <WorkflowIcon className="w-4 h-4" />,
       onClick: () => handleLoadWorkflow(),
       hidden: menuTarget.file.type !== 'image'
     },
     {
       key: 'use-in-workflow',
-      label: 'Use in workflow',
+      label: t('Use in workflow'),
       icon: <ThickArrowRightIcon className="w-4 h-4" />,
       onClick: () => handleLoadInWorkflow(),
       hidden: menuTarget.file.type !== 'image'
     },
     {
       key: 'download',
-      label: 'Download',
+      label: t('Download'),
       icon: <DownloadDeviceIcon className="w-4 h-4" />,
       onClick: () => handleDownload(),
       hidden: menuTarget.file.type === 'folder'
     },
     {
       key: 'delete',
-      label: 'Delete',
+      label: t('Delete'),
       icon: <TrashIcon className="w-4 h-4" />,
       onClick: () => handleDeleteRequest(),
       color: 'danger' as const

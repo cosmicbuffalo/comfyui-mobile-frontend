@@ -1,4 +1,5 @@
 import type { ReactNode, RefObject } from 'react';
+import { useT } from '@/i18n';
 import { ProgressRingWithTrack, WarningTriangleIcon } from '@/components/icons';
 import { FoldIcon } from '@/components/FoldIcon';
 
@@ -47,6 +48,7 @@ export function NodeCardHeader({
   expandedBorderColor,
   rightSlot,
 }: NodeCardHeaderProps) {
+  const t = useT();
   const handleHeaderClick = () => {
     if (isEditingLabel) return;
     toggleNodeFold();
@@ -107,7 +109,7 @@ export function NodeCardHeader({
             type="button"
             onClick={handleErrorButtonClick}
             className="w-5 h-5 flex items-center justify-center text-red-500 hover:text-red-600 shrink-0"
-            aria-label={isMissing && !hasErrors ? 'Missing node' : 'View errors'}
+            aria-label={isMissing && !hasErrors ? 'Missing node' : t('View errors')}
           >
             <WarningTriangleIcon className="w-4 h-4" />
           </button>

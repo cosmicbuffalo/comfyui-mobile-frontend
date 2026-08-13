@@ -3,6 +3,7 @@ import { CaretDownIcon, MenuIcon } from "@/components/icons";
 import { FoldIcon } from "@/components/FoldIcon";
 import { themeColors } from "@/theme/colors";
 import { hexToRgba } from "@/utils/grouping";
+import { useT } from "@/i18n";
 
 interface ContainerItemCardProps {
   containerType: "group" | "subgraph";
@@ -39,13 +40,16 @@ export function ContainerItemCard({
   onToggleCollapse,
   childrenContent,
 }: ContainerItemCardProps) {
+  const t = useT();
   const bypassPurple = themeColors.brand.bypassPurple;
   const backgroundColor = allBypassed ? hexToRgba(bypassPurple, 0.12) : hexToRgba(color, 0.15);
   const borderColor = allBypassed ? hexToRgba(bypassPurple, 0.3) : hexToRgba(color, 0.3);
   const headerBackgroundColor = allBypassed ? hexToRgba(bypassPurple, 0.12) : hexToRgba(color, 0.15);
-  const nodeCountLabel = `${nodeCount} node${nodeCount !== 1 ? "s" : ""}${
-    containerType === "subgraph" ? " (subgraph)" : ""
-  }`;
+  const nodeCountLabel = `${
+    nodeCount === 1
+      ? t("{count} node", { count: nodeCount })
+      : t("{count} nodes", { count: nodeCount })
+  }${containerType === "subgraph" ? ` ${t("(subgraph)")}` : ""}`;
 
   return (
     <div

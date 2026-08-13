@@ -7,6 +7,7 @@ import { ContextMenuButton } from '@/components/buttons/ContextMenuButton';
 import { ContextMenuBuilder } from '@/components/menus/ContextMenuBuilder';
 import { Dialog } from '@/components/modals/Dialog';
 import { appChromeIconButtonBareClassName } from '@/components/chromeStyles';
+import { useT } from '@/i18n';
 
 interface OutputsTopBarMenuProps {
   open: boolean;
@@ -25,6 +26,7 @@ export function OutputsTopBarMenu({
   onClose,
   onGoToWorkflow
 }: OutputsTopBarMenuProps) {
+  const t = useT();
   // The source the user is actually browsing: Delete rejected only removes
   // files from it, so switching to `input` and deleting can't take outputs with
   // it (and vice versa).
@@ -53,7 +55,11 @@ export function OutputsTopBarMenu({
     const result = await deleteRejectedOutputs([source]);
     if (result.failed > 0) {
       window.alert(
-        `Deleted ${result.deleted} of ${result.attempted} rejected outputs. ${result.failed} could not be deleted and remain marked.`,
+        t('Deleted {deleted} of {attempted} rejected outputs. {failed} could not be deleted and remain marked.', {
+          deleted: result.deleted,
+          attempted: result.attempted,
+          failed: result.failed,
+        }),
       );
     }
     refresh();
@@ -95,7 +101,7 @@ export function OutputsTopBarMenu({
       <ContextMenuButton
         buttonRef={buttonRef}
         onClick={onToggle}
-        ariaLabel="Outputs options"
+        ariaLabel={t('Outputs options')}
         className={`transition-colors ${appChromeIconButtonBareClassName}`}
       />
       {!open ? null : (
@@ -108,38 +114,38 @@ export function OutputsTopBarMenu({
             items={[
               {
                 key: 'go-to-workflow',
-                label: 'Workflow Panel',
+                label: t('Workflow Panel'),
                 icon: <ArrowRightIcon className="w-3 h-3" />,
                 onClick: handleGoToWorkflowClick
               },
               {
                 key: 'select',
-                label: 'Select',
+                label: t('Select'),
                 icon: <CheckIcon className="w-4 h-4" />,
                 onClick: handleToggleSelectionClick
               },
               {
                 key: 'search',
-                label: 'Search',
+                label: t('Search'),
                 icon: <SearchIcon className="w-4 h-4" />,
                 onClick: handleSearchClick,
                 hidden: searchOpen
               },
               {
                 key: 'new-folder',
-                label: 'New Folder',
+                label: t('New Folder'),
                 icon: <FolderIcon className="w-4 h-4" />,
                 onClick: handleNewFolderClick
               },
               {
                 key: 'toggle-hidden',
-                label: showHidden ? 'Hide Hidden Files' : 'Show Hidden Files',
+                label: showHidden ? t('Hide Hidden Files') : t('Show Hidden Files'),
                 icon: showHidden ? <EyeOffIcon className="w-4 h-4" /> : <EyeIcon className="w-4 h-4" />,
                 onClick: handleToggleShowHiddenClick
               },
               {
                 key: 'toggle-view',
-                label: viewMode === 'grid' ? 'List View' : 'Grid View',
+                label: viewMode === 'grid' ? t('List View') : t('Grid View'),
                 icon: viewMode === 'grid'
                   ? <DocumentLinesIcon className="w-4 h-4" />
                   : <DiceIcon className="w-4 h-4" />,
@@ -147,7 +153,7 @@ export function OutputsTopBarMenu({
               },
               {
                 key: 'delete-rejected',
-                label: `Delete rejected (${rejectedHere.length})`,
+                label: t('Delete rejected ({count})', { count: rejectedHere.length }),
                 icon: <TrashIcon className="w-4 h-4" />,
                 onClick: handleDeleteRejectedClick,
                 hidden: rejectedHere.length === 0,
@@ -160,19 +166,22 @@ export function OutputsTopBarMenu({
       {deleteRejectedOpen && (
         <Dialog
           onClose={() => setDeleteRejectedOpen(false)}
-          title="Delete rejected?"
-          description={`This will permanently delete ${rejectedHere.length} rejected ${
-            rejectedHere.length === 1 ? 'output' : 'outputs'
-          } from the server. This cannot be undone.`}
+          title={t('Delete rejected?')}
+          description={t(
+            rejectedHere.length === 1
+              ? 'This will permanently delete {count} rejected output from the server. This cannot be undone.'
+              : 'This will permanently delete {count} rejected outputs from the server. This cannot be undone.',
+            { count: rejectedHere.length },
+          )}
           zIndex={1800}
           actions={[
             {
-              label: 'Cancel',
+              label: t('Cancel'),
               onClick: () => setDeleteRejectedOpen(false),
               variant: 'secondary'
             },
             {
-              label: 'Delete',
+              label: t('Delete'),
               autoFocus: true,
               onClick: confirmDeleteRejected,
               variant: 'danger'

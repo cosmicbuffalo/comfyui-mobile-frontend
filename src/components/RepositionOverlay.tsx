@@ -6,6 +6,7 @@ import {
   useState,
 } from "react";
 import { createPortal } from "react-dom";
+import { useT } from "@/i18n";
 import type {
   RepositionTarget,
   RepositionViewportAnchor,
@@ -76,6 +77,7 @@ export function RepositionOverlay({
   onDone,
   onCancel,
 }: RepositionOverlayProps) {
+  const t = useT();
   const workflow = useWorkflowStore((s) => s.workflow);
   const nodeTypes = useWorkflowStore((s) => s.nodeTypes);
   const executingNodeId = useWorkflowStore((s) => s.executingNodeId);
@@ -491,7 +493,7 @@ export function RepositionOverlay({
 
   const getNodeDisplayName = (nodeId: number) => {
     const node = nodeMap.get(nodeId);
-    if (!node) return `Node #${nodeId}`;
+    if (!node) return t("Node #{nodeId}", { nodeId });
     const title =
       typeof (node as { title?: unknown }).title === "string" &&
       ((node as { title?: unknown }).title as string).trim()
@@ -692,7 +694,7 @@ export function RepositionOverlay({
         const isAncestorOfTarget = targetAncestors.groupIds.has(getGroupKey(ref.id, ref.subgraphId));
         const canToggleCollapse = !isTarget && !isAncestorOfTarget;
         const color = resolveWorkflowColor(group.color);
-        const displayTitle = group.title?.trim() || `Group ${ref.id}`;
+        const displayTitle = group.title?.trim() || t("Group {id}", { id: ref.id });
         const children = workingLayout.groups[getGroupKey(ref.id, ref.subgraphId)] ?? [];
         const nodeCount = countNodesInItems(children);
         const bypassedCount = countBypassedNodesInItems(children);
@@ -855,13 +857,13 @@ export function RepositionOverlay({
         actions={[
           {
             key: "cancel",
-            label: "Cancel",
+            label: t("Cancel"),
             onClick: onCancel,
             variant: "secondary"
           },
           {
             key: "done",
-            label: "Done",
+            label: t("Done"),
             onClick: handleDone,
             variant: "primary"
           }

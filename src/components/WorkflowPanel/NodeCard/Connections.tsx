@@ -1,4 +1,5 @@
 import { useMemo } from 'react';
+import { useT } from '@/i18n';
 import type { WorkflowInput, WorkflowNode } from '@/api/types';
 import { ConnectionButton } from './Connections/ConnectionButton';
 import { useWorkflowStore } from '@/hooks/useWorkflow';
@@ -25,6 +26,7 @@ export function NodeCardConnections({
   allInputs,
   allOutputs,
 }: NodeCardConnectionsProps) {
+  const t = useT();
   const connectionButtonsVisible = useWorkflowStore((s) => s.connectionButtonsVisible);
   const nodeTypes = useWorkflowStore((s) => s.nodeTypes);
   const expanded = useConnectionSectionFoldsStore((s) =>
@@ -45,7 +47,9 @@ export function NodeCardConnections({
   if (!connectionButtonsVisible) {
     return (
       <div className="connection-hidden-summary node-connections mb-3 px-1 text-center text-xs uppercase tracking-wide text-slate-500">
-        {connectionCount} hidden connection{connectionCount === 1 ? '' : 's'}
+        {connectionCount === 1
+          ? t('1 hidden connection')
+          : t('{count} hidden connections', { count: connectionCount })}
       </div>
     );
   }
@@ -57,13 +61,13 @@ export function NodeCardConnections({
     <div className="node-connections mb-3 px-1">
       <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2 text-xs uppercase tracking-wide text-slate-500">
         <div className="flex min-w-0 items-center gap-2">
-          {inputs.length > 0 && <span className="shrink-0">Inputs</span>}
+          {inputs.length > 0 && <span className="shrink-0">{t('Inputs')}</span>}
           <span className="connection-section-divider h-px min-w-0 flex-1 bg-slate-700" aria-hidden="true" />
         </div>
         <button
           type="button"
           aria-expanded={expanded}
-          aria-label={expanded ? 'Fold connections' : 'Unfold connections'}
+          aria-label={expanded ? t('Fold connections') : t('Unfold connections')}
           data-fold-state={expanded ? 'expanded' : 'collapsed'}
           onClick={() => toggleExpanded(nodeHierarchicalKey)}
           className={`flex h-7 items-center justify-center border text-slate-400 transition-[width,border-radius,background-color,border-color,color] duration-200 ease-out focus-visible:outline-none ${
@@ -87,7 +91,7 @@ export function NodeCardConnections({
         </button>
         <div className="flex min-w-0 items-center gap-2">
           <span className="connection-section-divider h-px min-w-0 flex-1 bg-slate-700" aria-hidden="true" />
-          {outputs.length > 0 && <span className="shrink-0 text-right">Outputs</span>}
+          {outputs.length > 0 && <span className="shrink-0 text-right">{t('Outputs')}</span>}
         </div>
       </div>
 

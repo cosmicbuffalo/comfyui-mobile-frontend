@@ -1,5 +1,6 @@
 import type { RefObject } from 'react';
 import { useRef, useState } from 'react';
+import { useT } from '@/i18n';
 import { CheckIcon, ClipboardIcon, MinusCircleIcon } from '@/components/icons';
 
 async function writeClipboard(text: string) {
@@ -70,6 +71,7 @@ export function TextareaActions({
    *  editing actions are dropped, leaving Copy, which still makes sense. */
   allowEdit?: boolean;
 }) {
+  const t = useT();
   const [copyDone, setCopyDone] = useState(false);
   const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const selectionRef = useRef<{ start: number; end: number } | null>(null);
@@ -110,14 +112,14 @@ export function TextareaActions({
         className="inline-flex items-center gap-1 px-1 py-0.5 text-slate-400 hover:text-slate-100"
         onMouseDown={keepFocus}
         onClick={handleCopyClick}
-        aria-label="Copy to clipboard"
+        aria-label={t("Copy to clipboard")}
       >
         {copyDone ? (
           <CheckIcon className="w-3.5 h-3.5 text-emerald-500" />
         ) : (
           <ClipboardIcon className="w-3.5 h-3.5" />
         )}
-        <span>Copy</span>
+        <span>{t("Copy")}</span>
       </button>
       {allowEdit && (
         <>
@@ -127,10 +129,10 @@ export function TextareaActions({
             className="textarea-clear-button inline-flex items-center gap-1 px-1 py-0.5 text-red-600"
             onMouseDown={keepFocus}
             onClick={handleClearClick}
-            aria-label="Clear text"
+            aria-label={t("Clear text")}
           >
             <MinusCircleIcon className="w-3.5 h-3.5" />
-            <span>Clear</span>
+            <span>{t("Clear")}</span>
           </button>
         </>
       )}

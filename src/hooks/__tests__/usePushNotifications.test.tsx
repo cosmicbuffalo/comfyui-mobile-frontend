@@ -113,7 +113,7 @@ describe('usePushNotifications', () => {
 
     expect(subscribe).not.toHaveBeenCalled();
     expect(hook.current!.subscribed).toBe(false);
-    expect(hook.current!.error).toMatch(/blocked/i);
+    expect(hook.current!.error).toMatch(/浏览器设置阻止/);
   });
 
   it('surfaces the server reason when push is unavailable', async () => {
@@ -132,7 +132,7 @@ describe('usePushNotifications', () => {
 
     await act(async () => { await hook.current!.sendTest(); });
 
-    expect(hook.current!.error).toMatch(/no notification was delivered/i);
+    expect(hook.current!.error).toMatch(/未收到任何通知/);
   });
 
   it('reports a failed test push', async () => {

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef } from 'react';
+import { useT } from '@/i18n';
 import { isWorkflowModified, useWorkflowStore } from '@/hooks/useWorkflow';
 import { useAppMenuStore } from '@/hooks/useAppMenu';
 import { useQueueStore } from '@/hooks/useQueue';
@@ -35,6 +36,7 @@ function getScrollSelectors(mode: TopBarProps['mode']): string[] {
 }
 
 export function TopBar({ mode = 'workflow' }: TopBarProps) {
+  const t = useT();
   const barRef = useRef<HTMLDivElement>(null);
   const lastTapRef = useRef<number>(0);
   const appMenuOpen = useAppMenuStore((s) => s.appMenuOpen);
@@ -108,7 +110,7 @@ export function TopBar({ mode = 'workflow' }: TopBarProps) {
     const manualHiddenCount = Object.keys(hiddenItems).length;
     const hasHiddenSubgraphs = Object.values(hiddenItems).some(Boolean);
     if (manualHiddenCount === 0 && !hasHiddenSubgraphs) {
-      return `${totalNodes} nodes ${isDirty ? '[Unsaved]' : ''}`.trim();
+      return `${t('{totalNodes} nodes', { totalNodes })}${isDirty ? ` ${t('[Unsaved]')}` : ''}`.trim();
     }
 
     const hiddenSubgraphNodeCount = hasHiddenSubgraphs
@@ -121,8 +123,8 @@ export function TopBar({ mode = 'workflow' }: TopBarProps) {
       : 0;
 
     const hiddenCount = manualHiddenCount + hiddenSubgraphNodeCount;
-    return `${totalNodes} nodes (${hiddenCount} hidden) ${isDirty ? '[Unsaved]' : ''}`.trim();
-  }, [workflow, hiddenItems, isDirty]);
+    return `${t('{totalNodes} nodes ({hiddenCount} hidden)', { totalNodes, hiddenCount })}${isDirty ? ` ${t('[Unsaved]')}` : ''}`.trim();
+  }, [workflow, hiddenItems, isDirty, t]);
 
   useEffect(() => {
     const el = barRef.current;
@@ -140,17 +142,17 @@ export function TopBar({ mode = 'workflow' }: TopBarProps) {
   const title = useMemo(() => {
     switch (mode) {
       case 'queue':
-        return 'Queue';
+        return t('Queue');
       case 'outputs':
-        return outputsSource === 'output' ? 'Outputs' : 'Inputs';
+        return outputsSource === 'output' ? t('Outputs') : t('Inputs');
       case 'workflow':
       default:
         if (currentFilename) {
           return getDisplayName(currentFilename);
         }
-        return workflow ? 'Untitled' : 'ComfyUI Mobile';
+        return workflow ? t('Untitled') : 'ComfyUI Mobile';
     }
-  }, [mode, outputsSource, currentFilename, workflow]);
+  }, [mode, outputsSource, currentFilename, workflow, t]);
 
   const rightControls = useMemo(() => {
     switch (mode) {

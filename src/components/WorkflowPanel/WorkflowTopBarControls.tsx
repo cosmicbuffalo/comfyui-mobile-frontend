@@ -12,6 +12,7 @@ import { useHistoryStore } from '@/hooks/useHistory';
 import { Dialog } from '@/components/modals/Dialog';
 import { WorkflowTopBarMenu } from './WorkflowTopBarControls/WorkflowTopBarMenu';
 import { SaveAsIcon, SaveDiskIcon, TrashIcon, LogoutIcon, ReloadIcon, XMarkIcon } from '@/components/icons';
+import { useT } from '@/i18n';
 
 type DirtyAction = 'unload' | 'clearWorkflowCache' | 'clearAllCache' | 'discardChanges' | 'reload';
 
@@ -51,6 +52,7 @@ function WorkflowActionButton({
 }
 
 export function WorkflowTopBarControls() {
+  const t = useT();
   const [menuOpenAt, setMenuOpenAt] = useState<number | null>(null);
   const [dirtyConfirmAction, setDirtyConfirmAction] = useState<DirtyAction | null>(null);
   const [actionsOpen, setActionsOpen] = useState(false);
@@ -112,11 +114,11 @@ export function WorkflowTopBarControls() {
       store.setSavingSessionId(savingId);
       let workflowForPersistence = getWorkflowForPersistence(workflow);
       if (!workflowForPersistence) {
-        throw new Error('Unable to save: embedded workflow is unavailable.');
+        throw new Error(t('Unable to save: embedded workflow is unavailable.'));
       }
       if (useGenerationSettingsStore.getState().obfuscateSharedInputPaths) {
         const nodeTypes = useWorkflowStore.getState().nodeTypes;
-        if (!nodeTypes) throw new Error('Unable to hide input paths: node definitions are unavailable.');
+        if (!nodeTypes) throw new Error(t('Unable to hide input paths: node definitions are unavailable.'));
         workflowForPersistence = await obfuscateWorkflowInputPaths(workflowForPersistence, nodeTypes);
       }
       await saveUserWorkflow(finalFilename, workflowForPersistence);
@@ -125,7 +127,7 @@ export function WorkflowTopBarControls() {
       setSaveAsOpen(false);
       setActionsOpen(false);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to save workflow');
+      setError(err instanceof Error ? err.message : t('Failed to save workflow'));
     } finally {
       setLoading(false);
       // Only clear if this save still owns the spinner — a newer save started
@@ -225,7 +227,7 @@ export function WorkflowTopBarControls() {
       }
       setActionsOpen(false);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to complete action');
+      setError(err instanceof Error ? err.message : t('Failed to complete action'));
     } finally {
       setLoading(false);
     }
@@ -302,7 +304,7 @@ export function WorkflowTopBarControls() {
             onClick={(event) => event.stopPropagation()}
           >
             <div className="px-4 py-3 text-sm font-semibold text-slate-100 border-b border-white/10">
-              Workflow actions
+              {t('Workflow actions')}
             </div>
             {error && (
               <div className="px-4 py-2 text-sm text-red-300 bg-red-500/10 border-b border-red-500/20">
@@ -312,7 +314,7 @@ export function WorkflowTopBarControls() {
             <div className="max-h-[60vh] overflow-y-auto">
               <WorkflowActionButton
                 icon={<SaveDiskIcon className="w-4 h-4 text-slate-400" />}
-                label="Save"
+                label={t('Save')}
                 onClick={() => {
                   if (!workflow) return;
                   if (!currentFilename) {
@@ -326,7 +328,7 @@ export function WorkflowTopBarControls() {
               />
               <WorkflowActionButton
                 icon={<SaveAsIcon className="w-4 h-4 text-slate-400" />}
-                label="Save as"
+                label={t('Save as')}
                 onClick={() => {
                   setSaveAsFilename(currentFilename ?? '');
                   setSaveAsOpen(true);
@@ -336,7 +338,7 @@ export function WorkflowTopBarControls() {
               {isDirty && (
                 <WorkflowActionButton
                   icon={<ReloadIcon className="w-4 h-4 text-red-500" />}
-                  label="Discard changes"
+                  label={t('Discard changes')}
                   tone="danger"
                   onClick={() => handleDirtyAction('discardChanges')}
                   disabled={loading}
@@ -345,23 +347,23 @@ export function WorkflowTopBarControls() {
               <div className="border-t border-white/10" />
               <WorkflowActionButton
                 icon={<TrashIcon className="w-5 h-5 text-slate-400" />}
-                label="Clear workflow cache"
-                description="(hidden nodes, folds, etc.)"
+                label={t('Clear workflow cache')}
+                description={t('(hidden nodes, folds, etc.)')}
                 onClick={() => handleDirtyAction('clearWorkflowCache')}
                 disabled={!workflow || loading}
               />
               <WorkflowActionButton
                 icon={<LogoutIcon className="w-5 h-5 text-red-500" />}
-                label="Unload workflow"
-                description="Close the current workflow panel state"
+                label={t('Unload workflow')}
+                description={t('Close the current workflow panel state')}
                 tone="danger"
                 onClick={() => handleDirtyAction('unload')}
                 disabled={!workflow || loading}
               />
               <WorkflowActionButton
                 icon={<TrashIcon className="w-5 h-5 text-red-500" />}
-                label="Clear device cache"
-                description="Reset local storage and reload app"
+                label={t('Clear device cache')}
+                description={t('Reset local storage and reload app')}
                 tone="danger"
                 onClick={() => handleDirtyAction('clearAllCache')}
                 disabled={loading}
@@ -372,7 +374,7 @@ export function WorkflowTopBarControls() {
                 className="w-full px-4 py-2.5 text-sm font-medium text-slate-300 bg-slate-950/80 rounded-lg hover:bg-white/10"
                 onClick={() => setActionsOpen(false)}
               >
-                Close
+                {t('Close')}
               </button>
             </div>
           </div>
@@ -390,7 +392,7 @@ export function WorkflowTopBarControls() {
             className="w-full max-w-sm bg-slate-900 border border-white/10 text-slate-100 rounded-xl shadow-lg p-4"
             onClick={(event) => event.stopPropagation()}
           >
-            <div className="text-base font-semibold text-slate-100 mb-3">Save as</div>
+            <div className="text-base font-semibold text-slate-100 mb-3">{t('Save as')}</div>
             <div className="relative">
               <input
                 type="text"
@@ -406,7 +408,7 @@ export function WorkflowTopBarControls() {
                   type="button"
                   className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-100"
                   onClick={() => setSaveAsFilename('')}
-                  aria-label="Clear filename"
+                  aria-label={t('Clear filename')}
                 >
                   <XMarkIcon className="w-4 h-4" />
                 </button>
@@ -417,21 +419,21 @@ export function WorkflowTopBarControls() {
                 className="px-3 py-2 rounded-lg text-sm font-medium text-slate-300 hover:bg-white/10"
                 onClick={() => setSaveAsOpen(false)}
               >
-                Cancel
+                {t('Cancel')}
               </button>
               <button
                 className="px-3 py-2 rounded-lg text-sm font-semibold text-slate-950 bg-cyan-500 hover:bg-cyan-400 disabled:opacity-50"
                 onClick={() => {
                   const next = saveAsFilename.trim();
                   if (!next) {
-                    setError('Please enter a filename.');
+                    setError(t('Please enter a filename.'));
                     return;
                   }
                   void performSave(next);
                 }}
                 disabled={!workflow || loading}
               >
-                Save
+                {t('Save')}
               </button>
             </div>
           </div>
@@ -441,20 +443,20 @@ export function WorkflowTopBarControls() {
       {dirtyConfirmAction && createPortal(
         <Dialog
           onClose={() => setDirtyConfirmAction(null)}
-          title="Unsaved changes"
-          description="You have unsaved changes in the current workflow. Continue without saving?"
+          title={t('Unsaved changes')}
+          description={t('You have unsaved changes in the current workflow. Continue without saving?')}
           actions={[
             {
-              label: 'Cancel',
+              label: t('Cancel'),
               onClick: () => setDirtyConfirmAction(null),
               variant: 'secondary'
             },
             {
               label: dirtyConfirmAction === 'discardChanges'
-                ? 'Discard changes'
+                ? t('Discard changes')
                 : dirtyConfirmAction === 'reload'
-                  ? 'Reload anyway'
-                  : 'Continue',
+                  ? t('Reload anyway')
+                  : t('Continue'),
               onClick: () => { void handleDirtyConfirmContinue(dirtyConfirmAction); },
               variant: 'danger'
             }

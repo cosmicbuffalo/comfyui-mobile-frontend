@@ -9,6 +9,7 @@ import {
   menuTextClassName,
 } from './menuStyles';
 import { NotificationPreferences } from './NotificationPreferences';
+import { useT } from '@/i18n';
 
 // The Notifications block embedded in the Preferences sub-page: the preference
 // toggles, then the delivery setup (web push opt-in, or native-app status).
@@ -16,6 +17,7 @@ import { NotificationPreferences } from './NotificationPreferences';
 // On the plain web (free tier): the self-hosted web-push setup, plus a nudge
 // toward the app for a zero-setup experience.
 function WebNotifications() {
+  const t = useT();
   const { supported, needsInstall, subscribed, busy, error, enable, disable, sendTest } =
     usePushNotifications();
 
@@ -27,9 +29,9 @@ function WebNotifications() {
         <div className="flex items-start gap-3">
           <GearIcon className={menuIconClassName} />
           <div className="flex-1">
-            <div className={menuTextClassName}>Generation complete alerts</div>
+            <div className={menuTextClassName}>{t('Generation complete alerts')}</div>
             <div className={`text-sm ${menuMutedTextClassName}`}>
-              Get a push notification when a generation finishes — even with the app closed.
+              {t('Get a push notification when a generation finishes — even with the app closed.')}
             </div>
           </div>
           {subscribed && <CheckIcon className="w-5 h-5 text-cyan-400 mt-1" />}
@@ -38,7 +40,7 @@ function WebNotifications() {
         {!supported && (
           <div className={`flex items-center gap-2 text-sm ${menuMutedTextClassName}`}>
             <WarningTriangleIcon className="w-4 h-4 text-slate-500" />
-            This browser doesn&apos;t support push notifications. A secure (HTTPS) connection is required.
+            {t("This browser doesn't support push notifications. A secure (HTTPS) connection is required.")}
           </div>
         )}
 
@@ -46,8 +48,7 @@ function WebNotifications() {
           <div className={`flex items-start gap-2 text-sm ${menuMutedTextClassName}`}>
             <WarningTriangleIcon className="w-4 h-4 text-slate-500 mt-0.5" />
             <span>
-              On iOS, add this app to your Home Screen first (Share &rarr; Add to Home Screen),
-              then open it from there to enable notifications.
+              {t('On iOS, add this app to your Home Screen first (Share \u2192 Add to Home Screen), then open it from there to enable notifications.')}
             </span>
           </div>
         )}
@@ -63,17 +64,17 @@ function WebNotifications() {
           <div className="space-y-2">
             {subscribed ? (
               <button type="button" onClick={disable} disabled={busy} className={`w-full ${menuSecondaryButtonClassName}`}>
-                {busy ? 'Working…' : 'Disable notifications'}
+                {busy ? t('Working…') : t('Disable notifications')}
               </button>
             ) : (
               <button type="button" onClick={enable} disabled={busy} className={`w-full ${menuPrimaryButtonClassName}`}>
-                {busy ? 'Working…' : 'Enable notifications'}
+                {busy ? t('Working…') : t('Enable notifications')}
               </button>
             )}
 
             {subscribed && (
               <button type="button" onClick={sendTest} disabled={busy} className={`w-full ${menuSecondaryButtonClassName}`}>
-                Send test notification
+                {t('Send test notification')}
               </button>
             )}
           </div>

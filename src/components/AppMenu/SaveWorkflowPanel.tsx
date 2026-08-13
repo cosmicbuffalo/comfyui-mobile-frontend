@@ -11,6 +11,7 @@ import {
   menuSurfaceClassName,
   menuTextClassName,
 } from './menuStyles';
+import { useT } from '@/i18n';
 
 interface SaveWorkflowPanelProps {
   error: string | null;
@@ -35,19 +36,20 @@ export function SaveWorkflowPanel({
   onSaveAs,
   onDownload,
 }: SaveWorkflowPanelProps) {
+  const t = useT();
   return (
     <div className="flex flex-col h-full">
-      <MenuSubPageHeader title="Save Workflow" onBack={onBack} />
+      <MenuSubPageHeader title={t('Save Workflow')} onBack={onBack} />
       <MenuErrorNotice error={error} onDismiss={onDismissError} />
 
       <div className="space-y-4">
         <div className={`${menuSurfaceClassName} p-4`}>
-          <p className={`text-sm ${menuMutedTextClassName} mb-3`}>Save to ComfyUI server:</p>
+          <p className={`text-sm ${menuMutedTextClassName} mb-3`}>{t('Save to ComfyUI server:')}</p>
           <input
             type="text"
             value={saveFilenameInput}
             onChange={(e) => onSaveFilenameChange(e.target.value)}
-            placeholder="Enter filename (e.g., my_workflow.json)"
+            placeholder={t('Enter filename (e.g., my_workflow.json)')}
             data-swipe-nav-ignore="true"
             className={`w-full p-3 rounded-lg mb-3 ${menuInputClassName}`}
           />
@@ -56,7 +58,7 @@ export function SaveWorkflowPanel({
             disabled={!workflow || !saveFilenameInput.trim() || loading}
             className={`w-full ${menuPrimaryButtonClassName}`}
           >
-            {loading ? 'Saving...' : 'Save As'}
+            {loading ? t('Saving...') : t('Save As')}
           </button>
         </div>
 
@@ -66,7 +68,7 @@ export function SaveWorkflowPanel({
           className={menuSurfaceButtonDisabledClassName}
         >
           <DownloadDeviceIcon className={menuIconClassName} />
-          <span className={menuTextClassName}>Download to Device</span>
+          <span className={menuTextClassName}>{t('Download to Device')}</span>
         </button>
 
       </div>

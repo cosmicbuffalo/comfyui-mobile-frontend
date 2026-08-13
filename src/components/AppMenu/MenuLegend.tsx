@@ -11,6 +11,7 @@ import {
   PinOutlineIcon,
   QueueStackIcon
 } from '@/components/icons';
+import { t, useT } from '@/i18n';
 
 interface MenuLegendProps {
   onBack: () => void;
@@ -21,11 +22,11 @@ function getLegendItems(): LegendItemProps[] {
     {
       icon: (
         <div className="w-8 h-8 flex items-center justify-center bg-cyan-500 text-slate-950 rounded-lg font-bold text-xs shadow-sm">
-          Run
+          {t('Run')}
         </div>
       ),
-      title: 'Run',
-      description: 'Execute current workflow'
+      title: t('Run'),
+      description: t('Execute current workflow')
     },
     {
       icon: (
@@ -33,8 +34,8 @@ function getLegendItems(): LegendItemProps[] {
           <QueueStackIcon className="w-5 h-5" />
         </div>
       ),
-      title: 'Queue / Follow',
-      description: 'View queue & follow execution'
+      title: t('Queue / Follow'),
+      description: t('View queue & follow execution')
     },
     {
       icon: (
@@ -42,8 +43,8 @@ function getLegendItems(): LegendItemProps[] {
           <PinIconSvg className="w-5 h-5" />
         </div>
       ),
-      title: 'Pinned Widget',
-      description: 'Quick access to pinned parameter'
+      title: t('Pinned Widget'),
+      description: t('Quick access to pinned parameter')
     },
     {
       icon: (
@@ -51,8 +52,8 @@ function getLegendItems(): LegendItemProps[] {
           ←
         </div>
       ),
-      title: 'Input',
-      description: 'Node input connection point'
+      title: t('Input'),
+      description: t('Node input connection point')
     },
     {
       icon: (
@@ -60,8 +61,8 @@ function getLegendItems(): LegendItemProps[] {
           →
         </div>
       ),
-      title: 'Output',
-      description: 'Node output connection point'
+      title: t('Output'),
+      description: t('Node output connection point')
     },
     {
       icon: (
@@ -69,8 +70,8 @@ function getLegendItems(): LegendItemProps[] {
           <NodeConnectionsLegendIcon className="w-6 h-6 overflow-visible" />
         </div>
       ),
-      title: 'Trace Connections',
-      description: 'Highlight connected nodes'
+      title: t('Trace Connections'),
+      description: t('Highlight connected nodes')
     },
     {
       icon: (
@@ -78,8 +79,8 @@ function getLegendItems(): LegendItemProps[] {
           <CaretDownIcon className="w-6 h-6" />
         </div>
       ),
-      title: 'Fold / Unfold',
-      description: 'Collapse or expand node card'
+      title: t('Fold / Unfold'),
+      description: t('Collapse or expand node card')
     },
     {
       icon: (
@@ -87,8 +88,8 @@ function getLegendItems(): LegendItemProps[] {
           <CloseIcon className="w-5 h-5" />
         </div>
       ),
-      title: 'Bypass',
-      description: 'Skip node execution'
+      title: t('Bypass'),
+      description: t('Skip node execution')
     },
     {
       icon: (
@@ -96,8 +97,8 @@ function getLegendItems(): LegendItemProps[] {
           <EyeOffIcon className="w-5 h-5" />
         </div>
       ),
-      title: 'Hide',
-      description: 'Hide node from view'
+      title: t('Hide'),
+      description: t('Hide node from view')
     },
     {
       icon: (
@@ -105,8 +106,8 @@ function getLegendItems(): LegendItemProps[] {
           <EyeIcon className="w-5 h-5" />
         </div>
       ),
-      title: 'Show',
-      description: 'Make node visible again'
+      title: t('Show'),
+      description: t('Make node visible again')
     },
     {
       icon: (
@@ -114,8 +115,8 @@ function getLegendItems(): LegendItemProps[] {
           <PinOutlineIcon className="w-5 h-5" />
         </div>
       ),
-      title: 'Pin widget',
-      description: 'Pin widget to bottom bar'
+      title: t('Pin widget'),
+      description: t('Pin widget to bottom bar')
     },
     {
       icon: (
@@ -128,18 +129,19 @@ function getLegendItems(): LegendItemProps[] {
           </span>
         </div>
       ),
-      title: 'Pop out widget',
-      description: 'Move a widget value into its own connected input node'
+      title: t('Pop out widget'),
+      description: t('Move a widget value into its own connected input node')
     }
   ];
 }
 
 export function MenuLegend({ onBack }: MenuLegendProps) {
+  const t = useT();
   const items = getLegendItems();
 
   return (
     <div className="flex flex-col h-full">
-      <MenuSubPageHeader title="Icon Legend" onBack={onBack} />
+      <MenuSubPageHeader title={t('Icon Legend')} onBack={onBack} />
 
       <div className="space-y-3 overflow-y-auto flex-1 pb-4">
         {items.map((item) => (

@@ -3,6 +3,7 @@ import { useWorkflowStore } from '@/hooks/useWorkflow';
 import { useConnectionSectionFoldsStore } from '@/hooks/useConnectionSectionFolds';
 import { prettyPackName } from '@/utils/search';
 import { resolveNodeTypeDisplayName, searchAndSortNodeTypes } from '@/utils/nodeTypeSearch';
+import { useT } from '@/i18n';
 import { NodeTypeSearchResult } from './NodeTypeSearchResult';
 import { SearchActionModal } from './SearchActionModal';
 import { SearchEmptyState } from './SearchEmptyState';
@@ -16,6 +17,7 @@ interface AddNodeModalProps {
 }
 
 export function AddNodeModal({ isOpen, onClose, addInGroupId = null, addInSubgraphId = null, onNodeAdded }: AddNodeModalProps) {
+  const t = useT();
   const nodeTypes = useWorkflowStore((s) => s.nodeTypes);
   const addNode = useWorkflowStore((s) => s.addNode);
   const scrollToNode = useWorkflowStore((s) => s.scrollToNode);
@@ -75,14 +77,14 @@ export function AddNodeModal({ isOpen, onClose, addInGroupId = null, addInSubgra
     <SearchActionModal
       isOpen={isOpen}
       onClose={onClose}
-      title="Add node"
+      title={t('Add node')}
       searchQuery={searchQuery}
       onSearchQueryChange={setSearchQuery}
-      searchPlaceholder="Search node types..."
+      searchPlaceholder={t('Search node types...')}
     >
       <div className="flex-1 overflow-auto bg-slate-950/88">
         {filteredTypes.length === 0 && (
-          <SearchEmptyState query={searchQuery} message="No matching node types found" />
+          <SearchEmptyState query={searchQuery} message={t('No matching node types found')} />
         )}
         <div className="px-3 pt-3 pb-20 flex flex-col gap-2">
           {filteredTypes.map((item) => (

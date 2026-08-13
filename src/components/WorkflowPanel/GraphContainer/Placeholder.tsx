@@ -1,5 +1,6 @@
 import { PlusIcon } from '@/components/icons';
 import { hexToRgba } from '@/utils/grouping';
+import { useT } from '@/i18n';
 
 type GraphContainerType = 'group' | 'subgraph';
 
@@ -18,7 +19,8 @@ export function GraphContainerPlaceholder({
   color,
   onClick
 }: GraphContainerPlaceholderProps) {
-  const label = containerType === 'group' ? 'group' : 'subgraph';
+  const t = useT();
+  const label = containerType === 'group' ? t('group') : t('subgraph');
   return (
     <div
       id={`${containerType}-placeholder-${containerId}`}
@@ -33,12 +35,14 @@ export function GraphContainerPlaceholder({
       >
         <span className="text-sm text-slate-400 select-none">
           {hiddenNodeCount > 0
-            ? `${hiddenNodeCount} hidden node${hiddenNodeCount !== 1 ? 's' : ''} in ${label}`
-            : `No nodes in ${label}`}
+            ? hiddenNodeCount === 1
+              ? t('{count} hidden node in {label}', { count: hiddenNodeCount, label })
+              : t('{count} hidden nodes in {label}', { count: hiddenNodeCount, label })
+            : t('No nodes in {label}', { label })}
         </span>
         <span className="text-xs text-slate-500 select-none mt-1 inline-flex items-center gap-1">
           <PlusIcon className="w-3 h-3" />
-          Click to add a node
+          {t('Click to add a node')}
         </span>
       </button>
     </div>

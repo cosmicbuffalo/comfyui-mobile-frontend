@@ -92,15 +92,15 @@ describe('QueuePanel prompt_id deep link', () => {
       await Promise.resolve();
     });
 
-    expect(container.textContent).toContain('Loading...');
-    expect(container.textContent).not.toContain('Queue is empty');
+    expect(container.textContent).toContain('加载中…');
+    expect(container.textContent).not.toContain('队列为空');
 
     await act(async () => {
       await vi.advanceTimersByTimeAsync(500);
     });
 
     expect(historyAttempts).toBe(2);
-    expect(container.textContent).toContain('Queue is empty');
+    expect(container.textContent).toContain('队列为空');
     errorSpy.mockRestore();
   });
 
@@ -139,7 +139,7 @@ describe('QueuePanel prompt_id deep link', () => {
     });
 
     expect(container.querySelectorAll('[data-queue-item-id]')).toHaveLength(1);
-    const firstImage = container.querySelector<HTMLImageElement>('img[alt="Generation"]');
+    const firstImage = container.querySelector<HTMLImageElement>('img[alt="生成结果"]');
     expect(firstImage).not.toBeNull();
 
     await act(async () => {

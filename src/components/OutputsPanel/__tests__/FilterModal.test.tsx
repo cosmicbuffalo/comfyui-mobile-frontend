@@ -53,11 +53,11 @@ describe('Outputs FilterModal', () => {
     const onChangeSort = vi.fn();
     await renderModal(allOff, { onCycleStatusFilter, onChangeSort });
 
-    expect(container.querySelector('#favorites-toggle-button')?.textContent).toBe('Favorites');
-    expect(container.querySelector('#rejects-toggle-button')?.textContent).toBe('Rejects');
+    expect(container.querySelector('#favorites-toggle-button')?.textContent).toBe('收藏');
+    expect(container.querySelector('#rejects-toggle-button')?.textContent).toBe('拒收');
     expect(container.querySelector('#sort-group-options')?.children).toHaveLength(4);
-    expect(container.querySelector('#sort-group-options')?.textContent).toContain('Created');
-    expect(container.querySelector('#sort-group-options')?.textContent).toContain('Modified');
+    expect(container.querySelector('#sort-group-options')?.textContent).toContain('创建时间');
+    expect(container.querySelector('#sort-group-options')?.textContent).toContain('修改时间');
 
     await act(async () => {
       container.querySelector<HTMLButtonElement>('#rejects-toggle-button')?.click();
@@ -65,18 +65,18 @@ describe('Outputs FilterModal', () => {
     expect(onCycleStatusFilter).toHaveBeenCalledWith('rejectsMode');
 
     const createdButton = Array.from(container.querySelectorAll<HTMLButtonElement>('#sort-group-options button'))
-      .find((button) => button.textContent === 'Created');
+      .find((button) => button.textContent === '创建时间');
     await act(async () => createdButton?.click());
     expect(onChangeSort).toHaveBeenCalledWith({ mode: 'created' });
   });
 
   it('labels each status mode with what the listing is doing', async () => {
     await renderModal({ ...allOff, favoritesMode: 'only', rejectsMode: 'off' });
-    expect(container.querySelector('#favorites-toggle-button')?.textContent).toBe('Favorites only');
+    expect(container.querySelector('#favorites-toggle-button')?.textContent).toBe('仅收藏');
 
     await renderModal({ ...allOff, favoritesMode: 'exclude', rejectsMode: 'exclude' });
-    expect(container.querySelector('#favorites-toggle-button')?.textContent).toBe('No favorites');
-    expect(container.querySelector('#rejects-toggle-button')?.textContent).toBe('No rejects');
+    expect(container.querySelector('#favorites-toggle-button')?.textContent).toBe('无收藏');
+    expect(container.querySelector('#rejects-toggle-button')?.textContent).toBe('无拒收');
     expect(
       container.querySelector('#rejects-toggle-button')?.getAttribute('data-status-mode'),
     ).toBe('exclude');

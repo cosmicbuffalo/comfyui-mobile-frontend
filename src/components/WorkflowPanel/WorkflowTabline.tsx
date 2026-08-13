@@ -17,6 +17,7 @@ import {
 import type { Workflow } from '@/api/types';
 import { useQueueStore } from '@/hooks/useQueue';
 import { getDisplayName } from '@/components/AppMenu/userWorkflowHelpers';
+import { useT } from '@/i18n';
 import {
   resolveWorkflowTabRunKey,
   shouldShowWorkflowTabActivity,
@@ -44,10 +45,11 @@ interface SessionView {
 function sessionDisplayLabel(
   filename: string | null,
   source: WorkflowSource | null,
+  t: ReturnType<typeof useT>,
 ): string {
   if (filename) return getDisplayName(filename);
   if (source && source.type === 'template') return source.templateName;
-  return 'Untitled';
+  return t('Untitled');
 }
 
 /** Small circular-progress ring wrapping the left-slot indicator. */
@@ -113,6 +115,7 @@ function WorkflowSessionTab({
   onSwitch: (id: string) => void;
   onRequestClose: (view: SessionView) => void;
 }) {
+  const t = useT();
   const overallProgress = useOverallProgress({
     workflow: view.workflow,
     runKey: view.runKey,
@@ -164,8 +167,8 @@ function WorkflowSessionTab({
         <span
           className="shrink-0 text-red-400"
           role="img"
-          aria-label="This workflow's last run errored"
-          title="This workflow's last run errored — open the tab to see the error"
+          aria-label={t("This workflow's last run errored")}
+          title={t("This workflow's last run errored — open the tab to see the error")}
         >
           <WarningTriangleIcon className="w-3.5 h-3.5" />
         </span>
@@ -179,7 +182,7 @@ function WorkflowSessionTab({
           <span
             className="shrink-0 w-3 h-3 rounded-full border-2 border-cyan-300/30 border-t-cyan-300 animate-spin"
             role="status"
-            aria-label="Saving"
+            aria-label={t('Saving')}
           />
         ) : view.isModified ? (
           <span className="shrink-0 text-cyan-300 text-[20px] font-bold leading-none" aria-hidden="true">
@@ -196,8 +199,12 @@ function WorkflowSessionTab({
             onRequestClose(view);
           }}
           className="text-slate-400 hover:text-slate-100 flex items-center justify-center"
-          aria-label={`Close ${view.label}${view.isModified ? ' with unsaved changes' : ''}`}
-          title={view.isModified ? 'Close workflow with unsaved changes' : 'Close workflow'}
+          aria-label={
+            view.isModified
+              ? t('Close {label} with unsaved changes', { label: view.label })
+              : t('Close {label}', { label: view.label })
+          }
+          title={view.isModified ? t('Close workflow with unsaved changes') : t('Close workflow')}
         >
           <CloseIcon className="w-3.5 h-3.5" />
         </button>
@@ -207,6 +214,7 @@ function WorkflowSessionTab({
 }
 
 export function WorkflowTabline({ showTabs = true }: WorkflowTablineProps) {
+  const t = useT();
   const [closeConfirmTarget, setCloseConfirmTarget] = useState<{
     view: SessionView;
     action: 'close' | 'makeRoom';
@@ -279,7 +287,7 @@ export function WorkflowTabline({ showTabs = true }: WorkflowTablineProps) {
       });
       return {
         id: meta.id,
-        label: sessionDisplayLabel(filename, source),
+        label: sessionDisplayLabel(filename, source, t),
         isActive,
         isModified,
         isSaving: savingSessionId === meta.id,
@@ -306,6 +314,7 @@ export function WorkflowTabline({ showTabs = true }: WorkflowTablineProps) {
     queuedCountBySession,
     runningPromptIds,
     promptToSession,
+    t,
   ]);
 
   const requestCloseSession = (view: SessionView) => {
@@ -510,7 +519,7 @@ export function WorkflowTabline({ showTabs = true }: WorkflowTablineProps) {
               selected tab is hidden under that side, else the top-bar color. */}
           <button
             type="button"
-            aria-label="Scroll to first tab"
+            aria-label={t('Scroll to first tab')}
             onClick={scrollLeftEdge}
             className={`absolute top-1/2 left-2 -translate-y-1/2 w-6 h-6 rounded-full border shadow flex items-center justify-center text-white transition-colors duration-200 ${
               activeHiddenSide === 'left'
@@ -528,7 +537,7 @@ export function WorkflowTabline({ showTabs = true }: WorkflowTablineProps) {
           </button>
           <button
             type="button"
-            aria-label="Scroll to last tab"
+            aria-label={t('Scroll to last tab')}
             onClick={scrollRightEdge}
             className={`absolute top-1/2 right-2 -translate-y-1/2 w-6 h-6 rounded-full border shadow flex items-center justify-center text-white transition-colors duration-200 ${
               activeHiddenSide === 'right'
@@ -558,11 +567,10 @@ export function WorkflowTabline({ showTabs = true }: WorkflowTablineProps) {
             onClick={(e) => e.stopPropagation()}
           >
             <h2 className="text-base font-semibold text-slate-100">
-              Close a workflow
+              {t('Close a workflow')}
             </h2>
             <p className="mt-1 text-sm text-slate-400">
-              You can have up to {MAX_WORKFLOW_SESSIONS} workflows open at once.
-              Choose one to close to make room for the new one.
+              {t('You can have up to {count} workflows open at once. Choose one to close to make room for the new one.', { count: MAX_WORKFLOW_SESSIONS })}
             </p>
             <div className="mt-3 flex flex-col gap-1.5">
               {views.map((view) => (
@@ -577,9 +585,9 @@ export function WorkflowTabline({ showTabs = true }: WorkflowTablineProps) {
                     className={`shrink-0 text-xs font-semibold ${
                       view.isModified ? 'text-cyan-300' : 'text-slate-500'
                     }`}
-                    title={view.isModified ? 'Unsaved changes' : 'No unsaved changes'}
+                    title={view.isModified ? t('Unsaved changes') : t('No unsaved changes')}
                   >
-                    {view.isModified ? '* unsaved' : 'saved'}
+                    {view.isModified ? t('* unsaved') : t('saved')}
                   </span>
                 </button>
               ))}
@@ -589,7 +597,7 @@ export function WorkflowTabline({ showTabs = true }: WorkflowTablineProps) {
               onClick={cancelCloseForNewWorkflow}
               className="mt-3 w-full rounded-lg border border-white/10 bg-slate-800/50 px-3 py-2 text-sm text-slate-300 hover:bg-slate-700"
             >
-              Cancel
+              {t('Cancel')}
             </button>
           </div>
         </div>
@@ -600,24 +608,24 @@ export function WorkflowTabline({ showTabs = true }: WorkflowTablineProps) {
           onClose={() => setCloseConfirmTarget(null)}
           title={
             closeConfirmTarget.action === 'makeRoom'
-              ? 'Discard changes and load workflow?'
-              : 'Close unsaved workflow?'
+              ? t('Discard changes and load workflow?')
+              : t('Close unsaved workflow?')
           }
           description={
             closeConfirmTarget.action === 'makeRoom'
-              ? `"${closeConfirmTarget.view.label}" has unsaved changes. Dropping it will discard those changes so the new workflow can open.`
-              : `"${closeConfirmTarget.view.label}" has unsaved changes. Closing this tab will discard them.`
+              ? t('"{label}" has unsaved changes. Dropping it will discard those changes so the new workflow can open.', { label: closeConfirmTarget.view.label })
+              : t('"{label}" has unsaved changes. Closing this tab will discard them.', { label: closeConfirmTarget.view.label })
           }
           actions={[
             {
-              label: 'Cancel',
+              label: t('Cancel'),
               onClick: () => setCloseConfirmTarget(null),
               variant: 'secondary',
             },
             {
               label: closeConfirmTarget.action === 'makeRoom'
-                ? 'Discard and load'
-                : 'Close without saving',
+                ? t('Discard and load')
+                : t('Close without saving'),
               onClick: confirmCloseSession,
               variant: 'danger',
               autoFocus: true,

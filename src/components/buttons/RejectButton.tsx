@@ -1,4 +1,5 @@
 import { RejectXIcon, RejectedIcon } from '@/components/icons';
+import { useT } from '@/i18n';
 import { OverlayCircleButton } from './OverlayCircleButton';
 
 interface RejectButtonProps {
@@ -19,11 +20,12 @@ interface RejectButtonProps {
 // and X path, so the X never moves or resizes when toggling — only the disc
 // appears behind it.
 export function RejectButton({ onClick, isRejected, isFavorited, bare }: RejectButtonProps) {
+  const t = useT();
   const ariaLabel = isFavorited
-    ? 'Remove from favorites'
+    ? t('Remove from favorites')
     : isRejected
-      ? 'Clear rejected mark'
-      : 'Reject';
+      ? t('Clear rejected mark')
+      : t('Reject');
   return (
     <OverlayCircleButton
       onClick={onClick}

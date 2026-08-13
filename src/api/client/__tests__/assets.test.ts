@@ -62,7 +62,7 @@ describe('loadFileState', () => {
       json: async () => { throw new SyntaxError('Unexpected token <'); },
     } as unknown as Response));
 
-    await expect(loadFileState('output')).rejects.toThrow('Failed to load file state');
+    await expect(loadFileState('output')).rejects.toThrow('无法加载文件状态');
   });
 });
 

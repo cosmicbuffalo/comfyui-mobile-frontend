@@ -150,9 +150,9 @@ describe('FileCard selection clicks', () => {
     });
 
     const metadata = container.querySelector('.folder-metadata');
-    expect(metadata?.textContent).toContain('12 items');
+    expect(metadata?.textContent).toContain('12 个项目');
     expect(metadata?.textContent).toContain('2.0 KB');
-    expect(metadata?.textContent).toContain('2 hours ago');
+    expect(metadata?.textContent).toContain('2 小时前');
 
     await act(async () => {
       root.render(
@@ -171,7 +171,7 @@ describe('FileCard selection clicks', () => {
       );
     });
     expect(container.querySelector('.folder-metadata')?.textContent)
-      .toContain('3 days ago');
+      .toContain('3 天前');
   });
 
   it('shows size and the active date metadata for files in list view', async () => {
@@ -204,7 +204,7 @@ describe('FileCard selection clicks', () => {
 
     const metadata = container.querySelector('.file-metadata');
     expect(metadata?.textContent).toContain('4.0 KB');
-    expect(metadata?.textContent).toContain('3 hours ago');
+    expect(metadata?.textContent).toContain('3 小时前');
 
     await act(async () => {
       root.render(
@@ -223,7 +223,7 @@ describe('FileCard selection clicks', () => {
       );
     });
     expect(container.querySelector('.file-metadata')?.textContent)
-      .toContain('4 days ago');
+      .toContain('4 天前');
   });
 
   it('shows nested reject counts instead of unfiltered folder totals', async () => {
@@ -251,7 +251,7 @@ describe('FileCard selection clicks', () => {
       );
     });
 
-    expect(container.querySelector('.folder-reject-count')?.textContent).toBe('3 rejects inside');
+    expect(container.querySelector('.folder-reject-count')?.textContent).toBe('其中 3 个拒收');
     expect(container.querySelector('.folder-metadata')).toBeNull();
   });
 });

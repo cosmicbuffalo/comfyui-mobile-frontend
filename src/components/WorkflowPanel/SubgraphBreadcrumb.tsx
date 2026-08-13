@@ -1,10 +1,12 @@
 import { useWorkflowStore } from '@/hooks/useWorkflow';
+import { useT } from '@/i18n';
 
 /**
  * Breadcrumb bar shown when the user has drilled into a subgraph.
  * Renders nothing when at the root scope (scopeStack.length === 1).
  */
 export function SubgraphBreadcrumb() {
+  const t = useT();
   const scopeStack = useWorkflowStore((s) => s.scopeStack);
   const workflow = useWorkflowStore((s) => s.workflow);
   const exitToRoot = useWorkflowStore((s) => s.exitToRoot);
@@ -18,7 +20,7 @@ export function SubgraphBreadcrumb() {
         className="text-cyan-300 hover:text-cyan-200 hover:underline shrink-0"
         onClick={exitToRoot}
       >
-        Root
+        {t('Root')}
       </button>
       {scopeStack.slice(1).map((frame, index) => {
         if (frame.type !== 'subgraph') return null;

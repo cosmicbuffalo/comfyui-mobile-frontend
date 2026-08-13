@@ -9,6 +9,7 @@ import { resolveInputPathForFile } from '@/utils/filesystem';
 import { getDisplayName } from '@/components/AppMenu/userWorkflowHelpers';
 import { useWorkflowHiddenStore } from '@/hooks/useWorkflowHidden';
 import { isWorkflowHidden } from '@/utils/workflowHidden';
+import { useT } from '@/i18n';
 
 interface UseImageModalProps {
   open: boolean;
@@ -27,6 +28,7 @@ export function UseImageModal({
   onLoaded,
   background = 'opaque'
 }: UseImageModalProps) {
+  const t = useT();
   const workflow = useWorkflowStore((s) => s.workflow);
   const nodeTypes = useWorkflowStore((s) => s.nodeTypes);
   const addInputComboOption = useWorkflowStore((s) => s.addInputComboOption);
@@ -55,10 +57,10 @@ export function UseImageModal({
             : parkedSessions[meta.id]?.currentFilename ?? null;
         return {
           id: meta.id,
-          label: filename ? getDisplayName(filename) : 'Untitled',
+          label: filename ? getDisplayName(filename) : t('Untitled'),
         };
       }),
-    [sessions, activeSessionId, parkedSessions, currentFilename],
+    [sessions, activeSessionId, parkedSessions, currentFilename, t],
   );
 
   const loadableNodes = useMemo(() => {
@@ -90,11 +92,11 @@ export function UseImageModal({
     setLoadNodeError(null);
     try {
       const targetNode = workflow.nodes.find((node) => node.itemKey === nodeHierarchicalKey);
-      if (!targetNode) throw new Error('Could not resolve selected node.');
+      if (!targetNode) throw new Error(t('Could not resolve selected node.'));
 
       const widget = resolveInputWidget({ workflow, nodeTypes, nodeId: targetNode.id });
       if (!widget) {
-        throw new Error('Selected node does not accept image inputs.');
+        throw new Error(t('Selected node does not accept image inputs.'));
       }
       const inputPath = await resolveInputPathForFile(file, source);
       // Set the widget value and surface the result immediately. The server
@@ -122,7 +124,7 @@ export function UseImageModal({
       }
     } catch (err) {
       console.error('Failed to load image into node:', err);
-      setLoadNodeError(err instanceof Error ? err.message : 'Failed to load image.');
+      setLoadNodeError(err instanceof Error ? err.message : t('Failed to load image.'));
     } finally {
       setLoadingNodeHierarchicalKey(null);
     }
@@ -151,13 +153,13 @@ export function UseImageModal({
               onClick={() => setStep('workflow')}
               disabled={loadingNodeHierarchicalKey !== null}
             >
-              ‹ Back
+              ‹ {t('Back')}
             </button>
           )}
           <span>
             {step === 'workflow'
-              ? 'Load image into which workflow?'
-              : 'Load image into node'}
+              ? t('Load image into which workflow?')
+              : t('Load image into node')}
           </span>
         </div>
         <div className="px-4 pt-3 text-xs text-slate-400">
@@ -173,7 +175,7 @@ export function UseImageModal({
               >
                 <span className="flex-1 text-slate-100 truncate">{option.label}</span>
                 {option.id === activeSessionId && (
-                  <span className="text-xs text-slate-500">current</span>
+                  <span className="text-xs text-slate-500">{t('current')}</span>
                 )}
               </button>
             ))}
@@ -182,7 +184,7 @@ export function UseImageModal({
           <div className="max-h-[50vh] overflow-y-auto">
             {loadableNodes.length === 0 && (
               <div className="px-4 py-3 text-sm text-slate-400">
-                No Load Image nodes found in the current workflow.
+                {t('No Load Image nodes found in the current workflow.')}
               </div>
             )}
             {loadableNodes.map(({ node, itemKey }) => {
@@ -197,7 +199,7 @@ export function UseImageModal({
                 >
                   <span className="text-slate-400">#{node.id}</span>
                   <span className="flex-1 text-slate-100 truncate">{label}</span>
-                  {isBusy && <span className="text-xs text-slate-400">Loading…</span>}
+                  {isBusy && <span className="text-xs text-slate-400">{t('Loading…')}</span>}
                 </button>
               );
             })}
@@ -214,7 +216,7 @@ export function UseImageModal({
             onClick={onClose}
             disabled={loadingNodeHierarchicalKey !== null}
           >
-            Close
+            {t('Close')}
           </button>
         </div>
       </div>

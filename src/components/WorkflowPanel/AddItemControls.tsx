@@ -1,4 +1,5 @@
 import { PlusIcon } from '@/components/icons';
+import { useT } from '@/i18n';
 
 interface AddItemControlsProps {
   onAddNode: () => void;
@@ -13,15 +14,16 @@ const buttonClass =
 // list (and in the empty-workflow state) so items can be added in the current
 // scope without going through a node/group context menu.
 export function AddItemControls({ onAddNode, onAddGroup, className = '' }: AddItemControlsProps) {
+  const t = useT();
   return (
     <div className={`add-item-controls flex gap-2 ${className}`}>
       <button type="button" onClick={onAddNode} className={buttonClass}>
         <PlusIcon className="w-4 h-4" />
-        Add node
+        {t('Add node')}
       </button>
       <button type="button" onClick={onAddGroup} className={buttonClass}>
         <PlusIcon className="w-4 h-4" />
-        Add group
+        {t('Add group')}
       </button>
     </div>
   );

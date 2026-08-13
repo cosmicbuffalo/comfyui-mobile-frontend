@@ -45,6 +45,7 @@ import {
 import { RowActionsMenu } from './UserWorkflowsPanel/RowActionsMenu';
 import { NameDialog } from './UserWorkflowsPanel/NameDialog';
 import { WorkflowMoveDialog } from './UserWorkflowsPanel/WorkflowMoveDialog';
+import { useT } from '@/i18n';
 
 interface UserWorkflowsPanelProps {
   error: string | null;
@@ -66,6 +67,7 @@ export function UserWorkflowsPanel({
   onLoadWorkflow,
   onRefresh,
 }: UserWorkflowsPanelProps) {
+  const t = useT();
   const [search, setSearch] = useState('');
   const [sortBy, setSortBy] = useState<'name' | 'date'>('name');
   const [currentFolder, setCurrentFolder] = useState('workflows');
@@ -142,10 +144,10 @@ export function UserWorkflowsPanel({
   };
 
   const folderDisplayName = isSearching
-    ? 'Search Results'
+    ? t('Search Results')
     : isInSubfolder
       ? currentFolder.substring(currentFolder.lastIndexOf('/') + 1)
-      : 'My Workflows';
+      : t('My Workflows');
 
   // Path of the current folder relative to the workflows root ('' at root).
   const currentRelDir = currentFolder.replace(/^workflows\/?/, '');
@@ -156,7 +158,7 @@ export function UserWorkflowsPanel({
       await action();
       onRefresh();
     } catch (e) {
-      setActionError(e instanceof Error ? e.message : 'Action failed');
+      setActionError(e instanceof Error ? e.message : t('Action failed'));
     }
   };
 
@@ -213,7 +215,7 @@ export function UserWorkflowsPanel({
     return [
       {
         key: 'bookmark',
-        label: isBookmarked ? 'Remove bookmark' : 'Bookmark',
+        label: isBookmarked ? t('Remove bookmark') : t('Bookmark'),
         icon: isBookmarked ? (
           <BookmarkIconSvg className="w-4 h-4 text-amber-500" />
         ) : (
@@ -223,7 +225,7 @@ export function UserWorkflowsPanel({
       },
       {
         key: 'hide',
-        label: isHidden ? 'Unhide' : 'Hide',
+        label: isHidden ? t('Unhide') : t('Hide'),
         icon: isHidden ? (
           <EyeIcon className="w-4 h-4" />
         ) : (
@@ -236,19 +238,19 @@ export function UserWorkflowsPanel({
       },
       {
         key: 'rename',
-        label: 'Rename',
+        label: t('Rename'),
         icon: <EditIcon className="w-4 h-4" />,
         onClick: () => setRenameTarget(file),
       },
       {
         key: 'move',
-        label: 'Move',
+        label: t('Move'),
         icon: <MoveUpDownIcon className="w-4 h-4" />,
         onClick: () => setMoveTarget(file),
       },
       {
         key: 'delete',
-        label: 'Delete',
+        label: t('Delete'),
         icon: <TrashIcon className="w-4 h-4" />,
         color: 'danger',
         onClick: () => setDeleteTarget(file),
@@ -261,7 +263,7 @@ export function UserWorkflowsPanel({
       onClick={() => setSortBy(sortBy === 'name' ? 'date' : 'name')}
       className="flex items-center gap-0.5 text-xs font-semibold text-cyan-300"
     >
-      <span>{sortBy === 'name' ? 'NAME' : 'DATE'}</span>
+      <span>{sortBy === 'name' ? t('NAME') : t('DATE')}</span>
       <span>↓</span>
     </button>
   );
@@ -286,7 +288,7 @@ export function UserWorkflowsPanel({
               <SearchBar
                 value={search}
                 onChange={setSearch}
-                placeholder="Search"
+                placeholder={t('Search')}
                 inputClassName={menuInputClassName}
               />
             </div>
@@ -294,7 +296,7 @@ export function UserWorkflowsPanel({
               type="button"
               onClick={() => setFavoritesOnly((v) => !v)}
               aria-pressed={favoritesOnly}
-              aria-label={favoritesOnly ? 'Show all' : 'Show bookmarks only'}
+              aria-label={favoritesOnly ? t('Show all') : t('Show bookmarks only')}
               className={`w-9 h-9 flex items-center justify-center rounded-lg transition-colors ${
                 favoritesOnly
                   ? 'bg-amber-500/20 text-amber-500'
@@ -308,18 +310,18 @@ export function UserWorkflowsPanel({
               )}
             </button>
             <RowActionsMenu
-              ariaLabel="Folder options"
+              ariaLabel={t('Folder options')}
               triggerClassName="bg-white/5 hover:bg-white/10 text-slate-300"
               items={[
                 {
                   key: 'new-folder',
-                  label: 'New folder',
+                  label: t('New folder'),
                   icon: <PlusIcon className="w-4 h-4" />,
                   onClick: () => setAddFolderOpen(true),
                 },
                 {
                   key: 'toggle-hidden',
-                  label: showHidden ? 'Hide hidden' : 'Show hidden',
+                  label: showHidden ? t('Hide hidden') : t('Show hidden'),
                   icon: showHidden ? <EyeOffIcon className="w-4 h-4" /> : <EyeIcon className="w-4 h-4" />,
                   onClick: () => setShowHidden((v) => !v),
                 },
@@ -336,12 +338,12 @@ export function UserWorkflowsPanel({
       ) : sortedItems.length === 0 ? (
         <p className={`${menuMutedTextClassName} text-center py-8`}>
           {isSearching
-            ? 'No matching workflows'
+            ? t('No matching workflows')
             : favoritesOnly
-              ? 'No bookmarks here'
+              ? t('No bookmarks here')
               : userWorkflows.length === 0
-                ? 'No saved workflows yet'
-                : 'Empty folder'}
+                ? t('No saved workflows yet')
+                : t('Empty folder')}
         </p>
       ) : (
         <div className="space-y-2 overflow-y-auto flex-1">
@@ -414,8 +416,8 @@ export function UserWorkflowsPanel({
 
       {addFolderOpen && (
         <NameDialog
-          title="New folder"
-          confirmLabel="Create"
+          title={t('New folder')}
+          confirmLabel={t('Create')}
           initialValue=""
           onConfirm={handleCreateFolder}
           onClose={() => setAddFolderOpen(false)}
@@ -423,8 +425,8 @@ export function UserWorkflowsPanel({
       )}
       {renameTarget && (
         <NameDialog
-          title={renameTarget.type === 'directory' ? 'Rename folder' : 'Rename workflow'}
-          confirmLabel="Rename"
+          title={renameTarget.type === 'directory' ? t('Rename folder') : t('Rename workflow')}
+          confirmLabel={t('Rename')}
           initialValue={
             renameTarget.type === 'directory'
               ? renameTarget.name
@@ -444,15 +446,15 @@ export function UserWorkflowsPanel({
       )}
       {deleteTarget && (
         <Dialog
-          title={deleteTarget.type === 'directory' ? 'Delete folder?' : 'Delete workflow?'}
+          title={deleteTarget.type === 'directory' ? t('Delete folder?') : t('Delete workflow?')}
           description={
             deleteTarget.type === 'directory'
-              ? `"${deleteTarget.name}" and everything inside it will be permanently deleted.`
-              : `"${deleteTarget.name.replace(/\.json$/, '')}" will be permanently deleted.`
+              ? t('"{name}" and everything inside it will be permanently deleted.', { name: deleteTarget.name })
+              : t('"{name}" will be permanently deleted.', { name: deleteTarget.name.replace(/\.json$/, '') })
           }
           actions={[
-            { label: 'Cancel', variant: 'secondary', onClick: () => setDeleteTarget(null) },
-            { label: 'Delete', variant: 'danger', onClick: () => handleDelete(deleteTarget) },
+            { label: t('Cancel'), variant: 'secondary', onClick: () => setDeleteTarget(null) },
+            { label: t('Delete'), variant: 'danger', onClick: () => handleDelete(deleteTarget) },
           ]}
           onClose={() => setDeleteTarget(null)}
         />

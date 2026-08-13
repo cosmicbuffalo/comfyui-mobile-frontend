@@ -13,6 +13,7 @@ import { applyImpactNodeFeedback, parseImpactNodeFeedback } from '@/utils/impact
 import type { WSMessage, WSStatusMessage, WSProgressMessage, WSExecutingMessage, WSExecutedMessage, HistoryOutputImage } from '@/api/types';
 import type { DenoVideoCompareAudio, DenoVideoCompareMetadata, NodeComparerOutput } from './useWorkflow';
 import { appendOasisPreviewResults } from '@/utils/nodeFrontendPreviews';
+import { t } from '@/i18n';
 
 // When a run finishes while the user is sitting on the Outputs panel, reload
 // that view if any of the just-saved images belong to the folder/source being
@@ -253,7 +254,10 @@ export function getBackendReconnectMessage(downtimeMs: number): string {
   const duration = seconds < 60
     ? `${seconds}s`
     : `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
-  return `Backend connection restored after ${duration}. ComfyUI may have restarted; running jobs may have been interrupted.`;
+  return t(
+    'Backend connection restored after {duration}. ComfyUI may have restarted; running jobs may have been interrupted.',
+    { duration },
+  );
 }
 
 // One tick of the 2s background poll. The poll is a backstop for missed
@@ -924,13 +928,16 @@ export function useWebSocket() {
             || asText(errorData.msg)
             || asText(errorData.error)
             || asText(errorObject?.message)
-            || 'Execution failed';
+            || t('Execution failed');
           const details = asText(errorData.exception_type)
             || asText(errorData.traceback)
             || asText(errorObject?.details)
             || '';
           const fullMessage = nodeId
-            ? `${message}${nodeType ? ` (${nodeType})` : ''} for node ${nodeId}`
+            ? t('{message} for node {nodeId}', {
+                message: nodeType ? `${message} (${nodeType})` : message,
+                nodeId,
+              })
             : message;
 
           const errCtx = getSessionContext(promptId);
@@ -1232,7 +1239,11 @@ export function useWebSocket() {
             } catch (err) {
               useWorkflowErrorsStore
                 .getState()
-                .setError(err instanceof Error ? err.message : 'Failed to restore lost queued jobs.');
+                .setError(
+                  err instanceof Error
+                    ? err.message
+                    : t('Failed to restore lost queued jobs.'),
+                );
             }
           }
           setQueueSynchronized(true);

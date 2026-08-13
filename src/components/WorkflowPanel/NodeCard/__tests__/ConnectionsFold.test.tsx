@@ -52,12 +52,12 @@ describe('NodeCardConnections folding', () => {
       );
     });
 
-    expect(container.textContent).toContain('Inputs');
-    expect(container.textContent).toContain('Outputs');
+    expect(container.textContent).toContain('输入');
+    expect(container.textContent).toContain('输出');
     const toggle = container.querySelector<HTMLButtonElement>('button[aria-expanded]');
     // Default open now: the section starts expanded.
     expect(toggle?.getAttribute('aria-expanded')).toBe('true');
-    expect(toggle?.getAttribute('aria-label')).toBe('Fold connections');
+    expect(toggle?.getAttribute('aria-label')).toBe('折叠连接');
     expect(toggle?.getAttribute('data-fold-state')).toBe('expanded');
     expect(toggle?.querySelectorAll('[data-connection-fold-chevron]')).toHaveLength(2);
     expect(container.querySelectorAll('.connection-section-divider')).toHaveLength(2);
@@ -69,7 +69,7 @@ describe('NodeCardConnections folding', () => {
 
     // Clicking folds it, recording the node key as collapsed.
     expect(toggle?.getAttribute('aria-expanded')).toBe('false');
-    expect(toggle?.getAttribute('aria-label')).toBe('Unfold connections');
+    expect(toggle?.getAttribute('aria-label')).toBe('展开连接');
     expect(toggle?.getAttribute('data-fold-state')).toBe('collapsed');
     expect(useConnectionSectionFoldsStore.getState().collapsedItemKeys).toEqual(['node-key']);
   });
@@ -97,7 +97,7 @@ describe('NodeCardConnections folding', () => {
       );
     });
 
-    expect(container.textContent).toBe('3 hidden connections');
+    expect(container.textContent).toBe('3 个隐藏连接');
     expect(container.querySelector('.connection-hidden-summary')).toBeTruthy();
     expect(container.querySelector('button[aria-expanded]')).toBeNull();
     expect(container.querySelectorAll('[data-testid^="connection-"]')).toHaveLength(0);
@@ -120,7 +120,7 @@ describe('NodeCardConnections folding', () => {
       );
     });
 
-    expect(container.textContent).toBe('1 hidden connection');
+    expect(container.textContent).toBe('1 个隐藏连接');
   });
 
   it('shows horizontal rules on both sides for one-sided nodes', async () => {
@@ -138,8 +138,8 @@ describe('NodeCardConnections folding', () => {
       );
     });
 
-    expect(container.textContent).not.toContain('Inputs');
-    expect(container.textContent).toContain('Outputs');
+    expect(container.textContent).not.toContain('输入');
+    expect(container.textContent).toContain('输出');
     expect(container.querySelectorAll('.connection-section-divider')).toHaveLength(2);
   });
 });

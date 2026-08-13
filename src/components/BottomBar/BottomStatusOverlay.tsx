@@ -10,6 +10,7 @@ import { useWidgetModalOpenStore } from '@/hooks/useWidgetModalOpen';
 import { useQueueStore } from '@/hooks/useQueue';
 import { useOverallProgress } from '@/hooks/useOverallProgress';
 import { resolveExecutingNodeLabel } from '@/utils/executionLabels';
+import { useT } from '@/i18n';
 
 // Clamp the inline error message so a long backend traceback can't grow the toast
 // off-screen (which would carry the Dismiss button out of reach); the full text is
@@ -23,6 +24,7 @@ const clampLinesStyle = {
 };
 
 export function BottomStatusOverlay() {
+  const t = useT();
   const currentPanel = useNavigationStore((s) => s.currentPanel);
   const viewerOpen = useImageViewerStore((s) => s.viewerOpen);
   const widgetModalOpen = useWidgetModalOpenStore((s) => s.openCount > 0);
@@ -60,24 +62,31 @@ export function BottomStatusOverlay() {
   // loudly on every panel — the user has just hit Run and is usually watching
   // the queue. Load-time node errors only matter on the workflow panel.
   const isRunNodeError = hasNodeErrors && nodeErrorsFromRun;
+  // Load-time node errors only matter on the workflow panel. The stored error
+  // text is localized (it is produced through t()), so match the prefix in the
+  // current language rather than hardcoding English.
+  const workflowLoadErrorPrefix = t('Workflow load error');
+  const backendConnectionPrefix = t('Backend connection');
   const isWorkflowLoadError =
-    Boolean(error?.startsWith("Workflow load error")) || (hasNodeErrors && !nodeErrorsFromRun);
+    Boolean(error?.startsWith(workflowLoadErrorPrefix)) || (hasNodeErrors && !nodeErrorsFromRun);
   const isBackendConnectionError =
-    Boolean(error?.startsWith("Backend connection"));
+    Boolean(error?.startsWith(backendConnectionPrefix));
   const skippedNodeCount = Object.keys(nodeErrors).length;
   const errorTitle = isWorkflowLoadError
-    ? "Workflow load error"
+    ? workflowLoadErrorPrefix
     : isBackendConnectionError
-      ? "Backend connection"
+      ? backendConnectionPrefix
     : isRunNodeError && !error
-      ? "Nodes skipped"
-    : "Prompt error";
+      ? t('Nodes skipped')
+    : t('Prompt error');
   const errorMessage = isWorkflowLoadError && error
-    ? error.replace(/^Workflow load error:\s*/i, '')
+    ? error.slice(workflowLoadErrorPrefix.length).replace(/^[:：]\s*/, '')
     : error ?? (
         isRunNodeError
-          ? `${skippedNodeCount} node${skippedNodeCount === 1 ? '' : 's'} had invalid inputs and ${skippedNodeCount === 1 ? 'was' : 'were'} skipped — tap to view.`
-          : hasNodeErrors ? `${nodeErrorCount} inputs reference missing options.` : null
+          ? skippedNodeCount === 1
+            ? t('1 node had invalid inputs and was skipped — tap to view.')
+            : t('{count} nodes had invalid inputs and were skipped — tap to view.', { count: skippedNodeCount })
+          : hasNodeErrors ? t('{count} inputs reference missing options.', { count: nodeErrorCount }) : null
       );
 
   const executingNodeLabel = useMemo(() => {
@@ -126,7 +135,7 @@ export function BottomStatusOverlay() {
     const closestId = closestNode.id;
     const itemKey = closestNode.itemKey;
     if (!itemKey) return;
-    const label = `Error #${nextIndex + 1}`;
+    const label = t('Error #{n}', { n: nextIndex + 1 });
     revealNodeWithParents(itemKey);
     setErrorCycleIndex((nextIndex + 1) % errorNodes.length);
 
@@ -245,23 +254,23 @@ export function BottomStatusOverlay() {
               <button
                 id="error-copy-button"
                 type="button"
-                aria-label="Copy error to clipboard"
+                aria-label={t('Copy error to clipboard')}
                 className="flex items-center gap-1 shrink-0 px-2.5 py-1 text-xs font-semibold bg-red-600/80 hover:bg-red-600 text-white rounded-full"
                 onPointerDown={handleErrorCopyPointerDown}
                 onClick={handleErrorCopyClick}
               >
                 {errorCopied ? <CheckIcon className="w-3 h-3" /> : <ClipboardIcon className="w-3 h-3" />}
-                {errorCopied ? 'Copied' : 'Copy'}
+                {errorCopied ? t('Copied') : t('Copy')}
               </button>
               <button
                 id="error-dismiss-button"
                 type="button"
-                aria-label="Dismiss error"
+                aria-label={t('Dismiss error')}
                 className="shrink-0 px-3 py-1 text-xs font-semibold bg-red-600 text-white rounded-full"
                 onPointerDown={handleErrorDismissPointerDown}
                 onClick={handleErrorDismissClick}
               >
-                Dismiss
+                {t('Dismiss')}
               </button>
             </div>
           </div>
@@ -278,7 +287,7 @@ export function BottomStatusOverlay() {
         >
           <button
             type="button"
-            aria-label="Dismiss progress"
+            aria-label={t('Dismiss progress')}
             className="absolute -top-3.5 -right-3.5 w-7 h-7 rounded-full flex items-center justify-center bg-slate-800 border border-white/15 text-slate-300 shadow-md hover:text-white hover:bg-slate-700"
             onPointerDown={handleProgressDismissPointerDown}
             onClick={handleProgressDismissClick}
@@ -287,7 +296,7 @@ export function BottomStatusOverlay() {
           </button>
           <div className="node-progress-info flex min-w-0 items-center justify-between gap-2 text-xs leading-snug">
             <span className="executing-node-name min-w-0 truncate font-semibold text-slate-100">
-              {executingNodeLabel || "Running"}
+              {executingNodeLabel || t('Running')}
             </span>
             <span className="shrink-0 font-semibold text-emerald-200">{displayNodeProgress}%</span>
           </div>
@@ -302,7 +311,7 @@ export function BottomStatusOverlay() {
           {overallProgress !== null && (
             <div className="overall-progress-container">
               <div className="overall-progress-info mt-1.5 flex items-center justify-between gap-2 text-[10px] leading-none text-slate-400">
-                <span>Overall</span>
+                <span>{t('Overall')}</span>
                 <span className="font-semibold text-cyan-200">{overallProgress}%</span>
               </div>
               <div className="overall-progress-track mt-1 h-1 rounded-full bg-slate-800/75 overflow-hidden">

@@ -1,3 +1,5 @@
+import { t } from '@/i18n';
+
 export interface LoraManagerRegistryNode {
   node_id: number;
   graph_id: string;
@@ -21,7 +23,7 @@ export async function registerLoraManagerNodes(nodes: LoraManagerRegistryNode[])
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ nodes })
   });
-  if (!response.ok) throw new Error('Failed to register Lora Manager nodes');
+  if (!response.ok) throw new Error(t('Failed to register Lora Manager nodes'));
 }
 
 export interface TriggerWordTargetReference {
@@ -42,7 +44,7 @@ export async function requestTriggerWords(
       node_ids: nodeIds
     })
   });
-  if (!response.ok) throw new Error('Failed to fetch trigger words');
+  if (!response.ok) throw new Error(t('Failed to fetch trigger words'));
 }
 
 // User workflows API

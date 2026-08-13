@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { useT } from '@/i18n';
 import { useTextareaFocus } from '@/hooks/useTextareaFocus';
 import { useBodyScrollLock } from '@/hooks/useBodyScrollLock';
 import { useWorkflowStore } from '@/hooks/useWorkflow';
@@ -122,6 +123,7 @@ export function MediaViewer({
   onTransformChange,
   zoomResetKey,
 }: MediaViewerProps) {
+  const t = useT();
   const overlayRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const imageRef = useRef<HTMLImageElement>(null);
@@ -281,7 +283,7 @@ export function MediaViewer({
   const fetchedMetadata = fileId ? metadataById[fileId] : undefined;
   const metadata = currentItem?.metadata ?? (fetchedMetadata === undefined ? undefined : fetchedMetadata);
   const durationLabel = formatDuration(currentItem?.durationSeconds);
-  const displayName = currentItem?.filename || currentItem?.alt || 'Output';
+  const displayName = currentItem?.filename || currentItem?.alt || t('Output');
   const showMetadataOverlay = showMetadata && !isIdle;
   const canToggleMetadata = showMetadataToggle;
   const metadataIsLoading = fileId ? Boolean(metadataLoading[fileId]) : false;
@@ -359,14 +361,14 @@ export function MediaViewer({
         // file. Whether it landed on disk is not knowable from an anchor click,
         // so a definite "Downloaded." would be a guess the user may act on.
         if (outcome.started) {
-          showDownloadToast('Download started.', 'success', 2000);
+          showDownloadToast(t('Download started.'), 'success', 2000);
         } else {
-          showDownloadToast('Download failed.', 'error', 3000);
+          showDownloadToast(t('Download failed.'), 'error', 3000);
         }
       },
-      () => showDownloadToast('Download failed.', 'error', 3000),
+      () => showDownloadToast(t('Download failed.'), 'error', 3000),
     );
-  }, [currentItem, onDownload, resetIdleTimer, showDownloadToast]);
+  }, [currentItem, onDownload, resetIdleTimer, showDownloadToast, t]);
 
   // Show an in-flight message right when loading begins (DownloadButton
   // signals via onLoadingChange). Only the native-iOS path saves to Photos —
@@ -382,14 +384,14 @@ export function MediaViewer({
         setIsIdle(false);
         // Keep info-toast persistent — the result handler clears or
         // replaces it once the promise settles.
-        showDownloadToast('Downloading…', 'info', null);
+        showDownloadToast(t('Downloading…'), 'info', null);
       } else {
         // Give the user time to read the completed toast, then return to the
         // viewer's normal chrome auto-hide behavior.
         resetIdleTimer();
       }
     },
-    [resetIdleTimer, showDownloadToast],
+    [resetIdleTimer, showDownloadToast, t],
   );
 
   const shouldIgnoreViewerKeyboard = useCallback(() => {
@@ -1321,7 +1323,7 @@ export function MediaViewer({
           iconSize={6}
           zIndex={MEDIA_VIEWER_OVERLAY_Z_INDEX}
         />
-        <p className="text-slate-300 mb-2">No images to display</p>
+        <p className="text-slate-300 mb-2">{t('No images to display')}</p>
         <p className="text-slate-500 text-sm">images: {items.length}, index: {index}</p>
       </div>,
       document.body
@@ -1366,7 +1368,7 @@ export function MediaViewer({
             {loadingPreviewSrc && (
               <img
                 src={loadingPreviewSrc}
-                alt="Live preview"
+                alt={t('Live preview')}
                 draggable={false}
                 className="latent-preview-image absolute inset-0 w-full h-full object-contain select-none"
               />
@@ -1428,7 +1430,7 @@ export function MediaViewer({
                 />
                 {videoError && (
                   <div className="absolute inset-0 flex items-center justify-center text-white text-sm bg-black/60">
-                    Unable to play this video.
+                    {t('Unable to play this video.')}
                   </div>
                 )}
               </>
@@ -1438,7 +1440,7 @@ export function MediaViewer({
                 <img
                   ref={imageRef}
                   src={getFullScreenImageSrc(renderItem)}
-                  alt={renderItem.alt || 'Comparison'}
+                  alt={renderItem.alt || t('Comparison')}
                   className="w-full h-auto block select-none relative"
                   draggable={false}
                   onLoad={handleImageLoad}
@@ -1454,7 +1456,7 @@ export function MediaViewer({
                 <img
                   ref={compareImageRef}
                   src={renderComparison.aDisplaySrc ?? renderComparison.aSrc}
-                  alt="Comparison A"
+                  alt={t('Comparison A')}
                   className="absolute top-0 left-0 w-full h-auto block select-none pointer-events-none"
                   draggable={false}
                   style={{
@@ -1471,7 +1473,7 @@ export function MediaViewer({
               <img
                 ref={imageRef}
                 src={getFullScreenImageSrc(renderItem)}
-                alt={renderItem.alt || 'Generation'}
+                alt={renderItem.alt || t('Generation')}
                 className="w-full h-auto block select-none relative"
                 draggable={false}
                 onLoad={handleImageLoad}
@@ -1510,7 +1512,7 @@ export function MediaViewer({
         {!showLoadingPlaceholder && showImageSpinner && (
           <div
             role="status"
-            aria-label="Loading image"
+            aria-label={t('Loading image')}
             className="image-loading-spinner pointer-events-none absolute inset-0 z-[2] flex items-center justify-center"
           >
             <div className="relative h-24 w-24">

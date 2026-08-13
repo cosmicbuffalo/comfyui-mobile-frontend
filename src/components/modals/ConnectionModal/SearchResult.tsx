@@ -1,5 +1,6 @@
 import { CheckIcon } from '@/components/icons';
 import { getTypeClass } from '@/utils/search';
+import { useT } from '@/i18n';
 
 interface ConnectionSearchResultProps {
   nodeId: number;
@@ -27,6 +28,7 @@ export function ConnectionSearchResult({
   currentlyConnected,
   onSelect
 }: ConnectionSearchResultProps) {
+  const t = useT();
   return (
     <button
       type="button"
@@ -46,7 +48,7 @@ export function ConnectionSearchResult({
             {currentlyConnected && (
               <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-cyan-500/15 text-cyan-300 text-[10px] font-medium shrink-0">
                 <CheckIcon className="w-3 h-3" />
-                Currently connected
+                {t('Currently connected')}
               </span>
             )}
           </div>

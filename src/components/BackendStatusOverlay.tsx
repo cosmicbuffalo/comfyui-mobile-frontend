@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { useT } from '@/i18n';
 import { useConnectionStatusStore } from '../hooks/useConnectionStatus';
 
 // How long the websocket may stay disconnected before we block the UI with the
@@ -68,6 +69,7 @@ export function ConnectionLostOverlay() {
 
 function ConnectionLostOverlayAfterGrace() {
   const [graceElapsed, setGraceElapsed] = useState(false);
+  const t = useT();
 
   useEffect(() => {
     const timer = window.setTimeout(
@@ -81,9 +83,9 @@ function ConnectionLostOverlayAfterGrace() {
 
   return (
     <BackendStatusOverlay
-      eyebrow="Connection Lost"
-      title="Reconnecting…"
-      message="Lost contact with the ComfyUI backend. Trying to reconnect — the app will recover automatically as soon as the server is back online."
+      eyebrow={t('Connection Lost')}
+      title={t('Reconnecting…')}
+      message={t('Lost contact with the ComfyUI backend. Trying to reconnect — the app will recover automatically as soon as the server is back online.')}
     />
   );
 }

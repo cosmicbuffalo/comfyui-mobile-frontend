@@ -28,7 +28,7 @@ describe('SelectionActionButton', () => {
     act(() => root.render(<SelectionActionButton />));
 
     const button = container.querySelector('button');
-    expect(button?.getAttribute('aria-label')).toBe('Cancel selection mode');
+    expect(button?.getAttribute('aria-label')).toBe('取消选择模式');
 
     act(() => button?.click());
 
@@ -41,7 +41,7 @@ describe('SelectionActionButton', () => {
     act(() => root.render(<SelectionActionButton />));
 
     const button = container.querySelector('button');
-    expect(button?.getAttribute('aria-label')).toBe('Selection actions');
+    expect(button?.getAttribute('aria-label')).toBe('选择操作');
 
     act(() => button?.click());
 

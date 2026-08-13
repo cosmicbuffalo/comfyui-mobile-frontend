@@ -1,0 +1,12 @@
+{
+  "Failed to disable notifications.": "无法禁用通知。",
+  "Failed to enable notifications.": "无法启用通知。",
+  "Failed to send test notification.": "无法发送测试通知。",
+  "Metadata refresh stopped partway — check the connection and run it again.": "元数据刷新中途停止——请检查连接后重试。",
+  "No notification was delivered. Make sure notifications are enabled on this device.": "未收到任何通知。请确保此设备上已启用通知。",
+  "Notification permission was not granted.": "未授予通知权限。",
+  "Notifications are blocked in browser settings.": "通知已被浏览器设置阻止。",
+  "Push is not available on the server (is pywebpush installed?).": "服务器上不支持推送（是否已安装 pywebpush？）。",
+  "Workflow load error: {count} input reference missing options.": "工作流加载错误：{count} 个输入引用了缺失的选项。",
+  "Workflow load error: {count} inputs reference missing options.": "工作流加载错误：{count} 个输入引用了缺失的选项。"
+}

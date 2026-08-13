@@ -6,6 +6,7 @@ import {
   type ContextMenuItemDefinition,
 } from '@/components/menus/ContextMenuBuilder';
 import { useAnchoredMenuPosition } from '@/hooks/useAnchoredMenuPosition';
+import { useT } from '@/i18n';
 
 /** A button that opens an anchored, portalled context menu (so it isn't clipped
  *  by the scrolling list). Shows a custom trigger icon when provided (e.g. the
@@ -13,7 +14,7 @@ import { useAnchoredMenuPosition } from '@/hooks/useAnchoredMenuPosition';
 export function RowActionsMenu({
   items,
   triggerIcon,
-  ariaLabel = 'Workflow actions',
+  ariaLabel,
   triggerClassName = 'bg-transparent hover:bg-white/10 text-slate-400',
 }: {
   items: ContextMenuItemDefinition[];
@@ -21,6 +22,7 @@ export function RowActionsMenu({
   ariaLabel?: string;
   triggerClassName?: string;
 }) {
+  const t = useT();
   const [open, setOpen] = useState(false);
   const buttonRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -50,7 +52,7 @@ export function RowActionsMenu({
     <>
       <ContextMenuButton
         buttonRef={buttonRef}
-        ariaLabel={ariaLabel}
+        ariaLabel={ariaLabel ?? t('Workflow actions')}
         buttonSize={9}
         icon={triggerIcon}
         onClick={(event) => {

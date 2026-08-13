@@ -168,9 +168,9 @@ describe('NodeCard emitted video output', () => {
     expect(video?.getAttribute('src')).toContain('cb=run%3Atwo');
     expect(video?.loop).toBe(true);
     expect(container.textContent).toContain('640×360');
-    expect(container.textContent).toContain('48 frames');
+    expect(container.textContent).toContain('48 帧');
     expect(container.textContent).toContain('24 fps');
-    expect(container.textContent).toContain('audio');
+    expect(container.textContent).toContain('音频');
   });
 
   it('persists Deno compare preview controls into the workflow widgets', async () => {
@@ -228,16 +228,16 @@ describe('NodeCard emitted video output', () => {
 
     const compare = container.querySelector('[data-deno-video-compare]')!;
     const compareButtons = Array.from(compare.querySelectorAll('button'));
-    const split = compare.querySelector<HTMLInputElement>('input[aria-label="Comparison split"]')!;
+    const split = compare.querySelector<HTMLInputElement>('input[aria-label="对比分割位置"]')!;
     await act(async () => {
       Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set?.call(split, '73');
       split.dispatchEvent(new Event('input', { bubbles: true }));
     });
-    await act(async () => compareButtons.find((button) => button.textContent === 'Difference')!.click());
-    await act(async () => compareButtons.find((button) => button.textContent === 'Swap A/B')!.click());
-    await act(async () => compareButtons.find((button) => button.textContent === 'Toggle')!.click());
+    await act(async () => compareButtons.find((button) => button.textContent === '差异')!.click());
+    await act(async () => compareButtons.find((button) => button.textContent === '交换 A/B')!.click());
+    await act(async () => compareButtons.find((button) => button.textContent === '切换')!.click());
     await act(async () => (
-      compare.querySelector('button[aria-label^="Showing video"]') as HTMLButtonElement
+      compare.querySelector('button[aria-label^="正在显示视频"]') as HTMLButtonElement
     ).click());
 
     expect(useWorkflowStore.getState().workflow?.nodes[0].widgets_values).toEqual([
@@ -312,7 +312,7 @@ describe('NodeCard emitted video output', () => {
     await act(async () => root.render(<NodeCard node={node} />));
     expect(container.querySelector('video')).toBeNull();
     const reveal = Array.from(container.querySelectorAll('button'))
-      .find((button) => button.textContent?.trim() === 'Show video preview')!;
+      .find((button) => button.textContent?.trim() === '显示视频预览')!;
     expect(reveal).toBeDefined();
     await act(async () => reveal.click());
     const revealedNode = useWorkflowStore.getState().workflow!.nodes[0];
@@ -355,7 +355,7 @@ describe('NodeCard emitted video output', () => {
     await act(async () => root.render(<NodeCard node={node} />));
 
     const reveal = Array.from(container.querySelectorAll('button'))
-      .find((button) => button.textContent?.trim() === 'Show video preview')!;
+      .find((button) => button.textContent?.trim() === '显示视频预览')!;
     expect(reveal).toBeDefined();
     await act(async () => reveal.click());
 
@@ -400,7 +400,7 @@ describe('NodeCard emitted video output', () => {
     await act(async () => root.render(<NodeCard node={node} />));
     expect(container.querySelector('video')?.getAttribute('src'))
       .toContain('/mobile/api/video/playable?filename=restored.webm');
-    const mode = container.querySelector<HTMLButtonElement>('button[aria-label="Playback mode: loop"]')!;
+    const mode = container.querySelector<HTMLButtonElement>('button[aria-label="播放模式：loop"]')!;
     await act(async () => mode.click());
     const saved = JSON.parse(
       (useWorkflowStore.getState().workflow!.nodes[0]

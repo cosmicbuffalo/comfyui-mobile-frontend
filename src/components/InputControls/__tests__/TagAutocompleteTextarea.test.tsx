@@ -114,7 +114,7 @@ describe('TagAutocompleteTextarea open delay', () => {
     expect(dropdown()).not.toBeNull();
 
     const dismiss = document.querySelector<HTMLButtonElement>(
-      '.autocomplete-dropdown button[aria-label="Dismiss autocomplete"]',
+      '.autocomplete-dropdown button[aria-label="关闭自动补全"]',
     );
     expect(dismiss).not.toBeNull();
 

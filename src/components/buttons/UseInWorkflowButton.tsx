@@ -1,4 +1,5 @@
 import { ThickArrowRightIcon } from '@/components/icons';
+import { useT } from '@/i18n';
 import { OverlayCircleButton } from './OverlayCircleButton';
 
 interface UseInWorkflowButtonProps {
@@ -6,10 +7,11 @@ interface UseInWorkflowButtonProps {
 }
 
 export function UseInWorkflowButton({ onClick }: UseInWorkflowButtonProps) {
+  const t = useT();
   return (
     <OverlayCircleButton
       onClick={onClick}
-      ariaLabel="Use in workflow"
+      ariaLabel={t('Use in workflow')}
       className="text-white"
       icon={<ThickArrowRightIcon className="w-5 h-5" />}
     />

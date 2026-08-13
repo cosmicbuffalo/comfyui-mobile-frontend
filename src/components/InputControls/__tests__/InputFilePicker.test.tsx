@@ -58,7 +58,7 @@ describe('InputFilePicker options menu', () => {
 
     await act(async () => {
       document
-        .querySelector<HTMLButtonElement>('[aria-label="Input picker options"]')
+        .querySelector<HTMLButtonElement>('[aria-label="输入选择器选项"]')
         ?.click();
     });
 
@@ -77,7 +77,7 @@ describe('InputFilePicker options menu', () => {
 
     const outputsTab = Array.from(
       document.querySelectorAll<HTMLButtonElement>('.input-picker-source-toggle button'),
-    ).find((button) => button.textContent === 'Outputs');
+    ).find((button) => button.textContent === '输出');
     expect(outputsTab).toBeTruthy();
 
     await act(async () => {
@@ -144,12 +144,12 @@ describe('InputFilePicker options menu', () => {
 
     await act(async () => {
       document
-        .querySelector<HTMLButtonElement>('[aria-label="Input picker options"]')
+        .querySelector<HTMLButtonElement>('[aria-label="输入选择器选项"]')
         ?.click();
     });
     const favoritesItem = Array.from(
       document.querySelectorAll<HTMLElement>('.input-picker-menu button'),
-    ).find((el) => el.textContent?.includes('Favorites Only'));
+    ).find((el) => el.textContent?.includes('仅收藏'));
     expect(favoritesItem).toBeTruthy();
     getUserImagesMock.mockClear();
     await act(async () => {

@@ -8,6 +8,7 @@ import {
   menuTextClassName,
 } from './menuStyles';
 import { CollapsibleMenuSection } from './CollapsibleMenuSection';
+import { useT } from '@/i18n';
 
 interface MenuLoadSectionProps {
   open: boolean;
@@ -30,6 +31,7 @@ export function MenuLoadSection({
   onOpenTemplates,
   onOpenPasteJson,
 }: MenuLoadSectionProps) {
+  const t = useT();
   return (
     <section ref={sectionRef} className="mb-6">
       <button
@@ -38,7 +40,7 @@ export function MenuLoadSection({
         className={menuSectionHeaderClassName}
         aria-expanded={open}
       >
-        <span>Load Workflow</span>
+        <span>{t('Load Workflow')}</span>
         <CaretDownIcon className={`${menuChevronClassName} ${open ? 'rotate-0' : '-rotate-90'}`} />
       </button>
       <CollapsibleMenuSection open={open}>
@@ -48,7 +50,7 @@ export function MenuLoadSection({
             className={menuSurfaceButtonClassName}
           >
             <ClockIcon className={menuIconClassName} />
-            <span className={menuTextClassName}>Recent</span>
+            <span className={menuTextClassName}>{t('Recent')}</span>
             <span className={menuArrowClassName}>&rarr;</span>
           </button>
 
@@ -57,7 +59,7 @@ export function MenuLoadSection({
             className={menuSurfaceButtonClassName}
           >
             <WorkflowIcon className={menuIconClassName} />
-            <span className={menuTextClassName}>My Workflows</span>
+            <span className={menuTextClassName}>{t('My Workflows')}</span>
             <span className={menuArrowClassName}>&rarr;</span>
           </button>
 
@@ -66,7 +68,7 @@ export function MenuLoadSection({
             className={menuSurfaceButtonClassName}
           >
             <TemplateIcon className={menuIconClassName} />
-            <span className={menuTextClassName}>Templates</span>
+            <span className={menuTextClassName}>{t('Templates')}</span>
             <span className={menuArrowClassName}>&rarr;</span>
           </button>
 
@@ -75,7 +77,7 @@ export function MenuLoadSection({
             className={menuSurfaceButtonClassName}
           >
             <ClipboardDownloadIcon className={menuIconClassName} />
-            <span className={menuTextClassName}>Paste JSON</span>
+            <span className={menuTextClassName}>{t('Paste JSON')}</span>
             <span className={menuArrowClassName}>&rarr;</span>
           </button>
 
@@ -84,7 +86,7 @@ export function MenuLoadSection({
             className={menuSurfaceButtonClassName}
           >
             <FolderIcon className={menuIconClassName} />
-            <span className={menuTextClassName}>From Device</span>
+            <span className={menuTextClassName}>{t('From Device')}</span>
           </button>
         </div>
       </CollapsibleMenuSection>

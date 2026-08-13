@@ -1,3 +1,5 @@
+import { t } from '@/i18n';
+
 export async function restartServer(): Promise<void> {
   // Abort rather than hang: on a flaky link a lost response would otherwise
   // leave the caller's "restarting" state stuck until a full app reload.
@@ -13,7 +15,7 @@ export async function restartServer(): Promise<void> {
     });
   } catch (err) {
     if (err instanceof DOMException && err.name === 'AbortError') {
-      throw new Error('Restart request timed out. The server may still restart; wait a moment before retrying.');
+      throw new Error(t('Restart request timed out. The server may still restart; wait a moment before retrying.'));
     }
     throw err;
   } finally {
@@ -22,7 +24,7 @@ export async function restartServer(): Promise<void> {
 
   if (!response.ok) {
     const error = await response.json().catch(() => ({}));
-    throw new Error(error.error || 'Failed to restart server');
+    throw new Error(error.error || t('Failed to restart server'));
   }
 }
 
@@ -53,7 +55,7 @@ export interface SystemStats {
 export async function fetchSystemStats(): Promise<SystemStats> {
   const response = await fetch(`/system_stats`, { cache: 'no-store' });
   if (!response.ok) {
-    throw new Error('Failed to fetch system stats');
+    throw new Error(t('Failed to fetch system stats'));
   }
   return response.json();
 }

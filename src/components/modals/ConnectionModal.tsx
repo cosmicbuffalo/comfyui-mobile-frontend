@@ -30,6 +30,7 @@ import { NodeTypeSearchResult } from './NodeTypeSearchResult';
 import { SearchEmptyState } from './SearchEmptyState';
 import { Dialog } from './Dialog';
 import { FullscreenModalActions } from './FullscreenModalActions';
+import { useT } from '@/i18n';
 
 interface ConnectionModalBaseProps {
   isOpen: boolean;
@@ -103,6 +104,7 @@ function areKeySetsEqual(a: Set<string>, b: Set<string>): boolean {
 
 export function ConnectionModal(props: ConnectionModalProps) {
   const { isOpen, onClose, nodeId, mode } = props;
+  const t = useT();
   const workflow = useWorkflowStore((s) => s.workflow);
   const scopeStack = useWorkflowStore((s) => s.scopeStack);
   const nodeTypes = useWorkflowStore((s) => s.nodeTypes);
@@ -289,8 +291,8 @@ export function ConnectionModal(props: ConnectionModalProps) {
         const inputSlot = isSynthetic ? undefined : node.inputs?.[inputIndex];
         if (!isSynthetic && !inputSlot) return null;
         const inputName = isSynthetic
-          ? (widgetInputName ?? 'value')
-          : (inputSlot!.localized_name || inputSlot!.name || `Input ${inputIndex + 1}`);
+          ? (widgetInputName ?? t('value'))
+          : (inputSlot!.localized_name || inputSlot!.name || t('Input {n}', { n: inputIndex + 1 }));
         const inputType = isSynthetic ? String(widgetInputType) : String(inputSlot!.type);
         const selectionKey = isSynthetic
           ? `${node.id}:w:${inputName}`
@@ -347,7 +349,7 @@ export function ConnectionModal(props: ConnectionModalProps) {
     const filtered = candidates.filter((candidate): candidate is OutputCandidate => candidate !== null);
     filtered.sort((a, b) => b.score - a.score || a.nodeId - b.nodeId);
     return filtered;
-  }, [mode, scopedWorkflow, workflow, nodeTypes, nodeId, props, searchQuery, currentSubgraphId]);
+  }, [mode, scopedWorkflow, workflow, nodeTypes, nodeId, props, searchQuery, currentSubgraphId, t]);
 
   const initialOutputSelection = useMemo(() => {
     if (mode !== 'output') return new Set<string>();
@@ -634,15 +636,15 @@ export function ConnectionModal(props: ConnectionModalProps) {
   }, [isOpen, showOverwriteConfirm, multiInputPickerNodeId, onClose]);
 
   const modalTitle = isGetInput
-    ? 'Read from Set'
+    ? t('Read from Set')
     : mode === 'input'
-    ? (currentAction === 'pick' ? `Connect ${props.inputName}` : 'Add new node')
-    : (currentAction === 'pick' ? `Connect ${props.outputName}` : 'Add new node');
+    ? (currentAction === 'pick' ? t('Connect {name}', { name: props.inputName }) : t('Add new node'))
+    : (currentAction === 'pick' ? t('Connect {name}', { name: props.outputName }) : t('Add new node'));
   const searchPlaceholder = isGetInput
-    ? 'Search set nodes...'
+    ? t('Search set nodes...')
     : mode === 'input'
-    ? (currentAction === 'pick' ? 'Search existing nodes...' : 'Search node types...')
-    : (currentAction === 'pick' ? 'Search target nodes...' : 'Search node types...');
+    ? (currentAction === 'pick' ? t('Search existing nodes...') : t('Search node types...'))
+    : (currentAction === 'pick' ? t('Search target nodes...') : t('Search node types...'));
 
   // GetNode source picker: list the SetNode relay names; selecting one sets the
   // Get's name widget (index 0). Lives in the standard connection modal shell.
@@ -659,7 +661,7 @@ export function ConnectionModal(props: ConnectionModalProps) {
     return (
       <div className="px-3 pt-3 pb-20 flex flex-col gap-2">
         {names.length === 0 ? (
-          <SearchEmptyState query={searchQuery} message="No Set nodes found" />
+          <SearchEmptyState query={searchQuery} message={t('No Set nodes found')} />
         ) : (
           names.map((name) => (
             <button
@@ -686,7 +688,7 @@ export function ConnectionModal(props: ConnectionModalProps) {
               onClose();
             }}
           >
-            Clear source
+            {t('Clear source')}
           </button>
         )}
       </div>
@@ -715,7 +717,7 @@ export function ConnectionModal(props: ConnectionModalProps) {
       const displayName = resolveWorkflowNodeDisplayName(workflow, node, nodeTypes);
       const pack = prettyPackName(String(typeDef?.python_module ?? typeDef?.category?.split('/')[0] ?? 'Core'));
       const outputSlot = node.outputs?.[outputIndex];
-      const outputName = outputSlot?.localized_name || outputSlot?.name || `Output ${outputIndex + 1}`;
+      const outputName = outputSlot?.localized_name || outputSlot?.name || t('Output {n}', { n: outputIndex + 1 });
       const outputType = String(outputSlot?.type ?? inputProps.inputType);
       const selected = Boolean(
         selectedInputSource &&
@@ -751,7 +753,7 @@ export function ConnectionModal(props: ConnectionModalProps) {
           <>
             <div className="flex items-center gap-2 pt-1 pb-0.5">
               <div className="flex-1 border-t border-white/10" />
-              <span className="text-xs font-medium text-slate-400 whitespace-nowrap">Wildcard *</span>
+              <span className="text-xs font-medium text-slate-400 whitespace-nowrap">{t('Wildcard *')}</span>
               <div className="flex-1 border-t border-white/10" />
             </div>
             {wildcardNodes.map(renderNodeEntry)}
@@ -759,7 +761,7 @@ export function ConnectionModal(props: ConnectionModalProps) {
         )}
 
         {filteredNodes.length === 0 && (
-          <SearchEmptyState query={searchQuery} message="No matching nodes found" />
+          <SearchEmptyState query={searchQuery} message={t('No matching nodes found')} />
         )}
 
         <button
@@ -770,7 +772,7 @@ export function ConnectionModal(props: ConnectionModalProps) {
           <div className="w-8 h-8 rounded-full bg-cyan-500 flex items-center justify-center flex-shrink-0">
             <PlusIcon className="w-4 h-4 text-slate-950" />
           </div>
-          <span className="text-sm font-semibold text-slate-100">Add new node...</span>
+          <span className="text-sm font-semibold text-slate-100">{t('Add new node...')}</span>
         </button>
 
         {inputProps.currentlyConnectedNodeId !== null && (
@@ -779,7 +781,7 @@ export function ConnectionModal(props: ConnectionModalProps) {
             className="w-full text-left rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm font-semibold text-red-300 hover:bg-red-500/20 active:scale-[0.998] transition"
             onClick={handleDisconnect}
           >
-            Disconnect
+            {t('Disconnect')}
           </button>
         )}
       </div>
@@ -805,7 +807,7 @@ export function ConnectionModal(props: ConnectionModalProps) {
       const { typeName, def, outputIndex } = entry;
       const pack = prettyPackName(String(def.python_module ?? def.category?.split('/')[0] ?? 'Core'));
       const outputType = String(def.output?.[outputIndex] ?? inputProps.inputType);
-      const outputName = def.output_name?.[outputIndex] ?? def.output?.[outputIndex] ?? 'Output';
+      const outputName = def.output_name?.[outputIndex] ?? def.output?.[outputIndex] ?? t('Output');
       return (
         <NodeTypeSearchResult
           key={typeName}
@@ -823,14 +825,14 @@ export function ConnectionModal(props: ConnectionModalProps) {
     return (
       <div className="px-3 pt-3 pb-20 flex flex-col gap-2">
         {filteredTypes.length === 0 && (
-          <SearchEmptyState query={searchQuery} message="No matching node types found" />
+          <SearchEmptyState query={searchQuery} message={t('No matching node types found')} />
         )}
         {concreteTypes.map(renderTypeEntry)}
         {wildcardTypes.length > 0 && (
           <>
             <div className="flex items-center gap-2 pt-1 pb-0.5">
               <div className="flex-1 border-t border-white/10" />
-              <span className="text-xs font-medium text-slate-400 whitespace-nowrap">Wildcard *</span>
+              <span className="text-xs font-medium text-slate-400 whitespace-nowrap">{t('Wildcard *')}</span>
               <div className="flex-1 border-t border-white/10" />
             </div>
             {wildcardTypes.map(renderTypeEntry)}
@@ -865,8 +867,11 @@ export function ConnectionModal(props: ConnectionModalProps) {
       const hasExistingLink = nodeCandidate.inputs.some((candidate) => candidate.hasExistingLink);
       const hasConnectedFromThisOutput = nodeCandidate.inputs.some((candidate) => candidate.currentlyConnectedFromThisOutput);
       const subtitle = nodeCandidate.inputs.length > 1
-        ? `${nodeCandidate.inputs.length} compatible inputs`
-        : `${outputProps.outputName} -> ${nodeCandidate.inputs[0]?.inputName ?? 'Input'}`;
+        ? t('{count} compatible inputs', { count: nodeCandidate.inputs.length })
+        : t('{output} -> {input}', {
+            output: outputProps.outputName,
+            input: nodeCandidate.inputs[0]?.inputName ?? t('Input'),
+          });
       return (
         <button
           key={`output-node-${nodeCandidate.nodeId}`}
@@ -887,12 +892,12 @@ export function ConnectionModal(props: ConnectionModalProps) {
                 {hasConnectedFromThisOutput && (
                   <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-cyan-500/15 text-cyan-300 text-[10px] font-medium shrink-0">
                     <CheckIcon className="w-3 h-3" />
-                    Connected
+                    {t('Connected')}
                   </span>
                 )}
                 {hasExistingLink && (
                   <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-300 text-[10px] font-medium shrink-0">
-                    Already linked
+                    {t('Already linked')}
                   </span>
                 )}
               </div>
@@ -900,7 +905,7 @@ export function ConnectionModal(props: ConnectionModalProps) {
               <div className="text-xs text-slate-300 mt-1 truncate">{subtitle}</div>
               {nodeCandidate.overrideableCount > 0 && (
                 <div className="text-[11px] text-cyan-300/90 mt-0.5">
-                  {nodeCandidate.overrideableCount} overrideable widget{nodeCandidate.overrideableCount === 1 ? '' : 's'}
+                  {nodeCandidate.overrideableCount} {t(nodeCandidate.overrideableCount === 1 ? 'overrideable widget' : 'overrideable widgets')}
                 </div>
               )}
             </div>
@@ -920,7 +925,7 @@ export function ConnectionModal(props: ConnectionModalProps) {
           <>
             <div className="flex items-center gap-2 pt-1 pb-0.5">
               <div className="flex-1 border-t border-white/10" />
-              <span className="text-xs font-medium text-slate-400 whitespace-nowrap">Wildcard *</span>
+              <span className="text-xs font-medium text-slate-400 whitespace-nowrap">{t('Wildcard *')}</span>
               <div className="flex-1 border-t border-white/10" />
             </div>
             {wildcardOutputNodes.map(renderOutputNodeEntry)}
@@ -928,7 +933,7 @@ export function ConnectionModal(props: ConnectionModalProps) {
         )}
 
         {outputNodeCandidates.length === 0 && (
-          <SearchEmptyState query={searchQuery} message="No matching target nodes found" />
+          <SearchEmptyState query={searchQuery} message={t('No matching target nodes found')} />
         )}
 
         <button
@@ -939,7 +944,7 @@ export function ConnectionModal(props: ConnectionModalProps) {
           <div className="w-8 h-8 rounded-full bg-cyan-500 flex items-center justify-center flex-shrink-0">
             <PlusIcon className="w-4 h-4 text-slate-950" />
           </div>
-          <span className="text-sm font-semibold text-slate-100">Add new node...</span>
+          <span className="text-sm font-semibold text-slate-100">{t('Add new node...')}</span>
         </button>
       </div>
     );
@@ -979,14 +984,14 @@ export function ConnectionModal(props: ConnectionModalProps) {
     return (
       <div className="px-3 pt-3 pb-20 flex flex-col gap-2">
         {filteredOutputTypes.length === 0 && (
-          <SearchEmptyState query={searchQuery} message="No matching node types found" />
+          <SearchEmptyState query={searchQuery} message={t('No matching node types found')} />
         )}
         {concreteOutputTypes.map(renderOutputTypeEntry)}
         {wildcardOutputTypes.length > 0 && (
           <>
             <div className="flex items-center gap-2 pt-1 pb-0.5">
               <div className="flex-1 border-t border-white/10" />
-              <span className="text-xs font-medium text-slate-400 whitespace-nowrap">Wildcard *</span>
+              <span className="text-xs font-medium text-slate-400 whitespace-nowrap">{t('Wildcard *')}</span>
               <div className="flex-1 border-t border-white/10" />
             </div>
             {wildcardOutputTypes.map(renderOutputTypeEntry)}
@@ -1011,7 +1016,7 @@ export function ConnectionModal(props: ConnectionModalProps) {
           actions={[
             {
               key: 'cancel',
-              label: 'Cancel',
+              label: t('Cancel'),
               onClick: onClose,
               variant: 'secondary'
             },
@@ -1019,7 +1024,7 @@ export function ConnectionModal(props: ConnectionModalProps) {
               && currentAction === 'pick'
               ? [{
                   key: 'apply',
-                  label: 'Apply',
+                  label: t('Apply'),
                   onClick: handleSubmitOutput,
                   variant: 'primary' as const,
                   disabled: !outputSelectionHasChanges
@@ -1030,7 +1035,7 @@ export function ConnectionModal(props: ConnectionModalProps) {
               && !isGetInput
               ? [{
                   key: 'apply',
-                  label: 'Apply',
+                  label: t('Apply'),
                   onClick: applyInputSelection,
                   variant: 'primary' as const,
                   disabled: !inputSelectionHasChanges
@@ -1068,7 +1073,7 @@ export function ConnectionModal(props: ConnectionModalProps) {
             onClick={(event) => event.stopPropagation()}
           >
             <div className="px-4 py-3 text-sm font-semibold text-slate-100 border-b border-white/10">
-              Select compatible inputs
+              {t('Select compatible inputs')}
             </div>
             <div className="max-h-[45vh] overflow-y-auto">
               {outputNodeCandidates
@@ -1090,7 +1095,7 @@ export function ConnectionModal(props: ConnectionModalProps) {
                           <span className="text-slate-100 truncate">{candidate.inputName}</span>
                           {candidate.isOverrideable && (
                             <span className="inline-flex items-center px-1.5 py-0.5 rounded-full bg-cyan-500/15 text-cyan-300 text-[10px] font-medium shrink-0">
-                              Override
+                              {t('Override')}
                             </span>
                           )}
                         </span>
@@ -1111,14 +1116,14 @@ export function ConnectionModal(props: ConnectionModalProps) {
                 className="px-3 py-2 rounded-lg text-sm font-medium text-slate-300 hover:bg-white/10"
                 onClick={closeMultiInputPicker}
               >
-                Cancel
+                {t('Cancel')}
               </button>
               <button
                 type="button"
                 className="px-3 py-2 rounded-lg text-sm font-semibold text-slate-950 bg-cyan-500 hover:bg-cyan-400"
                 onClick={applyMultiInputPickerSelection}
               >
-                Apply
+                {t('Apply')}
               </button>
             </div>
           </div>
@@ -1128,16 +1133,16 @@ export function ConnectionModal(props: ConnectionModalProps) {
       {mode === 'output' && showOverwriteConfirm && (
         <Dialog
           onClose={() => setShowOverwriteConfirm(false)}
-          title="Overwrite existing connections?"
-          description="Some selected inputs are already connected. Continuing will disconnect their current source and reconnect to this output."
+          title={t('Overwrite existing connections?')}
+          description={t('Some selected inputs are already connected. Continuing will disconnect their current source and reconnect to this output.')}
           actions={[
             {
-              label: 'Cancel',
+              label: t('Cancel'),
               onClick: () => setShowOverwriteConfirm(false),
               variant: 'secondary'
             },
             {
-              label: 'Overwrite',
+              label: t('Overwrite'),
               onClick: () => {
                 setShowOverwriteConfirm(false);
                 applyOutputSelection();

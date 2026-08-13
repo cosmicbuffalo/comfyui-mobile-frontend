@@ -1,9 +1,10 @@
 import type { QueueInfo, History } from '../types';
+import { t } from '@/i18n';
 import type { QueueWorkflowDiff } from '@/utils/workflowDiff';
 
 export async function getQueue(): Promise<QueueInfo> {
   const response = await fetch(`/api/queue`, { cache: 'no-store' });
-  if (!response.ok) throw new Error('Failed to fetch queue');
+  if (!response.ok) throw new Error(t('Failed to fetch queue'));
   return response.json();
 }
 
@@ -15,7 +16,7 @@ export async function getHistory(maxItems?: number): Promise<History> {
   // WebView navigation is worse than another small request, especially because
   // this endpoint is what rebuilds completed queue cards after an app restart.
   const response = await fetch(url, { cache: 'no-store' });
-  if (!response.ok) throw new Error('Failed to fetch history');
+  if (!response.ok) throw new Error(t('Failed to fetch history'));
   return response.json();
 }
 
@@ -102,7 +103,7 @@ export async function queuePrompt(
     const data = await response.json().catch(() => null) as { error?: unknown } | null;
     const message = typeof data?.error === 'string'
       ? data.error
-      : 'Failed to queue prompt';
+      : t('Failed to queue prompt');
     throw new Error(message);
   }
   return response.json();
@@ -128,7 +129,7 @@ export async function getQueuePromptMetadata(
   }
   const suffix = params.toString();
   const response = await fetch(`/mobile/api/queue-metadata${suffix ? `?${suffix}` : ''}`);
-  if (!response.ok) throw new Error('Failed to fetch queue metadata');
+  if (!response.ok) throw new Error(t('Failed to fetch queue metadata'));
   const data = await response.json() as { prompts?: Record<string, QueuePromptMetadata> };
   return data.prompts ?? {};
 }
@@ -141,7 +142,7 @@ export async function upsertQueuePromptMetadata(
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(metadata),
   });
-  if (!response.ok) throw new Error('Failed to save queue metadata');
+  if (!response.ok) throw new Error(t('Failed to save queue metadata'));
 }
 
 export async function remapQueuePromptMetadata(
@@ -153,7 +154,7 @@ export async function remapQueuePromptMetadata(
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ oldPromptId, newPromptId }),
   });
-  if (!response.ok) throw new Error('Failed to remap queue metadata');
+  if (!response.ok) throw new Error(t('Failed to remap queue metadata'));
 }
 
 
@@ -163,7 +164,7 @@ export async function deleteHistoryItem(promptId: string): Promise<void> {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ delete: [promptId] })
   });
-  if (!response.ok) throw new Error('Failed to delete history item');
+  if (!response.ok) throw new Error(t('Failed to delete history item'));
 }
 
 export async function deleteHistoryItems(promptIds: string[]): Promise<void> {
@@ -173,7 +174,7 @@ export async function deleteHistoryItems(promptIds: string[]): Promise<void> {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ delete: promptIds })
   });
-  if (!response.ok) throw new Error('Failed to delete history items');
+  if (!response.ok) throw new Error(t('Failed to delete history items'));
 }
 
 export async function clearHistory(): Promise<void> {
@@ -182,5 +183,5 @@ export async function clearHistory(): Promise<void> {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ clear: true })
   });
-  if (!response.ok) throw new Error('Failed to clear history');
+  if (!response.ok) throw new Error(t('Failed to clear history'));
 }

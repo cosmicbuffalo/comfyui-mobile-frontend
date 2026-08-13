@@ -83,27 +83,27 @@ describe('DenoVideoCompare', () => {
     ))).toBe(true);
 
     const buttons = Array.from(container.querySelectorAll('button'));
-    const difference = buttons.find((button) => button.textContent === 'Difference')!;
+    const difference = buttons.find((button) => button.textContent === '差异')!;
     await act(async () => difference.click());
     expect(difference.getAttribute('aria-pressed')).toBe('true');
     expect((container.querySelectorAll('img')[1] as HTMLElement).style.mixBlendMode).toBe('difference');
 
-    const sideBySide = buttons.find((button) => button.textContent === 'Side by Side')!;
+    const sideBySide = buttons.find((button) => button.textContent === '并排')!;
     await act(async () => sideBySide.click());
     expect(container.querySelector('.deno-compare-side-by-side')).not.toBeNull();
 
-    const toggle = buttons.find((button) => button.textContent === 'Toggle')!;
+    const toggle = buttons.find((button) => button.textContent === '切换')!;
     await act(async () => toggle.click());
-    const stageButton = container.querySelector('button[aria-label^="Showing video"]')! as HTMLButtonElement;
+    const stageButton = container.querySelector('button[aria-label^="正在显示视频"]')! as HTMLButtonElement;
     expect(stageButton.getAttribute('aria-label')).toContain('B');
     await act(async () => stageButton.click());
-    expect(container.querySelector('button[aria-label^="Showing video"]')?.getAttribute('aria-label'))
+    expect(container.querySelector('button[aria-label^="正在显示视频"]')?.getAttribute('aria-label'))
       .toContain('A');
   });
 
   it('supports timeline scrubbing, frame stepping, speed, loop, and transport controls', async () => {
     await act(async () => root.render(<DenoVideoCompare output={output()} displayName="Deno compare" />));
-    const timeline = container.querySelector<HTMLInputElement>('input[aria-label="Video comparison timeline"]')!;
+    const timeline = container.querySelector<HTMLInputElement>('input[aria-label="视频对比时间轴"]')!;
     await act(async () => {
       Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set?.call(timeline, '0.75');
       timeline.dispatchEvent(new Event('input', { bubbles: true }));
@@ -113,11 +113,11 @@ describe('DenoVideoCompare', () => {
     ))).toBe(true);
 
     const pause = Array.from(container.querySelectorAll('button'))
-      .find((button) => button.textContent === 'Pause')!;
+      .find((button) => button.textContent === '暂停')!;
     await act(async () => pause.click());
-    expect(container.textContent).toContain('Play');
-    expect(container.querySelector('select[aria-label="Playback speed"]')).not.toBeNull();
-    expect(container.textContent).toContain('4 frames');
+    expect(container.textContent).toContain('播放');
+    expect(container.querySelector('select[aria-label="播放速度"]')).not.toBeNull();
+    expect(container.textContent).toContain('4 帧');
     expect(container.textContent).toContain('640×360');
   });
 
@@ -133,18 +133,18 @@ describe('DenoVideoCompare', () => {
 
     const compare = container.querySelector('[data-deno-video-compare]')!;
     const buttons = Array.from(compare.querySelectorAll('button'));
-    const split = compare.querySelector<HTMLInputElement>('input[aria-label="Comparison split"]')!;
+    const split = compare.querySelector<HTMLInputElement>('input[aria-label="对比分割位置"]')!;
     await act(async () => {
       Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set?.call(split, '73');
       split.dispatchEvent(new Event('input', { bubbles: true }));
     });
 
-    await act(async () => buttons.find((button) => button.textContent === 'Difference')!.click());
+    await act(async () => buttons.find((button) => button.textContent === '差异')!.click());
 
-    await act(async () => buttons.find((button) => button.textContent === 'Swap A/B')!.click());
-    await act(async () => buttons.find((button) => button.textContent === 'Toggle')!.click());
+    await act(async () => buttons.find((button) => button.textContent === '交换 A/B')!.click());
+    await act(async () => buttons.find((button) => button.textContent === '切换')!.click());
     await act(async () => (
-      compare.querySelector('button[aria-label^="Showing video"]') as HTMLButtonElement
+      compare.querySelector('button[aria-label^="正在显示视频"]') as HTMLButtonElement
     ).click());
 
     expect(onWidgetChange.mock.calls).toEqual([
@@ -200,7 +200,7 @@ describe('DenoVideoCompare', () => {
         displayName="Deno compare"
       />,
     ));
-    const audioSelect = container.querySelector<HTMLSelectElement>('select[aria-label="Comparison audio"]')!;
+    const audioSelect = container.querySelector<HTMLSelectElement>('select[aria-label="对比音频"]')!;
     await act(async () => setSelectValue(audioSelect, 'A'));
     expect(pending).toHaveLength(1);
     expect(pending[0].url).toContain('old_audio.f32');
@@ -260,7 +260,7 @@ describe('DenoVideoCompare', () => {
     await act(async () => root.render(
       <DenoVideoCompare output={outputWithAudio('deno_vcmp_muted', 'audio.f32')} displayName="Deno compare" />,
     ));
-    const audioSelect = container.querySelector<HTMLSelectElement>('select[aria-label="Comparison audio"]')!;
+    const audioSelect = container.querySelector<HTMLSelectElement>('select[aria-label="对比音频"]')!;
     await act(async () => setSelectValue(audioSelect, 'A'));
     await act(async () => setSelectValue(audioSelect, 'off'));
     await act(async () => {

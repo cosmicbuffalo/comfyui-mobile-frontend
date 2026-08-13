@@ -1,5 +1,6 @@
 import { useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { useT } from '@/i18n';
 import { BypassToggleIcon, BookmarkIconSvg, BookmarkOutlineIcon, CheckIcon, ChevronRightIcon, ClipboardIcon, ClipboardDownloadIcon, CopyIcon, EyeIcon, EyeOffIcon, MoveUpDownIcon, NodeConnectionsIcon, EditIcon, ExternalLinkIcon, PinIconSvg, PinOutlineIcon, SaveDiskIcon, TrashIcon, ArrowRightIcon, WorkflowIcon } from '@/components/icons';
 import { useWorkflowSelectionStore } from '@/hooks/useWorkflowSelection';
 import { useAnchoredMenuPosition } from '@/hooks/useAnchoredMenuPosition';
@@ -110,6 +111,7 @@ export function NodeCardMenu({
   leftLineCount,
   rightLineCount
 }: NodeCardMenuProps) {
+  const t = useT();
   const resolvedNodeColor = resolveWorkflowColor(nodeColor);
   const [menuOpen, setMenuOpen] = useState(false);
   const [colorPopoverOpen, setColorPopoverOpen] = useState(false);
@@ -286,7 +288,7 @@ export function NodeCardMenu({
           type="button"
           className="w-8 h-8 flex items-center justify-center"
           aria-pressed={connectionHighlightMode !== 'off'}
-          aria-label="Highlight connected nodes"
+          aria-label={t('Highlight connected nodes')}
           onClick={handleHighlightConnections}
         >
           <NodeConnectionsIcon
@@ -301,7 +303,7 @@ export function NodeCardMenu({
       <ContextMenuButton
         onClick={handleToggleMenu}
         buttonRef={menuButtonRef}
-        ariaLabel="Node options"
+        ariaLabel={t('Node options')}
         buttonSize={8}
         iconSize={5}
         icon={isNodeBookmarked
@@ -325,8 +327,8 @@ export function NodeCardMenu({
                 <button
                   key={`${key}-${index}`}
                   type="button"
-                  title={label}
-                  aria-label={`Set color: ${label}`}
+                  title={t(label)}
+                  aria-label={t('Set color: {name}', { name: label })}
                   className={`w-9 aspect-square rounded-full transition-transform active:scale-95 ${
                     isSelected ? 'ring-2 ring-offset-1 ring-cyan-300 ring-offset-slate-900' : ''
                   }`}
@@ -354,7 +356,7 @@ export function NodeCardMenu({
             items={[
               {
                 key: 'enter-subgraph',
-                label: 'Enter subgraph',
+                label: t('Enter subgraph'),
                 icon: <ArrowRightIcon className="w-4 h-4" />,
                 onClick: (event) => {
                   event.stopPropagation();
@@ -370,20 +372,20 @@ export function NodeCardMenu({
               },
               {
                 key: 'edit-label',
-                label: 'Edit label',
+                label: t('Edit label'),
                 icon: <EditIcon className="w-4 h-4" />,
                 onClick: handleEditLabelClick
               },
               {
                 key: 'edit-set-name',
-                label: 'Edit set name',
+                label: t('Edit set name'),
                 icon: <EditIcon className="w-4 h-4" />,
                 onClick: handleEditSetNameClick,
                 hidden: !onEditSetName
               },
               {
                 key: 'change-color',
-                label: 'Change color',
+                label: t('Change color'),
                 icon: (
                   <span
                     className="inline-block w-3 h-3 rounded-full"
@@ -400,7 +402,7 @@ export function NodeCardMenu({
               },
               {
                 key: 'edit-fast-groups-config',
-                label: 'Edit config',
+                label: t('Edit config'),
                 icon: <EditIcon className="w-4 h-4" />,
                 onClick: (event) => {
                   event.stopPropagation();
@@ -415,7 +417,7 @@ export function NodeCardMenu({
               },
               {
                 key: 'toggle-bookmark',
-                label: isNodeBookmarked ? 'Remove bookmark' : 'Bookmark node',
+                label: isNodeBookmarked ? t('Remove bookmark') : t('Bookmark node'),
                 icon: isNodeBookmarked
                   ? <BookmarkOutlineIcon className="w-4 h-4" />
                   : <BookmarkIconSvg className="w-4 h-4 text-amber-500" />,
@@ -432,7 +434,7 @@ export function NodeCardMenu({
               },
               {
                 key: 'select-node',
-                label: 'Select',
+                label: t('Select'),
                 icon: <CheckIcon className="w-4 h-4" />,
                 onClick: (event) => {
                   event.stopPropagation();
@@ -443,7 +445,7 @@ export function NodeCardMenu({
               },
               {
                 key: 'toggle-bypass',
-                label: isBypassed ? 'Engage node' : 'Bypass node',
+                label: isBypassed ? t('Engage node') : t('Bypass node'),
                 icon: <BypassToggleIcon className="w-4 h-4" isBypassed={isBypassed} />,
                 onClick: handleToggleBypassClick,
                 // Subgraph placeholder bypass is derived from inner node bypass states.
@@ -452,13 +454,13 @@ export function NodeCardMenu({
               },
               {
                 key: 'hide-node',
-                label: 'Hide node',
+                label: t('Hide node'),
                 icon: <EyeOffIcon className="w-4 h-4" />,
                 onClick: handleHideNodeClick
               },
               {
                 key: 'duplicate-node',
-                label: 'Duplicate node',
+                label: t('Duplicate node'),
                 icon: <CopyIcon className="w-4 h-4" />,
                 onClick: (event) => {
                   event.stopPropagation();
@@ -470,7 +472,7 @@ export function NodeCardMenu({
                 // PreviewImage → SaveImage. Only shown on PreviewImage nodes
                 // when the parent wired up onConvertImageOutputNode.
                 key: 'convert-to-save-image',
-                label: 'Convert to Save Image',
+                label: t('Convert to Save Image'),
                 icon: <SaveDiskIcon className="w-4 h-4" />,
                 onClick: (event) => {
                   event.stopPropagation();
@@ -482,7 +484,7 @@ export function NodeCardMenu({
               {
                 // SaveImage → PreviewImage. Drops the filename_prefix widget.
                 key: 'convert-to-preview-image',
-                label: 'Convert to Preview Image',
+                label: t('Convert to Preview Image'),
                 icon: <EyeIcon className="w-4 h-4" />,
                 onClick: (event) => {
                   event.stopPropagation();
@@ -493,7 +495,7 @@ export function NodeCardMenu({
               },
               {
                 key: 'copy-node',
-                label: 'Copy',
+                label: t('Copy'),
                 icon: <ClipboardIcon className="w-4 h-4" />,
                 onClick: (event) => {
                   event.stopPropagation();
@@ -503,7 +505,7 @@ export function NodeCardMenu({
               },
               {
                 key: 'paste-below',
-                label: pasteSummary ? `Paste ${pasteSummary} below` : 'Paste below',
+                label: pasteSummary ? t('Paste {summary} below', { summary: pasteSummary }) : t('Paste below'),
                 icon: <ClipboardDownloadIcon className="w-4 h-4" />,
                 onClick: (event) => {
                   event.stopPropagation();
@@ -514,7 +516,7 @@ export function NodeCardMenu({
               },
               {
                 key: 'move-node',
-                label: 'Move',
+                label: t('Move'),
                 icon: <MoveUpDownIcon className="w-4 h-4" />,
                 onClick: (event) => {
                   event.stopPropagation();
@@ -524,7 +526,7 @@ export function NodeCardMenu({
               },
               {
                 key: 'open-lora-manager',
-                label: 'Open LoRA Manager',
+                label: t('Open LoRA Manager'),
                 icon: <ExternalLinkIcon className="w-4 h-4" />,
                 onClick: handleOpenLoraManagerClick,
                 hidden: !isLoraManagerNode
@@ -536,7 +538,7 @@ export function NodeCardMenu({
               },
               {
                 key: 'pin-single-widget',
-                label: isSingleWidgetPinned ? 'Remove pin' : 'Pin widget',
+                label: isSingleWidgetPinned ? t('Remove pin') : t('Pin widget'),
                 icon: isSingleWidgetPinned
                   ? <PinIconSvg className="w-4 h-4 text-fuchsia-500" />
                   : <PinOutlineIcon className="w-4 h-4" />,
@@ -545,14 +547,14 @@ export function NodeCardMenu({
               },
               {
                 key: 'remove-pin',
-                label: 'Remove pin',
+                label: t('Remove pin'),
                 icon: <PinIconSvg className="w-4 h-4 text-fuchsia-500" />,
                 onClick: handleRemovePinClick,
                 hidden: !(pinnableWidgets.length > 0 && !singlePinnableWidget && hasPinnedWidget)
               },
               {
                 key: 'pin-widget-submenu',
-                label: 'Pin widget',
+                label: t('Pin widget'),
                 icon: <PinOutlineIcon className="w-4 h-4" />,
                 rightSlot: (
                   <ChevronRightIcon className={`w-4 h-4 text-slate-400 transition-transform ${pinSubmenuOpen ? 'rotate-90' : ''}`} />
@@ -584,7 +586,7 @@ export function NodeCardMenu({
               },
               {
                 key: 'delete-node',
-                label: 'Delete node',
+                label: t('Delete node'),
                 icon: <TrashIcon className="w-4 h-4" />,
                 color: 'danger',
                 onClick: (event) => {

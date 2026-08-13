@@ -101,7 +101,7 @@ describe('QueueCard latent preview', () => {
     await render([]);
     const img = container.querySelector('img');
     expect(img?.getAttribute('src')).toBe('blob:latent-frame');
-    expect(container.textContent).toContain('LATENT');
+    expect(container.textContent).toContain('潜空间');
     // Latent-only: no thumbnail tab bar yet.
     expect(container.querySelector('.queue-media-tabs')).toBeNull();
   });
@@ -112,8 +112,8 @@ describe('QueueCard latent preview', () => {
     // One real preview tab + the latent tab.
     expect(tabs).toHaveLength(2);
     const labels = tabs.map((t) => t.getAttribute('title'));
-    expect(labels).toContain('Latent');
-    expect(labels).toContain('Preview #1');
+    expect(labels).toContain('潜空间');
+    expect(labels).toContain('预览 #1');
     expect(container.querySelector('.favorite-badge-container')).toBeNull();
     expect(container.querySelector('.rejected-badge-container')).toBeNull();
   });

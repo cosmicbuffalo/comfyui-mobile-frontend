@@ -1,4 +1,5 @@
 import { useCallback, useRef, useState } from 'react';
+import { useT } from '@/i18n';
 import { getImageUrl, getImagePreviewUrl } from '@/api/client';
 import { useGenerationSettingsStore } from '@/hooks/useGenerationSettings';
 import { MenuIcon } from '@/components/icons/MenuIcon';
@@ -45,6 +46,7 @@ export function NodeCardImageComparer({
   displayName,
   onOpenViewer,
 }: NodeCardImageComparerProps) {
+  const t = useT();
   const containerRef = useRef<HTMLDivElement>(null);
   // Subscribe so the preview refreshes immediately when the WebP preference is
   // toggled (the URL helpers read the flag, but this drives the re-render).
@@ -108,7 +110,7 @@ export function NodeCardImageComparer({
         items.push({
           src: getImageUrl(bi.filename, bi.subfolder, bi.type),
           displaySrc: getImagePreviewUrl(bi.filename, bi.subfolder, bi.type),
-          alt: `${displayName} comparison ${i + 1}`,
+          alt: t('{name} comparison {index}', { name: displayName, index: i + 1 }),
           comparison: {
             aSrc: getImageUrl(ai.filename, ai.subfolder, ai.type),
             aDisplaySrc: getImagePreviewUrl(ai.filename, ai.subfolder, ai.type),
@@ -122,14 +124,14 @@ export function NodeCardImageComparer({
         items.push({
           src: getImageUrl(only.filename, only.subfolder, only.type),
           displaySrc: getImagePreviewUrl(only.filename, only.subfolder, only.type),
-          alt: `${displayName} output ${i + 1}`,
+          alt: t('{name} output {index}', { name: displayName, index: i + 1 }),
         });
       }
     }
     if (items.length === 0) return;
     // enableFollowQueue=false: keep the comparer viewer scoped to its own batch.
     onOpenViewer(items, Math.min(sel, items.length - 1), false);
-  }, [onOpenViewer, aImages, bImages, displayName, sel]);
+  }, [onOpenViewer, aImages, bImages, displayName, sel, t]);
 
   if (!show) return null;
 
@@ -149,7 +151,7 @@ export function NodeCardImageComparer({
           <button
             key={`${thumb.type}/${thumb.subfolder}/${thumb.filename}`}
             type="button"
-            aria-label={`Compare batch image ${i + 1}`}
+            aria-label={t('Compare batch image {index}', { index: i + 1 })}
             aria-pressed={active}
             onClick={() => setSelectedIndex(i)}
             className={`shrink-0 overflow-hidden rounded-md border-2 ${
@@ -182,11 +184,11 @@ export function NodeCardImageComparer({
     return (
       <div className="image-comparer-fallback mb-3">
         <div className="text-xs text-slate-500 mb-1.5 uppercase tracking-wide">
-          Image Comparer
+          {t('Image Comparer')}
         </div>
         <img
           src={onlySrc}
-          alt={`${displayName} output`}
+          alt={t('{name} output', { name: displayName })}
           className={`w-full h-auto rounded-lg border border-white/10${onOpenViewer ? ' cursor-zoom-in' : ''}`}
           loading="lazy"
           onClick={onOpenViewer ? openInViewer : undefined}
@@ -199,7 +201,7 @@ export function NodeCardImageComparer({
   return (
     <div className="image-comparer mb-3">
       <div className="text-xs text-slate-500 mb-1.5 uppercase tracking-wide">
-        Image Comparer
+        {t('Image Comparer')}
       </div>
       <div
         ref={containerRef}
@@ -213,14 +215,14 @@ export function NodeCardImageComparer({
         {/* Base layer: image B drives the box height at its natural aspect. */}
         <img
           src={bSrc}
-          alt={`${displayName} image B`}
+          alt={t('{name} image B', { name: displayName })}
           className="block w-full h-auto pointer-events-none"
           draggable={false}
         />
         {/* Overlay: image A, revealed from the left up to the divider. */}
         <img
           src={aSrc}
-          alt={`${displayName} image A`}
+          alt={t('{name} image A', { name: displayName })}
           className="absolute inset-0 w-full h-full object-contain pointer-events-none"
           draggable={false}
           style={{ clipPath: `inset(0 ${100 - position}% 0 0)` }}
@@ -228,10 +230,10 @@ export function NodeCardImageComparer({
 
         {/* Corner labels — left region shows A, right region shows B. */}
         <span className="absolute top-1 left-1 px-1.5 py-0.5 rounded bg-black/55 text-[10px] font-semibold text-white/90 pointer-events-none">
-          A
+          {t('A')}
         </span>
         <span className="absolute top-1 right-1 px-1.5 py-0.5 rounded bg-black/55 text-[10px] font-semibold text-white/90 pointer-events-none">
-          B
+          {t('B')}
         </span>
 
         {/* Divider line (inert) + draggable handle. Only the handle takes pointer

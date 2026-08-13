@@ -8,6 +8,7 @@ import { idbStorage } from '@/utils/idbStorage';
 import { createQueueDisplaySlice } from './useQueue/displaySlice';
 import { createQueueRecoverySlice } from './useQueue/recoverySlice';
 import { capWorkflowDiffs, makeShadowJobFromQueueItem } from './useQueue/queueHelpers';
+import { t } from '@/i18n';
 
 export interface QueueItem {
   number: number;
@@ -333,7 +334,7 @@ export const useQueueStore = create<QueueState>()(
           });
         } catch (err) {
           console.error('Failed to clear queue:', err);
-          set({ actionError: 'Failed to cancel pending generations' });
+          set({ actionError: t('Failed to cancel pending generations') });
         }
       },
 
@@ -363,7 +364,7 @@ export const useQueueStore = create<QueueState>()(
           });
         } catch (err) {
           console.error('Failed to delete queue item:', err);
-          set({ actionError: 'Failed to cancel the queued generation' });
+          set({ actionError: t('Failed to cancel the queued generation') });
         }
       },
 
@@ -372,7 +373,7 @@ export const useQueueStore = create<QueueState>()(
           await api.interruptExecution();
         } catch (err) {
           console.error('Failed to interrupt execution:', err);
-          set({ actionError: 'Failed to interrupt the running generation' });
+          set({ actionError: t('Failed to interrupt the running generation') });
         }
       },
 

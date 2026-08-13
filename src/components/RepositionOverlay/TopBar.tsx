@@ -1,5 +1,6 @@
 import { NodeConnectionsIcon } from "@/components/icons";
 import { themeColors } from "@/theme/colors";
+import { useT } from "@/i18n";
 
 interface RepositionOverlayTopBarProps {
   nodeId: number;
@@ -24,6 +25,7 @@ export function RepositionOverlayTopBar({
   inputHighlightColor,
   outputHighlightColor,
 }: RepositionOverlayTopBarProps) {
+  const t = useT();
   return (
     <div
       className="bg-slate-900/95 border-b border-white/10"
@@ -32,14 +34,14 @@ export function RepositionOverlayTopBar({
       <div className="h-full px-4 flex items-center justify-between">
         <div className="w-10 h-10" />
         <h2 className="text-lg font-semibold text-slate-100 text-center">
-          Reposition Nodes
+          {t("Reposition Nodes")}
         </h2>
         <div className="w-10 h-10 flex items-center justify-center">
           {canShowConnectionsToggle && (
             <button
               type="button"
               className="w-8 h-8 flex items-center justify-center"
-              aria-label="Highlight node connections"
+              aria-label={t("Highlight node connections")}
               aria-pressed={connectionHighlightEnabled}
               onClick={onToggleConnections}
             >

@@ -1,3 +1,4 @@
+import { useT } from '@/i18n';
 import { ChevronRightIcon } from '@/components/icons';
 
 interface SectionFoldButtonProps {
@@ -11,11 +12,12 @@ interface SectionFoldButtonProps {
 // into an X when expanded (click to re-fold) and a pill arrow when collapsed.
 // Mirrors the connections section fold button.
 export function SectionFoldButton({ expanded, onToggle, label }: SectionFoldButtonProps) {
+  const t = useT();
   return (
     <button
       type="button"
       aria-expanded={expanded}
-      aria-label={expanded ? `Fold ${label}` : `Unfold ${label}`}
+      aria-label={expanded ? t('Fold {label}', { label }) : t('Unfold {label}', { label })}
       data-fold-state={expanded ? 'expanded' : 'collapsed'}
       onClick={onToggle}
       className={`flex h-7 items-center justify-center border text-slate-400 transition-[width,border-radius,background-color,border-color,color] duration-200 ease-out focus-visible:outline-none ${

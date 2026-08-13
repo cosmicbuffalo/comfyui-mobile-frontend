@@ -1,4 +1,5 @@
 import type { NodeTypes } from '../types';
+import { t } from '@/i18n';
 import { useGenerationSettingsStore } from '@/hooks/useGenerationSettings';
 import { getImageCacheToken } from '@/utils/imageCacheBust';
 
@@ -16,7 +17,7 @@ export const clientId = getOrCreateClientId();
 
 export async function getNodeTypes(): Promise<NodeTypes> {
   const response = await fetch(`/api/object_info`);
-  if (!response.ok) throw new Error('Failed to fetch node types');
+  if (!response.ok) throw new Error(t('Failed to fetch node types'));
   return response.json();
 }
 

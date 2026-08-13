@@ -236,11 +236,11 @@ describe('NodeCardOutputPreview', () => {
     expect(container.querySelector('video')?.getAttribute('src')).toContain('first.mp4');
     expect(changed).toHaveBeenCalledWith({ activeIndex: 0 });
 
-    const mode = container.querySelector<HTMLButtonElement>('button[aria-label="Playback mode: cycle"]')!;
+    const mode = container.querySelector<HTMLButtonElement>('button[aria-label="播放模式：cycle"]')!;
     await act(async () => mode.click());
     expect(changed).toHaveBeenCalledWith({ playMode: 'off' });
 
-    const first = container.querySelector<HTMLButtonElement>('button[aria-label="Show preview 1"]')!;
+    const first = container.querySelector<HTMLButtonElement>('button[aria-label="显示预览 1"]')!;
     await act(async () => first.click());
     expect(container.querySelector('video')?.getAttribute('src')).toContain('first.mp4');
     expect(first.getAttribute('aria-pressed')).toBe('true');
@@ -280,7 +280,7 @@ describe('NodeCardOutputPreview', () => {
     // changes the persisted selection and play mode; the UI must follow.
     await act(async () => renderWith(0, 'cycle'));
     expect(container.querySelector('video')?.getAttribute('src')).toContain('first.mp4');
-    expect(container.querySelector('button[aria-label="Playback mode: cycle"]')).not.toBeNull();
+    expect(container.querySelector('button[aria-label="播放模式：cycle"]')).not.toBeNull();
   });
 
   it('pauses another workflow preview when a video starts playing', async () => {
@@ -357,7 +357,7 @@ describe('NodeCardOutputPreview', () => {
     await act(async () => {
       video?.dispatchEvent(new Event('error', { bubbles: true }));
     });
-    expect(container.textContent).toContain('Unable to play this video.');
+    expect(container.textContent).toContain('无法播放此视频。');
     expect(warn).toHaveBeenCalledWith(
       '[video] Playback issue',
       expect.objectContaining({ context: 'workflow output preview', kind: 'error' }),
@@ -366,7 +366,7 @@ describe('NodeCardOutputPreview', () => {
     await act(async () => {
       video?.dispatchEvent(new Event('canplay', { bubbles: true }));
     });
-    expect(container.textContent).not.toContain('Unable to play this video.');
+    expect(container.textContent).not.toContain('无法播放此视频。');
   });
 
   it('autoplays only when initially visible and pauses when the preview is hidden', async () => {

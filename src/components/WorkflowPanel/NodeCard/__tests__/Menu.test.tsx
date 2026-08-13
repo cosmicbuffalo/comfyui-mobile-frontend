@@ -61,7 +61,7 @@ describe('NodeCardMenu fast groups actions', () => {
     });
 
     const menuButton = Array.from(document.querySelectorAll('button'))
-      .find((button) => button.getAttribute('aria-label') === 'Node options') as HTMLButtonElement | undefined;
+      .find((button) => button.getAttribute('aria-label') === '节点选项') as HTMLButtonElement | undefined;
     expect(menuButton).toBeTruthy();
 
     await act(async () => {
@@ -69,8 +69,8 @@ describe('NodeCardMenu fast groups actions', () => {
     });
 
     const buttons = Array.from(document.querySelectorAll('button'));
-    const changeColorIndex = buttons.findIndex((button) => button.textContent?.includes('Change color'));
-    const editConfigIndex = buttons.findIndex((button) => button.textContent?.includes('Edit config'));
+    const changeColorIndex = buttons.findIndex((button) => button.textContent?.includes('更改颜色'));
+    const editConfigIndex = buttons.findIndex((button) => button.textContent?.includes('编辑配置'));
 
     expect(changeColorIndex).toBeGreaterThan(-1);
     expect(editConfigIndex).toBe(changeColorIndex + 1);
@@ -120,12 +120,12 @@ describe('NodeCardMenu fast groups actions', () => {
     });
 
     const menuButton = Array.from(document.querySelectorAll('button'))
-      .find((button) => button.getAttribute('aria-label') === 'Node options') as HTMLButtonElement | undefined;
+      .find((button) => button.getAttribute('aria-label') === '节点选项') as HTMLButtonElement | undefined;
 
     await act(async () => {
       menuButton?.click();
     });
 
-    expect(document.body.textContent).not.toContain('Edit config');
+    expect(document.body.textContent).not.toContain('编辑配置');
   });
 });

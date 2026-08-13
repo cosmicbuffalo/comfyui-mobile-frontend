@@ -1,0 +1,13 @@
+{
+  "(subgraph)": "(子图)",
+  "{count} hidden node": "{count} 个已隐藏节点",
+  "{count} hidden nodes": "{count} 个已隐藏节点",
+  "{count} node": "{count} 个节点",
+  "{count} nodes": "{count} 个节点",
+  "Cancel": "取消",
+  "Done": "完成",
+  "Group {id}": "分组 {id}",
+  "Highlight node connections": "高亮节点连接",
+  "Node #{nodeId}": "节点 #{nodeId}",
+  "Reposition Nodes": "重新排序节点"
+}

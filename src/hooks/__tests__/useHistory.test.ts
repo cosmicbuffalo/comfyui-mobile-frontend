@@ -182,7 +182,7 @@ describe('useHistoryStore', () => {
     expect(entry).toMatchObject({
       prompt_id: promptId,
       success: false,
-      errorMessage: 'Execution did not complete (interrupted). Some outputs may be missing.',
+      errorMessage: '执行未完成（interrupted），部分输出可能缺失。',
       durationSeconds: 1.5,
     });
     expect(entry.outputs.images).toEqual([
@@ -193,7 +193,7 @@ describe('useHistoryStore', () => {
       },
     ]);
     expect(useWorkflowErrorsStore.getState().error).toBe(
-      'Execution did not complete (interrupted). Some outputs may be missing.',
+      '执行未完成（interrupted），部分输出可能缺失。',
     );
   });
 
@@ -434,7 +434,7 @@ describe('useHistoryStore', () => {
     expect(useHistoryStore.getState().history[0]).toMatchObject({
       prompt_id: promptId,
       success: false,
-      errorMessage: 'Execution did not complete (interrupted). Some outputs may be missing.',
+      errorMessage: '执行未完成（interrupted），部分输出可能缺失。',
     });
     expect(useWorkflowErrorsStore.getState().error).toBeNull();
   });
@@ -473,7 +473,7 @@ describe('useHistoryStore', () => {
       prompt_id: promptId,
       success: false,
       interrupted: true,
-      errorMessage: 'Execution did not complete (interrupted). Some outputs may be missing.',
+      errorMessage: '执行未完成（已中断），部分输出可能缺失。',
     });
     expect(useWorkflowErrorsStore.getState().error).toBeNull();
   });

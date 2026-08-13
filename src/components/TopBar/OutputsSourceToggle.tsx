@@ -1,4 +1,5 @@
 import { useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useT } from '@/i18n';
 import { useOutputsStore } from '@/hooks/useOutputs';
 
 export function OutputsSourceToggle() {
@@ -6,6 +7,7 @@ export function OutputsSourceToggle() {
   const setSource = useOutputsStore((s) => s.setSource);
   const files = useOutputsStore((s) => s.files);
   const isLoading = useOutputsStore((s) => s.isLoading);
+  const t = useT();
 
   const containerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLButtonElement>(null);
@@ -46,7 +48,7 @@ export function OutputsSourceToggle() {
     [files]
   );
 
-  const sourceLabel = source === 'input' ? 'inputs' : source === 'temp' ? 'temp' : 'outputs';
+  const sourceLabel = source === 'input' ? t('inputs') : source === 'temp' ? t('temp') : t('outputs');
   const subtitle = isLoading && files.length === 0
     ? ' '
     : `${totalItems.toLocaleString()} ${sourceLabel}`;
@@ -67,7 +69,7 @@ export function OutputsSourceToggle() {
           onClick={() => setSource('input')}
           className={`${buttonClass(source === 'input')} justify-self-end`}
         >
-          Inputs
+          {t('Inputs')}
         </button>
         <svg width="20" height="8" viewBox="0 0 20 8" className="text-slate-500 shrink-0" aria-hidden="true">
           <line x1="2" y1="4" x2="18" y2="4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
@@ -78,7 +80,7 @@ export function OutputsSourceToggle() {
           onClick={() => setSource('output')}
           className={`${buttonClass(source === 'output')} justify-self-start`}
         >
-          Outputs
+          {t('Outputs')}
         </button>
         {indicator && (
           // Animate real left/width rather than a scaleX of a 1px base: scaling

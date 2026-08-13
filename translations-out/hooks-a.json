@@ -1,0 +1,14 @@
+{
+  "Couldn't load \"{filename}\": the file is {problem}.": "无法加载“{filename}”：{problem}。",
+  "Couldn't load the workflow: the file is {problem}.": "无法加载工作流：{problem}。",
+  "Failed to queue prompt": "无法将任务加入队列",
+  "Failed to queue workflow": "无法将工作流加入队列",
+  "Infinite generation stopped: the workflow would re-run an identical prompt (likely a fixed seed), producing the same result over and over. Set a seed widget to randomize — or change an input — to keep generating new outputs.": "无限生成已停止：工作流会重复提交相同的提示（可能是固定种子），一遍又一遍生成相同的结果。请将种子控件设为随机化，或修改输入，以继续生成新结果。",
+  "Missing value: {value}": "缺少值：{value}",
+  "Node types are still loading. Try again in a moment.": "节点类型仍在加载中，请稍后再试。",
+  "Not found on server.": "服务器上未找到。",
+  "Unable to resolve local workflow path aliases. Loading their opaque values instead.": "无法解析本地工作流路径别名，将改为加载其原始值。",
+  "Untitled": "未命名",
+  "Workflow load error: {count} input reference missing options.": "工作流加载错误：{count} 个输入引用了缺失的选项。",
+  "Workflow load error: {count} inputs reference missing options.": "工作流加载错误：{count} 个输入引用了缺失的选项。"
+}

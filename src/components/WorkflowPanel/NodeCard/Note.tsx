@@ -1,4 +1,5 @@
 import type { RefObject } from 'react';
+import { useT } from '@/i18n';
 import { TextareaActions } from '../../InputControls/TextareaActions';
 
 interface NodeCardNoteProps {
@@ -22,6 +23,7 @@ export function NodeCardNote({
   noteTextareaRef,
   onNoteTap
 }: NodeCardNoteProps) {
+  const t = useT();
   const handleNoteUpdate = (value: string) => {
     if (noteWidgetIndex === null) return;
     onUpdateNote(value);
@@ -36,7 +38,7 @@ export function NodeCardNote({
     <div className="mb-3 group" data-textarea-root="true">
       <div className="flex items-center justify-between mb-1.5" data-textarea-header="true">
         <div className="text-xs text-slate-500 uppercase tracking-wide">
-          Note
+          {t('Note')}
         </div>
         {isEditingNote && (
           <TextareaActions

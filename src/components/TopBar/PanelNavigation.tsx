@@ -1,4 +1,5 @@
 import { ChevronLeftBoldIcon } from '@/components/icons';
+import { useT } from '@/i18n';
 import { useNavigationStore, type PanelMode } from '@/hooks/useNavigation';
 import {
   getTopBarPanelNavigation,
@@ -21,6 +22,7 @@ function DirectionChevron({
 }
 
 function NavigationButton({ item }: { item: TopBarPanelNavigationItem }) {
+  const t = useT();
   const setCurrentPanel = useNavigationStore((s) => s.setCurrentPanel);
   const chevron = <DirectionChevron direction={item.direction} jumps={item.jumps} />;
 
@@ -28,11 +30,11 @@ function NavigationButton({ item }: { item: TopBarPanelNavigationItem }) {
     <button
       type="button"
       onClick={() => setCurrentPanel(item.panel)}
-      aria-label={`Go to ${item.label}`}
+      aria-label={t('Go to {label}', { label: t(item.label) })}
       className="flex h-10 items-center gap-1.5 px-1 text-sm font-medium text-slate-400 transition-colors hover:text-slate-100 focus-visible:outline-none focus-visible:text-slate-100"
     >
       {item.direction === 'left' && chevron}
-      <span>{item.label}</span>
+      <span>{t(item.label)}</span>
       {item.direction === 'right' && chevron}
     </button>
   );
@@ -45,11 +47,12 @@ export function TopBarPanelNavigation({
   mode: PanelMode;
   side: 'left' | 'right';
 }) {
+  const t = useT();
   const items = getTopBarPanelNavigation(mode)[side];
 
   return (
     <nav
-      aria-label={`${side === 'left' ? 'Previous' : 'Next'} panels`}
+      aria-label={side === 'left' ? t('Previous panels') : t('Next panels')}
       className={`hidden items-center gap-2 lg:flex ${
         side === 'left'
           ? 'col-start-1 justify-start pl-3'

@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { createJSONStorage, persist } from 'zustand/middleware';
+import { t } from '@/i18n';
 
 export interface NodeError {
   type: string;
@@ -94,7 +95,11 @@ export const useWorkflowErrorsStore = create<WorkflowErrorsState>()(
           0
         );
         if (errorCount > 0 && !state.error) {
-          state.setError(`Workflow load error: ${errorCount} input${errorCount === 1 ? '' : 's'} reference missing options.`);
+          state.setError(
+            errorCount === 1
+              ? t('Workflow load error: {count} input reference missing options.', { count: errorCount })
+              : t('Workflow load error: {count} inputs reference missing options.', { count: errorCount })
+          );
         }
         if (errorCount > 0) {
           state.setErrorCycleIndex(0);

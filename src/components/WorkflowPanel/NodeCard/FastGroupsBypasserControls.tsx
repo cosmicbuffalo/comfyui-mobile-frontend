@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react';
+import { useT } from '@/i18n';
 import { Dialog } from '@/components/modals/Dialog';
 import { ExternalLinkIcon } from '@/components/icons';
 import type { WorkflowGroup, WorkflowNode } from '@/api/types';
@@ -101,6 +102,7 @@ export function FastGroupsBypasserControls({
   showFastGroupConfig,
   setShowFastGroupConfig
 }: FastGroupsBypasserControlsProps) {
+  const t = useT();
   const workflow = useWorkflowStore((state) => state.workflow);
   const scopeStack = useWorkflowStore((state) => state.scopeStack);
   const mobileLayout = useWorkflowStore((state) => state.mobileLayout);
@@ -236,7 +238,7 @@ export function FastGroupsBypasserControls({
       }
       entries.push({
         key: `${subgraphId ?? 'root'}-${group.id}`,
-        label: group.title?.trim() || `Group ${group.id}`,
+        label: group.title?.trim() || t('Group {id}', { id: group.id }),
         itemKey,
         color: group.color,
         subgraphId,
@@ -300,7 +302,7 @@ export function FastGroupsBypasserControls({
     }
 
     return entries;
-  }, [node.properties, scopeStack, workflow]);
+  }, [node.properties, scopeStack, workflow, t]);
 
   const handleFastGroupToggle = (entry: FastGroupToggleEntry) => () => {
     if (isBypassed || entry.isDisabled) return;
@@ -379,7 +381,7 @@ export function FastGroupsBypasserControls({
       {fastGroupToggles.length > 0 && (
         <div className="mb-4">
           <div className="text-xs text-slate-400 mb-1.5 uppercase tracking-wide">
-            Groups
+            {t('Groups')}
           </div>
           <div className="space-y-2">
             {fastGroupToggles.map((entry) => (
@@ -430,8 +432,8 @@ export function FastGroupsBypasserControls({
                   </button>
                   <button
                     type="button"
-                    aria-label={`Jump to ${entry.label}`}
-                    title={`Jump to ${entry.label}`}
+                    aria-label={t('Jump to {name}', { name: entry.label })}
+                    title={t('Jump to {name}', { name: entry.label })}
                     onClick={handleJumpToGroup(entry)}
                     className="h-8 w-8 inline-flex items-center justify-center rounded-lg border border-white/10 bg-slate-950/70 text-slate-300 transition-colors hover:bg-white/10 hover:text-cyan-200 active:scale-95"
                   >
@@ -446,12 +448,12 @@ export function FastGroupsBypasserControls({
       {showFastGroupConfig && (
         <Dialog
           onClose={() => setShowFastGroupConfig(false)}
-          title="Edit bypasser config"
+          title={t('Edit bypasser config')}
           description={(
             <div className="mt-3 space-y-3 text-left">
               <label className="block">
                 <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-400">
-                  Match colors
+                  {t('Match colors')}
                 </div>
                 <input
                   type="text"
@@ -463,7 +465,7 @@ export function FastGroupsBypasserControls({
               </label>
               <label className="block">
                 <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-400">
-                  Match title
+                  {t('Match title')}
                 </div>
                 <input
                   type="text"
@@ -475,21 +477,21 @@ export function FastGroupsBypasserControls({
               </label>
               <label className="block">
                 <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-400">
-                  Sort
+                  {t('Sort')}
                 </div>
                 <select
                   value={fastGroupDraft.sort}
                   onChange={(event) => setFastGroupDraft((current) => ({ ...current, sort: event.target.value }))}
                   className={fieldClassName}
                 >
-                  <option value="position">Position</option>
-                  <option value="alphanumeric">Alphanumeric</option>
-                  <option value="custom alphabet">Custom alphabet</option>
+                  <option value="position">{t('Position')}</option>
+                  <option value="alphanumeric">{t('Alphanumeric')}</option>
+                  <option value="custom alphabet">{t('Custom alphabet')}</option>
                 </select>
               </label>
               <label className="block">
                 <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-400">
-                  Custom alphabet
+                  {t('Custom alphabet')}
                 </div>
                 <input
                   type="text"
@@ -501,7 +503,7 @@ export function FastGroupsBypasserControls({
               </label>
               <label className="block">
                 <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-400">
-                  Toggle restriction
+                  {t('Toggle restriction')}
                 </div>
                 <input
                   type="text"
@@ -512,7 +514,7 @@ export function FastGroupsBypasserControls({
                 />
               </label>
               <label className={`flex items-center justify-between px-3 py-2 text-slate-100 ${controlNestedSurfaceClassName}`}>
-                <span className={`${controlLabelClassName} text-slate-100`}>Show all graphs</span>
+                <span className={`${controlLabelClassName} text-slate-100`}>{t('Show all graphs')}</span>
                 <input
                   type="checkbox"
                   className="h-4 w-4 accent-cyan-500"
@@ -521,7 +523,7 @@ export function FastGroupsBypasserControls({
                 />
               </label>
               <label className={`flex items-center justify-between px-3 py-2 text-slate-100 ${controlNestedSurfaceClassName}`}>
-                <span className={`${controlLabelClassName} text-slate-100`}>Show nav</span>
+                <span className={`${controlLabelClassName} text-slate-100`}>{t('Show nav')}</span>
                 <input
                   type="checkbox"
                   className="h-4 w-4 accent-cyan-500"
@@ -533,12 +535,12 @@ export function FastGroupsBypasserControls({
           )}
           actions={[
             {
-              label: 'Cancel',
+              label: t('Cancel'),
               onClick: () => setShowFastGroupConfig(false),
               variant: 'secondary',
             },
             {
-              label: 'Confirm',
+              label: t('Confirm'),
               onClick: applyFastGroupConfig,
               variant: 'primary',
               className: isBypassed ? 'cursor-not-allowed opacity-60' : undefined,

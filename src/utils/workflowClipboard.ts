@@ -26,6 +26,7 @@ import {
   generateUniqueSubgraphId,
 } from '@/utils/duplicateNode';
 import { expandGroupToFitNodes, getBottomPlacementForScope } from '@/utils/nodePositioning';
+import { t } from '@/i18n';
 import type {
   ClipboardLink,
   WorkflowClipboardPayload,
@@ -95,7 +96,7 @@ export function buildNodeClipboardPayload(
     links: [],
     subgraphs,
     group: null,
-    summary: isSubgraphPlaceholder(node, workflow) ? 'subgraph' : '1 node',
+    summary: isSubgraphPlaceholder(node, workflow) ? t('subgraph') : t('1 node'),
   };
 }
 
@@ -122,7 +123,9 @@ export function buildGroupClipboardPayload(
     links,
     subgraphs,
     group: structuredClone(group),
-    summary: `group (${nodes.length} node${nodes.length === 1 ? '' : 's'})`,
+    summary: nodes.length === 1
+      ? t('group (1 node)')
+      : t('group ({count} nodes)', { count: nodes.length }),
   };
 }
 
@@ -154,7 +157,9 @@ export function buildMultiNodeClipboardPayload(
     links,
     subgraphs,
     group: null,
-    summary: `${nodes.length} node${nodes.length === 1 ? '' : 's'}`,
+    summary: nodes.length === 1
+      ? t('1 node')
+      : t('{count} nodes', { count: nodes.length }),
   };
 }
 

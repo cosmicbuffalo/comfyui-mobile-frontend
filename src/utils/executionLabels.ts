@@ -1,4 +1,5 @@
 import type { NodeTypes, Workflow, WorkflowNode } from '@/api/types';
+import { t } from '@/i18n';
 import { findRootWorkflowNodeById, findWorkflowNodeInScope } from '@/utils/subgraphPlaceholderLabels';
 
 function toDisplayName(
@@ -36,7 +37,7 @@ export function resolveExecutingNodeLabel(
     if (parts.length > 0) {
       if (parts.length === 1) {
         const rootNode = findRootWorkflowNodeById(workflow, parts[0]);
-        if (rootNode) return toDisplayName(workflow, rootNode, `Node ${parts[0]}`, nodeTypes);
+        if (rootNode) return toDisplayName(workflow, rootNode, t('Node {id}', { id: parts[0] }), nodeTypes);
       } else {
         let subgraphId: string | null = null;
         const rootPlaceholder = findRootWorkflowNodeById(workflow, parts[0]);
@@ -48,19 +49,19 @@ export function resolveExecutingNodeLabel(
           const node = findWorkflowNodeInScope(workflow, nodeId, subgraphId);
           if (!node) break;
           if (i === parts.length - 1) {
-            return toDisplayName(workflow, node, `Node ${nodeId}`, nodeTypes);
+            return toDisplayName(workflow, node, t('Node {id}', { id: nodeId }), nodeTypes);
           }
           subgraphId = node.type;
         }
       }
       const leaf = parts[parts.length - 1];
-      return Number.isFinite(leaf) ? `Node ${leaf}` : `Node ${executingNodePath}`;
+      return Number.isFinite(leaf) ? t('Node {id}', { id: leaf }) : t('Node {id}', { id: executingNodePath });
     }
-    return `Node ${executingNodePath}`;
+    return t('Node {id}', { id: executingNodePath });
   }
 
   if (!executingNodeId) return null;
   const node = workflow.nodes.find((entry) => String(entry.id) === executingNodeId);
-  if (!node) return `Node ${executingNodeId}`;
-  return toDisplayName(workflow, node, `Node ${executingNodeId}`, nodeTypes);
+  if (!node) return t('Node {id}', { id: executingNodeId });
+  return toDisplayName(workflow, node, t('Node {id}', { id: executingNodeId }), nodeTypes);
 }

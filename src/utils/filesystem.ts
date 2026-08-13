@@ -1,4 +1,5 @@
 import { copyFileToInput, setFileState, type AssetSource, type FileItem } from '@/api/client';
+import { t } from '@/i18n';
 import { resolveFilePath } from './workflowOperations';
 
 export async function resolveInputPathForFile(
@@ -26,5 +27,5 @@ export async function resolveInputPathForFile(
     }
     return inputPath;
   }
-  throw new Error(`Cannot load ${source} files into nodes.`);
+  throw new Error(t('Cannot load {source} files into nodes.', { source }));
 }

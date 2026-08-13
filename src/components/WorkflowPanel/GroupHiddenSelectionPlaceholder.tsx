@@ -1,6 +1,7 @@
 import { useWorkflowSelectionStore } from '@/hooks/useWorkflowSelection';
 import { SelectionCheckbox } from '@/components/buttons/SelectionCheckbox';
 import { EyeOffIcon } from '@/components/icons';
+import { useT } from '@/i18n';
 
 interface GroupHiddenSelectionPlaceholderProps {
   // Item keys of the group's hidden member nodes (folded away / declutter-hidden).
@@ -17,6 +18,7 @@ interface GroupHiddenSelectionPlaceholderProps {
 export function GroupHiddenSelectionPlaceholder({
   hiddenKeys,
 }: GroupHiddenSelectionPlaceholderProps) {
+  const t = useT();
   const selectedKeys = useWorkflowSelectionStore((s) => s.selectedKeys);
   const selectKeys = useWorkflowSelectionStore((s) => s.selectKeys);
   const deselectKeys = useWorkflowSelectionStore((s) => s.deselectKeys);
@@ -40,7 +42,7 @@ export function GroupHiddenSelectionPlaceholder({
     >
       <SelectionCheckbox
         selected={allSelected}
-        ariaLabel={allSelected ? 'Deselect hidden nodes' : 'Select hidden nodes'}
+        ariaLabel={allSelected ? t('Deselect hidden nodes') : t('Select hidden nodes')}
         onClick={(event) => {
           event.stopPropagation();
           toggle();
@@ -48,8 +50,12 @@ export function GroupHiddenSelectionPlaceholder({
       />
       <EyeOffIcon className="h-4 w-4 shrink-0 text-slate-400" />
       <span className="text-xs text-slate-300">
-        {count} hidden node{count === 1 ? '' : 's'}
-        {selectedCount > 0 && !allSelected ? ` (${selectedCount} selected)` : ''}
+        {count === 1
+          ? t('{count} hidden node', { count })
+          : t('{count} hidden nodes', { count })}
+        {selectedCount > 0 && !allSelected
+          ? ` ${t('({count} selected)', { count: selectedCount })}`
+          : ''}
       </span>
     </button>
   );

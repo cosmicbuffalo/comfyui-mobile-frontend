@@ -2,6 +2,7 @@ import { CloudDownloadIcon } from "@/components/icons";
 import { useLoraManagerMetadataStore } from "@/hooks/useLoraManagerMetadata";
 import { MenuErrorNotice } from "./MenuErrorNotice";
 import { menuIconClassName, menuSurfaceButtonDisabledClassName, menuTextClassName } from "./menuStyles";
+import { useT } from "@/i18n";
 
 /**
  * "Refresh model metadata" button for the Server menu section. Runs our built-in
@@ -11,6 +12,7 @@ import { menuIconClassName, menuSurfaceButtonDisabledClassName, menuTextClassNam
  * share sidecars, so refreshing here updates both).
  */
 export function MenuRefreshMetadataButton() {
+  const t = useT();
   const refreshing = useLoraManagerMetadataStore((s) => s.refreshing);
   const refreshLabel = useLoraManagerMetadataStore((s) => s.refreshLabel);
   const refreshError = useLoraManagerMetadataStore((s) => s.refreshError);
@@ -29,8 +31,8 @@ export function MenuRefreshMetadataButton() {
         <CloudDownloadIcon className={menuIconClassName} />
         <span className={menuTextClassName}>
           {refreshing
-            ? `Refreshing ${refreshLabel ?? ""}`.trim()
-            : "Refresh model metadata"}
+            ? t('Refreshing {refreshLabel}', { refreshLabel: refreshLabel ?? '' }).trim()
+            : t('Refresh model metadata')}
         </span>
       </button>
       {!refreshing && (

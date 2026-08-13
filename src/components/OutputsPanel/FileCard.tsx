@@ -7,6 +7,7 @@ import {
 import { ContextMenuButton } from '@/components/buttons/ContextMenuButton';
 import { formatBytes } from '@/utils/formatBytes';
 import { formatRelativeAge } from '@/utils/outputsBrowser';
+import { useT } from '@/i18n';
 
 interface SelectionClickOptions {
   range?: boolean;
@@ -36,6 +37,7 @@ function SelectionBadge({
   fileName: string;
   onRangeSelect: (event: MouseEvent) => void;
 }) {
+  const t = useT();
   if (isSelected) {
     // Clickable so the badge can drive range *deselect* the same way the
     // unselected badge drives range select — see handleToggleSelection.
@@ -43,7 +45,7 @@ function SelectionBadge({
       <button
         type="button"
         className="selection-badge w-6 h-6 rounded-full border-2 flex items-center justify-center shadow-sm bg-cyan-500 border-cyan-500 text-slate-950"
-        aria-label={`Range deselect to ${fileName}`}
+        aria-label={t('Range deselect to {fileName}', { fileName })}
         onClick={onRangeSelect}
       >
         <CheckIcon className="w-4 h-4" />
@@ -54,7 +56,7 @@ function SelectionBadge({
     <button
       type="button"
       className="selection-badge w-6 h-6 rounded-full border-2 flex items-center justify-center shadow-sm border-white bg-black/20"
-      aria-label={`Range select to ${fileName}`}
+      aria-label={t('Range select to {fileName}', { fileName })}
       onClick={onRangeSelect}
     />
   );
@@ -74,6 +76,7 @@ function FileCardComponent({
   showContextMenu = true,
   sortMode,
 }: FileCardProps) {
+  const t = useT();
   const isFolder = file.type === 'folder';
   const isHiddenFolder = isFolder && file.name.startsWith('.');
   // Dimmed when the item is hidden (dot-prefixed or manually marked). Such items
@@ -89,7 +92,7 @@ function FileCardComponent({
 
   const folderMetadata = isFolder && typeof file.count === 'number' ? (
     <div className="folder-metadata flex min-w-0 items-center gap-x-1 overflow-hidden whitespace-nowrap text-xs text-slate-400">
-      <span className="shrink-0">{file.count} {file.count === 1 ? 'item' : 'items'}</span>
+      <span className="shrink-0">{t(file.count === 1 ? '{count} item' : '{count} items', { count: file.count })}</span>
       {typeof file.size === 'number' && file.size > 0 && (
         <>
           <span className="shrink-0" aria-hidden="true">·</span>
@@ -192,15 +195,15 @@ function FileCardComponent({
           </div>
           {isFolder && typeof file.matchCount === 'number' ? (
             <div className="text-xs text-cyan-300">
-              {file.matchCount} {file.matchCount === 1 ? 'match' : 'matches'}
+              {t(file.matchCount === 1 ? '{count} match' : '{count} matches', { count: file.matchCount })}
             </div>
           ) : isFolder && typeof file.favoriteCount === 'number' ? (
             <div className="folder-favorite-count text-xs text-red-400">
-              {file.favoriteCount} {file.favoriteCount === 1 ? 'favorite' : 'favorites'} inside
+              {t(file.favoriteCount === 1 ? '{count} favorite inside' : '{count} favorites inside', { count: file.favoriteCount })}
             </div>
           ) : isFolder && typeof file.rejectCount === 'number' ? (
             <div className="folder-reject-count text-xs text-rose-300">
-              {file.rejectCount} {file.rejectCount === 1 ? 'reject' : 'rejects'} inside
+              {t(file.rejectCount === 1 ? '{count} reject inside' : '{count} rejects inside', { count: file.rejectCount })}
             </div>
           ) : isFolder && typeof file.count === 'number' ? (
             folderMetadata
@@ -224,7 +227,7 @@ function FileCardComponent({
           ) : showContextMenu ? (
             <ContextMenuButton
               onClick={handleMenuButtonClick}
-              ariaLabel="File options"
+              ariaLabel={t('File options')}
               buttonSize={8}
               iconSize={5}
             />
@@ -246,15 +249,15 @@ function FileCardComponent({
             <FolderIcon className={`w-12 h-12 mb-2 ${folderIconClass}`} />
             {typeof file.matchCount === 'number' ? (
               <span className="text-xs text-cyan-300">
-                {file.matchCount} {file.matchCount === 1 ? 'match' : 'matches'}
+                {t(file.matchCount === 1 ? '{count} match' : '{count} matches', { count: file.matchCount })}
               </span>
             ) : typeof file.favoriteCount === 'number' ? (
               <span className="folder-favorite-count text-xs text-red-400">
-                {file.favoriteCount} {file.favoriteCount === 1 ? 'favorite' : 'favorites'}
+                {t(file.favoriteCount === 1 ? '{count} favorite' : '{count} favorites', { count: file.favoriteCount })}
               </span>
             ) : typeof file.rejectCount === 'number' ? (
               <span className="folder-reject-count text-xs text-rose-300">
-                {file.rejectCount} {file.rejectCount === 1 ? 'reject' : 'rejects'}
+                {t(file.rejectCount === 1 ? '{count} reject' : '{count} rejects', { count: file.rejectCount })}
               </span>
             ) : typeof file.count === 'number' ? (
               <div className="flex justify-center">{folderMetadata}</div>
@@ -295,7 +298,7 @@ function FileCardComponent({
           <div className="file-menu-trigger-container absolute top-2 right-2 flex flex-col items-center gap-2 text-white">
             <ContextMenuButton
               onClick={handleMenuButtonClick}
-              ariaLabel="File options"
+              ariaLabel={t('File options')}
               buttonSize={8}
               iconSize={6}
             />

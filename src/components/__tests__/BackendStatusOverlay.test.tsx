@@ -12,7 +12,7 @@ function overlayText(): string | null {
 }
 
 function isOverlayShown(): boolean {
-  return Boolean(overlayText()?.includes('Connection Lost'));
+  return Boolean(overlayText()?.includes('连接已断开'));
 }
 
 describe('ConnectionLostOverlay', () => {

@@ -101,7 +101,7 @@ describe('MediaViewer workflow availability', () => {
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
     expect(
-      document.querySelector('button[aria-label="Load workflow"]'),
+      document.querySelector('button[aria-label="加载工作流"]'),
     ).not.toBeNull();
     const video = document.querySelector<HTMLVideoElement>('#media-viewer-overlay video');
     expect(video?.getAttribute('poster')).toBe(
@@ -135,7 +135,7 @@ describe('MediaViewer workflow availability', () => {
     await flushEffects();
 
     expect(
-      document.querySelector('button[aria-label="Load workflow"]'),
+      document.querySelector('button[aria-label="加载工作流"]'),
     ).toBeNull();
   });
 

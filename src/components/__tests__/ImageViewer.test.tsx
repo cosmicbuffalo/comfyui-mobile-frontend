@@ -463,7 +463,7 @@ describe('ImageViewer follow queue mode', () => {
       props.onDelete?.(item);
     });
     const deleteButton = Array.from(document.body.querySelectorAll('button')).find(
-      (button) => button.textContent?.trim() === 'Delete',
+      (button) => button.textContent?.trim() === '删除',
     );
     if (!deleteButton) throw new Error('Delete confirmation button not found');
     await act(async () => {

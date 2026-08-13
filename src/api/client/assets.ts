@@ -1,4 +1,5 @@
 import type { Workflow } from '../types';
+import { t } from '@/i18n';
 
 export async function uploadImageFile(
   file: File,
@@ -22,7 +23,7 @@ export async function uploadImageFile(
   });
 
   if (!response.ok) {
-    throw new Error('Failed to upload image');
+    throw new Error(t('Failed to upload image'));
   }
 
   return response.json();
@@ -58,7 +59,7 @@ export async function copyFileToInput(
         // Keep the status text fallback.
       }
     }
-    throw new Error(`Failed to copy file to inputs (${response.status}): ${detail}`);
+    throw new Error(t('Failed to copy file to inputs ({status}): {detail}', { status: response.status, detail }));
   }
 
   return response.json();
@@ -73,7 +74,7 @@ export async function createInputAliases(paths: string[]): Promise<Record<string
   });
   if (!response.ok) {
     const error = await response.json().catch(() => ({}));
-    throw new Error(error.error || 'Failed to create input aliases');
+    throw new Error(error.error || t('Failed to create input aliases'));
   }
   const data = await response.json() as { aliases?: Record<string, string> };
   return data.aliases ?? {};
@@ -88,7 +89,7 @@ export async function resolveInputAliases(aliases: string[]): Promise<Record<str
   });
   if (!response.ok) {
     const error = await response.json().catch(() => ({}));
-    throw new Error(error.error || 'Failed to resolve input aliases');
+    throw new Error(error.error || t('Failed to resolve input aliases'));
   }
   const data = await response.json() as { resolved?: Record<string, string> };
   return data.resolved ?? {};
@@ -103,7 +104,7 @@ export async function createFilePrefixAliases(prefixes: string[]): Promise<Recor
   });
   if (!response.ok) {
     const error = await response.json().catch(() => ({}));
-    throw new Error(error.error || 'Failed to create filename prefix aliases');
+    throw new Error(error.error || t('Failed to create filename prefix aliases'));
   }
   const data = await response.json() as { aliases?: Record<string, string> };
   return data.aliases ?? {};
@@ -118,7 +119,7 @@ export async function resolveFilePrefixAliases(aliases: string[]): Promise<Recor
   });
   if (!response.ok) {
     const error = await response.json().catch(() => ({}));
-    throw new Error(error.error || 'Failed to resolve filename prefix aliases');
+    throw new Error(error.error || t('Failed to resolve filename prefix aliases'));
   }
   const data = await response.json() as { resolved?: Record<string, string> };
   return data.resolved ?? {};
@@ -215,7 +216,7 @@ async function fetchMobileFiles(
   if (options.dirsOnly) params.set('dirsOnly', 'true');
 
   const response = await fetch(`/mobile/api/files?${params}`);
-  if (!response.ok) throw new Error('Failed to fetch files');
+  if (!response.ok) throw new Error(t('Failed to fetch files'));
   return response.json();
 }
 
@@ -371,7 +372,7 @@ export async function loadFileState(source: AssetSource = 'output'): Promise<Fil
   const response = await fetch(`/mobile/api/files/state?${params.toString()}`);
   if (!response.ok) {
     const error = await response.json().catch(() => ({}));
-    throw new Error(error.error || 'Failed to load file state');
+    throw new Error(error.error || t('Failed to load file state'));
   }
   const data = await response.json() as Partial<FileStateLists>;
   return {
@@ -442,7 +443,7 @@ export async function setFileState(
   });
   if (!response.ok) {
     const error = await response.json().catch(() => ({}));
-    throw new FileStateError(error.error || 'Failed to update file state', response.status);
+    throw new FileStateError(error.error || t('Failed to update file state'), response.status);
   }
 }
 
@@ -480,7 +481,7 @@ export async function deleteFile(path: string, source: AssetSource = 'output'): 
   const alreadyGone =
     response.status === 404 && /not found/i.test(String(error.error ?? ''));
   if (alreadyGone) return;
-  throw new Error(error.error || 'Failed to delete file');
+  throw new Error(error.error || t('Failed to delete file'));
 }
 
 export async function getFileWorkflow(
@@ -494,11 +495,11 @@ export async function getFileWorkflow(
   });
   if (!response.ok) {
     const error = await response.json().catch(() => ({}));
-    throw new Error(error.error || 'Failed to load file metadata');
+    throw new Error(error.error || t('Failed to load file metadata'));
   }
   const data = await response.json();
   if (!data.workflow) {
-    throw new Error('No workflow metadata found');
+    throw new Error(t('No workflow metadata found'));
   }
   return data.workflow as Workflow;
 }
@@ -514,7 +515,7 @@ export async function getFileWorkflowAvailability(
   });
   if (!response.ok) {
     const error = await response.json().catch(() => ({}));
-    throw new Error(error.error || 'Failed to load workflow availability');
+    throw new Error(error.error || t('Failed to load workflow availability'));
   }
   const data = await response.json();
   return Boolean(data.available);
@@ -528,7 +529,7 @@ export async function getImageMetadata(
   const response = await fetch(`/mobile/api/image-metadata?${params.toString()}`);
   if (!response.ok) {
     const error = await response.json().catch(() => ({}));
-    throw new Error(error.error || 'Failed to load image metadata');
+    throw new Error(error.error || t('Failed to load image metadata'));
   }
   return response.json();
 }
@@ -545,7 +546,7 @@ export async function moveFiles(
   });
   if (!response.ok) {
     const error = await response.json().catch(() => ({}));
-    throw new Error(error.error || 'Failed to move files');
+    throw new Error(error.error || t('Failed to move files'));
   }
 }
 
@@ -557,7 +558,7 @@ export async function createFolder(path: string, source: AssetSource = 'output')
   });
   if (!response.ok) {
     const error = await response.json().catch(() => ({}));
-    throw new Error(error.error || 'Failed to create folder');
+    throw new Error(error.error || t('Failed to create folder'));
   }
 }
 
@@ -573,6 +574,6 @@ export async function renameFile(
   });
   if (!response.ok) {
     const error = await response.json().catch(() => ({}));
-    throw new Error(error.error || 'Failed to rename file');
+    throw new Error(error.error || t('Failed to rename file'));
   }
 }

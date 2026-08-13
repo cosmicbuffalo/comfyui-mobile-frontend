@@ -64,14 +64,14 @@ describe('GraphContainerHeader menu bypass actions', () => {
       );
     });
 
-    const button = document.querySelector('button[aria-label="group options"]') as HTMLButtonElement | null;
+    const button = document.querySelector('button[aria-label="分组选项"]') as HTMLButtonElement | null;
     expect(button).toBeTruthy();
     await act(async () => {
       button?.click();
     });
 
-    expect(document.body.textContent).not.toContain('Bypass all nodes');
-    expect(document.body.textContent).toContain('Engage all nodes');
+    expect(document.body.textContent).not.toContain('绕过所有节点');
+    expect(document.body.textContent).toContain('启用所有节点');
   });
 
   it('shows "Bypass all nodes" when showBypassAllAction is true', async () => {
@@ -86,14 +86,14 @@ describe('GraphContainerHeader menu bypass actions', () => {
       );
     });
 
-    const button = document.querySelector('button[aria-label="group options"]') as HTMLButtonElement | null;
+    const button = document.querySelector('button[aria-label="分组选项"]') as HTMLButtonElement | null;
     expect(button).toBeTruthy();
     await act(async () => {
       button?.click();
     });
 
-    expect(document.body.textContent).toContain('Bypass all nodes');
-    expect(document.body.textContent).not.toContain('Engage all nodes');
+    expect(document.body.textContent).toContain('绕过所有节点');
+    expect(document.body.textContent).not.toContain('启用所有节点');
   });
 
   it('dismisses the color popover on outside click', async () => {
@@ -107,7 +107,7 @@ describe('GraphContainerHeader menu bypass actions', () => {
       );
     });
 
-    const menuButton = document.querySelector('button[aria-label="group options"]') as HTMLButtonElement | null;
+    const menuButton = document.querySelector('button[aria-label="分组选项"]') as HTMLButtonElement | null;
     expect(menuButton).toBeTruthy();
 
     await act(async () => {
@@ -115,19 +115,19 @@ describe('GraphContainerHeader menu bypass actions', () => {
     });
 
     const changeColorButton = Array.from(document.querySelectorAll('button'))
-      .find((button) => button.textContent?.includes('Change color')) as HTMLButtonElement | undefined;
+      .find((button) => button.textContent?.includes('更改颜色')) as HTMLButtonElement | undefined;
     expect(changeColorButton).toBeTruthy();
 
     await act(async () => {
       changeColorButton?.click();
     });
 
-    expect(document.querySelector('button[aria-label^="Set color:"]')).toBeTruthy();
+    expect(document.querySelector('button[aria-label^="设置颜色："]')).toBeTruthy();
 
     await act(async () => {
       document.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
     });
 
-    expect(document.querySelector('button[aria-label^="Set color:"]')).toBeNull();
+    expect(document.querySelector('button[aria-label^="设置颜色："]')).toBeNull();
   });
 });

@@ -1,4 +1,5 @@
 import { ProgressRingWithTrack, WorkflowIcon } from '@/components/icons';
+import { useT } from '@/i18n';
 import { OverlayCircleButton } from './OverlayCircleButton';
 
 interface LoadWorkflowButtonProps {
@@ -7,11 +8,12 @@ interface LoadWorkflowButtonProps {
 }
 
 export function LoadWorkflowButton({ onClick, progress }: LoadWorkflowButtonProps) {
+  const t = useT();
   const isLoading = progress != null;
   return (
     <OverlayCircleButton
       onClick={onClick}
-      ariaLabel="Load workflow"
+      ariaLabel={t('Load workflow')}
       disabled={isLoading}
       className="relative text-white"
       icon={(

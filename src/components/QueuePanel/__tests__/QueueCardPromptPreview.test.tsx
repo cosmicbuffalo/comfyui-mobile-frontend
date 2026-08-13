@@ -237,7 +237,7 @@ describe('QueueCard active prompt preview', () => {
       });
 
       const promptPreviewButton = Array.from(container.querySelectorAll('button')).find(
-        (button) => button.textContent?.includes('Prompt preview'),
+        (button) => button.textContent?.includes('提示词预览'),
       );
       expect(promptPreviewButton).toBeDefined();
 
@@ -246,7 +246,7 @@ describe('QueueCard active prompt preview', () => {
       });
 
       expect(container.textContent).toContain('a bright red fox');
-      expect(container.querySelector<HTMLImageElement>('img[alt="Generation input"]')
+      expect(container.querySelector<HTMLImageElement>('img[alt="输入图片"]')
         ?.getAttribute('src')).toBe(
         '/mobile/api/preview?filename=source%20image.png&subfolder=references&type=input&maxedge=1280',
       );

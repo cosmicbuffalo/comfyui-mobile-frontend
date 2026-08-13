@@ -58,7 +58,7 @@ describe('buildNodeClipboardPayload', () => {
   it('copies a single node with no internal links and no subgraphs', () => {
     const payload = buildNodeClipboardPayload(workflow, 'root/node:5');
     expect(payload).not.toBeNull();
-    expect(payload!.summary).toBe('1 node');
+    expect(payload!.summary).toBe('1 个节点');
     expect(payload!.nodes).toHaveLength(1);
     expect(payload!.nodes[0].id).toBe(5);
     expect(payload!.nodes[0].widgets_values).toEqual(['hello', 5]);
@@ -83,7 +83,7 @@ describe('buildNodeClipboardPayload', () => {
     });
     const payload = buildNodeClipboardPayload(wf, 'root/node:7');
     expect(payload).not.toBeNull();
-    expect(payload!.summary).toBe('subgraph');
+    expect(payload!.summary).toBe('子图');
     expect(payload!.subgraphs).toHaveLength(1);
     expect(payload!.subgraphs[0].id).toBe('SG');
   });
@@ -135,7 +135,7 @@ describe('buildGroupClipboardPayload + applyClipboardPaste', () => {
   it('collects only internal links among group members', () => {
     const payload = buildGroupClipboardPayload(workflow, group, null, [1, 2]);
     expect(payload).not.toBeNull();
-    expect(payload!.summary).toBe('group (2 nodes)');
+    expect(payload!.summary).toBe('分组（2 个节点）');
     expect(payload!.nodes.map((n) => n.id).sort()).toEqual([1, 2]);
     // Only the 1→2 link is internal; the 2→3 boundary link is dropped.
     expect(payload!.links).toHaveLength(1);

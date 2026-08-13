@@ -1,4 +1,5 @@
 import { useState, useEffect, type ReactNode } from "react";
+import { useT } from "@/i18n";
 import { MinusIcon, PlusIcon } from "../icons";
 import { PromotedWidgetIcon } from "../icons";
 import {
@@ -50,6 +51,7 @@ export function NumberControl({
   isPromoted = false,
   labelAccessory,
 }: NumberControlProps) {
+  const t = useT();
   const [localValue, setLocalValue] = useState(String(value || 0));
   const isInt =
     isIntProp ??
@@ -132,7 +134,7 @@ export function NumberControl({
           type="button"
           onClick={() => adjust(-step)}
           className={buttonClassName}
-          aria-label="Decrease value"
+          aria-label={t("Decrease value")}
           disabled={disabled}
         >
           <MinusIcon className="w-4 h-4" />
@@ -141,7 +143,7 @@ export function NumberControl({
           type="button"
           onClick={() => adjust(step)}
           className={buttonClassName}
-          aria-label="Increase value"
+          aria-label={t("Increase value")}
           disabled={disabled}
         >
           <PlusIcon className="w-4 h-4" />

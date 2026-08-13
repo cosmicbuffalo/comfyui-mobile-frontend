@@ -1,4 +1,5 @@
 import type { NodeTypes, Workflow, WorkflowNode } from '@/api/types';
+import { t } from '@/i18n';
 import { getNodeWidgetIndexMap } from '@/utils/workflowInputs';
 import { findSeedWidgetIndex } from '@/utils/seedUtils';
 
@@ -120,7 +121,7 @@ function nodeLabel(node: WorkflowNode): string {
   const title = typeof node.title === 'string' ? node.title.trim() : '';
   if (title) return title;
   if (node.type) return node.type;
-  return `Node ${node.id}`;
+  return t('Node {id}', { id: node.id });
 }
 
 interface NamedWidget {
@@ -144,7 +145,7 @@ function getNamedWidgets(workflow: Workflow, node: WorkflowNode): NamedWidget[] 
     }
     if (named.length > 0) return named;
   }
-  return values.map((value, index) => ({ name: `widget ${index}`, value }));
+  return values.map((value, index) => ({ name: t('widget {index}', { index }), value }));
 }
 
 const PROMPT_FIELD_RE = /^(text|prompt|wildcard_text|positive|negative|text_g|text_l)$/i;

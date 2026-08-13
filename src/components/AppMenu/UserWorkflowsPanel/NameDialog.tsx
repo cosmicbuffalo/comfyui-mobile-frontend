@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Dialog } from '@/components/modals/Dialog';
 import { menuInputClassName } from '../menuStyles';
+import { useT } from '@/i18n';
 
 /** Single text-field dialog used for both "New folder" and "Rename". */
 export function NameDialog({
@@ -16,6 +17,7 @@ export function NameDialog({
   onConfirm: (value: string) => void;
   onClose: () => void;
 }) {
+  const t = useT();
   const [value, setValue] = useState(initialValue);
   const trimmed = value.trim();
   const invalid = trimmed.length === 0 || /[/\\]/.test(trimmed);
@@ -34,13 +36,13 @@ export function NameDialog({
             onKeyDown={(e) => {
               if (e.key === 'Enter' && !invalid) onConfirm(trimmed);
             }}
-            placeholder="Name"
+            placeholder={t('Name')}
             className={`w-full rounded-lg border px-3 py-2 text-sm focus:outline-none focus:ring-2 ${menuInputClassName}`}
           />
         </div>
       }
       actions={[
-        { label: 'Cancel', variant: 'secondary', onClick: onClose },
+        { label: t('Cancel'), variant: 'secondary', onClick: onClose },
         {
           label: confirmLabel,
           variant: 'primary',

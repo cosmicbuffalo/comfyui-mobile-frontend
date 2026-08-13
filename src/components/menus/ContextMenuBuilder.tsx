@@ -1,4 +1,5 @@
 import type { MouseEvent, ReactNode } from 'react';
+import { useT } from '@/i18n';
 
 export type ContextMenuColor = 'default' | 'muted' | 'danger' | 'primary';
 
@@ -63,6 +64,7 @@ export function ContextMenuBuilder({
   className,
   itemClassName
 }: ContextMenuBuilderProps) {
+  const t = useT();
   return (
     <div
       className={`bg-slate-900 border border-white/10 text-slate-100 rounded-lg shadow-lg overflow-hidden ${className ?? ''}`.trim()}
@@ -110,7 +112,7 @@ export function ContextMenuBuilder({
                   {item.icon}
                 </span>
               ) : null}
-              <span className="flex-1 truncate text-left">{item.label}</span>
+              <span className="flex-1 truncate text-left">{t(item.label)}</span>
             </span>
             {item.rightSlot ? <span className="shrink-0">{item.rightSlot}</span> : null}
           </button>

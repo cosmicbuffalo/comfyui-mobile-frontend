@@ -31,14 +31,14 @@ describe('FilterSortButton', () => {
   it('is unlit with no filter applied', async () => {
     await render();
     expect(button()?.classList.contains('filter-active')).toBe(false);
-    expect(button()?.getAttribute('aria-label')).toBe('Filter and sort');
+    expect(button()?.getAttribute('aria-label')).toBe('筛选与排序');
   });
 
   it('lights up for favorites-only', async () => {
     useOutputsStore.setState({ filter: { search: '', favoritesMode: 'only', rejectsMode: 'off', type: 'all' } });
     await render();
     expect(button()?.classList.contains('filter-active')).toBe(true);
-    expect(button()?.getAttribute('aria-label')).toBe('Filter and sort (filters applied)');
+    expect(button()?.getAttribute('aria-label')).toBe('筛选与排序（已应用筛选）');
   });
 
   it('lights up for rejects-only', async () => {

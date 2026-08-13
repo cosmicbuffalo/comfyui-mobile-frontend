@@ -51,6 +51,7 @@ import {
 import { fuzzyMatch, normalizeTypes } from "@/utils/workflowSearch";
 import { useErrorBadges } from "./WorkflowPanel/useErrorBadges";
 import { useExecutionFollower } from "./WorkflowPanel/useExecutionFollower";
+import { useT } from "@/i18n";
 
 export const WorkflowPanel = memo(function WorkflowPanel({
   visible,
@@ -63,6 +64,7 @@ export const WorkflowPanel = memo(function WorkflowPanel({
     enableFollowQueue?: boolean,
   ) => void;
 }) {
+  const t = useT();
   const workflow = useWorkflowStore((s) => s.workflow);
   const executingNodePath = useWorkflowStore((s) => s.executingNodePath);
   const connectionHighlightModes = useWorkflowStore(
@@ -1545,6 +1547,7 @@ export const WorkflowPanel = memo(function WorkflowPanel({
         const hasBypassedNodes = item.bypassedNodeCount > 0;
         const hasEngagedNodes = item.bypassedNodeCount < item.nodeCount;
         const foldAllLabel = hasExpandedChildren ? "Fold all" : "Unfold all";
+
         const handleFoldAll = () => {
           if (!hasExpandedChildren) {
             setItemCollapsed(groupHierarchicalKey, false);
@@ -1573,7 +1576,7 @@ export const WorkflowPanel = memo(function WorkflowPanel({
               containerId={group.id}
               selectionKey={groupHierarchicalKey}
               selectionMemberKeys={groupSelectionMemberKeys}
-              title={group.title?.trim() || `Group ${group.id}`}
+              title={group.title?.trim() || t('Group {id}', { id: group.id })}
               nodeCount={item.nodeCount}
               isCollapsed={item.isCollapsed}
               color={resolvedGroupColor}
@@ -1610,7 +1613,7 @@ export const WorkflowPanel = memo(function WorkflowPanel({
                   containerTypeLabel: "group",
                   containerIdLabel: `#${item.group.id}`,
                   displayName:
-                    item.group.title?.trim() || `Group ${item.group.id}`,
+                    item.group.title?.trim() || t('Group {id}', { id: item.group.id }),
                   nodeCount: item.nodeCount,
                 });
               }}
@@ -1661,8 +1664,9 @@ export const WorkflowPanel = memo(function WorkflowPanel({
               >
                 {hiddenNodeCount > 0 && item.nodeCount > 0 && (
                   <div className="px-3 pb-2 -mt-1 text-xs text-slate-400 text-center">
-                    {hiddenNodeCount} hidden node
-                    {hiddenNodeCount === 1 ? "" : "s"}
+                    {hiddenNodeCount === 1
+                      ? t('{count} hidden node', { count: hiddenNodeCount })
+                      : t('{count} hidden nodes', { count: hiddenNodeCount })}
                   </div>
                 )}
                 {hasVisibleChildren ? (
@@ -1778,10 +1782,10 @@ export const WorkflowPanel = memo(function WorkflowPanel({
             <DocumentIcon className="w-10 h-10 text-slate-500" />
           </div>
           <p id="no-workflow-title" className="text-lg font-semibold text-slate-100">
-            No workflow loaded
+            {t('No workflow loaded')}
           </p>
           <p id="no-workflow-description" className="text-sm mt-2 text-slate-400">
-            Open the menu to load a workflow
+            {t('Open the menu to load a workflow')}
           </p>
         </div>
       </div>
@@ -1804,10 +1808,10 @@ export const WorkflowPanel = memo(function WorkflowPanel({
             <EmptyWorkflowIcon className="w-10 h-10 text-slate-500" />
           </div>
           <p id="empty-workflow-title" className="text-lg font-semibold text-slate-100">
-            Empty workflow
+            {t('Empty workflow')}
           </p>
           <p id="empty-workflow-description" className="text-sm mt-2 text-slate-400">
-            This workflow has no nodes
+            {t('This workflow has no nodes')}
           </p>
           <div className="mt-6 w-80 max-w-full mx-auto">
             <AddItemControls
@@ -1832,7 +1836,7 @@ export const WorkflowPanel = memo(function WorkflowPanel({
                 value={searchQuery}
                 onChange={setSearchQuery}
                 onClear={handleClearSearch}
-                placeholder="Search nodes..."
+                placeholder={t('Search nodes...')}
                 inputClassName="comfy-input border-white/10 bg-slate-950/80 text-slate-100 placeholder:text-slate-500 focus:ring-cyan-400"
               />
             </div>
@@ -1850,8 +1854,8 @@ export const WorkflowPanel = memo(function WorkflowPanel({
           {nestedItems.length === 0 ? (
             <div className="flex items-center justify-center h-full text-slate-400">
               <div className="text-center p-6 rounded-xl border border-white/10 bg-slate-900/95">
-                <p className="text-sm font-semibold text-slate-100">No matching nodes</p>
-                <p className="text-xs mt-2">Try a different search.</p>
+                <p className="text-sm font-semibold text-slate-100">{t('No matching nodes')}</p>
+                <p className="text-xs mt-2">{t('Try a different search.')}</p>
               </div>
             </div>
           ) : (
@@ -1949,8 +1953,8 @@ export const WorkflowPanel = memo(function WorkflowPanel({
           className="pointer-events-none absolute inset-0 z-[1400] flex items-center justify-center bg-slate-950/70 backdrop-blur-[1px]"
         >
           <div className="m-4 flex flex-col items-center gap-1 rounded-2xl border-2 border-dashed border-cyan-400/70 px-8 py-6 text-center">
-            <span className="text-sm font-semibold text-cyan-200">Drop to load workflow</span>
-            <span className="text-xs text-slate-400">Workflow .json or an image with an embedded workflow</span>
+            <span className="text-sm font-semibold text-cyan-200">{t('Drop to load workflow')}</span>
+            <span className="text-xs text-slate-400">{t('Workflow .json or an image with an embedded workflow')}</span>
           </div>
         </div>
       )}
@@ -2029,7 +2033,7 @@ export const WorkflowPanel = memo(function WorkflowPanel({
               <button
                 type="button"
                 className="w-10 h-10 rounded-full border border-white/10 bg-slate-900/70 text-slate-300 shadow-sm backdrop-blur-sm flex items-center justify-center select-none"
-                aria-label="Cycle bookmarks"
+                aria-label={t('Cycle bookmarks')}
                 onClick={handleBookmarkCycleClick}
               >
                 <CaretDownIcon className="w-4 h-4" />

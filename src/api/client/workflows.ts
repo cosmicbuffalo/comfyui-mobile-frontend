@@ -1,4 +1,5 @@
 import type { Workflow } from '../types';
+import { t } from '@/i18n';
 
 const RECENT_WORKFLOWS_PATH = 'mobile/recent_workflows.json';
 const WORKFLOW_HIDDEN_PATH = 'mobile/workflow_hidden.json';
@@ -17,7 +18,7 @@ export async function listUserWorkflows(): Promise<UserDataFile[]> {
   if (!response.ok) {
     // Folder may not exist yet
     if (response.status === 404) return [];
-    throw new Error('Failed to list user workflows');
+    throw new Error(t('Failed to list user workflows'));
   }
   const data = await response.json();
   // Keep directories and JSON files
@@ -35,7 +36,7 @@ export async function loadUserWorkflow(filename: string): Promise<Workflow> {
   const response = await fetch(`/api/userdata/${encodeUserDataPath('workflows/' + filename)}`, {
     cache: 'no-store',
   });
-  if (!response.ok) throw new Error('Failed to load workflow');
+  if (!response.ok) throw new Error(t('Failed to load workflow'));
   return response.json();
 }
 
@@ -45,14 +46,14 @@ export async function saveUserWorkflow(filename: string, workflow: Workflow): Pr
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(workflow)
   });
-  if (!response.ok) throw new Error('Failed to save workflow');
+  if (!response.ok) throw new Error(t('Failed to save workflow'));
 }
 
 export async function deleteUserWorkflow(filename: string): Promise<void> {
   const response = await fetch(`/api/userdata/${encodeUserDataPath('workflows/' + filename)}`, {
     method: 'DELETE'
   });
-  if (!response.ok) throw new Error('Failed to delete workflow');
+  if (!response.ok) throw new Error(t('Failed to delete workflow'));
 }
 
 // Rename/move a workflow file OR folder. Paths are relative to the workflows
@@ -64,8 +65,8 @@ export async function renameUserWorkflowEntry(fromPath: string, toPath: string):
   const response = await fetch(`/api/userdata/${src}/move/${dest}?overwrite=false`, {
     method: 'POST',
   });
-  if (response.status === 409) throw new Error('A file or folder with that name already exists');
-  if (!response.ok) throw new Error('Failed to rename');
+  if (response.status === 409) throw new Error(t('A file or folder with that name already exists'));
+  if (!response.ok) throw new Error(t('Failed to rename'));
 }
 
 // Create an empty folder under the workflows dir (path relative to workflows).
@@ -78,7 +79,7 @@ export async function createUserWorkflowFolder(path: string): Promise<void> {
   });
   if (!response.ok) {
     const err = await response.json().catch(() => ({}));
-    throw new Error(err.error || 'Failed to create folder');
+    throw new Error(err.error || t('Failed to create folder'));
   }
 }
 
@@ -90,7 +91,7 @@ export async function deleteUserWorkflowFolder(path: string): Promise<void> {
   });
   if (!response.ok) {
     const err = await response.json().catch(() => ({}));
-    throw new Error(err.error || 'Failed to delete folder');
+    throw new Error(err.error || t('Failed to delete folder'));
   }
 }
 
@@ -101,7 +102,7 @@ export interface WorkflowTemplates {
 
 export async function getWorkflowTemplates(): Promise<WorkflowTemplates> {
   const response = await fetch(`/api/workflow_templates`);
-  if (!response.ok) throw new Error('Failed to fetch templates');
+  if (!response.ok) throw new Error(t('Failed to fetch templates'));
   return response.json();
 }
 
@@ -111,7 +112,7 @@ export async function loadTemplateWorkflow(moduleName: string, templateName: str
   const response = await fetch(
     `/api/workflow_templates/${encodeURIComponent(moduleName)}/${encodeURIComponent(fileName)}`
   );
-  if (!response.ok) throw new Error('Failed to load template');
+  if (!response.ok) throw new Error(t('Failed to load template'));
   return response.json();
 }
 
@@ -123,7 +124,7 @@ export async function loadWorkflowHiddenFromServer(): Promise<string[] | null | 
       { cache: 'no-store' },
     );
     if (response.status === 404) return null;
-    if (!response.ok) throw new Error('Failed to load hidden workflows');
+    if (!response.ok) throw new Error(t('Failed to load hidden workflows'));
     const data = await response.json();
     return Array.isArray(data)
       ? data.filter((path): path is string => typeof path === 'string' && path.length > 0)
@@ -142,7 +143,7 @@ export async function saveWorkflowHiddenToServer(hidden: string[]): Promise<void
       body: JSON.stringify(hidden),
     },
   );
-  if (!response.ok) throw new Error('Failed to save hidden workflows');
+  if (!response.ok) throw new Error(t('Failed to save hidden workflows'));
 }
 
 // Same shape as the hidden API above — server-synced bookmarked workflows
@@ -154,7 +155,7 @@ export async function loadWorkflowFavoritesFromServer(): Promise<string[] | null
       { cache: 'no-store' },
     );
     if (response.status === 404) return null;
-    if (!response.ok) throw new Error('Failed to load favorite workflows');
+    if (!response.ok) throw new Error(t('Failed to load favorite workflows'));
     const data = await response.json();
     return Array.isArray(data)
       ? data.filter((path): path is string => typeof path === 'string' && path.length > 0)
@@ -173,7 +174,7 @@ export async function saveWorkflowFavoritesToServer(favorites: string[]): Promis
       body: JSON.stringify(favorites),
     },
   );
-  if (!response.ok) throw new Error('Failed to save favorite workflows');
+  if (!response.ok) throw new Error(t('Failed to save favorite workflows'));
 }
 
 export async function loadRecentWorkflowsFromServer(): Promise<unknown[]> {

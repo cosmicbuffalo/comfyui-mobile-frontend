@@ -5,16 +5,7 @@ import {
   type PushPreferences,
 } from '@/api/client';
 import { menuMutedTextClassName, menuSurfaceClassName, menuTextClassName } from './menuStyles';
-
-const ROWS: { key: keyof PushPreferences; label: string; hint?: string }[] = [
-  { key: 'notifyOnComplete', label: 'Notify when a generation finishes' },
-  { key: 'notifyOnError', label: 'Notify when a generation errors' },
-  {
-    key: 'includeThumbnail',
-    label: 'Include a preview image',
-    hint: 'Shows the output thumbnail in the notification.',
-  },
-];
+import { useT } from '@/i18n';
 
 function Toggle({ on, disabled, onChange }: { on: boolean; disabled: boolean; onChange: () => void }) {
   return (
@@ -40,8 +31,19 @@ function Toggle({ on, disabled, onChange }: { on: boolean; disabled: boolean; on
 // Server-side notification preferences. Apply to whichever delivery is active
 // (web push or the native app), so they're shown in both modes.
 export function NotificationPreferences() {
+  const t = useT();
   const [prefs, setPrefs] = useState<PushPreferences | null>(null);
   const [saving, setSaving] = useState(false);
+
+  const ROWS: { key: keyof PushPreferences; label: string; hint?: string }[] = [
+    { key: 'notifyOnComplete', label: t('Notify when a generation finishes') },
+    { key: 'notifyOnError', label: t('Notify when a generation errors') },
+    {
+      key: 'includeThumbnail',
+      label: t('Include a preview image'),
+      hint: t('Shows the output thumbnail in the notification.'),
+    },
+  ];
 
   useEffect(() => {
     let cancelled = false;

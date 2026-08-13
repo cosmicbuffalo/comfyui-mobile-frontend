@@ -28,10 +28,10 @@ describe('TopBarPanelNavigation', () => {
     });
 
     const outputsButton = container.querySelector<HTMLButtonElement>(
-      'button[aria-label="Go to Outputs"]',
+      'button[aria-label="转到输出"]',
     );
     const workflowButton = container.querySelector<HTMLButtonElement>(
-      'button[aria-label="Go to Workflow"]',
+      'button[aria-label="转到工作流"]',
     );
 
     expect(outputsButton?.querySelectorAll('svg')).toHaveLength(2);

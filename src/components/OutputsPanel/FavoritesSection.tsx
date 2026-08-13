@@ -1,4 +1,5 @@
 import type { StatusFilterMode } from '@/hooks/useOutputs';
+import { useT } from '@/i18n';
 
 interface FavoritesSectionProps {
   favoritesMode: StatusFilterMode;
@@ -34,14 +35,15 @@ function FilterToggle({
   onCycle: () => void;
   tone: 'cyan' | 'rose';
 }) {
+  const t = useT();
   // The label states what the listing is doing right now, since a tri-state
   // button can't say it through pressed-ness alone. Struck-through styling
   // reinforces the excluded reading for anyone who skims rather than reads.
   const label = mode === 'only'
-    ? `${noun} only`
+    ? t(`${noun} only`)
     : mode === 'exclude'
-      ? `No ${noun.toLowerCase()}`
-      : noun;
+      ? t(`No ${noun.toLowerCase()}`)
+      : t(noun);
 
   return (
     <button

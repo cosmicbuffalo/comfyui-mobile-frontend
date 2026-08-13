@@ -17,3 +17,9 @@ if (typeof globalThis.localStorage === 'undefined' || typeof globalThis.localSto
 // React 19 act() environment hint for non-testing-library render tests.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+
+// The i18n store now picks its initial language from navigator.language, which
+// jsdom reports as "en-US". The component test suite asserts the Chinese UI
+// (the default for zh browsers), so pin the store to Chinese up front.
+import { useI18nStore } from '@/i18n';
+useI18nStore.setState({ language: 'zh' });

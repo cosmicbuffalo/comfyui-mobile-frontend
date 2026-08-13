@@ -1,4 +1,5 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useT } from '@/i18n';
 import type { HistoryOutputImage, WorkflowInput, WorkflowNode } from '@/api/types';
 import { useWildcards } from '@/hooks/useWildcards';
 import {
@@ -84,6 +85,7 @@ export const NodeCard = memo(function NodeCard({
   onMoveNode,
   onEnterSubgraph,
 }: NodeCardProps) {
+  const t = useT();
   const nodeTypes = useWorkflowStore((s) => s.nodeTypes);
   const workflow = useWorkflowStore((s) => s.workflow);
   const updateNodeWidget = useWorkflowStore((s) => s.updateNodeWidget);
@@ -1053,7 +1055,7 @@ export const NodeCard = memo(function NodeCard({
         rightSlot={selectionMode ? (
           <SelectionCheckbox
             selected={isNodeSelected}
-            ariaLabel={isNodeSelected ? 'Deselect' : 'Select'}
+            ariaLabel={isNodeSelected ? t('Deselect') : t('Select')}
             onClick={(event) => {
               event.stopPropagation();
               toggleSelectionKey(nodeHierarchicalKey);
@@ -1202,7 +1204,7 @@ export const NodeCard = memo(function NodeCard({
                   );
                 }}
               >
-                Show video preview
+                {t('Show video preview')}
               </button>
             )}
 

@@ -402,13 +402,13 @@ describe('QueueCard video replay overlay', () => {
     const video = container.querySelector('video');
     expect(video).not.toBeNull();
     expect(HTMLMediaElement.prototype.play).toHaveBeenCalledTimes(1);
-    expect(container.querySelector('[aria-label="Replay video"]')).toBeNull();
+    expect(container.querySelector('[aria-label="重新播放视频"]')).toBeNull();
 
     await act(async () => {
       video?.dispatchEvent(new Event('ended', { bubbles: false }));
     });
 
-    expect(container.querySelector('[aria-label="Replay video"]')).not.toBeNull();
+    expect(container.querySelector('[aria-label="重新播放视频"]')).not.toBeNull();
   });
 
   it('starts an arriving video while it is staged behind the live preview', async () => {
@@ -505,7 +505,7 @@ describe('QueueCard video replay overlay', () => {
     await act(async () => {
       endedVideo?.dispatchEvent(new Event('ended', { bubbles: false }));
     });
-    expect(container.querySelector('[aria-label="Replay video"]')).not.toBeNull();
+    expect(container.querySelector('[aria-label="重新播放视频"]')).not.toBeNull();
 
     // Switch to the image tab and settle that swap: resolve the image's
     // preload so it stages on the back slot, then load + promote it.
@@ -554,7 +554,7 @@ describe('QueueCard video replay overlay', () => {
     ).toBe(revisitedVideo);
     // No replay: the guard held, and the overlay is reachable again.
     expect(HTMLMediaElement.prototype.play).toHaveBeenCalledTimes(1);
-    expect(container.querySelector('[aria-label="Replay video"]')).not.toBeNull();
+    expect(container.querySelector('[aria-label="重新播放视频"]')).not.toBeNull();
   });
 
   it('settles the swap and un-guards the source when autoplay is rejected', async () => {
@@ -790,7 +790,7 @@ describe('QueueCard video replay overlay', () => {
       root.render(<CoordinatedVideoCards enabled={false} firstItem={item} />);
     });
     expect(container.querySelectorAll('video')).toHaveLength(0);
-    expect(container.querySelectorAll('img[alt="Generation video poster"]')).toHaveLength(2);
+    expect(container.querySelectorAll('img[alt="生成视频封面"]')).toHaveLength(2);
     expect(selectedVideo?.hasAttribute('src')).toBe(false);
     expect(HTMLMediaElement.prototype.pause).toHaveBeenCalled();
     expect(HTMLMediaElement.prototype.load).toHaveBeenCalled();

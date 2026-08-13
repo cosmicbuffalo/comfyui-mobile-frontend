@@ -72,7 +72,7 @@ describe('resolveInputPathForFile', () => {
     vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch);
 
     await expect(resolveInputPathForFile(makeFile(), 'output')).rejects.toThrow(
-      'Failed to copy file to inputs',
+      '无法将文件复制到输入文件夹',
     );
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });

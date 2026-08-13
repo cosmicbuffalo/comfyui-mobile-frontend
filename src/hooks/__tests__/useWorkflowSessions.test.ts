@@ -419,7 +419,7 @@ describe('multi-workflow sessions', () => {
     expect(promptCalls).toHaveLength(1);
     expect(useWorkflowStore.getState().infiniteLoopSessionId).toBeNull();
     expect(useWorkflowStore.getState().infiniteLoop).toBe(false);
-    expect(useWorkflowErrorsStore.getState().error).toMatch(/identical prompt/i);
+    expect(useWorkflowErrorsStore.getState().error).toMatch(/重复提交相同的提示/);
   });
 
   it('switching tabs mid-enqueue does not overwrite the newly active tab', async () => {

@@ -1,5 +1,6 @@
 import { createPortal } from 'react-dom';
 import { Dialog } from './Dialog';
+import { useT } from '@/i18n';
 
 interface DeleteContainerModalProps {
   containerTypeLabel: 'group' | 'subgraph';
@@ -20,32 +21,33 @@ export function DeleteContainerModal({
   onDeleteContainerOnly,
   onDeleteContainerAndNodes
 }: DeleteContainerModalProps) {
-  const typeText = containerTypeLabel;
+  const t = useT();
+  const typeText = containerTypeLabel === 'group' ? t('group') : t('subgraph');
   return createPortal(
     <Dialog
       onClose={onCancel}
-      title={`Delete ${typeText}`}
+      title={t('Delete {type}', { type: typeText })}
       description={
         <>
-          <span className="font-medium text-slate-100">{displayName}</span> ({containerIdLabel}) has {nodeCount} node{nodeCount === 1 ? '' : 's'}.
+          <span className="font-medium text-slate-100">{displayName}</span> ({containerIdLabel}) {t('has')} {nodeCount} {t(nodeCount === 1 ? 'node' : 'nodes')}.
         </>
       }
       actionsLayout="stack"
       actions={[
         {
-          label: `Delete ${typeText} only`,
+          label: t('Delete {type} only', { type: typeText }),
           onClick: onDeleteContainerOnly,
           variant: 'danger',
           className: 'w-full bg-red-500/15 text-red-300 hover:bg-red-500/20'
         },
         {
-          label: `Delete ${typeText} and nodes`,
+          label: t('Delete {type} and nodes', { type: typeText }),
           onClick: onDeleteContainerAndNodes,
           variant: 'danger',
           className: 'w-full'
         },
         {
-          label: 'Cancel',
+          label: t('Cancel'),
           onClick: onCancel,
           variant: 'secondary',
           className: 'w-full'

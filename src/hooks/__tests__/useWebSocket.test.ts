@@ -182,7 +182,7 @@ describe('backend reconnect notices', () => {
     await disconnectThenReconnect(BACKEND_LOST_NOTICE_MIN_DOWNTIME_MS + 1000);
 
     expect(useWorkflowErrorsStore.getState().error).toBe(
-      'Backend connection restored after 6s. ComfyUI may have restarted; running jobs may have been interrupted.',
+      '后端连接已在 6s 后恢复。ComfyUI 可能已重启，正在运行的任务可能已被中断。',
     );
     // Stale execution state is still cleared regardless of whether we notify.
     expect(useWorkflowStore.getState()).toMatchObject({
@@ -381,7 +381,7 @@ describe('backend reconnect notices', () => {
 
   it('formats longer reconnect durations', () => {
     expect(getBackendReconnectMessage(65_000)).toBe(
-      'Backend connection restored after 1m 5s. ComfyUI may have restarted; running jobs may have been interrupted.',
+      '后端连接已在 1m 5s 后恢复。ComfyUI 可能已重启，正在运行的任务可能已被中断。',
     );
   });
 });

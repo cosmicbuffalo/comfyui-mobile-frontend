@@ -22,6 +22,7 @@ import { useHistoryBackClose } from './hooks/useHistoryBackClose';
 import { useWorkflowErrorsStore } from './hooks/useWorkflowErrors';
 import { useTextareaFocus } from './hooks/useTextareaFocus';
 import { useBookmarksStore } from './hooks/useBookmarks';
+import { t, useI18nStore } from './i18n';
 import * as api from './api/client';
 import { getCachedNodeTypes, setCachedNodeTypes } from './utils/nodeTypesCache';
 import { buildOutputPreferredViewerImages, type ViewerImage } from './utils/viewerImages';
@@ -64,6 +65,11 @@ function App() {
   const bookmarkRepositioningActive = useBookmarksStore(
     (s) => s.bookmarkRepositioningActive,
   );
+  // Keep the <html lang> attribute in sync with the UI language.
+  const i18nLanguage = useI18nStore((s) => s.language);
+  useEffect(() => {
+    document.documentElement.lang = i18nLanguage === 'zh' ? 'zh-CN' : 'en';
+  }, [i18nLanguage]);
   const mainRef = useRef<HTMLDivElement>(null);
   const { isInputFocused } = useTextareaFocus();
   const outputsViewerOpen = useOutputsStore((s) => s.outputsViewerOpen);
@@ -173,7 +179,7 @@ function App() {
           useWorkflowErrorsStore
             .getState()
             .setError(
-              'Failed to load node definitions from the server. Widgets may be missing or wrong — check the connection and reload the page.',
+              t('Failed to load node definitions from the server. Widgets may be missing or wrong — check the connection and reload the page.'),
             );
         }
       });
@@ -237,7 +243,7 @@ function App() {
     // with a stale closed-over snapshot.
     const allImages = buildOutputPreferredViewerImages(
       useHistoryStore.getState().history,
-      { alt: 'Generation' },
+      { alt: t('Generation') },
     );
 
     // Disable swipe navigation before opening viewer

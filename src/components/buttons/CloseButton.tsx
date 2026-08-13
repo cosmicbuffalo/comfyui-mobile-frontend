@@ -1,4 +1,5 @@
 import { XMarkIcon } from "@/components/icons";
+import { useT } from '@/i18n';
 
 interface CloseButtonProps {
   onClick: () => void;
@@ -13,7 +14,7 @@ interface CloseButtonProps {
 
 export function CloseButton({
   onClick,
-  ariaLabel = "Close",
+  ariaLabel,
   variant = "default",
   buttonSize = 10,
   iconSize = 6,
@@ -21,6 +22,7 @@ export function CloseButton({
   zIndex,
   disabled = false,
 }: CloseButtonProps) {
+  const t = useT();
   // MediaViewer passes isIdle/zIndex and always uses the floating overlay close treatment.
   const isViewerVariant = typeof isIdle === "boolean" || typeof zIndex === "number";
   const resolvedVariant = isViewerVariant ? "viewer" : variant;
@@ -41,7 +43,7 @@ export function CloseButton({
             : `w-${buttonSize} h-${buttonSize} bg-slate-950/80 border border-white/10 text-slate-400 hover:text-slate-100 hover:bg-white/10`
       }`.trim()}
       style={isViewerVariant && typeof zIndex === "number" ? { zIndex } : undefined}
-      aria-label={ariaLabel}
+      aria-label={ariaLabel ?? t('Close')}
     >
       <XMarkIcon className={`w-${iconSize} h-${iconSize}`} />
     </button>

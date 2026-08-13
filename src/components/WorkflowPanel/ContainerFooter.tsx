@@ -1,5 +1,6 @@
 import { themeColors } from "@/theme/colors";
 import { hexToRgba } from "@/utils/grouping";
+import { useT } from '@/i18n';
 
 interface ContainerFooterProps {
   id: string;
@@ -22,6 +23,7 @@ export function ContainerFooter({
   className = '',
   allBypassed = false,
 }: ContainerFooterProps) {
+  const t = useT();
   const handleClick = () => {
     const header = document.getElementById(headerId);
     header?.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -44,7 +46,9 @@ export function ContainerFooter({
         </span>
         {typeof nodeCount === 'number' && (
           <span className={`text-xs select-none ${textClassName}`}>
-            {nodeCount} node{nodeCount !== 1 ? 's' : ''}
+            {nodeCount === 1
+              ? t('{count} node', { count: nodeCount })
+              : t('{count} nodes', { count: nodeCount })}
           </span>
         )}
       </div>

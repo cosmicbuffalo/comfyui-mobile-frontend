@@ -23,6 +23,7 @@ import { resolveQueueExecutionContext } from './QueuePanel/executionContext';
 import { CloseIcon } from './icons';
 import * as api from '@/api/client';
 import { buildReenqueueRequest } from './QueuePanel/queueReenqueue';
+import { useT } from '@/i18n';
 
 interface QueuePanelProps {
   visible: boolean;
@@ -63,6 +64,7 @@ function promptIdFromNotificationUrl(value: unknown): string | null {
 }
 
 export const QueuePanel = memo(function QueuePanel({ visible, onImageClick }: QueuePanelProps) {
+  const t = useT();
   const running = useQueueStore((s) => s.running);
   const pending = useQueueStore((s) => s.pending);
   const queueOutputLayout = useQueueStore((s) => s.queueOutputLayout);
@@ -360,7 +362,7 @@ export const QueuePanel = memo(function QueuePanel({ visible, onImageClick }: Qu
     if (!workflow) return;
     const text = JSON.stringify(workflow, null, 2);
     const copied = await copyTextToClipboard(text);
-    setToastMessage(copied ? 'Copied to clipboard' : 'Failed to copy');
+    setToastMessage(copied ? t('Copied to clipboard') : t('Failed to copy'));
     setTimeout(() => setToastMessage(null), 2000);
   };
 
@@ -448,10 +450,10 @@ export const QueuePanel = memo(function QueuePanel({ visible, onImageClick }: Qu
         ? previewVisibility[item.prompt_id] ?? previewVisibilityDefault
         : previewVisibilityDefault;
       return previewsVisible
-        ? buildViewerImages([item], { alt: 'Generation' })
-        : buildOutputPreferredViewerImages([item], { alt: 'Generation' });
+        ? buildViewerImages([item], { alt: t('Generation') })
+        : buildOutputPreferredViewerImages([item], { alt: t('Generation') });
     });
-  }, [unifiedList, previewVisibility, previewVisibilityDefault]);
+  }, [unifiedList, previewVisibility, previewVisibilityDefault, t]);
 
   const firstDoneItemId = useMemo(() => {
     const firstDone = unifiedList.find((item) => item.status === 'done');
@@ -701,7 +703,7 @@ export const QueuePanel = memo(function QueuePanel({ visible, onImageClick }: Qu
     try {
       const response = await api.queuePrompt(request);
       const newPromptId = response.prompt_id;
-      if (!newPromptId) throw new Error('Backend did not return a prompt id');
+      if (!newPromptId) throw new Error(t('Backend did not return a prompt id'));
 
       const workflowState = useWorkflowStore.getState();
       const sessionId = workflowState.promptToSession[promptId] ?? null;
@@ -734,10 +736,10 @@ export const QueuePanel = memo(function QueuePanel({ visible, onImageClick }: Qu
         });
       }
       await fetchQueue();
-      setToastMessage('Re-enqueued stopped prompt');
+      setToastMessage(t('Re-enqueued stopped prompt'));
       setTimeout(() => setToastMessage(null), 2000);
     } catch (err) {
-      setToastMessage(err instanceof Error ? err.message : 'Failed to re-enqueue prompt');
+      setToastMessage(err instanceof Error ? err.message : t('Failed to re-enqueue prompt'));
       setTimeout(() => setToastMessage(null), 2500);
     }
   };
@@ -759,10 +761,14 @@ export const QueuePanel = memo(function QueuePanel({ visible, onImageClick }: Qu
           }));
         },
       });
-      setToastMessage(`Restored ${recoverableJobIds.length} lost queued job${recoverableJobIds.length === 1 ? '' : 's'}`);
+      setToastMessage(
+        recoverableJobIds.length === 1
+          ? t('Restored 1 lost queued job')
+          : t('Restored {count} lost queued jobs', { count: recoverableJobIds.length }),
+      );
       setTimeout(() => setToastMessage(null), 2000);
     } catch (err) {
-      setToastMessage(err instanceof Error ? err.message : 'Failed to restore lost queued jobs');
+      setToastMessage(err instanceof Error ? err.message : t('Failed to restore lost queued jobs'));
       setTimeout(() => setToastMessage(null), 2500);
     }
   };
@@ -782,20 +788,22 @@ export const QueuePanel = memo(function QueuePanel({ visible, onImageClick }: Qu
           {recoverableJobIds.length > 0 && (
             <div className={`mx-auto w-full ${wideStackedLayout ? 'max-w-full' : 'max-w-3xl'}`}>
               <div className="relative mx-4 mt-4 rounded-lg border border-cyan-400/30 bg-cyan-950/55 px-3 py-3 text-sm text-slate-100">
-                <div className="pr-8 font-semibold text-cyan-200">Lost queued jobs found</div>
+                <div className="pr-8 font-semibold text-cyan-200">{t('Lost queued jobs found')}</div>
                 {/* Dismissal discards the shadow records for these jobs (not just
                     this render's banner), so it can't come back for the same lost
                     jobs on the next reload. */}
                 <button
                   type="button"
-                  aria-label="Dismiss lost jobs banner"
+                  aria-label={t('Dismiss lost jobs banner')}
                   className="absolute right-2 top-2 flex h-8 w-8 items-center justify-center rounded-lg text-slate-300 transition-colors hover:bg-white/10 hover:text-slate-100"
                   onClick={discardRecoverableJobs}
                 >
                   <CloseIcon className="h-4 w-4" />
                 </button>
                 <div className="mt-1 text-xs text-slate-300">
-                  {recoverableJobIds.length} queued job{recoverableJobIds.length === 1 ? '' : 's'} disappeared from the backend queue after a restart.
+                  {recoverableJobIds.length === 1
+                    ? t('1 queued job disappeared from the backend queue after a restart.')
+                    : t('{count} queued jobs disappeared from the backend queue after a restart.', { count: recoverableJobIds.length })}
                 </div>
                 <button
                   type="button"
@@ -803,7 +811,7 @@ export const QueuePanel = memo(function QueuePanel({ visible, onImageClick }: Qu
                   onClick={handleRestoreLostJobs}
                   disabled={isRestoringLostJobs}
                 >
-                  {isRestoringLostJobs ? 'Restoring...' : 'Restore lost jobs'}
+                  {isRestoringLostJobs ? t('Restoring...') : t('Restore lost jobs')}
                 </button>
               </div>
             </div>

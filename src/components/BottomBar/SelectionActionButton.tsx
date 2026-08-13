@@ -1,8 +1,10 @@
 import { CheckIcon } from '@/components/icons';
 import { useOutputsStore } from '@/hooks/useOutputs';
 import { appChromeIconButtonClassName, chromeBarButtonClassName } from '@/components/chromeStyles';
+import { useT } from '@/i18n';
 
 export function SelectionActionButton() {
+  const t = useT();
   const selectedCount = useOutputsStore((s) => s.selectedIds.length);
   const setSelectionActionOpen = useOutputsStore((s) => s.setSelectionActionOpen);
   const toggleSelectionMode = useOutputsStore((s) => s.toggleSelectionMode);
@@ -20,7 +22,7 @@ export function SelectionActionButton() {
     <button
       onClick={handleClick}
       className={`${chromeBarButtonClassName} ${appChromeIconButtonClassName}`}
-      aria-label={hasSelection ? 'Selection actions' : 'Cancel selection mode'}
+      aria-label={hasSelection ? t('Selection actions') : t('Cancel selection mode')}
     >
       <div
         className={`w-6 h-6 rounded-full border-2 flex items-center justify-center shadow-sm ${

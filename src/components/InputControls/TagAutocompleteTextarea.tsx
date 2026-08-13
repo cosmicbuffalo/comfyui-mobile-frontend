@@ -9,6 +9,7 @@ import {
   type Suggestion,
 } from '@/utils/autocompleteSearch';
 import { ExternalLinkIcon, XMarkIcon } from '@/components/icons';
+import { useT } from '@/i18n';
 import {
   selectAutocompleteActive,
   useAutocompleteStore,
@@ -71,6 +72,7 @@ export function TagAutocompleteTextarea({
   style,
   autoFocus,
 }: TagAutocompleteTextareaProps) {
+  const t = useT();
   const active = useAutocompleteStore(selectAutocompleteActive);
   const dataStatus = useAutocompleteStore((s) => s.dataStatus);
   const getSuggestions = useAutocompleteStore((s) => s.getSuggestions);
@@ -309,7 +311,7 @@ export function TagAutocompleteTextarea({
           >
             <button
               type="button"
-              aria-label="Dismiss autocomplete"
+              aria-label={t("Dismiss autocomplete")}
               className="absolute -right-3 -top-3 z-10 flex h-7 w-7 items-center justify-center rounded-full border border-white/15 bg-slate-800 text-slate-300 shadow-md hover:bg-slate-700 hover:text-white"
               onMouseDown={(e) => {
                 // Keep the textarea focused; the tap should only close the list.
@@ -326,7 +328,7 @@ export function TagAutocompleteTextarea({
             <ul className="max-h-[inherit] overflow-auto py-1" role="listbox">
             {!open && loadingVisible ? (
               <li className="autocomplete-loading px-3 py-2 text-sm text-slate-400">
-                Loading tag suggestions…
+                {t("Loading tag suggestions…")}
               </li>
             ) : (
               suggestions.map((suggestion, index) => {
@@ -387,7 +389,7 @@ export function TagAutocompleteTextarea({
                         href={wikiUrl}
                         target="_blank"
                         rel="noreferrer"
-                        aria-label={`Open the Danbooru wiki page for ${suggestion.label}`}
+                        aria-label={t("Open the Danbooru wiki page for {label}", { label: suggestion.label })}
                         // Don't let opening the wiki also accept the suggestion;
                         // keep focus on the textarea (preventDefault on mousedown
                         // doesn't block the anchor's click navigation).

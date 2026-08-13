@@ -86,6 +86,6 @@ describe('queue bootstrap requests', () => {
     vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, status: 500 } as Response)));
 
     await expect(deleteHistoryItems(['prompt-with-deleted-video']))
-      .rejects.toThrow('Failed to delete history items');
+      .rejects.toThrow('无法删除历史记录');
   });
 });

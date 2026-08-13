@@ -1,0 +1,16 @@
+{
+  "Prompt search failed": "提示词搜索失败",
+  "Could not hide every item: {message}": "无法隐藏所有文件：{message}",
+  "Could not unhide every item: {message}": "无法取消隐藏所有文件：{message}",
+  "Backend connection restored after {duration}. ComfyUI may have restarted; running jobs may have been interrupted.": "后端连接已在 {duration} 后恢复。ComfyUI 可能已重启，正在运行的任务可能已被中断。",
+  "Execution failed": "执行失败",
+  "{message} for node {nodeId}": "{message}（节点 {nodeId}）",
+  "Failed to restore lost queued jobs.": "无法恢复丢失的排队任务。",
+  "Execution did not complete (interrupted). Some outputs may be missing.": "执行未完成（已中断），部分输出可能缺失。",
+  "Execution did not complete ({status}). Some outputs may be missing.": "执行未完成（{status}），部分输出可能缺失。",
+  "Execution did not complete. Some outputs may be missing.": "执行未完成，部分输出可能缺失。",
+  "{node}: execution error": "{node}：执行错误",
+  "Failed to cancel pending generations": "无法取消排队中的生成",
+  "Failed to cancel the queued generation": "无法取消已排队的生成",
+  "Failed to interrupt the running generation": "无法中断正在运行的生成"
+}

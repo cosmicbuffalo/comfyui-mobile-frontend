@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { useT } from '@/i18n';
 import {
   getImagePreviewUrl,
   getImageUrl,
@@ -79,6 +80,7 @@ function WorkflowVideoPreview({
   playbackRate?: number;
   onEnded?: () => void;
 }) {
+  const t = useT();
   const videoRef = useRef<HTMLVideoElement>(null);
   const [playbackError, setPlaybackError] = useState(false);
   const viewerOpen = useImageViewerStore((state) => state.viewerOpen);
@@ -176,7 +178,7 @@ function WorkflowVideoPreview({
       />
       {playbackError && (
         <div className="pointer-events-none absolute inset-0 flex items-center justify-center rounded-lg bg-black/65 px-4 text-center text-sm text-white">
-          Unable to play this video.
+          {t('Unable to play this video.')}
         </div>
       )}
     </div>
@@ -192,6 +194,7 @@ function FrontendMediaPlaylist({
   displayName: string;
   onStateChange?: NodeCardOutputPreviewProps['onFrontendPreviewStateChange'];
 }) {
+  const t = useT();
   const items = preview.playlist?.length ? preview.playlist : [preview];
   const requestedIndex = preview.activeIndex ?? 0;
   const initialIndex = Math.max(0, Math.min(items.length - 1, requestedIndex));
@@ -245,7 +248,7 @@ function FrontendMediaPlaylist({
           key={selected.src}
           src={selected.src}
           poster={selected.poster ?? ''}
-          label={`${displayName} video preview`}
+          label={t('{name} video preview', { name: displayName })}
           autoPlay={autoPlaySelection || selected.autoPlay}
           loop={playMode === 'loop' || (playMode === 'cycle' && items.length === 1)
             || (playMode == null && selected.loop)}
@@ -255,7 +258,7 @@ function FrontendMediaPlaylist({
       ) : (
         <img
           src={selected.src}
-          alt={`${displayName} preview`}
+          alt={t('{name} preview', { name: displayName })}
           className="w-full h-auto rounded-lg border border-white/10"
           loading="lazy"
         />
@@ -265,19 +268,19 @@ function FrontendMediaPlaylist({
           type="button"
           className="mt-2 rounded border border-white/15 px-2 py-1 text-xs text-slate-300"
           onClick={rotatePlayMode}
-          aria-label={`Playback mode: ${playMode}`}
+          aria-label={t('Playback mode: {mode}', { mode: playMode })}
         >
-          {playMode === 'off' ? 'Play once' : playMode === 'loop' ? 'Loop clip' : 'Cycle scenes'}
+          {playMode === 'off' ? t('Play once') : playMode === 'loop' ? t('Loop clip') : t('Cycle scenes')}
         </button>
       )}
       {items.length > 1 && (
-        <div className="mt-2 flex gap-1.5 overflow-x-auto pb-1" aria-label={`${displayName} preview history`}>
+        <div className="mt-2 flex gap-1.5 overflow-x-auto pb-1" aria-label={t('{name} preview history', { name: displayName })}>
           {items.map((item, index) => (
             <button
               key={`${item.src}:${index}`}
               type="button"
               className={`relative h-12 w-16 shrink-0 overflow-hidden rounded border ${index === selectedIndex ? 'border-emerald-300' : 'border-white/15'}`}
-              aria-label={`Show preview ${index + 1}`}
+              aria-label={t('Show preview {index}', { index: index + 1 })}
               aria-pressed={index === selectedIndex}
               onClick={() => select(index)}
             >
@@ -312,6 +315,7 @@ export function NodeCardOutputPreview({
   videoPlaybackRate = 1,
   onFrontendPreviewStateChange,
 }: NodeCardOutputPreviewProps) {
+  const t = useT();
   // Subscribe so the preview refreshes immediately when the WebP preference is
   // toggled (must run before the early return to satisfy the rules of hooks).
   useGenerationSettingsStore((s) => s.webpPreviewEnabled);
@@ -344,7 +348,7 @@ export function NodeCardOutputPreview({
   return (
     <div className="output-preview mb-3">
       <div className="text-xs text-slate-500 mb-1.5 uppercase tracking-wide">
-        Output Preview
+        {t('Output Preview')}
       </div>
       {isTiled ? (
         <div className="output-batch-grid grid grid-cols-2 gap-2">
@@ -354,7 +358,7 @@ export function NodeCardOutputPreview({
                 key={media.displaySrc}
                 src={media.displaySrc}
                 poster={media.poster ?? ''}
-                label={`${media.alt} output ${i + 1}`}
+                label={t('{name} output {index}', { name: media.alt, index: i + 1 })}
                 autoPlay={false}
               />
             ) : (
@@ -374,7 +378,7 @@ export function NodeCardOutputPreview({
           key={videoSrc}
           src={videoSrc}
           poster={videoPoster}
-          label={`${displayName} video output`}
+          label={t('{name} video output', { name: displayName })}
           autoPlay={videoAutoPlay}
           loop={videoLoop}
           playbackRate={videoPlaybackRate}
@@ -389,7 +393,7 @@ export function NodeCardOutputPreview({
       ) : frontendPreview?.mediaType === 'image' ? (
         <img
           src={frontendPreview.src}
-          alt={`${displayName} preview`}
+          alt={t('{name} preview', { name: displayName })}
           className="w-full h-auto rounded-lg border border-white/10"
           loading="lazy"
         />
@@ -398,7 +402,7 @@ export function NodeCardOutputPreview({
           <img
             key={previewImage ? 'preview' : 'latent'}
             src={displaySrc}
-            alt={`${displayName} output`}
+            alt={t('{name} output', { name: displayName })}
             className="w-full h-auto rounded-lg border border-white/10"
             loading="lazy"
             onClick={onImageClick}
@@ -407,7 +411,7 @@ export function NodeCardOutputPreview({
             <div className="absolute inset-0 bg-black/40 rounded-lg flex items-end p-3">
               <div className="w-full">
                 <div className="flex items-center justify-between text-xs text-white/90 mb-1">
-                  <span>Progress</span>
+                  <span>{t('Progress')}</span>
                   <span>{displayNodeProgress}%</span>
                 </div>
                 <div className="h-2 rounded-full bg-white/30 overflow-hidden">
@@ -417,7 +421,7 @@ export function NodeCardOutputPreview({
                   />
                 </div>
                 <div className="flex items-center justify-between text-xs text-white/90 mt-2 mb-1">
-                  <span>Overall</span>
+                  <span>{t('Overall')}</span>
                   <span>{overallProgress}%</span>
                 </div>
                 <div className="h-2 rounded-full bg-white/30 overflow-hidden">
@@ -436,9 +440,9 @@ export function NodeCardOutputPreview({
           {Number(previewImage.width) > 0 && Number(previewImage.height) > 0 && (
             <span>{previewImage.width}×{previewImage.height}</span>
           )}
-          {Number(previewImage.frame_count) > 0 && <span>{previewImage.frame_count} frames</span>}
+          {Number(previewImage.frame_count) > 0 && <span>{t('{count} frames', { count: previewImage.frame_count ?? 0 })}</span>}
           {Number(previewImage.frame_rate) > 0 && <span>{previewImage.frame_rate} fps</span>}
-          {previewImage.has_audio === true && <span>audio</span>}
+          {previewImage.has_audio === true && <span>{t('audio')}</span>}
         </div>
       )}
       {previewText && (

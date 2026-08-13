@@ -1,0 +1,19 @@
+{
+  "{totalNodes} nodes": "{totalNodes} 个节点",
+  "[Unsaved]": "[未保存]",
+  "{totalNodes} nodes ({hiddenCount} hidden)": "{totalNodes} 个节点（{hiddenCount} 个已隐藏）",
+  "Queue": "队列",
+  "Outputs": "输出",
+  "Inputs": "输入",
+  "Untitled": "未命名",
+  "inputs": "输入",
+  "temp": "临时",
+  "outputs": "输出",
+  "Go to {label}": "转到{label}",
+  "Workflow": "工作流",
+  "Previous panels": "上一个面板",
+  "Next panels": "下一个面板",
+  "run": "次运行",
+  "runs": "次运行",
+  "{count} pending": "{count} 个排队中"
+}
