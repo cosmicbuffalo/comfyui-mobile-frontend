@@ -564,7 +564,7 @@ export function CustomNodesManagerModal({
             disabled={actionLoading === 'git-url'}
             className="shrink-0 text-xs font-semibold text-cyan-300 disabled:opacity-50"
           >
-            Install via Git URL
+            {t('Install via Git URL')}
           </button>
         </div>
       </div>
@@ -784,6 +784,7 @@ function CustomNodeCard({
 }
 
 function CustomNodeNotes({ note }: { note: ReturnType<typeof getCustomNodeNote> }) {
+  const { t } = useI18n();
   if (!note) return null;
   const supported = note.supported ?? [];
   const unsupported = note.unsupported ?? [];
@@ -791,7 +792,7 @@ function CustomNodeNotes({ note }: { note: ReturnType<typeof getCustomNodeNote> 
   return (
     <div className="custom-node-notes mt-2 rounded-md border border-white/10 bg-slate-950/40 p-2.5">
       <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">
-        Mobile frontend support
+        {t('Mobile frontend support')}
       </p>
       {note.summary && (
         <p className="mt-1 text-xs leading-5 text-slate-300 break-words">{note.summary}</p>

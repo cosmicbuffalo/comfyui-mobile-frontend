@@ -563,11 +563,10 @@ export function WorkflowTabline({ showTabs = true }: WorkflowTablineProps) {
             onClick={(e) => e.stopPropagation()}
           >
             <h2 className="text-base font-semibold text-slate-100">
-              Close a workflow
+              {t('Close a workflow')}
             </h2>
             <p className="mt-1 text-sm text-slate-400">
-              You can have up to {MAX_WORKFLOW_SESSIONS} workflows open at once.
-              Choose one to close to make room for the new one.
+              {t('You can have up to {count} workflows open at once. Choose one to close to make room for the new one.', { count: MAX_WORKFLOW_SESSIONS })}
             </p>
             <div className="mt-3 flex flex-col gap-1.5">
               {views.map((view) => (

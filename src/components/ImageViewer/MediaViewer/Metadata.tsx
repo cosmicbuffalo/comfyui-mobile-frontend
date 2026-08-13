@@ -1,4 +1,5 @@
 import type { extractMetadata } from "@/utils/metadata";
+import { useI18n } from "@/i18n";
 
 interface MediaViewerMetadataProps {
   isVideo: boolean;
@@ -17,6 +18,7 @@ export function MediaViewerMetadata({
   metadata,
   durationLabel,
 }: MediaViewerMetadataProps) {
+  const { t } = useI18n();
   if (!showMetadataToggle) return null;
 
   return (
@@ -32,7 +34,7 @@ export function MediaViewerMetadata({
     >
       {metadataIsLoading ? (
         <div className="px-1.5 py-0.5 bg-black/50 text-white text-[10px] rounded backdrop-blur-sm">
-          Loading metadata...
+          {t('Loading metadata...')}
         </div>
       ) : metadata ? (
         <>
@@ -64,7 +66,7 @@ export function MediaViewerMetadata({
         </>
       ) : (
         <div className="px-1.5 py-0.5 bg-black/50 text-white text-[10px] rounded backdrop-blur-sm">
-          No metadata found
+          {t('No metadata found')}
         </div>
       )}
     </div>

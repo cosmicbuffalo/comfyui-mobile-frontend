@@ -168,7 +168,7 @@ export function NodeCardErrorPopover({
                 onClick={(event) => { event.stopPropagation(); onInstall(); }}
                 className="mt-1 w-full rounded bg-red-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-red-500"
               >
-                Install missing node
+                {t('Install missing node')}
               </button>
             )}
           </div>

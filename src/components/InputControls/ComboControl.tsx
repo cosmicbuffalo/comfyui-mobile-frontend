@@ -481,7 +481,7 @@ export function ComboControl({
     >
       <span className="inline-flex items-center justify-center gap-2">
         <FolderIcon className="w-4 h-4" />
-        Browse files
+        {t('Browse files')}
       </span>
     </button>
   ) : null;
@@ -632,7 +632,7 @@ export function ComboControl({
 
         {isMissingValue && (
           <div className="mt-1 pl-1 text-xs text-red-400">
-            Missing on ComfyUI server
+            {t('Missing on ComfyUI server')}
           </div>
         )}
         {supportsUpload && (
@@ -921,7 +921,7 @@ export function ComboControl({
       </div>
       {isMissingValue && (
         <div className="mt-1 pl-1 text-xs text-red-400">
-          Missing on ComfyUI server
+            {t('Missing on ComfyUI server')}
         </div>
       )}
       {supportsUpload && (

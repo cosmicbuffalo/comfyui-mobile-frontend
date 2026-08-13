@@ -80,6 +80,7 @@ function WorkflowVideoPreview({
   playbackRate?: number;
   onEnded?: () => void;
 }) {
+  const { t } = useI18n();
   const videoRef = useRef<HTMLVideoElement>(null);
   const [playbackError, setPlaybackError] = useState(false);
   const viewerOpen = useImageViewerStore((state) => state.viewerOpen);
@@ -177,7 +178,7 @@ function WorkflowVideoPreview({
       />
       {playbackError && (
         <div className="pointer-events-none absolute inset-0 flex items-center justify-center rounded-lg bg-black/65 px-4 text-center text-sm text-white">
-          Unable to play this video.
+          {t('Unable to play this video.')}
         </div>
       )}
     </div>

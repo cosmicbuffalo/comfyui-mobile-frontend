@@ -1780,10 +1780,10 @@ export const WorkflowPanel = memo(function WorkflowPanel({
             <DocumentIcon className="w-10 h-10 text-slate-500" />
           </div>
           <p id="no-workflow-title" className="text-lg font-semibold text-slate-100">
-            No workflow loaded
+            {t('No workflow loaded')}
           </p>
           <p id="no-workflow-description" className="text-sm mt-2 text-slate-400">
-            Open the menu to load a workflow
+            {t('Open the menu to load a workflow')}
           </p>
         </div>
       </div>
@@ -1806,10 +1806,10 @@ export const WorkflowPanel = memo(function WorkflowPanel({
             <EmptyWorkflowIcon className="w-10 h-10 text-slate-500" />
           </div>
           <p id="empty-workflow-title" className="text-lg font-semibold text-slate-100">
-            Empty workflow
+            {t('Empty workflow')}
           </p>
           <p id="empty-workflow-description" className="text-sm mt-2 text-slate-400">
-            This workflow has no nodes
+            {t('This workflow has no nodes')}
           </p>
           <div className="mt-6 w-80 max-w-full mx-auto">
             <AddItemControls

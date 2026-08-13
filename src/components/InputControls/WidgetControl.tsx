@@ -525,7 +525,7 @@ export function WidgetControl({
 
           {showSeparate && (
             <label className="block text-sm font-medium text-slate-300 ml-1">
-              Clip strength
+              {t('Clip strength')}
             </label>
           )}
           {showSeparate && (

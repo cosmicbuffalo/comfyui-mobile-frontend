@@ -1204,7 +1204,7 @@ export const NodeCard = memo(function NodeCard({
                   );
                 }}
               >
-                Show video preview
+                {t('Show video preview')}
               </button>
             )}
 

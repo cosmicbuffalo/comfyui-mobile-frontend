@@ -12,7 +12,7 @@ import {
 import { NotificationsSettings } from './NotificationsSettings';
 import { useAutocompleteStore } from '@/hooks/useAutocompleteStore';
 import { useEffect, type ReactNode } from 'react';
-import { LOCALES, LOCALE_LABELS, useI18n } from '@/i18n';
+import { useI18n } from '@/i18n';
 
 interface GenerationSettingsPanelProps {
   onBack: () => void;
@@ -66,7 +66,7 @@ function PreferenceSection({
 }
 
 export function GenerationSettingsPanel({ onBack }: GenerationSettingsPanelProps) {
-  const { t, locale, setLocale } = useI18n();
+  const { t } = useI18n();
   const infiniteModeEnabled = useGenerationSettingsStore((s) => s.infiniteModeEnabled);
   const setInfiniteModeEnabled = useGenerationSettingsStore((s) => s.setInfiniteModeEnabled);
   const previewMethod = useGenerationSettingsStore((s) => s.previewMethod);
@@ -127,35 +127,6 @@ export function GenerationSettingsPanel({ onBack }: GenerationSettingsPanelProps
       <MenuSubPageHeader title={t('Preferences')} onBack={onBack} />
 
       <div className="space-y-4">
-        <div className={menuPanelDivideClassName}>
-          <div className="flex items-center justify-between px-4 py-3">
-            <div className={`text-sm ${menuTextClassName}`}>{t('Language')}</div>
-          </div>
-          <div className="px-4 pb-3">
-            <div className="flex flex-wrap gap-2" role="radiogroup" aria-label={t('Language')}>
-              {LOCALES.map((option) => {
-                const isActive = locale === option;
-                return (
-                  <button
-                    key={option}
-                    type="button"
-                    role="radio"
-                    aria-checked={isActive}
-                    onClick={() => setLocale(option)}
-                    className={`rounded-lg border px-3 py-1.5 text-sm transition-colors focus:outline-none focus:ring-2 focus:ring-cyan-400 ${
-                      isActive
-                        ? 'border-cyan-400 bg-cyan-500 text-slate-950 shadow-sm'
-                        : 'border-white/10 bg-slate-950/70 text-slate-100 hover:bg-slate-800/95'
-                    }`}
-                  >
-                    {LOCALE_LABELS[option]}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-        </div>
-
         <PreferenceSection
           label={t('Fast image previews')}
           description={t('Load lightweight WebP previews instead of full-size originals. Turn off if images look wrong. Downloads always use the original.')}

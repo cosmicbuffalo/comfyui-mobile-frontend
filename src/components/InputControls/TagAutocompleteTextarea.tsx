@@ -328,7 +328,7 @@ export function TagAutocompleteTextarea({
             <ul className="max-h-[inherit] overflow-auto py-1" role="listbox">
             {!open && loadingVisible ? (
               <li className="autocomplete-loading px-3 py-2 text-sm text-slate-400">
-                Loading tag suggestions…
+                {t('Loading tag suggestions…')}
               </li>
             ) : (
               suggestions.map((suggestion, index) => {

@@ -1430,7 +1430,7 @@ export function MediaViewer({
                 />
                 {videoError && (
                   <div className="absolute inset-0 flex items-center justify-center text-white text-sm bg-black/60">
-                    Unable to play this video.
+                    {t('Unable to play this video.')}
                   </div>
                 )}
               </>

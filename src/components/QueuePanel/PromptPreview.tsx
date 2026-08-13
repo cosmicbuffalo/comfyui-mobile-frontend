@@ -141,7 +141,7 @@ export function PromptPreview({
       >
         <FoldIcon open={sectionOpen} className="h-6 w-6 shrink-0 text-slate-500" />
         <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
-          Prompt preview
+          {t('Prompt preview')}
         </span>
       </button>
       <Collapsible open={sectionOpen}>

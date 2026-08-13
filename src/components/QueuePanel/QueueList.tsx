@@ -351,9 +351,9 @@ export function QueueList({
             <div className="flex items-center justify-center mb-4">
               <InboxIcon className="w-10 h-10 text-slate-600" />
             </div>
-            <p className="text-lg font-medium">Queue is empty</p>
+            <p className="text-lg font-medium">{t('Queue is empty')}</p>
             <p className="text-sm mt-2">
-              Run a workflow to see items here
+              {t('Run a workflow to see items here')}
             </p>
           </div>
         </div>

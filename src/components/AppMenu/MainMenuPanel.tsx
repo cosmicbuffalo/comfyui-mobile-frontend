@@ -5,6 +5,12 @@ import { MenuServerSection } from './MenuServerSection';
 import { MenuLoadSection } from './MenuLoadSection';
 import { MenuSaveSection } from './MenuSaveSection';
 import { MenuAboutSection } from './MenuAboutSection';
+import { LOCALE_LABELS, useI18n } from '@/i18n';
+import {
+  menuArrowClassName,
+  menuSurfaceButtonClassName,
+  menuTextClassName,
+} from './menuStyles';
 
 interface MenuSectionsOpen {
   load: boolean;
@@ -40,6 +46,7 @@ interface MainMenuPanelProps {
   onRestartServer: () => void;
   onOpenGenerationSettings: () => void;
   onOpenCustomNodes: () => void;
+  onOpenLanguage: () => void;
 }
 
 export function MainMenuPanel({
@@ -69,7 +76,9 @@ export function MainMenuPanel({
   onRestartServer,
   onOpenGenerationSettings,
   onOpenCustomNodes,
+  onOpenLanguage,
 }: MainMenuPanelProps) {
+  const { t, locale } = useI18n();
   return (
     <div className="pb-8">
       <MenuErrorNotice error={error} onDismiss={onDismissError} />
@@ -108,6 +117,17 @@ export function MainMenuPanel({
         onSave={onSave}
         onOpenSaveAs={onOpenSaveAs}
       />
+
+      <button
+        type="button"
+        onClick={onOpenLanguage}
+        className={menuSurfaceButtonClassName}
+      >
+        <span aria-hidden="true" className="text-base leading-none">🌐</span>
+        <span className={menuTextClassName}>{t('Language')}</span>
+        <span className="ml-auto text-xs text-slate-500">{LOCALE_LABELS[locale]}</span>
+        <span className={menuArrowClassName}>&rarr;</span>
+      </button>
 
       <MenuAboutSection
         open={menuSectionsOpen.info}
