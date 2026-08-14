@@ -3,6 +3,7 @@ import type { SortMode } from '@/api/client';
 import { OptionSection } from './OptionSection';
 import { FavoritesSection } from './FavoritesSection';
 import { CloseButton } from '@/components/buttons/CloseButton';
+import { useI18n } from '@/i18n';
 
 interface FilterModalProps {
   open: boolean;
@@ -22,6 +23,7 @@ export function FilterModal({
   open, onClose, filter, sort, onChangeFilter, onCycleStatusFilter, onChangeSort,
   zIndex = 1600, hideTypeFilter = false
 }: FilterModalProps) {
+  const { t } = useI18n();
   if (!open) return null;
 
   // Derived state for UI - handle potential undefined mode from old persisted state
@@ -68,7 +70,7 @@ export function FilterModal({
         onClick={e => e.stopPropagation()}
       >
         <div id="filter-modal-header" className="p-4 border-b border-white/10 flex items-center justify-between">
-          <h3 id="filter-modal-title" className="font-semibold text-slate-100">Filter & Sort</h3>
+          <h3 id="filter-modal-title" className="font-semibold text-slate-100">{t('Filter & Sort')}</h3>
           <CloseButton variant="plain" onClick={onClose} buttonSize={8} iconSize={6} />
         </div>
 
@@ -76,11 +78,11 @@ export function FilterModal({
           {!hideTypeFilter && (
             <OptionSection<FilterState['type']>
               idPrefix="filter-type-group"
-              title="File Type"
+              title={t('File Type')}
               items={[
-                { value: 'all', label: 'All' },
-                { value: 'image', label: 'Image' },
-                { value: 'video', label: 'Video' }
+                { value: 'all', label: t('All') },
+                { value: 'image', label: t('Image') },
+                { value: 'video', label: t('Video') }
               ]}
               selectedValue={filter.type}
               onSelect={(type) => onChangeFilter({ type })}
@@ -97,16 +99,16 @@ export function FilterModal({
           />
           <OptionSection<'name' | 'size' | 'created' | 'modified'>
             idPrefix="sort-group"
-            title="Sort By"
-            items={[
-              {
-                value: 'name',
-                label: 'Name',
+            title={t('Sort By')}
+              items={[
+                {
+                  value: 'name',
+                  label: t('Name'),
                 suffix: currentField === 'name' ? (currentOrder === 'asc' ? ' ↓' : ' ↑') : undefined
               },
               {
                 value: 'size',
-                label: 'Size',
+                  label: t('Size'),
                 suffix: currentField === 'size' ? (currentOrder === 'desc' ? ' ↓' : ' ↑') : undefined
               },
               {

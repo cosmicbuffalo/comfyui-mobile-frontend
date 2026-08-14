@@ -34,6 +34,7 @@ import {
   appChromeIconButtonClassName,
 } from "@/components/chromeStyles";
 import { comboSelectionToValue } from "./comboSelection";
+import { useI18n } from "@/i18n";
 
 const VIDEO_EXTENSIONS = new Set(["mp4", "webm", "mkv", "gif", "mov", "avi", "wmv"]);
 const comboInputBackground = "rgb(2 6 23 / 0.8)";
@@ -81,6 +82,7 @@ export function ComboControl({
   onModalClose,
   compactTrailingControls = false,
 }: ComboControlProps) {
+  const { t } = useI18n();
   type SelectOption = ComboSelectOption;
 
   const addInputComboOption = useWorkflowStore((s) => s.addInputComboOption);
@@ -135,7 +137,7 @@ export function ComboControl({
   const supportsUpload = supportsImageUpload || supportsVideoUpload;
   const uploadFolder = resolveUploadFolder(supportsVideoUpload, imageFolder);
   const uploadAccept = supportsVideoUpload ? "video/*" : "image/*";
-  const uploadLabel = supportsVideoUpload ? "Upload video from device" : "Load from camera roll";
+  const uploadLabel = supportsVideoUpload ? t("Upload video from device") : t("Load from camera roll");
   const [inputPickerOpen, setInputPickerOpen] = useState(false);
   const stripSafetensorsSuffix = Boolean(getOption("stripSafetensorsSuffix"));
   const modelLookup = getOption("modelLookup") as ModelLookup | undefined;
@@ -202,7 +204,7 @@ export function ComboControl({
     };
     const opts: SelectOption[] = [];
     if (value === null || hasNullChoice) {
-      opts.push({ value: NULL_OPTION_VALUE, label: "None" });
+      opts.push({ value: NULL_OPTION_VALUE, label: t("None") });
     }
     for (const missingValue of missingValues) {
       const missingString = String(missingValue);
@@ -218,7 +220,7 @@ export function ComboControl({
       return buildOption(optionValue, rawValue);
     }));
     return opts;
-  }, [mergedChoices, isModelMode, modelLookup, stripSafetensorsSuffix, value, hasNullChoice, missingValues, rawChoiceByString]);
+  }, [mergedChoices, isModelMode, modelLookup, stripSafetensorsSuffix, value, hasNullChoice, missingValues, rawChoiceByString, t]);
   const selectedOption =
     selectOptions.find((opt) => opt.value === valueString) ?? null;
   const selectedOptions = isMultiSelect
@@ -265,10 +267,10 @@ export function ComboControl({
           return baseModelFilter === BASE_MODEL_FILTER_UNKNOWN ? !bm : bm === baseModelFilter;
         });
   const baseModelFilterOptions: Array<{ key: string; value: string | null; label: string }> = [
-    { key: "all", value: null, label: "All" },
+    { key: "all", value: null, label: t("All") },
     ...baseModelChoices.map((bm) => ({ key: bm, value: bm, label: bm })),
     ...(hasUnknownBaseModel
-      ? [{ key: "unknown", value: BASE_MODEL_FILTER_UNKNOWN, label: "Unknown" }]
+      ? [{ key: "unknown", value: BASE_MODEL_FILTER_UNKNOWN, label: t("Unknown") }]
       : []),
   ];
 
@@ -443,7 +445,7 @@ export function ComboControl({
       }
     } catch (err) {
       console.error("Failed to sync picked file:", err);
-      setError("Failed to sync file selection");
+      setError(t("Failed to sync file selection"));
     } finally {
       setIsUploading(false);
       setInputPickerOpen(false);
@@ -465,7 +467,7 @@ export function ComboControl({
     >
       <span className="inline-flex items-center justify-center gap-2">
         <PlusIcon className="w-4 h-4" />
-        {isUploading ? "Uploading..." : uploadLabel}
+        {isUploading ? t("Uploading...") : uploadLabel}
       </span>
     </button>
   ) : null;
@@ -479,7 +481,7 @@ export function ComboControl({
     >
       <span className="inline-flex items-center justify-center gap-2">
         <FolderIcon className="w-4 h-4" />
-        Browse files
+        {t('Browse files')}
       </span>
     </button>
   ) : null;
@@ -525,7 +527,7 @@ export function ComboControl({
           }}
         >
           <span className={`truncate min-w-0 flex-1 text-slate-100 ${hasVisiblePin ? "pr-16" : "pr-6"}`}>
-            {selectedLabel || valueString || "Select..."}
+            {selectedLabel || valueString || t("Select...")}
           </span>
           <span className="absolute right-0 top-0 bottom-0 flex items-center pointer-events-none">
             <span className="px-2 text-slate-400"><ChevronDownIcon className="w-5 h-5" /></span>
@@ -603,7 +605,7 @@ export function ComboControl({
                 hasSelection ? { color: themeColors.text.onDark } : undefined
               }
             >
-              {selectedLabel || "Select..."}
+              {selectedLabel || t("Select...")}
             </span>
           )}
 
@@ -630,7 +632,7 @@ export function ComboControl({
 
         {isMissingValue && (
           <div className="mt-1 pl-1 text-xs text-red-400">
-            Missing on ComfyUI server
+            {t('Missing on ComfyUI server')}
           </div>
         )}
         {supportsUpload && (
@@ -672,7 +674,7 @@ export function ComboControl({
               autoFocus={!forceModalOpen}
               menuIsOpen={forceModalOpen ? undefined : true}
               controlShouldRenderValue={true}
-              placeholder="Search..."
+              placeholder={t("Search...")}
               filterOption={createFilter({
                 ignoreAccents: true,
                 ignoreCase: true,
@@ -742,13 +744,13 @@ export function ComboControl({
                 },
               }}
               components={selectComponents}
-              noOptionsMessage={() => "No matches"}
+              noOptionsMessage={() => t("No matches")}
             />
               {showBaseModelFilter && (
                 <div className="combo-control-filter absolute right-1.5 top-[5px]">
                   <button
                     type="button"
-                    aria-label="Filter by base model"
+                    aria-label={t("Filter by base model")}
                     aria-expanded={filterMenuOpen}
                     onClick={() => setFilterMenuOpen((open) => !open)}
                     className={`flex h-9 w-9 items-center justify-center rounded-md transition-colors ${
@@ -894,7 +896,7 @@ export function ComboControl({
             },
           }}
           components={selectComponents}
-          noOptionsMessage={() => "No matches"}
+          noOptionsMessage={() => t("No matches")}
         />
         <div className="combo-control-icons absolute right-0 top-0 bottom-0 flex items-center pointer-events-none">
           <div className={`combo-control-chevron text-slate-400 ${
@@ -919,7 +921,7 @@ export function ComboControl({
       </div>
       {isMissingValue && (
         <div className="mt-1 pl-1 text-xs text-red-400">
-          Missing on ComfyUI server
+            {t('Missing on ComfyUI server')}
         </div>
       )}
       {supportsUpload && (

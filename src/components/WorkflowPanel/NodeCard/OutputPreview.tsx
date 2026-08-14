@@ -13,6 +13,7 @@ import {
   reportVideoAutoplayRejection,
   reportVideoPlaybackIssue,
 } from '@/utils/mediaDiagnostics';
+import { useI18n } from '@/i18n';
 
 export interface NodeCardBatchPreview {
   displaySrc: string;
@@ -79,6 +80,7 @@ function WorkflowVideoPreview({
   playbackRate?: number;
   onEnded?: () => void;
 }) {
+  const { t } = useI18n();
   const videoRef = useRef<HTMLVideoElement>(null);
   const [playbackError, setPlaybackError] = useState(false);
   const viewerOpen = useImageViewerStore((state) => state.viewerOpen);
@@ -176,7 +178,7 @@ function WorkflowVideoPreview({
       />
       {playbackError && (
         <div className="pointer-events-none absolute inset-0 flex items-center justify-center rounded-lg bg-black/65 px-4 text-center text-sm text-white">
-          Unable to play this video.
+          {t('Unable to play this video.')}
         </div>
       )}
     </div>
@@ -192,12 +194,20 @@ function FrontendMediaPlaylist({
   displayName: string;
   onStateChange?: NodeCardOutputPreviewProps['onFrontendPreviewStateChange'];
 }) {
+  const { t } = useI18n();
   const items = preview.playlist?.length ? preview.playlist : [preview];
   const requestedIndex = preview.activeIndex ?? 0;
   const initialIndex = Math.max(0, Math.min(items.length - 1, requestedIndex));
   const [selectedIndex, setSelectedIndex] = useState(initialIndex);
   const [autoPlaySelection, setAutoPlaySelection] = useState(preview.autoPlay);
   const [playMode, setPlayMode] = useState(preview.playMode);
+  // Label per playback mode, so the button text is a lookup rather than a
+  // ternary chain that has to be re-read whenever a mode is added.
+  const PLAY_MODE_LABEL_KEYS: Record<'off' | 'loop' | 'cycle', string> = {
+    off: 'Play once',
+    loop: 'Loop clip',
+    cycle: 'Cycle scenes',
+  };
   const selected: FrontendNodeMediaItem = items[selectedIndex] ?? items[0];
 
   // Follow persisted widget state that changes underneath an unchanged
@@ -255,7 +265,7 @@ function FrontendMediaPlaylist({
       ) : (
         <img
           src={selected.src}
-          alt={`${displayName} preview`}
+          alt={t('{name} preview', { name: displayName })}
           className="w-full h-auto rounded-lg border border-white/10"
           loading="lazy"
         />
@@ -265,13 +275,13 @@ function FrontendMediaPlaylist({
           type="button"
           className="mt-2 rounded border border-white/15 px-2 py-1 text-xs text-slate-300"
           onClick={rotatePlayMode}
-          aria-label={`Playback mode: ${playMode}`}
+          aria-label={t('Playback mode: {mode}', { mode: playMode })}
         >
-          {playMode === 'off' ? 'Play once' : playMode === 'loop' ? 'Loop clip' : 'Cycle scenes'}
+          {t(PLAY_MODE_LABEL_KEYS[playMode])}
         </button>
       )}
       {items.length > 1 && (
-        <div className="mt-2 flex gap-1.5 overflow-x-auto pb-1" aria-label={`${displayName} preview history`}>
+        <div className="mt-2 flex gap-1.5 overflow-x-auto pb-1" aria-label={t('{name} preview history', { name: displayName })}>
           {items.map((item, index) => (
             <button
               key={`${item.src}:${index}`}
@@ -312,6 +322,7 @@ export function NodeCardOutputPreview({
   videoPlaybackRate = 1,
   onFrontendPreviewStateChange,
 }: NodeCardOutputPreviewProps) {
+  const { t } = useI18n();
   // Subscribe so the preview refreshes immediately when the WebP preference is
   // toggled (must run before the early return to satisfy the rules of hooks).
   useGenerationSettingsStore((s) => s.webpPreviewEnabled);
@@ -398,7 +409,7 @@ export function NodeCardOutputPreview({
           <img
             key={previewImage ? 'preview' : 'latent'}
             src={displaySrc}
-            alt={`${displayName} output`}
+            alt={t('{name} output', { name: displayName })}
             className="w-full h-auto rounded-lg border border-white/10"
             loading="lazy"
             onClick={onImageClick}
@@ -407,7 +418,7 @@ export function NodeCardOutputPreview({
             <div className="absolute inset-0 bg-black/40 rounded-lg flex items-end p-3">
               <div className="w-full">
                 <div className="flex items-center justify-between text-xs text-white/90 mb-1">
-                  <span>Progress</span>
+                  <span>{t('Progress')}</span>
                   <span>{displayNodeProgress}%</span>
                 </div>
                 <div className="h-2 rounded-full bg-white/30 overflow-hidden">
@@ -417,7 +428,7 @@ export function NodeCardOutputPreview({
                   />
                 </div>
                 <div className="flex items-center justify-between text-xs text-white/90 mt-2 mb-1">
-                  <span>Overall</span>
+                  <span>{t('Overall')}</span>
                   <span>{overallProgress}%</span>
                 </div>
                 <div className="h-2 rounded-full bg-white/30 overflow-hidden">
@@ -436,9 +447,9 @@ export function NodeCardOutputPreview({
           {Number(previewImage.width) > 0 && Number(previewImage.height) > 0 && (
             <span>{previewImage.width}×{previewImage.height}</span>
           )}
-          {Number(previewImage.frame_count) > 0 && <span>{previewImage.frame_count} frames</span>}
+          {Number(previewImage.frame_count) > 0 && <span>{t('{count} frames', { count: Number(previewImage.frame_count) })}</span>}
           {Number(previewImage.frame_rate) > 0 && <span>{previewImage.frame_rate} fps</span>}
-          {previewImage.has_audio === true && <span>audio</span>}
+          {previewImage.has_audio === true && <span>{t('audio')}</span>}
         </div>
       )}
       {previewText && (

@@ -16,7 +16,7 @@ function buildProps(
     hiddenNodeCount: 0,
     isBookmarked: false,
     canShowBookmarkAction: true,
-    foldAllLabel: 'Fold all',
+    canFoldAll: true,
     color: '#ffffff',
     onToggleCollapse: vi.fn(),
     onToggleFoldAll: vi.fn(),

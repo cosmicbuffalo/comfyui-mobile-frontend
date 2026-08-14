@@ -21,11 +21,14 @@ export async function getPushConfig(): Promise<PushConfig> {
   return response.json();
 }
 
-export async function sendSubscription(subscription: PushSubscription): Promise<{ subscriptions: number }> {
+export async function sendSubscription(
+  subscription: PushSubscription,
+  locale?: string,
+): Promise<{ subscriptions: number }> {
   const response = await fetch('/mobile/api/push/subscribe', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ subscription: subscription.toJSON() }),
+    body: JSON.stringify({ subscription: subscription.toJSON(), locale }),
   });
   if (!response.ok) throw new Error('Failed to register subscription');
   return response.json();

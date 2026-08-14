@@ -5,6 +5,7 @@ import { MenuServerSection } from './MenuServerSection';
 import { MenuLoadSection } from './MenuLoadSection';
 import { MenuSaveSection } from './MenuSaveSection';
 import { MenuAboutSection } from './MenuAboutSection';
+import { MenuLanguageSection } from './MenuLanguageSection';
 
 interface MenuSectionsOpen {
   load: boolean;
@@ -108,6 +109,8 @@ export function MainMenuPanel({
         onSave={onSave}
         onOpenSaveAs={onOpenSaveAs}
       />
+
+      <MenuLanguageSection />
 
       <MenuAboutSection
         open={menuSectionsOpen.info}

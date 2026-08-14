@@ -1,4 +1,5 @@
 import type { StatusFilterMode } from '@/hooks/useOutputs';
+import { useI18n } from '@/i18n';
 
 interface FavoritesSectionProps {
   favoritesMode: StatusFilterMode;
@@ -30,18 +31,22 @@ function FilterToggle({
 }: {
   id: string;
   mode: StatusFilterMode;
+  /** Untranslated key (e.g. 'Favorites'); translated here, not by the caller. */
   noun: string;
   onCycle: () => void;
   tone: 'cyan' | 'rose';
 }) {
+  const { t } = useI18n();
   // The label states what the listing is doing right now, since a tri-state
   // button can't say it through pressed-ness alone. Struck-through styling
   // reinforces the excluded reading for anyone who skims rather than reads.
-  const label = mode === 'only'
-    ? `${noun} only`
-    : mode === 'exclude'
-      ? `No ${noun.toLowerCase()}`
-      : noun;
+  const translatedNoun = t(noun);
+  const resolveLabel = () => {
+    if (mode === 'only') return t('{noun} only', { noun: translatedNoun });
+    if (mode === 'exclude') return t('No {noun}', { noun: translatedNoun.toLowerCase() });
+    return translatedNoun;
+  };
+  const label = resolveLabel();
 
   return (
     <button

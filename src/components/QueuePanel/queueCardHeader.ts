@@ -1,3 +1,5 @@
+import { t } from '@/i18n';
+
 export function getQueueCardHeaderLabel({
   isGenerating,
   isCompleting,
@@ -15,11 +17,11 @@ export function getQueueCardHeaderLabel({
   isErrored: boolean;
   preferredOutputFilename: string | null;
 }): string | null {
-  if (isGenerating) return 'GENERATING';
-  if (isCompleting) return preferredOutputFilename ?? 'LOADING...';
-  if (isPending) return 'PENDING';
-  if (isStopped) return 'STOPPED';
-  if (isErrored) return 'ERROR';
+  if (isGenerating) return t('GENERATING');
+  if (isCompleting) return preferredOutputFilename ?? t('LOADING...');
+  if (isPending) return t('PENDING');
+  if (isStopped) return t('STOPPED');
+  if (isErrored) return t('ERROR');
   return preferredOutputFilename;
 }
 

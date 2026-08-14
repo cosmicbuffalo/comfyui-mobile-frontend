@@ -5,6 +5,7 @@ import { useWorkflowStore } from '@/hooks/useWorkflow';
 import { useCustomNodesManager } from '@/hooks/useCustomNodesManager';
 import { collectMissingNodeTypes } from '@/utils/missingNodes';
 import { prefetchCustomNodesData } from '@/utils/customNodesManagerCache';
+import { useI18n } from '@/i18n';
 
 /**
  * On loading a workflow that uses custom nodes which aren't installed, surface a
@@ -14,6 +15,7 @@ import { prefetchCustomNodesData } from '@/utils/customNodesManagerCache';
  * (NodeCard). Re-shown on each fresh load via the workflowLoadedAt token.
  */
 export function MissingNodesDialog() {
+  const { t } = useI18n();
   const workflow = useWorkflowStore((s) => s.workflow);
   const nodeTypes = useWorkflowStore((s) => s.nodeTypes);
   const workflowLoadedAt = useWorkflowStore((s) => s.workflowLoadedAt);
@@ -53,12 +55,12 @@ export function MissingNodesDialog() {
       title={
         <span className="flex items-center gap-2">
           <WarningTriangleIcon className="w-5 h-5 shrink-0 text-red-500" />
-          This workflow has missing nodes
+          {t('This workflow has missing nodes')}
         </span>
       }
       description={
         <div className="space-y-3">
-          <p>This workflow uses custom nodes you haven&apos;t installed yet.</p>
+          <p>{t("This workflow uses custom nodes you haven't installed yet.")}</p>
           <ul className="max-h-48 space-y-1 overflow-y-auto rounded-lg border border-white/10 bg-black/20 p-2">
             {missingTypes.map((type) => (
               <li
@@ -70,15 +72,14 @@ export function MissingNodesDialog() {
             ))}
           </ul>
           <p className="text-sm text-slate-400">
-            Install these nodes to run this workflow, or replace them with installed
-            alternatives. Missing nodes are highlighted in red.
+            {t('Install these nodes to run this workflow, or replace them with installed alternatives. Missing nodes are highlighted in red.')}
           </p>
         </div>
       }
       actionsLayout="stack"
       actions={[
         {
-          label: 'Install missing nodes',
+          label: t('Install missing nodes'),
           variant: 'primary',
           autoFocus: true,
           onClick: () => {
@@ -86,7 +87,7 @@ export function MissingNodesDialog() {
             dismiss();
           },
         },
-        { label: 'Dismiss', variant: 'secondary', onClick: dismiss },
+        { label: t('Dismiss'), variant: 'secondary', onClick: dismiss },
       ]}
     />
   );

@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
+import { t } from "@/i18n";
 import type {
   HistoryOutputImage,
   Workflow,
@@ -384,7 +385,7 @@ function queueWorkflowLabel(
 ): string {
   if (filename) return workflowDisplayName(filename);
   if (source?.type === "template") return source.templateName;
-  return "Untitled";
+  return t("Untitled");
 }
 
 // Monotonic recency stamp for streaming queue latent previews (see
@@ -1278,8 +1279,8 @@ function collectWorkflowLoadErrors(
           }
           errors[nodeId].push({
             type: "workflow_load",
-            message: `Missing value: ${normalizedString}`,
-            details: "Not found on server.",
+            message: t('Missing value: {value}', { value: normalizedString }),
+            details: t("Not found on server."),
             inputName: name,
           });
         }
@@ -3626,7 +3627,10 @@ export const useWorkflowStore = create<WorkflowState>()(
               errorsStore.setError(null);
             } else if (remaining.every((e) => e.type === "workflow_load")) {
               errorsStore.setError(
-                `Workflow load error: ${remaining.length} input${remaining.length === 1 ? "" : "s"} reference missing options.`,
+                remaining.length === 1
+                  ? t("Workflow load error: {count} input references missing options.", { count: remaining.length })
+                  : t("Workflow load error: {count} inputs reference missing options.", { count: remaining.length }),
+                "workflow-load",
               );
             }
           }
@@ -4303,7 +4307,7 @@ export const useWorkflowStore = create<WorkflowState>()(
             .catch((error) => {
               console.error("Failed to resolve workflow path aliases:", error);
               useWorkflowErrorsStore.getState().setError(
-                "Unable to resolve local workflow path aliases. Loading their opaque values instead.",
+                t("Unable to resolve local workflow path aliases. Loading their opaque values instead."),
               );
               get().loadWorkflow(workflow, filename, {
                 ...options,
@@ -4681,7 +4685,10 @@ export const useWorkflowStore = create<WorkflowState>()(
             useWorkflowErrorsStore
               .getState()
               .setError(
-                `Workflow load error: ${loadErrorCount} input${loadErrorCount === 1 ? "" : "s"} reference missing options.`,
+                loadErrorCount === 1
+                  ? t("Workflow load error: {count} input references missing options.", { count: loadErrorCount })
+                  : t("Workflow load error: {count} inputs reference missing options.", { count: loadErrorCount }),
+                "workflow-load",
               );
           } else {
             useWorkflowErrorsStore.getState().clearNodeErrors();
@@ -6049,7 +6056,7 @@ export const useWorkflowStore = create<WorkflowState>()(
         if (!sourceWorkflow || !nodeTypes) {
           useWorkflowErrorsStore
             .getState()
-            .setError("Node types are still loading. Try again in a moment.");
+            .setError(t("Node types are still loading. Try again in a moment."));
           return;
         }
 
@@ -6430,7 +6437,7 @@ export const useWorkflowStore = create<WorkflowState>()(
               useWorkflowErrorsStore
                 .getState()
                 .setError(
-                  "Infinite generation stopped: the workflow would re-run an identical prompt (likely a fixed seed), producing the same result over and over. Set a seed widget to randomize — or change an input — to keep generating new outputs.",
+                  t("Infinite generation stopped: the workflow would re-run an identical prompt (likely a fixed seed), producing the same result over and over. Set a seed widget to randomize — or change an input — to keep generating new outputs."),
                 );
               return;
             }
@@ -6540,7 +6547,7 @@ export const useWorkflowStore = create<WorkflowState>()(
               }
 
               throw new Error(
-                getErrorMessage(errorData.error) || "Failed to queue prompt",
+                getErrorMessage(errorData.error) || t("Failed to queue prompt"),
               );
             }
 
@@ -6682,7 +6689,7 @@ export const useWorkflowStore = create<WorkflowState>()(
           useWorkflowErrorsStore
             .getState()
             .setError(
-              err instanceof Error ? err.message : "Failed to queue workflow",
+              err instanceof Error ? err.message : t("Failed to queue workflow"),
             );
         } finally {
           // Keep the submit feedback visible until the queued prompt is

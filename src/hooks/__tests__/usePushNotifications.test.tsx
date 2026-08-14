@@ -101,7 +101,10 @@ describe('usePushNotifications', () => {
     await act(async () => { await hook.current!.enable(); });
 
     expect(subscribe).toHaveBeenCalledTimes(1);
-    expect(mockSend).toHaveBeenCalledWith(expect.objectContaining({ endpoint: 'https://push.example/abc' }));
+    expect(mockSend).toHaveBeenCalledWith(
+      expect.objectContaining({ endpoint: 'https://push.example/abc' }),
+      expect.any(String),
+    );
     expect(hook.current!.subscribed).toBe(true);
     expect(hook.current!.error).toBeNull();
   });

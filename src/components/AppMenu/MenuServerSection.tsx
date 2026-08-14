@@ -1,6 +1,7 @@
 import { Component, type ReactNode } from 'react';
 import { CaretDownIcon, DownloadDeviceIcon, GearIcon, ReloadIcon, ServerIcon, WarningTriangleIcon } from '@/components/icons';
 import type { SystemStats } from '@/api/client';
+import { t as globalT, useI18n } from '@/i18n';
 import { MenuRefreshMetadataButton } from './MenuRefreshMetadataButton';
 import {
   menuChevronClassName,
@@ -51,7 +52,7 @@ class StatsErrorBoundary extends Component<{ children: ReactNode }, { hasError: 
       return (
         <div className={`${menuSurfaceClassName} p-4 text-sm text-slate-400 text-center flex items-center justify-center gap-2`}>
           <WarningTriangleIcon className="w-4 h-4 text-slate-500" />
-          Unable to display server stats
+          {globalT('Unable to display server stats')}
         </div>
       );
     }
@@ -94,7 +95,7 @@ function ServerStatsCard({ systemStats, cpuPercent }: { systemStats: SystemStats
             <UsageBar
               used={vramUsed}
               total={device.vram_total}
-              label="VRAM"
+              label={globalT('VRAM')}
               color={device.vram_total > 0 && vramUsed / device.vram_total > 0.9 ? 'bg-red-500' : device.vram_total > 0 && vramUsed / device.vram_total > 0.7 ? 'bg-amber-500' : 'bg-cyan-500'}
             />
           </div>
@@ -105,7 +106,7 @@ function ServerStatsCard({ systemStats, cpuPercent }: { systemStats: SystemStats
         <UsageBar
           used={ramTotal - ramFree}
           total={ramTotal}
-          label="System RAM"
+          label={globalT('System RAM')}
           color="bg-emerald-500"
         />
       )}
@@ -113,7 +114,7 @@ function ServerStatsCard({ systemStats, cpuPercent }: { systemStats: SystemStats
       {cpuPercent != null && (
         <div>
           <div className="flex items-center justify-between text-xs text-slate-400 mb-1">
-            <span>CPU</span>
+            <span>{globalT('CPU')}</span>
             <span>{cpuPercent.toFixed(0)}%</span>
           </div>
           <div className="h-2 rounded-full bg-white/10 overflow-hidden">
@@ -129,13 +130,13 @@ function ServerStatsCard({ systemStats, cpuPercent }: { systemStats: SystemStats
         <div className="pt-2 border-t border-white/10 space-y-1">
           {pytorchVersion && (
             <div className="flex justify-between text-xs text-slate-500">
-              <span>PyTorch</span>
+              <span>{globalT('PyTorch')}</span>
               <span>{pytorchVersion}</span>
             </div>
           )}
           {pythonVersion && (
             <div className="flex justify-between text-xs text-slate-500">
-              <span>Python</span>
+              <span>{globalT('Python')}</span>
               <span>{pythonVersion.split(' ')[0]}</span>
             </div>
           )}
@@ -168,6 +169,7 @@ export function MenuServerSection({
   onOpenGenerationSettings,
   onOpenCustomNodes,
 }: MenuServerSectionProps) {
+  const { t } = useI18n();
   return (
     <section ref={sectionRef} className="mb-6">
       <button
@@ -176,7 +178,7 @@ export function MenuServerSection({
         className={menuSectionHeaderClassName}
         aria-expanded={open}
       >
-        <span>Server</span>
+        <span>{t('Server')}</span>
         <CaretDownIcon className={`${menuChevronClassName} ${open ? 'rotate-0' : '-rotate-90'}`} />
       </button>
       <CollapsibleMenuSection open={open}>
@@ -186,7 +188,7 @@ export function MenuServerSection({
               <ServerStatsCard systemStats={systemStats} cpuPercent={cpuPercent} />
             ) : (
               <div className={`${menuSurfaceClassName} p-4 text-sm text-slate-400 text-center`}>
-                Loading server info...
+                {t('Loading server info...')}
               </div>
             )}
           </StatsErrorBoundary>
@@ -196,7 +198,7 @@ export function MenuServerSection({
             className={menuSurfaceButtonClassName}
           >
             <DownloadDeviceIcon className={menuIconClassName} />
-            <span className={menuTextClassName}>Custom nodes</span>
+            <span className={menuTextClassName}>{t('Custom nodes')}</span>
           </button>
 
           <MenuRefreshMetadataButton />
@@ -206,7 +208,7 @@ export function MenuServerSection({
             className={menuSurfaceButtonClassName}
           >
             <GearIcon className={menuIconClassName} />
-            <span className={menuTextClassName}>Preferences</span>
+            <span className={menuTextClassName}>{t('Preferences')}</span>
           </button>
 
           <button
@@ -216,7 +218,7 @@ export function MenuServerSection({
           >
             <ReloadIcon className={menuIconClassName} />
             <span className={menuTextClassName}>
-              {restartingServer ? 'Restarting ComfyUI...' : 'Restart ComfyUI'}
+              {restartingServer ? t('Restarting ComfyUI...') : t('Restart ComfyUI')}
             </span>
           </button>
         </div>

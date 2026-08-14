@@ -1,5 +1,6 @@
 import type { Ref } from 'react';
 import { SearchIcon, XMarkIcon } from '@/components/icons';
+import { useI18n } from '@/i18n';
 
 interface SearchBarProps {
   value: string;
@@ -30,6 +31,8 @@ export function SearchBar({
   inputRef,
   showClearButton = true,
 }: SearchBarProps) {
+  const { t } = useI18n();
+  const resolvedPlaceholder = placeholder ?? t('Search...');
   const canClear = showClearButton && value.trim().length > 0 && !disabled && !readOnly;
 
   return (
@@ -45,7 +48,7 @@ export function SearchBar({
             onSubmit(value);
           }
         }}
-        placeholder={placeholder}
+        placeholder={resolvedPlaceholder}
         data-swipe-nav-ignore="true"
         className={`w-full rounded-lg border border-white/10 bg-slate-950/80 pl-9 pr-9 py-2 text-sm text-slate-100 placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-cyan-400 focus:border-transparent ${inputClassName}`.trim()}
         autoFocus={autoFocus}
@@ -63,7 +66,7 @@ export function SearchBar({
             onChange('');
           }}
           className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-slate-400 hover:text-slate-100"
-          aria-label="Clear search"
+          aria-label={t('Clear search')}
         >
           <XMarkIcon className="w-4 h-4" />
         </button>

@@ -3,6 +3,7 @@ import { useWorkflowStore } from '@/hooks/useWorkflow';
 import { getScopedWorkflowView } from '@/utils/canonicalWorkflowOps';
 import { runUndoTransaction } from '@/utils/undoTransaction';
 import { useConnectionSectionFoldsStore } from '@/hooks/useConnectionSectionFolds';
+import { useI18n } from '@/i18n';
 import {
   findCompatibleSourceNodes,
   findCompatibleNodeTypesForInput,
@@ -102,6 +103,7 @@ function areKeySetsEqual(a: Set<string>, b: Set<string>): boolean {
 }
 
 export function ConnectionModal(props: ConnectionModalProps) {
+  const { t } = useI18n();
   const { isOpen, onClose, nodeId, mode } = props;
   const workflow = useWorkflowStore((s) => s.workflow);
   const scopeStack = useWorkflowStore((s) => s.scopeStack);
@@ -634,15 +636,15 @@ export function ConnectionModal(props: ConnectionModalProps) {
   }, [isOpen, showOverwriteConfirm, multiInputPickerNodeId, onClose]);
 
   const modalTitle = isGetInput
-    ? 'Read from Set'
+    ? t('Read from Set')
     : mode === 'input'
-    ? (currentAction === 'pick' ? `Connect ${props.inputName}` : 'Add new node')
-    : (currentAction === 'pick' ? `Connect ${props.outputName}` : 'Add new node');
+    ? (currentAction === 'pick' ? t('Connect {name}', { name: props.inputName }) : t('Add new node'))
+    : (currentAction === 'pick' ? t('Connect {name}', { name: props.outputName }) : t('Add new node'));
   const searchPlaceholder = isGetInput
-    ? 'Search set nodes...'
+    ? t('Search set nodes...')
     : mode === 'input'
-    ? (currentAction === 'pick' ? 'Search existing nodes...' : 'Search node types...')
-    : (currentAction === 'pick' ? 'Search target nodes...' : 'Search node types...');
+    ? (currentAction === 'pick' ? t('Search existing nodes...') : t('Search node types...'))
+    : (currentAction === 'pick' ? t('Search target nodes...') : t('Search node types...'));
 
   // GetNode source picker: list the SetNode relay names; selecting one sets the
   // Get's name widget (index 0). Lives in the standard connection modal shell.
@@ -659,7 +661,7 @@ export function ConnectionModal(props: ConnectionModalProps) {
     return (
       <div className="px-3 pt-3 pb-20 flex flex-col gap-2">
         {names.length === 0 ? (
-          <SearchEmptyState query={searchQuery} message="No Set nodes found" />
+          <SearchEmptyState query={searchQuery} message={t('No Set nodes found')} />
         ) : (
           names.map((name) => (
             <button
@@ -751,7 +753,7 @@ export function ConnectionModal(props: ConnectionModalProps) {
           <>
             <div className="flex items-center gap-2 pt-1 pb-0.5">
               <div className="flex-1 border-t border-white/10" />
-              <span className="text-xs font-medium text-slate-400 whitespace-nowrap">Wildcard *</span>
+              <span className="text-xs font-medium text-slate-400 whitespace-nowrap">{t('Wildcard *')}</span>
               <div className="flex-1 border-t border-white/10" />
             </div>
             {wildcardNodes.map(renderNodeEntry)}
@@ -759,7 +761,7 @@ export function ConnectionModal(props: ConnectionModalProps) {
         )}
 
         {filteredNodes.length === 0 && (
-          <SearchEmptyState query={searchQuery} message="No matching nodes found" />
+          <SearchEmptyState query={searchQuery} message={t('No matching nodes found')} />
         )}
 
         <button
@@ -810,7 +812,7 @@ export function ConnectionModal(props: ConnectionModalProps) {
         <NodeTypeSearchResult
           key={typeName}
           title={resolveNodeTypeDisplayName(def, typeName)}
-          subtitle={pack || 'Core'}
+          subtitle={pack || t('Core')}
           outputType={outputType}
           outputName={String(outputName)}
           inputName={inputProps.inputName}
@@ -823,14 +825,14 @@ export function ConnectionModal(props: ConnectionModalProps) {
     return (
       <div className="px-3 pt-3 pb-20 flex flex-col gap-2">
         {filteredTypes.length === 0 && (
-          <SearchEmptyState query={searchQuery} message="No matching node types found" />
+          <SearchEmptyState query={searchQuery} message={t('No matching node types found')} />
         )}
         {concreteTypes.map(renderTypeEntry)}
         {wildcardTypes.length > 0 && (
           <>
             <div className="flex items-center gap-2 pt-1 pb-0.5">
               <div className="flex-1 border-t border-white/10" />
-              <span className="text-xs font-medium text-slate-400 whitespace-nowrap">Wildcard *</span>
+              <span className="text-xs font-medium text-slate-400 whitespace-nowrap">{t('Wildcard *')}</span>
               <div className="flex-1 border-t border-white/10" />
             </div>
             {wildcardTypes.map(renderTypeEntry)}
@@ -865,8 +867,8 @@ export function ConnectionModal(props: ConnectionModalProps) {
       const hasExistingLink = nodeCandidate.inputs.some((candidate) => candidate.hasExistingLink);
       const hasConnectedFromThisOutput = nodeCandidate.inputs.some((candidate) => candidate.currentlyConnectedFromThisOutput);
       const subtitle = nodeCandidate.inputs.length > 1
-        ? `${nodeCandidate.inputs.length} compatible inputs`
-        : `${outputProps.outputName} -> ${nodeCandidate.inputs[0]?.inputName ?? 'Input'}`;
+        ? t('{count} compatible inputs', { count: nodeCandidate.inputs.length })
+        : t('{output} -> {input}', { output: outputProps.outputName, input: nodeCandidate.inputs[0]?.inputName ?? t('Input') });
       return (
         <button
           key={`output-node-${nodeCandidate.nodeId}`}
@@ -920,7 +922,7 @@ export function ConnectionModal(props: ConnectionModalProps) {
           <>
             <div className="flex items-center gap-2 pt-1 pb-0.5">
               <div className="flex-1 border-t border-white/10" />
-              <span className="text-xs font-medium text-slate-400 whitespace-nowrap">Wildcard *</span>
+              <span className="text-xs font-medium text-slate-400 whitespace-nowrap">{t('Wildcard *')}</span>
               <div className="flex-1 border-t border-white/10" />
             </div>
             {wildcardOutputNodes.map(renderOutputNodeEntry)}
@@ -928,7 +930,7 @@ export function ConnectionModal(props: ConnectionModalProps) {
         )}
 
         {outputNodeCandidates.length === 0 && (
-          <SearchEmptyState query={searchQuery} message="No matching target nodes found" />
+          <SearchEmptyState query={searchQuery} message={t('No matching target nodes found')} />
         )}
 
         <button
@@ -966,7 +968,7 @@ export function ConnectionModal(props: ConnectionModalProps) {
         <NodeTypeSearchResult
           key={typeName}
           title={resolveNodeTypeDisplayName(def, typeName)}
-          subtitle={pack || 'Core'}
+          subtitle={pack || t('Core')}
           outputType={outputProps.outputType}
           outputName={outputProps.outputName}
           inputName={String(inputName)}
@@ -979,14 +981,14 @@ export function ConnectionModal(props: ConnectionModalProps) {
     return (
       <div className="px-3 pt-3 pb-20 flex flex-col gap-2">
         {filteredOutputTypes.length === 0 && (
-          <SearchEmptyState query={searchQuery} message="No matching node types found" />
+          <SearchEmptyState query={searchQuery} message={t('No matching node types found')} />
         )}
         {concreteOutputTypes.map(renderOutputTypeEntry)}
         {wildcardOutputTypes.length > 0 && (
           <>
             <div className="flex items-center gap-2 pt-1 pb-0.5">
               <div className="flex-1 border-t border-white/10" />
-              <span className="text-xs font-medium text-slate-400 whitespace-nowrap">Wildcard *</span>
+              <span className="text-xs font-medium text-slate-400 whitespace-nowrap">{t('Wildcard *')}</span>
               <div className="flex-1 border-t border-white/10" />
             </div>
             {wildcardOutputTypes.map(renderOutputTypeEntry)}
@@ -1011,7 +1013,7 @@ export function ConnectionModal(props: ConnectionModalProps) {
           actions={[
             {
               key: 'cancel',
-              label: 'Cancel',
+              label: t('Cancel'),
               onClick: onClose,
               variant: 'secondary'
             },
@@ -1019,7 +1021,7 @@ export function ConnectionModal(props: ConnectionModalProps) {
               && currentAction === 'pick'
               ? [{
                   key: 'apply',
-                  label: 'Apply',
+                  label: t('Apply'),
                   onClick: handleSubmitOutput,
                   variant: 'primary' as const,
                   disabled: !outputSelectionHasChanges
@@ -1030,7 +1032,7 @@ export function ConnectionModal(props: ConnectionModalProps) {
               && !isGetInput
               ? [{
                   key: 'apply',
-                  label: 'Apply',
+                  label: t('Apply'),
                   onClick: applyInputSelection,
                   variant: 'primary' as const,
                   disabled: !inputSelectionHasChanges
@@ -1128,16 +1130,16 @@ export function ConnectionModal(props: ConnectionModalProps) {
       {mode === 'output' && showOverwriteConfirm && (
         <Dialog
           onClose={() => setShowOverwriteConfirm(false)}
-          title="Overwrite existing connections?"
-          description="Some selected inputs are already connected. Continuing will disconnect their current source and reconnect to this output."
+          title={t('Overwrite existing connections?')}
+          description={t('Some selected inputs are already connected. Continuing will disconnect their current source and reconnect to this output.')}
           actions={[
             {
-              label: 'Cancel',
+              label: t('Cancel'),
               onClick: () => setShowOverwriteConfirm(false),
               variant: 'secondary'
             },
             {
-              label: 'Overwrite',
+              label: t('Overwrite'),
               onClick: () => {
                 setShowOverwriteConfirm(false);
                 applyOutputSelection();

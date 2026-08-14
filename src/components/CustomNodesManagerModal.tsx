@@ -38,6 +38,7 @@ import {
 } from '@/utils/customNodesManagerCache';
 import { useBodyScrollLock } from '@/hooks/useBodyScrollLock';
 import { useModalKeyboard } from '@/hooks/useModalKeyboard';
+import { t as globalT, useI18n } from '@/i18n';
 import { FullscreenModalHeader } from './modals/FullscreenModalHeader';
 import { Dialog } from './modals/Dialog';
 import {
@@ -97,13 +98,13 @@ function formatLastUpdate(value: string | number | undefined): string | null {
 }
 
 function getStatusLabel(row: CustomNodeRow): string {
-  if (row.action === 'updatable') return 'Update Available';
-  if (row.action === 'import-fail') return 'Import failed';
-  if (row.action === 'invalid-installation') return 'Invalid';
-  if (row.state === 'enabled') return 'Enabled';
-  if (row.state === 'disabled') return 'Disabled';
-  if (row.state === 'not-installed') return 'Not Installed';
-  return row.state || 'Unknown';
+  if (row.action === 'updatable') return globalT('Update Available');
+  if (row.action === 'import-fail') return globalT('Import failed');
+  if (row.action === 'invalid-installation') return globalT('Invalid');
+  if (row.state === 'enabled') return globalT('Enabled');
+  if (row.state === 'disabled') return globalT('Disabled');
+  if (row.state === 'not-installed') return globalT('Not Installed');
+  return row.state || globalT('Unknown');
 }
 
 function statusClassName(row: CustomNodeRow): string {
@@ -151,6 +152,7 @@ export function CustomNodesManagerModal({
   initialFilter = '',
   initialSearch = '',
 }: CustomNodesManagerModalProps) {
+  const { t } = useI18n();
   const workflow = useWorkflowStore((s) => s.workflow);
   const nodeTypes = useWorkflowStore((s) => s.nodeTypes);
 
@@ -246,12 +248,12 @@ export function CustomNodesManagerModal({
     } catch (err) {
       // If we already painted from cache, a background refresh failure is silent.
       if (!hadCache) {
-        setError(err instanceof Error ? err.message : 'Failed to load custom nodes');
+        setError(err instanceof Error ? err.message : t('Failed to load custom nodes'));
       }
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [t]);
 
   const loadSpecialFilter = useCallback(async (targetFilter: CustomNodeFilterValue) => {
     if (!targetFilter || loadedSpecialFiltersRef.current.has(targetFilter)) return;
@@ -320,7 +322,7 @@ export function CustomNodesManagerModal({
   useEffect(() => {
     if (!isOpen) return;
     void loadBaseData();
-  }, [isOpen, loadBaseData]);
+  }, [isOpen, loadBaseData, t]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -356,7 +358,7 @@ export function CustomNodesManagerModal({
         if (wasQueueProcessingRef.current && !status.is_processing && weStartedQueueRef.current) {
           weStartedQueueRef.current = false;
           setNeedsRestart(true);
-          setMessage('Custom node task completed. Restart ComfyUI to apply changes.');
+          setMessage(t('Custom node task completed. Restart ComfyUI to apply changes.'));
           void loadBaseData({ force: true });
         }
         wasQueueProcessingRef.current = status.is_processing;
@@ -367,7 +369,7 @@ export function CustomNodesManagerModal({
     void loadQueueStatus();
     const interval = window.setInterval(loadQueueStatus, 2500);
     return () => window.clearInterval(interval);
-  }, [isOpen, loadBaseData]);
+  }, [isOpen, loadBaseData, t]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -391,14 +393,14 @@ export function CustomNodesManagerModal({
         if (weStartedQueueRef.current) {
           weStartedQueueRef.current = false;
           setNeedsRestart(true);
-          setMessage('Custom node task completed. Restart ComfyUI to apply changes.');
+          setMessage(t('Custom node task completed. Restart ComfyUI to apply changes.'));
           void loadBaseData({ force: true });
         }
       }
     };
     window.addEventListener('comfy-mobile-manager-queue-status', onQueueStatus);
     return () => window.removeEventListener('comfy-mobile-manager-queue-status', onQueueStatus);
-  }, [isOpen, loadBaseData]);
+  }, [isOpen, loadBaseData, t]);
 
   const visibleRows = useMemo(
     () => filterCustomNodeRows(rows, filter, keywords),
@@ -415,7 +417,7 @@ export function CustomNodesManagerModal({
     setVisibleCount(CUSTOM_NODE_PAGE_SIZE);
     if (listScrollRef.current) listScrollRef.current.scrollTop = 0;
   }, [visibleRows]);
-  const selectedFilterLabel = CUSTOM_NODE_FILTERS.find((item) => item.value === filter)?.label ?? 'All';
+  const selectedFilterLabel = CUSTOM_NODE_FILTERS.find((item) => item.value === filter)?.label ?? t('All');
   const filterWidth = Math.min(Math.max(selectedFilterLabel.length * 7.5 + 76, 112), 230);
 
   const handleFilterChange = (value: CustomNodeFilterValue) => {
@@ -424,7 +426,7 @@ export function CustomNodesManagerModal({
   };
 
   const handleInstallViaGitUrl = async () => {
-    const url = window.prompt('Git repository URL to install');
+    const url = window.prompt(t('Git repository URL to install'));
     if (!url?.trim()) return;
     setActionLoading('git-url');
     setError(null);
@@ -432,10 +434,10 @@ export function CustomNodesManagerModal({
       weStartedQueueRef.current = true;
       await installCustomNodeViaGitUrl(url.trim());
       setNeedsRestart(true);
-      setMessage('Custom node installed. Restart ComfyUI to apply changes.');
+      setMessage(t('Custom node installed. Restart ComfyUI to apply changes.'));
       await loadBaseData({ force: true });
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to install via Git URL');
+      setError(err instanceof Error ? err.message : t('Failed to install via Git URL'));
     } finally {
       setActionLoading(null);
     }
@@ -482,9 +484,15 @@ export function CustomNodesManagerModal({
       // call that no-ops server-side would later look like a completed task and
       // wrongly prompt for a restart. Real tasks are caught by the poll seeing
       // is_processing:true, or by the authoritative 'done' queue-status event.
-      setMessage(`${mode === 'switch' ? 'Switch version' : mode} queued for ${title}.`);
+      setMessage(t('{action} queued for {title}.', {
+        action: mode === 'switch' ? t('Switch version') : t(mode),
+        title,
+      }));
     } catch (err) {
-      setError(err instanceof Error ? err.message : `Failed to ${mode} ${title}`);
+      setError(err instanceof Error ? err.message : t('Failed to {action} {title}', {
+        action: mode === 'switch' ? t('Switch version') : t(mode),
+        title,
+      }));
     } finally {
       setActionLoading(null);
     }
@@ -495,7 +503,7 @@ export function CustomNodesManagerModal({
   return createPortal(
     <div ref={modalRef} className="fixed inset-0 z-[2600] bg-slate-950 flex flex-col safe-area-top text-slate-100">
       <FullscreenModalHeader
-        title="Custom nodes"
+        title={t('Custom nodes')}
         onClose={onClose}
         headerActions={
           needsRestart ? (
@@ -505,7 +513,7 @@ export function CustomNodesManagerModal({
               className="h-10 px-3 rounded-lg border border-emerald-400/25 bg-emerald-500/10 text-emerald-200 text-sm font-semibold inline-flex items-center gap-2"
             >
               <ReloadIcon className="w-4 h-4" />
-              Restart
+              {t('Restart')}
             </button>
           ) : null
         }
@@ -519,8 +527,8 @@ export function CustomNodesManagerModal({
               type="search"
               value={keywords}
               onChange={(event) => setKeywords(event.target.value)}
-              placeholder="Search custom nodes"
-              aria-label="Search custom nodes"
+              placeholder={t('Search custom nodes')}
+              aria-label={t('Search custom nodes')}
               className="w-full h-11 rounded-lg border border-white/10 bg-slate-950/80 pl-10 pr-3 text-sm text-slate-100 placeholder:text-slate-500 focus:border-cyan-400 focus:outline-none focus:ring-2 focus:ring-cyan-400/25"
             />
           </div>
@@ -528,12 +536,12 @@ export function CustomNodesManagerModal({
             <FunnelIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" />
             <select
               value={filter}
-              aria-label="Filter custom nodes"
+              aria-label={t('Filter custom nodes')}
               onChange={(event) => handleFilterChange(event.target.value as CustomNodeFilterValue)}
               className="w-full h-11 appearance-none rounded-lg border border-white/10 bg-slate-950/80 pl-9 pr-9 text-sm text-slate-100 focus:border-cyan-400 focus:outline-none focus:ring-2 focus:ring-cyan-400/25"
             >
               {CUSTOM_NODE_FILTERS.map((item) => (
-                <option key={item.value || 'all'} value={item.value}>{item.label}</option>
+                <option key={item.value || 'all'} value={item.value}>{t(item.label)}</option>
               ))}
             </select>
             <ChevronDownIcon className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" />
@@ -542,7 +550,10 @@ export function CustomNodesManagerModal({
 
         <div className="flex items-center justify-between gap-3 text-xs text-slate-400">
           <div className="min-w-0 flex flex-wrap items-center gap-x-2 gap-y-1">
-            <span>{visibleRows.length.toLocaleString()} custom nodes{channel && channel !== 'default' ? ` · Channel: ${channel}` : ''}</span>
+            <span>
+              {t('{count} custom nodes', { count: visibleRows.length.toLocaleString() })}
+              {channel && channel !== 'default' ? t(' · Channel: {channel}', { channel }) : ''}
+            </span>
             {queueStatus?.is_processing ? (
               <span>{queueStatus.done_count}/{queueStatus.total_count} tasks</span>
             ) : null}
@@ -553,7 +564,7 @@ export function CustomNodesManagerModal({
             disabled={actionLoading === 'git-url'}
             className="shrink-0 text-xs font-semibold text-cyan-300 disabled:opacity-50"
           >
-            Install via Git URL
+            {t('Install via Git URL')}
           </button>
         </div>
       </div>
@@ -587,11 +598,11 @@ export function CustomNodesManagerModal({
         {loading && visibleRows.length === 0 ? (
           <div className="flex items-center justify-center gap-3 rounded-lg border border-white/10 bg-slate-900/95 p-6 text-center text-sm text-slate-400">
             <div className="h-5 w-5 shrink-0 animate-spin rounded-full border-2 border-slate-700 border-t-cyan-300" />
-            <span>{keywords.trim() ? `Finding “${keywords.trim()}”…` : 'Loading custom nodes…'}</span>
+            <span>{keywords.trim() ? t('Finding “{query}”…', { query: keywords.trim() }) : t('Loading custom nodes…')}</span>
           </div>
         ) : visibleRows.length === 0 ? (
           <div className="rounded-lg border border-white/10 bg-slate-900/95 p-6 text-center text-sm text-slate-400">
-            No custom nodes match this view.
+            {t('No custom nodes match this view.')}
           </div>
         ) : (
           windowedRows.map((row) => (
@@ -613,11 +624,11 @@ export function CustomNodesManagerModal({
           // Above this fullscreen modal (z-2600).
           zIndex={2700}
           fullscreen
-          title={`Uninstall ${rowTitle(uninstallTarget)}?`}
+          title={t('Uninstall {title}?', { title: rowTitle(uninstallTarget) })}
           actions={[
-            { label: 'Cancel', onClick: () => setUninstallTarget(null) },
+            { label: t('Cancel'), onClick: () => setUninstallTarget(null) },
             {
-              label: 'Uninstall',
+              label: t('Uninstall'),
               variant: 'danger',
               autoFocus: true,
               onClick: () => {
@@ -649,6 +660,7 @@ function CustomNodeCard({
   onCloseMenu: () => void;
   onAction: (mode: CustomNodeActionMode) => void;
 }) {
+  const { t } = useI18n();
   const menuRef = useRef<HTMLDivElement>(null);
   const actions = getCustomNodeActionOptions(row);
   const repository = rowRepository(row);
@@ -658,8 +670,8 @@ function CustomNodeCard({
   const description = plainTextFromHtml(row.description);
   const subtitleItems = [
     row.version && !isUnknownVersion(row.version) ? `v${row.version}` : null,
-    row.cnr_latest && row.cnr_latest !== row.version ? `latest ${row.cnr_latest}` : null,
-    typeof row.nodes === 'number' ? `${row.nodes} nodes` : null,
+    row.cnr_latest && row.cnr_latest !== row.version ? t('latest {version}', { version: row.cnr_latest }) : null,
+    typeof row.nodes === 'number' ? t('{count} nodes', { count: row.nodes }) : null,
   ].filter((item): item is string => Boolean(item));
   const bottomItems: Array<string | ReactElement> = [
     row.author ? String(row.author) : String(row.id || row.key),
@@ -700,7 +712,7 @@ function CustomNodeCard({
 
         <div ref={menuRef} className="relative -mr-2 -mt-2 shrink-0 text-slate-300">
           <ContextMenuButton
-            ariaLabel={`Actions for ${rowTitle(row)}`}
+            ariaLabel={t('Actions for {title}', { title: rowTitle(row) })}
             onClick={(event) => {
               event.stopPropagation();
               onToggleMenu();
@@ -721,10 +733,10 @@ function CustomNodeCard({
                   }`}
                 >
                   <CustomNodeActionIcon mode={action.mode} className="w-4 h-4 shrink-0" />
-                  {action.label}
+                  {t(action.label)}
                 </button>
               )) : (
-                <div className="px-3 py-2 text-sm text-slate-400">No actions</div>
+                <div className="px-3 py-2 text-sm text-slate-400">{t('No actions')}</div>
               )}
             </div>
           )}
@@ -753,7 +765,7 @@ function CustomNodeCard({
               href={repository}
               target="_blank"
               rel="noreferrer"
-              aria-label={`Open repository for ${rowTitle(row)}`}
+              aria-label={t('Open repository for {title}', { title: rowTitle(row) })}
               className="inline-flex items-center justify-center text-slate-400 hover:text-slate-100"
             >
               <ExternalLinkIcon className="w-5 h-5" />
@@ -772,6 +784,7 @@ function CustomNodeCard({
 }
 
 function CustomNodeNotes({ note }: { note: ReturnType<typeof getCustomNodeNote> }) {
+  const { t } = useI18n();
   if (!note) return null;
   const supported = note.supported ?? [];
   const unsupported = note.unsupported ?? [];
@@ -779,7 +792,7 @@ function CustomNodeNotes({ note }: { note: ReturnType<typeof getCustomNodeNote> 
   return (
     <div className="custom-node-notes mt-2 rounded-md border border-white/10 bg-slate-950/40 p-2.5">
       <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">
-        Mobile frontend support
+        {t('Mobile frontend support')}
       </p>
       {note.summary && (
         <p className="mt-1 text-xs leading-5 text-slate-300 break-words">{note.summary}</p>

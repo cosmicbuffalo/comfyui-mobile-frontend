@@ -2,6 +2,7 @@ import type { ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { SearchBar } from '@/components/SearchBar';
 import { CloseButton } from '@/components/buttons/CloseButton';
+import { useI18n } from '@/i18n';
 
 interface SearchActionModalProps {
   isOpen: boolean;
@@ -25,12 +26,14 @@ export function SearchActionModal({
   onSearchQueryChange,
   searchPlaceholder,
   onBack,
-  backLabel = 'Back',
+  backLabel,
   children,
   footer,
   zIndex = 2200,
 }: SearchActionModalProps) {
+  const { t } = useI18n();
   if (!isOpen) return null;
+  const resolvedBackLabel = backLabel ?? t('Back');
 
   return createPortal(
     <div
@@ -47,7 +50,7 @@ export function SearchActionModal({
                 className="text-sm text-cyan-300 hover:text-cyan-200 font-medium"
                 onClick={onBack}
               >
-                {backLabel}
+                {resolvedBackLabel}
               </button>
             )}
             <h2 className="text-base font-semibold text-slate-100">{title}</h2>

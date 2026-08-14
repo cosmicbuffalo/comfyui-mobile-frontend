@@ -3,6 +3,7 @@ import type { FileItem, SortMode } from '@/api/client';
 import { Collapsible } from '@/components/Collapsible';
 import { FoldIcon } from '@/components/FoldIcon';
 import { FileCard } from './FileCard';
+import { useI18n } from '@/i18n';
 
 interface OutputsFoldersSectionProps {
   folders: FileItem[];
@@ -33,6 +34,7 @@ export function OutputsFoldersSection({
   showContextMenus = true,
   sortMode,
 }: OutputsFoldersSectionProps) {
+  const { t } = useI18n();
   if (folders.length === 0) return null;
 
   return (
@@ -45,7 +47,7 @@ export function OutputsFoldersSection({
         className="sticky top-[-16px] z-20 -mx-4 mb-2 flex w-[calc(100%+2rem)] items-center gap-2 bg-slate-950/95 px-4 py-2 text-left text-sm font-medium text-slate-400 backdrop-blur-sm hover:text-slate-100"
       >
         <FoldIcon open={!foldersCollapsed} variant="chevron" className="w-4 h-4" />
-        <span>Folders ({folders.length})</span>
+        <span>{t('Folders ({count})', { count: folders.length })}</span>
       </button>
       <Collapsible open={!foldersCollapsed}>
         <div className="flex flex-col gap-2">

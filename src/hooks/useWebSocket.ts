@@ -10,6 +10,7 @@ import { useConnectionStatusStore } from './useConnectionStatus';
 import { useNavigationStore } from './useNavigation';
 import { useOutputsStore } from './useOutputs';
 import { applyImpactNodeFeedback, parseImpactNodeFeedback } from '@/utils/impactNodeFeedback';
+import { t } from '@/i18n';
 import type { WSMessage, WSStatusMessage, WSProgressMessage, WSExecutingMessage, WSExecutedMessage, HistoryOutputImage } from '@/api/types';
 import type { DenoVideoCompareAudio, DenoVideoCompareMetadata, NodeComparerOutput } from './useWorkflow';
 import { appendOasisPreviewResults } from '@/utils/nodeFrontendPreviews';
@@ -253,7 +254,7 @@ export function getBackendReconnectMessage(downtimeMs: number): string {
   const duration = seconds < 60
     ? `${seconds}s`
     : `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
-  return `Backend connection restored after ${duration}. ComfyUI may have restarted; running jobs may have been interrupted.`;
+  return t('Backend connection restored after {duration}. ComfyUI may have restarted; running jobs may have been interrupted.', { duration });
 }
 
 // One tick of the 2s background poll. The poll is a backstop for missed
@@ -1207,7 +1208,7 @@ export function useWebSocket() {
           ) {
             useWorkflowErrorsStore
               .getState()
-              .setError(getBackendReconnectMessage(reconnectedAfterMs));
+              .setError(getBackendReconnectMessage(reconnectedAfterMs), 'backend-connection');
           }
           if (
             recoverableJobIds.length > 0 &&

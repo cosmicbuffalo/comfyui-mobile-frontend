@@ -5,6 +5,7 @@ import {
   type PushPreferences,
 } from '@/api/client';
 import { menuMutedTextClassName, menuSurfaceClassName, menuTextClassName } from './menuStyles';
+import { useI18n } from '@/i18n';
 
 const ROWS: { key: keyof PushPreferences; label: string; hint?: string }[] = [
   { key: 'notifyOnComplete', label: 'Notify when a generation finishes' },
@@ -40,6 +41,7 @@ function Toggle({ on, disabled, onChange }: { on: boolean; disabled: boolean; on
 // Server-side notification preferences. Apply to whichever delivery is active
 // (web push or the native app), so they're shown in both modes.
 export function NotificationPreferences() {
+  const { t } = useI18n();
   const [prefs, setPrefs] = useState<PushPreferences | null>(null);
   const [saving, setSaving] = useState(false);
 
@@ -74,8 +76,8 @@ export function NotificationPreferences() {
       {ROWS.map((row) => (
         <div key={row.key} className="flex items-center gap-3">
           <div className="flex-1">
-            <div className={menuTextClassName}>{row.label}</div>
-            {row.hint && <div className={`text-sm ${menuMutedTextClassName}`}>{row.hint}</div>}
+            <div className={menuTextClassName}>{t(row.label)}</div>
+            {row.hint && <div className={`text-sm ${menuMutedTextClassName}`}>{t(row.hint)}</div>}
           </div>
           <Toggle on={prefs[row.key]} disabled={saving} onChange={() => toggle(row.key)} />
         </div>

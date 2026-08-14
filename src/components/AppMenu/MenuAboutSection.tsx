@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { BookIcon, CaretDownIcon, ExternalLinkIcon, GithubIcon, InfoCircleOutlineIcon, MegaphoneIcon } from '@/components/icons';
+import { useI18n } from '@/i18n';
 import type { SystemStats } from '@/api/client';
 import type { Workflow } from '@/api/types';
 import { FeedbackDialog } from './FeedbackDialog';
@@ -31,6 +32,7 @@ export function MenuAboutSection({
   onToggle,
   onOpenLegend,
 }: MenuAboutSectionProps) {
+  const { t } = useI18n();
   const [feedbackDialogOpen, setFeedbackDialogOpen] = useState(false);
 
   return (
@@ -41,7 +43,7 @@ export function MenuAboutSection({
         className={menuSectionHeaderClassName}
         aria-expanded={open}
       >
-        <span>About</span>
+        <span>{t('About')}</span>
         <CaretDownIcon className={`${menuChevronClassName} ${open ? 'rotate-0' : '-rotate-90'}`} />
       </button>
       <CollapsibleMenuSection open={open}>
@@ -52,7 +54,7 @@ export function MenuAboutSection({
             className={menuSurfaceButtonClassName}
           >
             <MegaphoneIcon className={menuIconClassName} />
-            <span className={menuTextClassName}>Send Feedback</span>
+            <span className={menuTextClassName}>{t('Send Feedback')}</span>
             <span className={menuArrowClassName}>&rarr;</span>
           </button>
 
@@ -63,7 +65,7 @@ export function MenuAboutSection({
             className={menuSurfaceButtonClassName}
           >
             <GithubIcon className={menuIconClassName} />
-            <span className={menuTextClassName}>Open in GitHub</span>
+            <span className={menuTextClassName}>{t('Open in GitHub')}</span>
             <ExternalLinkIcon className={menuExternalIconClassName} />
           </a>
 
@@ -72,7 +74,7 @@ export function MenuAboutSection({
             className={menuSurfaceButtonClassName}
           >
             <InfoCircleOutlineIcon className={menuIconClassName} />
-            <span className={menuTextClassName}>Icon Legend</span>
+            <span className={menuTextClassName}>{t('Icon Legend')}</span>
             <span className={menuArrowClassName}>&rarr;</span>
           </button>
 
@@ -83,7 +85,7 @@ export function MenuAboutSection({
             className={menuSurfaceButtonClassName}
           >
             <BookIcon className={menuIconClassName} />
-            <span className={menuTextClassName}>User Manual</span>
+            <span className={menuTextClassName}>{t('User Manual')}</span>
             <ExternalLinkIcon className={menuExternalIconClassName} />
           </a>
         </div>

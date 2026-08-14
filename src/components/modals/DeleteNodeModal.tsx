@@ -1,5 +1,6 @@
 import { createPortal } from 'react-dom';
 import { Dialog } from './Dialog';
+import { useI18n } from '@/i18n';
 
 interface DeleteNodeModalProps {
   nodeId: number;
@@ -16,6 +17,7 @@ export function DeleteNodeModal({
   onCancel,
   onDelete
 }: DeleteNodeModalProps) {
+  const { t } = useI18n();
   type ActionItem = {
     label: string;
     onClick: () => void;
@@ -25,7 +27,7 @@ export function DeleteNodeModal({
   const actions: ActionItem[] = [];
   if (hasConnections) {
     actions.push({
-      label: 'Delete & Reconnect',
+      label: t('Delete & Reconnect'),
       onClick: () => onDelete(true),
       variant: 'danger'
     });
@@ -38,7 +40,7 @@ export function DeleteNodeModal({
       className: hasConnections ? 'bg-red-500/15 text-red-300 hover:bg-red-500/20' : undefined
     },
     {
-      label: 'Cancel',
+      label: t('Cancel'),
       onClick: onCancel,
       variant: 'secondary',
       className: 'w-full'
@@ -48,10 +50,10 @@ export function DeleteNodeModal({
   return createPortal(
     <Dialog
       onClose={onCancel}
-      title="Delete node"
+      title={t('Delete node')}
       description={
         <>
-          Delete <span className="font-medium text-slate-100">{displayName}</span> (#{nodeId})?
+          {t('Delete {name} (#{id})?', { name: displayName, id: nodeId })}
         </>
       }
       actionsLayout="stack"

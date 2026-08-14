@@ -17,6 +17,7 @@ import {
 import type { Workflow } from '@/api/types';
 import { useQueueStore } from '@/hooks/useQueue';
 import { getDisplayName } from '@/components/AppMenu/userWorkflowHelpers';
+import { useI18n } from '@/i18n';
 import {
   resolveWorkflowTabRunKey,
   shouldShowWorkflowTabActivity,
@@ -113,6 +114,7 @@ function WorkflowSessionTab({
   onSwitch: (id: string) => void;
   onRequestClose: (view: SessionView) => void;
 }) {
+  const { t } = useI18n();
   const overallProgress = useOverallProgress({
     workflow: view.workflow,
     runKey: view.runKey,
@@ -164,8 +166,8 @@ function WorkflowSessionTab({
         <span
           className="shrink-0 text-red-400"
           role="img"
-          aria-label="This workflow's last run errored"
-          title="This workflow's last run errored — open the tab to see the error"
+          aria-label={t("This workflow's last run errored")}
+          title={t("This workflow's last run errored — open the tab to see the error")}
         >
           <WarningTriangleIcon className="w-3.5 h-3.5" />
         </span>
@@ -179,7 +181,7 @@ function WorkflowSessionTab({
           <span
             className="shrink-0 w-3 h-3 rounded-full border-2 border-cyan-300/30 border-t-cyan-300 animate-spin"
             role="status"
-            aria-label="Saving"
+            aria-label={t('Saving')}
           />
         ) : view.isModified ? (
           <span className="shrink-0 text-cyan-300 text-[20px] font-bold leading-none" aria-hidden="true">
@@ -196,8 +198,10 @@ function WorkflowSessionTab({
             onRequestClose(view);
           }}
           className="text-slate-400 hover:text-slate-100 flex items-center justify-center"
-          aria-label={`Close ${view.label}${view.isModified ? ' with unsaved changes' : ''}`}
-          title={view.isModified ? 'Close workflow with unsaved changes' : 'Close workflow'}
+          aria-label={view.isModified
+            ? t('Close {label} with unsaved changes', { label: view.label })
+            : t('Close {label}', { label: view.label })}
+          title={view.isModified ? t('Close workflow with unsaved changes') : t('Close workflow')}
         >
           <CloseIcon className="w-3.5 h-3.5" />
         </button>
@@ -207,6 +211,7 @@ function WorkflowSessionTab({
 }
 
 export function WorkflowTabline({ showTabs = true }: WorkflowTablineProps) {
+  const { t } = useI18n();
   const [closeConfirmTarget, setCloseConfirmTarget] = useState<{
     view: SessionView;
     action: 'close' | 'makeRoom';
@@ -510,7 +515,7 @@ export function WorkflowTabline({ showTabs = true }: WorkflowTablineProps) {
               selected tab is hidden under that side, else the top-bar color. */}
           <button
             type="button"
-            aria-label="Scroll to first tab"
+            aria-label={t('Scroll to first tab')}
             onClick={scrollLeftEdge}
             className={`absolute top-1/2 left-2 -translate-y-1/2 w-6 h-6 rounded-full border shadow flex items-center justify-center text-white transition-colors duration-200 ${
               activeHiddenSide === 'left'
@@ -528,7 +533,7 @@ export function WorkflowTabline({ showTabs = true }: WorkflowTablineProps) {
           </button>
           <button
             type="button"
-            aria-label="Scroll to last tab"
+            aria-label={t('Scroll to last tab')}
             onClick={scrollRightEdge}
             className={`absolute top-1/2 right-2 -translate-y-1/2 w-6 h-6 rounded-full border shadow flex items-center justify-center text-white transition-colors duration-200 ${
               activeHiddenSide === 'right'
@@ -558,11 +563,10 @@ export function WorkflowTabline({ showTabs = true }: WorkflowTablineProps) {
             onClick={(e) => e.stopPropagation()}
           >
             <h2 className="text-base font-semibold text-slate-100">
-              Close a workflow
+              {t('Close a workflow')}
             </h2>
             <p className="mt-1 text-sm text-slate-400">
-              You can have up to {MAX_WORKFLOW_SESSIONS} workflows open at once.
-              Choose one to close to make room for the new one.
+              {t('You can have up to {count} workflows open at once. Choose one to close to make room for the new one.', { count: MAX_WORKFLOW_SESSIONS })}
             </p>
             <div className="mt-3 flex flex-col gap-1.5">
               {views.map((view) => (

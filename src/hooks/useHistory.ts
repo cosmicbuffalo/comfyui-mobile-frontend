@@ -9,6 +9,7 @@ import { HIDDEN_WORKFLOW_EXTRA_DATA_KEY } from '@/utils/workflowHidden';
 import { useOutputsStore } from '@/hooks/useOutputs';
 import { bustImageCache } from '@/utils/imageCacheBust';
 import { getHistoryImageFileId } from '@/utils/viewerImages';
+import { t } from '@/i18n';
 
 // Invalidate the browser cache for a deleted entry's output images so a later
 // generation that reuses the same filename doesn't show the stale deleted image.
@@ -437,11 +438,11 @@ export const useHistoryStore = create<HistoryState>((set, get) => ({
           !statusStr.includes('error');
         if (!success && !errorMessage) {
           const displayStatus = interrupted
-            ? 'interrupted'
+            ? t('interrupted')
             : item.status?.status_str?.trim();
           errorMessage = displayStatus
-            ? `Execution did not complete (${displayStatus}). Some outputs may be missing.`
-            : 'Execution did not complete. Some outputs may be missing.';
+            ? t('Execution did not complete ({status}). Some outputs may be missing.', { status: displayStatus })
+            : t('Execution did not complete. Some outputs may be missing.');
         }
         const workflow = (item.prompt?.[3] as { extra_pnginfo?: { workflow?: Workflow } } | undefined)?.extra_pnginfo?.workflow;
         const extraData = (item.prompt?.[3] ?? {}) as Record<string, unknown>;
@@ -508,7 +509,7 @@ export const useHistoryStore = create<HistoryState>((set, get) => ({
           markFailedNotified(entry.prompt_id);
           useWorkflowErrorsStore
             .getState()
-            .setError(entry.errorMessage || 'Execution did not complete. Some outputs may be missing.');
+            .setError(entry.errorMessage || t('Execution did not complete. Some outputs may be missing.'));
         }
         if (queueStore.queueItemExpanded[entry.prompt_id] === undefined) {
           queueStore.setQueueItemExpanded(entry.prompt_id, true);

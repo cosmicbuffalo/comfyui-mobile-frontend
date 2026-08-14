@@ -5,6 +5,7 @@ import { QueueCard } from './QueueCard';
 import { InboxIcon } from '@/components/icons';
 import { LoadingSpinner } from '@/components/LoadingSpinner';
 import { useQueueStore } from '@/hooks/useQueue';
+import { useI18n } from '@/i18n';
 import { useIsDesktop } from '@/hooks/useIsDesktop';
 import {
   captureQueueScrollAnchor,
@@ -85,6 +86,7 @@ export function QueueList({
   onScroll,
   loadingMore = false
 }: QueueListProps) {
+  const { t } = useI18n();
   const queueOutputLayout = useQueueStore((s) => s.queueOutputLayout);
   const isDesktop = useIsDesktop();
   // In the desktop stacked layout the panel is full-width, so each card shrinks
@@ -339,7 +341,7 @@ export function QueueList({
         <div className="flex items-center justify-center min-h-[calc(100vh-180px)] text-slate-400">
           <div className="text-center">
             <LoadingSpinner size="lg" color="gray" className="mx-auto mb-4" />
-            <p className="text-lg">Loading...</p>
+            <p className="text-lg">{t('Loading...')}</p>
           </div>
         </div>
       )}
@@ -349,9 +351,9 @@ export function QueueList({
             <div className="flex items-center justify-center mb-4">
               <InboxIcon className="w-10 h-10 text-slate-600" />
             </div>
-            <p className="text-lg font-medium">Queue is empty</p>
+            <p className="text-lg font-medium">{t('Queue is empty')}</p>
             <p className="text-sm mt-2">
-              Run a workflow to see items here
+              {t('Run a workflow to see items here')}
             </p>
           </div>
         </div>

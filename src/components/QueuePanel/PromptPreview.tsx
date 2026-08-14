@@ -3,6 +3,7 @@ import type { Workflow } from '@/api/types';
 import { useQueueStore } from '@/hooks/useQueue';
 import { Collapsible } from '@/components/Collapsible';
 import { FoldIcon } from '@/components/FoldIcon';
+import { useI18n } from '@/i18n';
 import {
   computeQueueWorkflowDiff,
   type DiffSegment,
@@ -111,6 +112,7 @@ export function PromptPreview({
   inputImages = [],
   onInputImageClick,
 }: PromptPreviewProps) {
+  const { t } = useI18n();
   const storedDiff = useQueueStore((s) => s.workflowDiffs[promptId]);
   const [sectionOpen, setSectionOpen] = useState(false);
 
@@ -139,7 +141,7 @@ export function PromptPreview({
       >
         <FoldIcon open={sectionOpen} className="h-6 w-6 shrink-0 text-slate-500" />
         <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
-          Prompt preview
+          {t('Prompt preview')}
         </span>
       </button>
       <Collapsible open={sectionOpen}>
@@ -207,7 +209,7 @@ export function PromptPreview({
 
           {hasInputs && (
             <FoldChunk
-              label="Inputs"
+              label={t('Inputs')}
               anchorId={`${anchorBaseId}::inputs`}
               labelClassName="text-[11px] font-semibold text-amber-300"
               iconClassName="text-amber-300/70"
@@ -218,7 +220,7 @@ export function PromptPreview({
                   <div key={img.key} className="relative">
                     <img
                       src={img.displaySrc}
-                      alt="Generation input"
+                      alt={t('Generation input')}
                       className="aspect-square w-full rounded object-cover"
                       loading="lazy"
                       onClick={() => onInputImageClick?.(img.src, img.index)}

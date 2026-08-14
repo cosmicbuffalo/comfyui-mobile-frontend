@@ -1,5 +1,6 @@
 import { HeartIcon, HeartOutlineIcon } from '@/components/icons';
 import { OverlayCircleButton } from './OverlayCircleButton';
+import { useI18n } from '@/i18n';
 
 interface FavoriteButtonProps {
   onClick: () => void;
@@ -9,12 +10,13 @@ interface FavoriteButtonProps {
 }
 
 export function FavoriteButton({ onClick, isFavorited, bare }: FavoriteButtonProps) {
+  const { t } = useI18n();
   return (
     <OverlayCircleButton
       onClick={onClick}
       // Favoriting is sticky — this button enters the favorited state but never
       // leaves it (use the reject/x affordance to unfavorite).
-      ariaLabel={isFavorited ? 'Favorited' : 'Favorite'}
+      ariaLabel={isFavorited ? t('Favorited') : t('Favorite')}
       ariaPressed={isFavorited}
       bare={bare}
       className={`text-white${bare ? ' drop-shadow' : ''}`}

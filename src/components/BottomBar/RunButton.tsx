@@ -2,8 +2,10 @@ import { useEffect } from 'react';
 import { useWorkflowStore } from '@/hooks/useWorkflow';
 import { useQueueStore } from '@/hooks/useQueue';
 import { appChromePrimaryButtonClassName, appChromePrimaryButtonDisabledClassName } from '@/components/chromeStyles';
+import { useI18n } from '@/i18n';
 
 export function RunButton() {
+  const { t } = useI18n();
   const workflow = useWorkflowStore((s) => s.workflow);
   const runCount = useWorkflowStore((s) => s.runCount);
   const infiniteLoop = useWorkflowStore((s) => s.infiniteLoop);
@@ -95,9 +97,9 @@ export function RunButton() {
           // full label only appears at the desktop breakpoint (lg / 1024px, see
           // DESKTOP_MIN_WIDTH). This avoids the jarring Run -> Queueing... text
           // swap on small screens.
-          <span className="hidden lg:inline">Queueing...</span>
+          <span className="hidden lg:inline">{t('Queueing...')}</span>
         ) : (
-          'Run'
+          t('Run')
         )}
       </span>
     </button>
