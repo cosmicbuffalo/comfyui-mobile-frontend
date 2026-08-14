@@ -3,6 +3,9 @@
  *
  * Keys are the English source strings (including `{param}` placeholders).
  * A missing key falls back to the English source text.
+ *
+ * TODO(i18n-review): these strings were machine-translated and have not
+ * been checked by a fluent speaker. See the note in src/i18n/index.ts.
  */
 export const ko: Record<string, string> = {
   // 상단 바

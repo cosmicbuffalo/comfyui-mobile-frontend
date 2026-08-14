@@ -20,6 +20,18 @@ export {
 } from './locales';
 export type { Locale } from './locales';
 
+/**
+ * TODO(i18n-review): the zh-CN / zh-TW / ja / ko dictionaries are ~770 strings
+ * each and were machine-translated. None of them has been reviewed by a fluent
+ * speaker, and nothing in CI can catch a translation that is grammatical but
+ * wrong, awkward, or wrong for its UI context — the tests only verify that keys
+ * exist, are unique across locales, and keep their `{param}` placeholders.
+ *
+ * Worth a native-speaker pass per locale before leaning on these too heavily.
+ * The highest-value strings to check first are the destructive-action dialogs
+ * (delete / uninstall confirmations), where a mistranslation could get someone
+ * to confirm something they didn't intend.
+ */
 const translations: Record<Locale, Record<string, string>> = {
   // English is the source of truth: every key is its own English text, so no
   // lookup table is needed. Missing translations in any locale fall back to

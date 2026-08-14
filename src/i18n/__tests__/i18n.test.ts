@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
@@ -30,6 +30,31 @@ function readDictionaryKeys(locale: Locale): string[] {
   return [...source.matchAll(entry)].map(([, , key]) =>
     key.replace(/\\(['"\\])/g, '$1'),
   );
+}
+
+// Every string literal handed to t() across the app, with the file:line it came
+// from. Only literal calls are visible here — a handful of sites translate a
+// runtime value (`t(action.label)`), and those keys can't be checked statically.
+function readSourceTranslationKeys(): Map<string, string> {
+  const root = resolve(process.cwd(), 'src');
+  const files = readdirSync(root, { recursive: true, encoding: 'utf8' })
+    .filter((f) => /\.tsx?$/.test(f))
+    .filter((f) => !f.includes('__tests__') && !f.startsWith('i18n/'));
+
+  // `\bt(` with a quoted first argument. The word boundary keeps `format(`,
+  // `useEffect(` and friends from matching.
+  const call = /\bt\(\s*('|")((?:\\.|(?!\1).)*)\1/g;
+  const found = new Map<string, string>();
+  for (const file of files) {
+    const source = readFileSync(resolve(root, file), 'utf8');
+    for (const match of source.matchAll(call)) {
+      const key = match[2].replace(/\\(['"\\])/g, '$1');
+      if (found.has(key)) continue;
+      const line = source.slice(0, match.index).split('\n').length;
+      found.set(key, `src/${file}:${line}`);
+    }
+  }
+  return found;
 }
 
 describe('i18n', () => {
@@ -83,6 +108,28 @@ describe('i18n', () => {
       expect(duplicates, `${name} has duplicate keys: ${duplicates.join(', ')}`)
         .toEqual([]);
     }
+  });
+
+  it('translates every string the app passes to t()', () => {
+    // The guard against silent drift. Two ways this fails:
+    //   - a new t('...') string was added without dictionary entries, so it
+    //     renders English in every locale;
+    //   - an existing English string was reworded, which changes the key and
+    //     silently unhooks all four translations at once.
+    // Either way the UI degrades to English with only a console warning at
+    // runtime, so it has to be caught here.
+    const sourceKeys = readSourceTranslationKeys();
+    const translated = new Set(readDictionaryKeys('zh-CN'));
+    const untranslated = [...sourceKeys]
+      .filter(([key]) => !translated.has(key))
+      .map(([key, where]) => `${where}  t(${JSON.stringify(key)})`);
+
+    expect(
+      untranslated,
+      `${untranslated.length} string(s) reach t() with no dictionary entry. ` +
+        'Add them to all four dictionaries in src/i18n/, or revert the English ' +
+        'wording change that orphaned them:\n' + untranslated.join('\n'),
+    ).toEqual([]);
   });
 
   it('defines the same key set in every dictionary', () => {
