@@ -25,6 +25,17 @@ export function TopBarTitle({
   isHidden = false,
 }: TopBarTitleProps) {
   const { t } = useI18n();
+
+  const resolveSubtitle = () => {
+    if (mode === 'workflow') return hasWorkflow ? nodeCountLabel : ' ';
+    if (mode !== 'queue') return ' ';
+    const runs = historyLength === 1
+      ? t('{count} run', { count: historyLength })
+      : t('{count} runs', { count: historyLength });
+    if (pendingLength === 0) return runs;
+    return `${runs} ${t('({count} pending)', { count: pendingLength })}`;
+  };
+
   return (
     <div id="top-bar-title-container" className="grid h-11 w-full min-w-0 grid-rows-[1.75rem_1rem] px-2 text-center cursor-pointer" onClick={onTap}>
       <h1 id="top-bar-title" className="flex h-7 w-full min-w-0 items-center justify-center overflow-hidden text-base font-semibold leading-7 text-slate-100">
@@ -43,11 +54,7 @@ export function TopBarTitle({
           so the top bar keeps a constant height across all three panels and
           the buttons don't shift vertically when swiping between them. */}
       <p className="top-bar-subtitle h-4 w-full truncate text-center text-xs text-slate-400 leading-4">
-        {mode === 'workflow'
-          ? (hasWorkflow ? nodeCountLabel : ' ')
-          : mode === 'queue'
-            ? `${t('{count} run', { count: historyLength })}${pendingLength > 0 ? ` ${t('({count} pending)', { count: pendingLength })}` : ''}`
-            : ' '}
+        {resolveSubtitle()}
       </p>
     </div>
   );

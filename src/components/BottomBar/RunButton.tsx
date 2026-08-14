@@ -99,7 +99,7 @@ export function RunButton() {
           // swap on small screens.
           <span className="hidden lg:inline">{t('Queueing...')}</span>
         ) : (
-          'Run'
+          t('Run')
         )}
       </span>
     </button>

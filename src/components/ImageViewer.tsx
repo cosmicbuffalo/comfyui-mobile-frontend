@@ -588,7 +588,7 @@ export function ImageViewer({ onClose }: ImageViewerProps) {
           background="translucent"
           onClose={() => setDeleteTarget(null)}
           title={t('Delete file?')}
-          description={`This will permanently delete "${deleteTarget.file.name}" from the server. This cannot be undone.`}
+          description={t('This will permanently delete "{name}" from the server. This cannot be undone.', { name: deleteTarget.file.name })}
           actions={[
             {
               label: t('Cancel'),

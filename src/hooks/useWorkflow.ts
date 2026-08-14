@@ -3630,6 +3630,7 @@ export const useWorkflowStore = create<WorkflowState>()(
                 remaining.length === 1
                   ? t("Workflow load error: {count} input references missing options.", { count: remaining.length })
                   : t("Workflow load error: {count} inputs reference missing options.", { count: remaining.length }),
+                "workflow-load",
               );
             }
           }
@@ -4687,6 +4688,7 @@ export const useWorkflowStore = create<WorkflowState>()(
                 loadErrorCount === 1
                   ? t("Workflow load error: {count} input references missing options.", { count: loadErrorCount })
                   : t("Workflow load error: {count} inputs reference missing options.", { count: loadErrorCount }),
+                "workflow-load",
               );
           } else {
             useWorkflowErrorsStore.getState().clearNodeErrors();

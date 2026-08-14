@@ -65,7 +65,7 @@ _PUSH_MESSAGES = {
     },
     "ko": {
         "render_complete_title": "생성 완료",
-        "render_complete_body": "생성이 완료되었습니다（출력 {outputs}개）。",
+        "render_complete_body": "생성이 완료되었습니다(출력 {outputs}개).",
         "render_complete_body_empty": "생성이 완료되었습니다.",
         "generation_failed_title": "생성 실패",
         "generation_failed_body": "ComfyUI 서버에서 생성 중 오류가 발생했습니다.",

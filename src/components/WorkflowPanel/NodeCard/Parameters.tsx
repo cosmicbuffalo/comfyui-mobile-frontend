@@ -754,7 +754,7 @@ export function NodeCardParameters({
         <SectionFoldButton
           expanded={parametersExpanded}
           onToggle={() => toggleParametersCollapsed(node.itemKey ?? '')}
-          label={t('parameters')}
+          label="parameters"
         />
         <div className="flex min-w-0 items-center gap-2">
           <span className="h-px min-w-0 flex-1 bg-slate-700" aria-hidden="true" />

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   getPushConfig,
   sendSubscription,
@@ -81,7 +81,33 @@ export function usePushNotifications(): PushState {
     return () => {
       cancelled = true;
     };
-  }, [supported, locale]);
+  }, [supported]);
+
+  // The backend renders notification copy in the locale it recorded at
+  // subscribe time, so a language switch has to be pushed up — otherwise
+  // completion notifications keep arriving in the previous language until the
+  // user toggles push off and on again.
+  const syncedLocaleRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!supported || !subscribed) return;
+    if (syncedLocaleRef.current === locale) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const registration = await navigator.serviceWorker.ready;
+        const existing = await registration.pushManager.getSubscription();
+        if (!existing || cancelled) return;
+        await sendSubscription(existing, locale);
+        if (!cancelled) syncedLocaleRef.current = locale;
+      } catch {
+        // Offline or the server rejected it — the locale re-syncs on the next
+        // change or the next explicit enable().
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [supported, subscribed, locale]);
 
   const enable = useCallback(async () => {
     if (!supported) return;
@@ -115,6 +141,7 @@ export function usePushNotifications(): PushState {
         }));
 
       await sendSubscription(subscription, locale);
+      syncedLocaleRef.current = locale;
       setSubscribed(true);
     } catch (err) {
       setError(err instanceof Error ? err.message : t('Failed to enable notifications.'));
@@ -134,6 +161,7 @@ export function usePushNotifications(): PushState {
         await removeSubscription(subscription.endpoint);
         await subscription.unsubscribe();
       }
+      syncedLocaleRef.current = null;
       setSubscribed(false);
     } catch (err) {
       setError(err instanceof Error ? err.message : t('Failed to disable notifications.'));

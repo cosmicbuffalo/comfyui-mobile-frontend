@@ -761,7 +761,9 @@ export const QueuePanel = memo(function QueuePanel({ visible, onImageClick }: Qu
           }));
         },
       });
-      setToastMessage(`Restored ${recoverableJobIds.length} lost queued job${recoverableJobIds.length === 1 ? '' : 's'}`);
+      setToastMessage(recoverableJobIds.length === 1
+        ? t('Restored {count} lost queued job', { count: recoverableJobIds.length })
+        : t('Restored {count} lost queued jobs', { count: recoverableJobIds.length }));
       setTimeout(() => setToastMessage(null), 2000);
     } catch (err) {
       setToastMessage(err instanceof Error ? err.message : t('Failed to restore lost queued jobs'));

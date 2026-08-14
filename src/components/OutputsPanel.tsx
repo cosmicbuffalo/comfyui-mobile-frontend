@@ -21,6 +21,7 @@ import {
   buildFileSections,
   collapseBreadcrumbs,
   isCrumbHidden,
+  sourceRootLabel,
 } from '@/utils/outputsBrowser';
 import type { ViewerImage } from '@/utils/viewerImages';
 import { getMediaType } from '@/utils/media';
@@ -64,6 +65,12 @@ export const OutputsPanel = memo(function OutputsPanel({ visible }: { visible: b
   // re-render this whole panel on every store write, even while hidden.
   const source = useOutputsStore((s) => s.source);
   const currentFolder = useOutputsStore((s) => s.currentFolder);
+  const resolveEmptyMessage = () => {
+    if (currentFolder) return t('No images in this folder');
+    return source === 'output'
+      ? t('No generated images yet')
+      : t('No imported images');
+  };
   const isLoading = useOutputsStore((s) => s.isLoading);
   const error = useOutputsStore((s) => s.error);
   const viewMode = useOutputsStore((s) => s.viewMode);
@@ -1366,11 +1373,7 @@ export const OutputsPanel = memo(function OutputsPanel({ visible }: { visible: b
 
           {!isLoading && !error && displayedFiles.length === 0 && (
              <div id="outputs-empty-message" className="text-center text-slate-400 py-8">
-               {currentFolder
-                 ? t('No images in this folder')
-                 : source === 'output'
-                   ? t('No generated images yet')
-                   : t('No imported images')}
+               {resolveEmptyMessage()}
              </div>
           )}
        </div>
@@ -1518,7 +1521,7 @@ export const OutputsPanel = memo(function OutputsPanel({ visible }: { visible: b
                          </span>
                          <FolderIcon className="w-4 h-4 shrink-0 text-cyan-300" />
                          <span className="truncate text-slate-200">
-                           {folder || (source === 'output' ? t('Outputs') : source === 'input' ? t('Inputs') : t('Temp'))}
+                           {folder || sourceRootLabel(source)}
                          </span>
                        </button>
                      );
@@ -1675,13 +1678,19 @@ export const OutputsPanel = memo(function OutputsPanel({ visible }: { visible: b
              const folderLabel = folders === 1
                ? t('{count} folder', { count: folders })
                : t('{count} folders', { count: folders });
-             const target =
-               folders === 0 ? fileLabel : files === 0 ? folderLabel : t('{file} and {folder}', { file: fileLabel, folder: folderLabel });
-             return folders === 0
-               ? t('This will permanently delete {target} from the server. This cannot be undone.', { target })
-               : folders === 1
-                 ? t('This will permanently delete {target} from the server, including all contents of the selected folder. This cannot be undone.', { target })
-                 : t('This will permanently delete {target} from the server, including all contents of the selected folders. This cannot be undone.', { target });
+             const resolveTarget = () => {
+               if (folders === 0) return fileLabel;
+               if (files === 0) return folderLabel;
+               return t('{file} and {folder}', { file: fileLabel, folder: folderLabel });
+             };
+             const target = resolveTarget();
+             if (folders === 0) {
+               return t('This will permanently delete {target} from the server. This cannot be undone.', { target });
+             }
+             if (folders === 1) {
+               return t('This will permanently delete {target} from the server, including all contents of the selected folder. This cannot be undone.', { target });
+             }
+             return t('This will permanently delete {target} from the server, including all contents of the selected folders. This cannot be undone.', { target });
            })()}
            zIndex={1800}
            actions={[

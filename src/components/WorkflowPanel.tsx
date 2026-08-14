@@ -1546,7 +1546,6 @@ export const WorkflowPanel = memo(function WorkflowPanel({
         // item.children, but nodeCount/bypassedNodeCount remain accurate.
         const hasBypassedNodes = item.bypassedNodeCount > 0;
         const hasEngagedNodes = item.bypassedNodeCount < item.nodeCount;
-        const foldAllLabel = hasExpandedChildren ? t("Fold all") : t("Unfold all");
         const handleFoldAll = () => {
           if (!hasExpandedChildren) {
             setItemCollapsed(groupHierarchicalKey, false);
@@ -1584,7 +1583,7 @@ export const WorkflowPanel = memo(function WorkflowPanel({
               hiddenNodeCount={hiddenNodeCount}
               isBookmarked={isGroupBookmarked}
               canShowBookmarkAction={canShowGroupBookmarkAction}
-              foldAllLabel={foldAllLabel}
+              canFoldAll={hasExpandedChildren}
               onToggleCollapse={() => setItemCollapsed(groupHierarchicalKey, !item.isCollapsed)}
               onToggleBookmark={() => toggleBookmark(groupHierarchicalKey)}
               onShowHiddenNodes={() => {

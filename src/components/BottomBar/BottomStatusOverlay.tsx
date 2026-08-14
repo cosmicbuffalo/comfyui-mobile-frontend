@@ -36,6 +36,7 @@ export function BottomStatusOverlay() {
   const executingPromptId = useWorkflowStore((s) => s.executingPromptId);
   const workflowDurationStats = useWorkflowStore((s) => s.workflowDurationStats);
   const error = useWorkflowErrorsStore((s) => s.error);
+  const errorKind = useWorkflowErrorsStore((s) => s.errorKind);
   const nodeErrors = useWorkflowErrorsStore((s) => s.nodeErrors);
   const nodeErrorsFromRun = useWorkflowErrorsStore((s) => s.nodeErrorsFromRun);
   const errorsDismissed = useWorkflowErrorsStore((s) => s.errorsDismissed);
@@ -62,21 +63,25 @@ export function BottomStatusOverlay() {
   // loudly on every panel — the user has just hit Run and is usually watching
   // the queue. Load-time node errors only matter on the workflow panel.
   const isRunNodeError = hasNodeErrors && nodeErrorsFromRun;
+  // `errorKind` is set by whoever raised the error. The English prefix test is
+  // only a fallback for a message persisted by a build that predates the kind
+  // field; new errors always carry one.
   const isWorkflowLoadError =
-    Boolean(error?.startsWith("Workflow load error")) ||
-    Boolean(error?.startsWith(t("Workflow load error"))) ||
+    errorKind === "workflow-load" ||
+    (errorKind == null && Boolean(error?.startsWith("Workflow load error"))) ||
     (hasNodeErrors && !nodeErrorsFromRun);
   const isBackendConnectionError =
-    Boolean(error?.startsWith("Backend connection")) ||
-    Boolean(error?.startsWith(t("Backend connection")));
+    errorKind === "backend-connection" ||
+    (errorKind == null && Boolean(error?.startsWith("Backend connection")));
   const skippedNodeCount = Object.keys(nodeErrors).length;
-  const errorTitle = isWorkflowLoadError
-    ? t("Workflow load error")
-    : isBackendConnectionError
-      ? t("Backend connection")
-    : isRunNodeError && !error
-      ? t("Nodes skipped")
-    : t("Prompt error");
+
+  const resolveErrorTitle = () => {
+    if (isWorkflowLoadError) return t("Workflow load error");
+    if (isBackendConnectionError) return t("Backend connection");
+    if (isRunNodeError && !error) return t("Nodes skipped");
+    return t("Prompt error");
+  };
+  const errorTitle = resolveErrorTitle();
   const stripWorkflowLoadErrorPrefix = (message: string) => {
     const prefixes = ["Workflow load error:", t("Workflow load error:")];
     for (const prefix of prefixes) {
@@ -84,19 +89,24 @@ export function BottomStatusOverlay() {
     }
     return message;
   };
+  // Fallback copy for when there is no explicit `error` string — derived from
+  // whichever kind of node errors are outstanding.
+  const resolveNodeErrorSummary = () => {
+    if (isRunNodeError) {
+      return skippedNodeCount === 1
+        ? t("{count} node had invalid inputs and was skipped — tap to view.", { count: skippedNodeCount })
+        : t("{count} nodes had invalid inputs and were skipped — tap to view.", { count: skippedNodeCount });
+    }
+    if (hasNodeErrors) {
+      return nodeErrorCount === 1
+        ? t("{count} input references missing options.", { count: nodeErrorCount })
+        : t("{count} inputs reference missing options.", { count: nodeErrorCount });
+    }
+    return null;
+  };
   const errorMessage = isWorkflowLoadError && error
     ? stripWorkflowLoadErrorPrefix(error)
-    : error ?? (
-        isRunNodeError
-          ? skippedNodeCount === 1
-            ? t("{count} node had invalid inputs and was skipped — tap to view.", { count: skippedNodeCount })
-            : t("{count} nodes had invalid inputs and were skipped — tap to view.", { count: skippedNodeCount })
-          : hasNodeErrors
-            ? nodeErrorCount === 1
-              ? t("{count} input references missing options.", { count: nodeErrorCount })
-              : t("{count} inputs reference missing options.", { count: nodeErrorCount })
-            : null
-      );
+    : error ?? resolveNodeErrorSummary();
 
   const executingNodeLabel = useMemo(() => {
     return resolveExecutingNodeLabel(

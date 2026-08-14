@@ -9,8 +9,17 @@ export interface NodeError {
   inputName?: string;
 }
 
+/**
+ * What kind of failure `error` describes. Carried explicitly so the UI can pick
+ * a title without pattern-matching the message — the message is translated, and
+ * word order differs by locale (in ja/ko the reconnect notice leads with the
+ * duration, so a prefix test against the translated title fails).
+ */
+export type WorkflowErrorKind = 'workflow-load' | 'backend-connection' | 'prompt';
+
 interface WorkflowErrorsState {
   error: string | null;
+  errorKind: WorkflowErrorKind | null;
   nodeErrors: Record<string, NodeError[]>;
   // Whether the current nodeErrors came from a queue/run attempt (ComfyUI
   // excluded a branch) rather than from loading a workflow. Run errors are
@@ -24,7 +33,7 @@ interface WorkflowErrorsState {
   // here instead so it doesn't hijack the foreground — it surfaces a warning
   // marker on that tab and is promoted to `error` when the user enters the tab.
   sessionErrors: Record<string, string>;
-  setError: (message: string | null) => void;
+  setError: (message: string | null, kind?: WorkflowErrorKind) => void;
   setNodeErrors: (errors: Record<string, NodeError[]>, fromRun?: boolean) => void;
   clearNodeErrors: () => void;
   clearNodeError: (nodeId: number) => void;
@@ -38,19 +47,24 @@ export const useWorkflowErrorsStore = create<WorkflowErrorsState>()(
   persist(
     (set) => ({
       error: null,
+      errorKind: null,
       nodeErrors: {},
       nodeErrorsFromRun: false,
       errorCycleIndex: 0,
       errorsDismissed: false,
       sessionErrors: {},
-      setError: (message) => {
-        set({ error: message, errorsDismissed: false });
+      setError: (message, kind) => {
+        set({
+          error: message,
+          errorKind: message === null ? null : (kind ?? 'prompt'),
+          errorsDismissed: false,
+        });
       },
       setNodeErrors: (errors, fromRun = false) => {
         set({ nodeErrors: errors, nodeErrorsFromRun: fromRun, errorCycleIndex: 0, errorsDismissed: false });
       },
       clearNodeErrors: () => {
-        set({ error: null, nodeErrors: {}, nodeErrorsFromRun: false, errorCycleIndex: 0, errorsDismissed: false });
+        set({ error: null, errorKind: null, nodeErrors: {}, nodeErrorsFromRun: false, errorCycleIndex: 0, errorsDismissed: false });
       },
       clearNodeError: (nodeId) => {
         set((state) => {
@@ -84,6 +98,7 @@ export const useWorkflowErrorsStore = create<WorkflowErrorsState>()(
       storage: createJSONStorage(() => localStorage),
       partialize: (state) => ({
         error: state.error,
+        errorKind: state.errorKind,
         nodeErrors: state.nodeErrors,
         errorCycleIndex: state.errorCycleIndex,
         errorsDismissed: state.errorsDismissed,
@@ -99,6 +114,7 @@ export const useWorkflowErrorsStore = create<WorkflowErrorsState>()(
             errorCount === 1
               ? t('Workflow load error: {count} input references missing options.', { count: errorCount })
               : t('Workflow load error: {count} inputs reference missing options.', { count: errorCount }),
+            'workflow-load',
           );
         }
         if (errorCount > 0) {

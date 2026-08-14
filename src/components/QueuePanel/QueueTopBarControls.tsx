@@ -77,8 +77,10 @@ export function QueueTopBarControls() {
       {deleteRejectedConfirmOpen && createPortal(
         <Dialog
           onClose={() => setDeleteRejectedConfirmOpen(false)}
-          title={`Delete ${rejectedCount} rejected output${rejectedCount === 1 ? '' : 's'}?`}
-          description="This permanently deletes the files marked as rejected from your server's output folder and removes them from the queue. This can't be undone."
+          title={rejectedCount === 1
+            ? t('Delete {count} rejected output?', { count: rejectedCount })
+            : t('Delete {count} rejected outputs?', { count: rejectedCount })}
+          description={t("This permanently deletes the files marked as rejected from your server's output folder and removes them from the queue. This can't be undone.")}
           actions={[
             {
               label: t('Cancel'),

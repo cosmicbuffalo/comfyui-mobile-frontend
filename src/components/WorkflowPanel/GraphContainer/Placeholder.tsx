@@ -21,6 +21,17 @@ export function GraphContainerPlaceholder({
 }: GraphContainerPlaceholderProps) {
   const { t } = useI18n();
   const label = containerType === 'group' ? t('group') : t('subgraph');
+
+  const resolveEmptyLabel = () => {
+    if (hiddenNodeCount === 1) {
+      return t('{count} hidden node in {type}', { count: hiddenNodeCount, type: label });
+    }
+    if (hiddenNodeCount > 1) {
+      return t('{count} hidden nodes in {type}', { count: hiddenNodeCount, type: label });
+    }
+    return t('No nodes in {type}', { type: label });
+  };
+
   return (
     <div
       id={`${containerType}-placeholder-${containerId}`}
@@ -34,9 +45,7 @@ export function GraphContainerPlaceholder({
         style={{ borderColor: hexToRgba(color, 0.4) }}
       >
         <span className="text-sm text-slate-400 select-none">
-          {hiddenNodeCount > 0
-            ? t('{count} hidden nodes in {type}', { count: hiddenNodeCount, type: label })
-            : t('No nodes in {type}', { type: label })}
+          {resolveEmptyLabel()}
         </span>
         <span className="text-xs text-slate-500 select-none mt-1 inline-flex items-center gap-1">
           <PlusIcon className="w-3 h-3" />

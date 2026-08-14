@@ -1208,7 +1208,7 @@ export function useWebSocket() {
           ) {
             useWorkflowErrorsStore
               .getState()
-              .setError(getBackendReconnectMessage(reconnectedAfterMs));
+              .setError(getBackendReconnectMessage(reconnectedAfterMs), 'backend-connection');
           }
           if (
             recoverableJobIds.length > 0 &&

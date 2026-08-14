@@ -31,6 +31,7 @@ function FilterToggle({
 }: {
   id: string;
   mode: StatusFilterMode;
+  /** Untranslated key (e.g. 'Favorites'); translated here, not by the caller. */
   noun: string;
   onCycle: () => void;
   tone: 'cyan' | 'rose';
@@ -39,11 +40,13 @@ function FilterToggle({
   // The label states what the listing is doing right now, since a tri-state
   // button can't say it through pressed-ness alone. Struck-through styling
   // reinforces the excluded reading for anyone who skims rather than reads.
-  const label = mode === 'only'
-    ? t('{noun} only', { noun: t(noun) })
-    : mode === 'exclude'
-      ? t('No {noun}', { noun: t(noun).toLowerCase() })
-      : t(noun);
+  const translatedNoun = t(noun);
+  const resolveLabel = () => {
+    if (mode === 'only') return t('{noun} only', { noun: translatedNoun });
+    if (mode === 'exclude') return t('No {noun}', { noun: translatedNoun.toLowerCase() });
+    return translatedNoun;
+  };
+  const label = resolveLabel();
 
   return (
     <button
@@ -68,13 +71,12 @@ export function FavoritesSection({
   onCycleRejects,
   showRejects = true,
 }: FavoritesSectionProps) {
-  const { t } = useI18n();
   return (
     <div className={showRejects ? 'grid grid-cols-2 gap-2' : undefined}>
       <FilterToggle
         id="favorites-toggle-button"
         mode={favoritesMode}
-        noun={t('Favorites')}
+        noun="Favorites"
         onCycle={onCycleFavorites}
         tone="cyan"
       />
@@ -82,7 +84,7 @@ export function FavoritesSection({
         <FilterToggle
           id="rejects-toggle-button"
           mode={rejectsMode}
-          noun={t('Rejects')}
+          noun="Rejects"
           onCycle={onCycleRejects}
           tone="rose"
         />

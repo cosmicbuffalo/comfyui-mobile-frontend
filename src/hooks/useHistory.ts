@@ -438,10 +438,10 @@ export const useHistoryStore = create<HistoryState>((set, get) => ({
           !statusStr.includes('error');
         if (!success && !errorMessage) {
           const displayStatus = interrupted
-            ? 'interrupted'
+            ? t('interrupted')
             : item.status?.status_str?.trim();
           errorMessage = displayStatus
-            ? `Execution did not complete (${displayStatus}). Some outputs may be missing.`
+            ? t('Execution did not complete ({status}). Some outputs may be missing.', { status: displayStatus })
             : t('Execution did not complete. Some outputs may be missing.');
         }
         const workflow = (item.prompt?.[3] as { extra_pnginfo?: { workflow?: Workflow } } | undefined)?.extra_pnginfo?.workflow;

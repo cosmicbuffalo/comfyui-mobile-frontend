@@ -4,7 +4,7 @@ import { useI18n } from '@/i18n';
 interface SectionFoldButtonProps {
   expanded: boolean;
   onToggle: () => void;
-  /** Used in the aria-label, e.g. "parameters" → "Fold parameters". */
+  /** Untranslated key used in the aria-label, e.g. "parameters" → "Fold parameters". */
   label: string;
 }
 

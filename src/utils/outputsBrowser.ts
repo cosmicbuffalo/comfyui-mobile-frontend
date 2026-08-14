@@ -124,9 +124,20 @@ export interface DisplayCrumb extends Crumb {
   isClickable: boolean;
 }
 
+const SOURCE_ROOT_LABEL_KEYS: Record<AssetSource, string> = {
+  output: 'Outputs',
+  input: 'Inputs',
+  temp: 'Temp',
+};
+
+/** Display name for a source's root folder ("Outputs" / "Inputs" / "Temp"). */
+export function sourceRootLabel(source: AssetSource): string {
+  return t(SOURCE_ROOT_LABEL_KEYS[source]);
+}
+
 /** Build the breadcrumb trail (root + each folder segment) for a browse location. */
 export function buildBreadcrumbs(source: AssetSource, folder: string | null): Crumb[] {
-  const rootName = source === 'output' ? t('Outputs') : source === 'input' ? t('Inputs') : t('Temp');
+  const rootName = sourceRootLabel(source);
   const crumbs: Crumb[] = [{ name: rootName, path: null }];
   if (folder) {
     const parts = folder.split('/');

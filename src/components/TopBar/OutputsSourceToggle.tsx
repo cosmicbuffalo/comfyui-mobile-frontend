@@ -48,13 +48,16 @@ export function OutputsSourceToggle() {
     [files]
   );
 
+  // Keyed by source so adding a source is a dictionary entry, not another
+  // ternary branch.
+  const SUBTITLE_KEYS: Record<typeof source, string> = {
+    input: '{count} inputs',
+    temp: '{count} temp files',
+    output: '{count} outputs',
+  };
   const subtitle = isLoading && files.length === 0
     ? ' '
-    : source === 'input'
-      ? t('{count} inputs', { count: totalItems.toLocaleString() })
-      : source === 'temp'
-        ? t('{count} temp files', { count: totalItems.toLocaleString() })
-        : t('{count} outputs', { count: totalItems.toLocaleString() });
+    : t(SUBTITLE_KEYS[source], { count: totalItems.toLocaleString() });
 
   const buttonClass = (active: boolean) =>
     `h-7 text-lg font-semibold leading-7 transition-colors ${

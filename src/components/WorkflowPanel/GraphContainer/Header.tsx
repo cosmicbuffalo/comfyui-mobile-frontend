@@ -38,7 +38,8 @@ interface GraphContainerHeaderProps {
   hiddenNodeCount: number;
   isBookmarked: boolean;
   canShowBookmarkAction: boolean;
-  foldAllLabel: string;
+  /** True when the group has expanded children, so "fold all" is the action. */
+  canFoldAll: boolean;
   color: string;
   onToggleCollapse: () => void;
   onToggleFoldAll: () => void;
@@ -78,7 +79,7 @@ export function GraphContainerHeader({
   hiddenNodeCount,
   isBookmarked,
   canShowBookmarkAction,
-  foldAllLabel,
+  canFoldAll,
   color,
   onToggleCollapse,
   onToggleFoldAll,
@@ -500,8 +501,8 @@ export function GraphContainerHeader({
                 },
                 {
                   key: 'fold-all',
-                  label: foldAllLabel,
-                  icon: foldAllLabel === t("Fold all")
+                  label: canFoldAll ? t("Fold all") : t("Unfold all"),
+                  icon: canFoldAll
                     ? <CaretRightIcon className="w-4 h-4" />
                     : <CaretDownIcon className="w-4 h-4" />,
                   onClick: (event) => {
@@ -509,7 +510,7 @@ export function GraphContainerHeader({
                     onToggleFoldAll();
                     closeMenu();
                   },
-                  hidden: isCollapsed && foldAllLabel === t("Unfold all")
+                  hidden: isCollapsed && !canFoldAll
                 },
                 {
                   key: 'bypass-all',

@@ -52,6 +52,12 @@ export function NodeCardErrorPopover({
   onClose
 }: NodeCardErrorPopoverProps) {
   const { t } = useI18n();
+  const resolvePopoverTitle = () => {
+    if (isMissing) return t('Missing Node');
+    return errors.length === 1
+      ? t('{count} Error', { count: errors.length })
+      : t('{count} Errors', { count: errors.length });
+  };
   const handleCloseClick = (event: React.MouseEvent<HTMLButtonElement>) => {
     event.stopPropagation();
     onClose();
@@ -127,11 +133,7 @@ export function NodeCardErrorPopover({
     >
       <div id={`error-popover-header-${nodeId}`} className="popover-header shrink-0 flex items-center justify-between gap-2 px-3 py-2 border-b border-red-500/40 bg-red-600">
         <span id={`error-popover-title-${nodeId}`} className="popover-title text-sm font-semibold text-white">
-          {isMissing
-            ? t('Missing Node')
-            : errors.length === 1
-              ? t('{count} Error', { count: errors.length })
-              : t('{count} Errors', { count: errors.length })}
+          {resolvePopoverTitle()}
         </span>
         <div className="flex items-center gap-1 shrink-0">
           {!isMissing && (

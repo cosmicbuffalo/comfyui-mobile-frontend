@@ -201,6 +201,13 @@ function FrontendMediaPlaylist({
   const [selectedIndex, setSelectedIndex] = useState(initialIndex);
   const [autoPlaySelection, setAutoPlaySelection] = useState(preview.autoPlay);
   const [playMode, setPlayMode] = useState(preview.playMode);
+  // Label per playback mode, so the button text is a lookup rather than a
+  // ternary chain that has to be re-read whenever a mode is added.
+  const PLAY_MODE_LABEL_KEYS: Record<'off' | 'loop' | 'cycle', string> = {
+    off: 'Play once',
+    loop: 'Loop clip',
+    cycle: 'Cycle scenes',
+  };
   const selected: FrontendNodeMediaItem = items[selectedIndex] ?? items[0];
 
   // Follow persisted widget state that changes underneath an unchanged
@@ -270,7 +277,7 @@ function FrontendMediaPlaylist({
           onClick={rotatePlayMode}
           aria-label={t('Playback mode: {mode}', { mode: playMode })}
         >
-          {playMode === 'off' ? t('Play once') : playMode === 'loop' ? t('Loop clip') : t('Cycle scenes')}
+          {t(PLAY_MODE_LABEL_KEYS[playMode])}
         </button>
       )}
       {items.length > 1 && (

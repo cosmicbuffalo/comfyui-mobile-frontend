@@ -349,7 +349,7 @@ export function WidgetControl({
           disabled={disabled}
         >
           <PlusIcon className="w-5 h-5" />
-          Add Lora
+          {t("Add Lora")}
         </button>
       </div>
     );
@@ -553,7 +553,9 @@ export function WidgetControl({
     const handlePowerLoraAddClick = () => {
       onChange({
         on: true,
-        lora: t("None"),
+        // Sentinel value the rgthree Power LoRA loader expects — never
+        // translate it, it is stored in the workflow and sent to the backend.
+        lora: "None",
         strength: 1.0,
         model_strength: 1.0,
         clip_strength: 1.0,
@@ -568,7 +570,7 @@ export function WidgetControl({
           disabled={disabled}
         >
           <PlusIcon className="w-5 h-5" />
-          Add Lora
+          {t("Add Lora")}
         </button>
       </div>
     );

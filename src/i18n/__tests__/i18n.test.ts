@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   getLocale,
@@ -16,6 +18,19 @@ import { ja } from '@/i18n/ja';
 import { ko } from '@/i18n/ko';
 
 const NON_EN_LOCALES: Locale[] = ['zh-CN', 'zh-TW', 'ja', 'ko'];
+
+// Keys in source order, including any duplicates — the whole point of reading
+// the file rather than the evaluated object.
+function readDictionaryKeys(locale: Locale): string[] {
+  const source = readFileSync(
+    resolve(process.cwd(), `src/i18n/${locale}.ts`),
+    'utf8',
+  );
+  const entry = /^ {2}('|")((?:\\.|(?!\1).)*)\1\s*:/gm;
+  return [...source.matchAll(entry)].map(([, , key]) =>
+    key.replace(/\\(['"\\])/g, '$1'),
+  );
+}
 
 describe('i18n', () => {
   it('declares labels for every supported locale', () => {
@@ -54,6 +69,42 @@ describe('i18n', () => {
   });
 
   it('has no duplicate keys in any dictionary', () => {
+    // Must read the source text, not Object.keys(): a duplicated key collapses
+    // when the object literal is evaluated, so an in-memory check can never
+    // fail and would silently pass a dictionary with a shadowed entry.
+    for (const name of NON_EN_LOCALES) {
+      const keys = readDictionaryKeys(name);
+      const seen = new Set<string>();
+      const duplicates = keys.filter((key) => {
+        if (seen.has(key)) return true;
+        seen.add(key);
+        return false;
+      });
+      expect(duplicates, `${name} has duplicate keys: ${duplicates.join(', ')}`)
+        .toEqual([]);
+    }
+  });
+
+  it('defines the same key set in every dictionary', () => {
+    // zh-CN is the reference; drift in either direction means some locale
+    // silently falls back to English for a string the others translate.
+    const reference = readDictionaryKeys('zh-CN');
+    const referenceSet = new Set(reference);
+    for (const name of NON_EN_LOCALES.filter((l) => l !== 'zh-CN')) {
+      const keys = new Set(readDictionaryKeys(name));
+      const missing = reference.filter((key) => !keys.has(key));
+      const extra = [...keys].filter((key) => !referenceSet.has(key));
+      expect(missing, `${name} is missing keys`).toEqual([]);
+      expect(extra, `${name} has keys zh-CN lacks`).toEqual([]);
+    }
+  });
+
+  it('preserves every {param} placeholder from the English key', () => {
+    // The key is the English source string, so it defines which placeholders
+    // must survive translation. A dropped one renders as a blank in the UI; an
+    // invented one renders literally, since interpolate() leaves it untouched.
+    const placeholders = (value: string) =>
+      [...value.matchAll(/\{(\w+)\}/g)].map((m) => m[1]).sort();
     const dictionaries: Array<[string, Record<string, string>]> = [
       ['zh-CN', zhCN],
       ['zh-TW', zhTW],
@@ -61,8 +112,10 @@ describe('i18n', () => {
       ['ko', ko],
     ];
     for (const [name, dictionary] of dictionaries) {
-      const keys = Object.keys(dictionary);
-      expect(new Set(keys).size, `${name} has duplicate keys`).toBe(keys.length);
+      for (const [key, value] of Object.entries(dictionary)) {
+        expect(placeholders(value), `${name} placeholder mismatch for "${key}"`)
+          .toEqual(placeholders(key));
+      }
     }
   });
 });
