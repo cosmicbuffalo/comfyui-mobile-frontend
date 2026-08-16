@@ -75,8 +75,21 @@ const PRELOAD_RETENTION_INDEX_BUFFER = 3;
 const LOADED_SRCS_MAX = 256;
 const workflowAvailabilityCache = new Map<string, boolean>();
 
-function makeWorkflowAvailabilityCacheKey(source: string, path: string): string {
-  return `${source}:${path}`;
+// How long the viewer must rest on a file before its workflow-availability
+// probe fires. Long enough that flicking through a folder skips the files
+// passed over, short enough to feel immediate once the user stops.
+const WORKFLOW_PROBE_SETTLE_MS = 300;
+
+// Keyed by path *and* the file's modification stamp, so replacing a file at
+// the same path (e.g. re-saving an image without embedded workflow metadata)
+// invalidates the cached answer instead of leaving Load Workflow stale until
+// the next page reload.
+function makeWorkflowAvailabilityCacheKey(
+  source: string,
+  path: string,
+  file?: { modifiedDate?: number; size?: number } | null,
+): string {
+  return `${source}:${path}:${file?.modifiedDate ?? ''}:${file?.size ?? ''}`;
 }
 
 function isEditableElement(element: HTMLElement | null): boolean {
@@ -201,7 +214,6 @@ export function MediaViewer({
   const [metadataById, setMetadataById] = useState<Record<string, ReturnType<typeof extractMetadata> | null>>({});
   const [metadataLoading, setMetadataLoading] = useState<Record<string, boolean>>({});
   const [workflowAvailableById, setWorkflowAvailableById] = useState<Record<string, boolean>>({});
-  const [workflowLoadingById, setWorkflowLoadingById] = useState<Record<string, boolean>>({});
   const [videoError, setVideoError] = useState(false);
   // Pixel resolution of the currently displayed media, shown under the filename.
   const [naturalSize, setNaturalSize] = useState<{ width: number; height: number } | null>(null);
@@ -288,9 +300,7 @@ export function MediaViewer({
   const canToggleMetadata = showMetadataToggle;
   const metadataIsLoading = fileId ? Boolean(metadataLoading[fileId]) : false;
   const workflowAvailabilityKnown = fileId ? Object.prototype.hasOwnProperty.call(workflowAvailableById, fileId) : false;
-  const workflowIsLoading = fileId ? Boolean(workflowLoadingById[fileId]) : false;
-  const canLoadWorkflow = !isVideo
-    || Boolean(currentItem?.workflow)
+  const canLoadWorkflow = Boolean(currentItem?.workflow)
     || (fileId ? Boolean(workflowAvailableById[fileId]) : false);
 
   const resetIdleTimer = useCallback(() => {
@@ -681,51 +691,60 @@ export function MediaViewer({
   /* eslint-enable react-hooks/set-state-in-effect */
 
   /* eslint-disable react-hooks/set-state-in-effect */
+  // Runs for stills as well as videos. `currentItem.workflow` is only
+  // populated from the loaded history window, so an older image with embedded
+  // workflow metadata has no in-memory signal — without probing it, the Load
+  // Workflow control would be hidden on a file that can load perfectly well.
+  //
+  // Structure matters here, because two earlier shapes of this effect broke:
+  // - A `workflowIsLoading` state guard in the dependency array made the
+  //   effect abort itself: setting the flag re-ran the effect, whose cleanup
+  //   cancelled the request it had just issued. Re-entry is instead prevented
+  //   by the effect's own lifecycle — any dep change aborts the old probe
+  //   before a new one can start, so no in-flight bookkeeping is needed.
+  // - Caching a failed probe as `false` turned a transient server blip into a
+  //   permanently hidden Load Workflow button. Failures now write nothing, so
+  //   the next view of the file retries.
   useEffect(() => {
     if (!open) return;
-    if (!isVideo) return;
     if (currentItem?.workflow) return;
-    if (!currentItem?.file) return;
-    if (!fileId) return;
-    if (workflowAvailabilityKnown || workflowIsLoading) return;
+    const file = currentItem?.file;
+    const id = fileId;
+    if (!file || !id) return;
+    if (workflowAvailabilityKnown) return;
 
-    const source = resolveFileSource(currentItem.file);
-    const path = resolveFilePath(currentItem.file, source);
-    const cacheKey = makeWorkflowAvailabilityCacheKey(source, path);
+    const source = resolveFileSource(file);
+    const path = resolveFilePath(file, source);
+    const cacheKey = makeWorkflowAvailabilityCacheKey(source, path, file);
     const cached = workflowAvailabilityCache.get(cacheKey);
     if (cached !== undefined) {
-      setWorkflowAvailableById((prev) => ({ ...prev, [fileId]: cached }));
+      setWorkflowAvailableById((prev) => ({ ...prev, [id]: cached }));
       return;
     }
 
+    // Wait for the swipe to settle before asking: each probe makes the server
+    // parse the file's embedded metadata, so a fast flick through a large
+    // folder must not fire one request per file passed over. Files swiped
+    // past never issue a request at all — cleanup cancels the timer.
     const controller = new AbortController();
-    setWorkflowLoadingById((prev) => ({ ...prev, [fileId]: true }));
-    getFileWorkflowAvailability(path, source, { signal: controller.signal })
-      .then((available) => {
-        workflowAvailabilityCache.set(cacheKey, available);
-        setWorkflowAvailableById((prev) => ({ ...prev, [fileId]: available }));
-      })
-      .catch(() => {
-        if (controller.signal.aborted) return;
-        workflowAvailabilityCache.set(cacheKey, false);
-        setWorkflowAvailableById((prev) => ({ ...prev, [fileId]: false }));
-      })
-      .finally(() => {
-        if (controller.signal.aborted) return;
-        setWorkflowLoadingById((prev) => ({ ...prev, [fileId]: false }));
-      });
+    const timer = window.setTimeout(() => {
+      getFileWorkflowAvailability(path, source, { signal: controller.signal })
+        .then((available) => {
+          workflowAvailabilityCache.set(cacheKey, available);
+          setWorkflowAvailableById((prev) => ({ ...prev, [id]: available }));
+        })
+        .catch(() => {
+          // Aborted (user moved on) or failed (server blip): the answer is
+          // unknown, not "no" — leave both caches untouched so a later view
+          // of this file can ask again.
+        });
+    }, WORKFLOW_PROBE_SETTLE_MS);
 
     return () => {
+      window.clearTimeout(timer);
       controller.abort();
     };
-  }, [
-    open,
-    isVideo,
-    currentItem,
-    fileId,
-    workflowAvailabilityKnown,
-    workflowIsLoading,
-  ]);
+  }, [open, currentItem, fileId, workflowAvailabilityKnown]);
   /* eslint-enable react-hooks/set-state-in-effect */
 
   /* eslint-disable react-hooks/set-state-in-effect */

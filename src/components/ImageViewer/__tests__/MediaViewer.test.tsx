@@ -51,6 +51,16 @@ async function flushEffects(): Promise<void> {
   });
 }
 
+/** The availability probe waits for the swipe to settle before firing.
+ *  Advance past that delay and flush the result. Requires fake timers. */
+async function settleWorkflowProbe(): Promise<void> {
+  await act(async () => {
+    vi.advanceTimersByTime(300);
+  });
+  await flushEffects();
+  await flushEffects();
+}
+
 describe('MediaViewer workflow availability', () => {
   let container: HTMLDivElement;
   let root: Root;
@@ -61,6 +71,10 @@ describe('MediaViewer workflow availability', () => {
     document.body.appendChild(container);
     root = createRoot(container);
     getFileWorkflowAvailabilityMock.mockReset();
+    // The probe runs for stills as well as videos, so every test that opens
+    // the viewer reaches it. Default to "no workflow" and let the cases that
+    // care override.
+    getFileWorkflowAvailabilityMock.mockResolvedValue(false);
     getImageMetadataMock.mockReset();
     getImageMetadataMock.mockResolvedValue({});
   });
@@ -75,6 +89,7 @@ describe('MediaViewer workflow availability', () => {
   });
 
   it('shows load workflow button for video when availability endpoint reports true', async () => {
+    vi.useFakeTimers();
     getFileWorkflowAvailabilityMock.mockResolvedValue(true);
 
     await act(async () => {
@@ -92,8 +107,7 @@ describe('MediaViewer workflow availability', () => {
       );
     });
 
-    await flushEffects();
-    await flushEffects();
+    await settleWorkflowProbe();
 
     expect(getFileWorkflowAvailabilityMock).toHaveBeenCalledWith(
       'renders/clip.mp4',
@@ -113,7 +127,197 @@ describe('MediaViewer workflow availability', () => {
     );
   });
 
+  // Regression: the "hide Load Workflow on images with no workflow" fix
+  // originally left the availability probe video-only, so a still fell back to
+  // `item.workflow` alone. That is only populated from the loaded history
+  // window, meaning any older image lost the button despite having embedded
+  // workflow metadata.
+  it('shows load workflow button for an image the availability endpoint reports true', async () => {
+    vi.useFakeTimers();
+    getFileWorkflowAvailabilityMock.mockResolvedValue(true);
+
+    await act(async () => {
+      root.render(
+        <MediaViewer
+          open={true}
+          items={[makeImageItem('output/renders/old.png', 'old.png')]}
+          index={0}
+          onIndexChange={() => {}}
+          onClose={() => {}}
+          onDelete={() => {}}
+          onLoadWorkflow={() => {}}
+          onLoadInWorkflow={() => {}}
+        />,
+      );
+    });
+
+    await settleWorkflowProbe();
+
+    expect(getFileWorkflowAvailabilityMock).toHaveBeenCalledWith(
+      'renders/old.png',
+      'output',
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
+    expect(
+      document.querySelector('button[aria-label="Load workflow"]'),
+    ).not.toBeNull();
+  });
+
+  it('keeps load workflow button hidden for an image with no embedded workflow', async () => {
+    vi.useFakeTimers();
+    getFileWorkflowAvailabilityMock.mockResolvedValue(false);
+
+    await act(async () => {
+      root.render(
+        <MediaViewer
+          open={true}
+          items={[makeImageItem('output/renders/plain.png', 'plain.png')]}
+          index={0}
+          onIndexChange={() => {}}
+          onClose={() => {}}
+          onDelete={() => {}}
+          onLoadWorkflow={() => {}}
+          onLoadInWorkflow={() => {}}
+        />,
+      );
+    });
+
+    await settleWorkflowProbe();
+
+    expect(
+      document.querySelector('button[aria-label="Load workflow"]'),
+    ).toBeNull();
+  });
+
+  // Regression: an earlier shape of the probe effect listed its own loading
+  // flag as a dependency — setting the flag re-ran the effect, whose cleanup
+  // aborted the request it had just issued. A mock that resolves in a
+  // microtask can't catch that (it settles before React's cleanup runs), so
+  // this one stays pending until the test resolves it, and rejects on abort
+  // exactly like a real fetch.
+  it('lets a slow probe finish instead of aborting it on its own re-render', async () => {
+    vi.useFakeTimers();
+    let resolveProbe: ((available: boolean) => void) | undefined;
+    getFileWorkflowAvailabilityMock.mockImplementation(
+      (_path: string, _source: string, opts: { signal: AbortSignal }) =>
+        new Promise((resolve, reject) => {
+          opts.signal.addEventListener('abort', () =>
+            reject(new DOMException('aborted', 'AbortError')));
+          resolveProbe = resolve;
+        }),
+    );
+
+    await act(async () => {
+      root.render(
+        <MediaViewer
+          open={true}
+          items={[makeImageItem('output/renders/slow.png', 'slow.png')]}
+          index={0}
+          onIndexChange={() => {}}
+          onClose={() => {}}
+          onDelete={() => {}}
+          onLoadWorkflow={() => {}}
+          onLoadInWorkflow={() => {}}
+        />,
+      );
+    });
+    await settleWorkflowProbe();
+    // Extra flushes: give any state-set re-render every chance to run the
+    // effect again (and wrongly abort) before the "network" answers.
+    await flushEffects();
+    await flushEffects();
+
+    await act(async () => {
+      resolveProbe?.(true);
+      await Promise.resolve();
+    });
+    await flushEffects();
+
+    expect(
+      document.querySelector('button[aria-label="Load workflow"]'),
+    ).not.toBeNull();
+  });
+
+  it('does not probe files swiped past before the settle delay', async () => {
+    vi.useFakeTimers();
+    const items = [
+      makeImageItem('output/renders/skip-a.png', 'skip-a.png'),
+      makeImageItem('output/renders/skip-b.png', 'skip-b.png'),
+    ];
+    const renderAt = (index: number) =>
+      act(async () => {
+        root.render(
+          <MediaViewer
+            open={true}
+            items={items}
+            index={index}
+            onIndexChange={() => {}}
+            onClose={() => {}}
+            onDelete={() => {}}
+            onLoadWorkflow={() => {}}
+            onLoadInWorkflow={() => {}}
+          />,
+        );
+      });
+
+    await renderAt(0);
+    // Swipe on before the settle delay elapses — the first file's probe timer
+    // must be cancelled without ever issuing a request.
+    await act(async () => {
+      vi.advanceTimersByTime(100);
+    });
+    await renderAt(1);
+    await settleWorkflowProbe();
+
+    const probedPaths = getFileWorkflowAvailabilityMock.mock.calls.map((call) => call[0]);
+    expect(probedPaths).toEqual(['renders/skip-b.png']);
+  });
+
+  // Regression: a transient probe failure used to be written into the
+  // module-level availability cache as a definitive `false`, permanently
+  // hiding Load Workflow for that file. Failures must leave the answer
+  // unknown so a later view retries.
+  it('retries after a failed probe instead of caching it as no-workflow', async () => {
+    vi.useFakeTimers();
+    getFileWorkflowAvailabilityMock
+      .mockRejectedValueOnce(new Error('server blip'))
+      .mockResolvedValue(true);
+    const renderViewer = (open: boolean) =>
+      act(async () => {
+        root.render(
+          <MediaViewer
+            open={open}
+            items={[makeImageItem('output/renders/flaky.png', 'flaky.png')]}
+            index={0}
+            onIndexChange={() => {}}
+            onClose={() => {}}
+            onDelete={() => {}}
+            onLoadWorkflow={() => {}}
+            onLoadInWorkflow={() => {}}
+          />,
+        );
+      });
+
+    await renderViewer(true);
+    await settleWorkflowProbe();
+    expect(
+      document.querySelector('button[aria-label="Load workflow"]'),
+    ).toBeNull();
+
+    // Close and reopen: the failed probe must not have been cached, so the
+    // viewer asks again and the button appears.
+    await renderViewer(false);
+    await renderViewer(true);
+    await settleWorkflowProbe();
+
+    expect(getFileWorkflowAvailabilityMock).toHaveBeenCalledTimes(2);
+    expect(
+      document.querySelector('button[aria-label="Load workflow"]'),
+    ).not.toBeNull();
+  });
+
   it('keeps load workflow button hidden for video when availability endpoint reports false', async () => {
+    vi.useFakeTimers();
     getFileWorkflowAvailabilityMock.mockResolvedValue(false);
 
     await act(async () => {
@@ -131,8 +335,7 @@ describe('MediaViewer workflow availability', () => {
       );
     });
 
-    await flushEffects();
-    await flushEffects();
+    await settleWorkflowProbe();
 
     expect(
       document.querySelector('button[aria-label="Load workflow"]'),
