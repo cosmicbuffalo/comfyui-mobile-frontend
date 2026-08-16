@@ -46,5 +46,8 @@ describe('NodeCardHeader typography', () => {
     expect(
       container.querySelector('#node-display-name-1')?.classList.contains('text-sm'),
     ).toBe(true);
+    expect(container.querySelector('button')?.getAttribute('aria-label')).toBe(
+      'Fold Example Node',
+    );
   });
 });

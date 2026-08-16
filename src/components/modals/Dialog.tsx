@@ -198,7 +198,7 @@ export function Dialog({
     <div
       ref={dialogRootRef}
       data-dialog-root="true"
-      className={`fixed left-0 right-0 bg-black/50 flex ${alignClass} justify-center p-4 overscroll-contain`}
+      className={`fixed left-0 right-0 pointer-events-auto bg-black/50 flex ${alignClass} justify-center p-4 overscroll-contain`}
       style={{
         zIndex,
         top: fullscreen ? 0 : 'var(--top-bar-offset, 0px)',

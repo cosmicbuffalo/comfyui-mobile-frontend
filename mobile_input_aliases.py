@@ -175,6 +175,42 @@ def ensure_aliases(cache_path: str, input_dir: str, paths: list[str]) -> dict[st
         return result
 
 
+def known_aliases(cache_path: str) -> set[str]:
+    """Return every alias name recorded in the cache, whether live or stale."""
+    with _LOCK:
+        return set(_load(cache_path)["aliases"])
+
+
+def missing_aliases(cache_path: str, input_dir: str) -> set[str]:
+    """Return cached aliases whose hard-link file no longer exists.
+
+    An alias whose original path is gone is still a perfectly usable input (that
+    is the point of the hard link), so callers must not treat "cannot resolve"
+    as "gone". Only the alias file itself disappearing makes it unusable.
+    """
+    with _LOCK:
+        names = list(_load(cache_path)["aliases"])
+    missing: set[str] = set()
+    for alias in names:
+        if not isinstance(alias, str) or not alias.startswith(ALIAS_PREFIX):
+            continue
+        try:
+            if not os.path.isfile(_resolve_input_path(input_dir, alias)):
+                missing.add(alias)
+        except (OSError, ValueError):
+            missing.add(alias)
+    return missing
+
+
+def resolve_all_aliases(cache_path: str, input_dir: str) -> dict[str, str]:
+    """Resolve every live cached alias to its current source path."""
+    with _LOCK:
+        names = list(_load(cache_path)["aliases"])
+    if not names:
+        return {}
+    return resolve_aliases(cache_path, input_dir, names)
+
+
 def resolve_aliases(
     cache_path: str,
     input_dir: str,

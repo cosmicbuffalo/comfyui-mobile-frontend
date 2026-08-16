@@ -79,3 +79,28 @@ def test_extract_workflow_from_metadata_reads_prompt_fallback():
 
     workflow = extract_workflow_from_metadata(metadata)
     assert workflow == {"id": "workflow-from-prompt"}
+
+
+def test_prompt_text_cache_eviction_is_thread_safe(tmp_path: Path, monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+
+    import mobile_metadata as metadata
+
+    metadata.clear_prompt_text_cache()
+    monkeypatch.setattr(metadata, "_PROMPT_TEXT_CACHE_MAX", 10)
+    monkeypatch.setattr(
+        metadata,
+        "_read_prompt_text",
+        lambda path: Path(path).stem,
+    )
+    paths = []
+    for index in range(40):
+        path = tmp_path / f"{index}.png"
+        path.write_bytes(b"metadata")
+        paths.append(str(path))
+
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        values = list(executor.map(metadata.get_cached_prompt_text, paths * 3))
+
+    assert all(value for value in values)
+    assert len(metadata._PROMPT_TEXT_CACHE) <= metadata._PROMPT_TEXT_CACHE_MAX

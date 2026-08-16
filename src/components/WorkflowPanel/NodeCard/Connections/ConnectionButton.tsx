@@ -336,7 +336,7 @@ export const ConnectionButton = memo(function ConnectionButton({
 
   // Shared navigation: unfold the destination's connections section, reveal +
   // scroll to it, and flash the reciprocal connection button in sync with the
-  // node pulse (scrollToNode fires both together once the scroll settles).
+  // node pulse (scrollToNode fires both together as the node arrives).
   const navigateToConnectedNode = useCallback(
     (itemKey: string, targetNodeId: number | null) => {
       expandConnectionsSection(itemKey);
@@ -503,6 +503,30 @@ export const ConnectionButton = memo(function ConnectionButton({
     ? connectedNodeId
     : null;
   const shouldWrapResolvedLabel = resolvedLabel.includes('/') || resolvedLabel.includes('\n');
+  const buttonAriaLabel = (() => {
+    if (isBoundaryConnection) {
+      return t('Follow {label} outside this subgraph', { label: resolvedLabel });
+    }
+    if (connectionCount === 1) {
+      const target = effectiveNodes[0];
+      const targetLabel = target
+        ? resolveWorkflowNodeDisplayName(workflow, target, nodeTypes)
+        : t('connected node');
+      return t('Go to {target} from {label}', {
+        target: targetLabel,
+        label: resolvedLabel,
+      });
+    }
+    if (connectionCount > 1) {
+      return t('Show {count} connections from {label}', {
+        count: connectionCount,
+        label: resolvedLabel,
+      });
+    }
+    return direction === 'input'
+      ? t('Connect input {label}', { label: resolvedLabel })
+      : t('Connect output {label}', { label: resolvedLabel });
+  })();
 
   const setNameEditor = isEditingSetName ? (
     <input
@@ -542,6 +566,7 @@ export const ConnectionButton = memo(function ConnectionButton({
         typeClass={getTypeClass(slot.type)}
         buttonRef={buttonRef}
         buttonId={connectionButtonDomId(nodeId, direction, slotIndex)}
+        ariaLabel={buttonAriaLabel}
         connectionCount={connectionCount}
         onClick={handleClick}
         onPointerDown={handlePointerDown}

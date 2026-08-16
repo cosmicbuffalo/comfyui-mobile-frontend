@@ -1,8 +1,19 @@
+import { saveToPhotosInNativeApp } from '@/utils/nativeSave';
+
 export async function downloadImage(
   src: string,
   filename: string = 'image.png',
   onDownloaded?: (src: string) => void,
 ) {
+  // Inside the native iOS app: route through the savePhoto JS channel so the
+  // file lands in Photos. The anchor click below would otherwise be treated as
+  // a top-level navigation by WKWebView (the download attribute isn't honored
+  // there), trapping the user on the bare image URL.
+  const native = saveToPhotosInNativeApp(src, filename);
+  if (native) {
+    if (await native) onDownloaded?.(src);
+    return;
+  }
   try {
     const link = document.createElement('a');
     link.href = src;
@@ -63,26 +74,39 @@ interface ShareTarget {
  *
  * The Web Share API is intentionally not used: passing a `File` requires a
  * pre-fetch, which always blows the activation window on iOS.
+ *
+ * In the native iOS app this anchor path is never reached — the save goes
+ * through the `savePhoto` JS channel first and only falls through here on the
+ * open web.
  */
 /**
- * Per-call disposition of shareOrDownloadFile.
+ * Per-call disposition of shareOrDownloadFile. The two routes report different
+ * things on purpose, so the UI can only claim what the surface actually knows.
  *
- * `started` is deliberately not `ok`: handing a URL to the browser via an
- * anchor click is fire-and-forget — `click()` does not throw when the browser
- * refuses or silently drops the download (iOS Safari does exactly that on large
- * files), so this layer genuinely cannot know whether a file reached the disk.
- * The UI must not claim it did. `failed` covers the one case we can observe:
- * the click never happened. The Photos route arrives with the native-app bridge
- * in 3.1.1, which reports a real per-save result.
+ * `downloads` reports `started`, deliberately not `ok`: handing a URL to the
+ * browser via an anchor click is fire-and-forget — `click()` does not throw
+ * when the browser refuses or silently drops the download (iOS Safari does
+ * exactly that on large files), so this layer genuinely cannot know whether a
+ * file reached the disk. `started: false` covers the one case we can observe:
+ * the click never happened.
+ *
+ * `photos` reports a real `ok`: the native app writes to PHPhotoLibrary itself
+ * and calls back with the per-save result, so success there is observed rather
+ * than assumed.
  */
 export type DownloadOutcome =
-  | { route: 'downloads'; started: true }
-  | { route: 'downloads'; started: false };
+  | { route: 'photos'; ok: boolean }
+  | { route: 'downloads'; started: boolean };
 
 export async function shareOrDownloadFile(
   src: string,
   filename: string,
 ): Promise<DownloadOutcome> {
+  // Inside the native iOS app: route through the savePhoto JS channel — the
+  // anchor click below is treated as a top-level navigation by WKWebView and
+  // would trap the user on the bare image URL.
+  const native = saveToPhotosInNativeApp(src, filename);
+  if (native) return { route: 'photos', ok: await native };
   try {
     const link = document.createElement('a');
     link.href = src;
@@ -112,6 +136,14 @@ export async function shareOrDownloadBatch(
   if (targets.length === 0) return;
   try {
     for (const target of targets) {
+      // Inside the native iOS app: route through the savePhoto JS channel — the
+      // anchor click below would otherwise navigate the WebView away from the
+      // mobile frontend on the first iteration.
+      const native = saveToPhotosInNativeApp(target.src, target.filename);
+      if (native) {
+        if (await native) onCompleted?.(target.src);
+        continue;
+      }
       const link = document.createElement('a');
       link.href = target.src;
       link.download = target.filename;

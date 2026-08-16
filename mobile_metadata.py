@@ -1,9 +1,16 @@
 import json
 import os
+import threading
 from typing import Any
 
 IMAGE_EXTENSIONS = ('.png', '.jpg', '.jpeg', '.webp', '.gif')
 VIDEO_EXTENSIONS = ('.mp4', '.m4v', '.mov', '.webm', '.mkv', '.avi')
+
+
+# Metadata requests run in ComfyUI's executor. Protect the shared bounded cache
+# while keeping file/Pillow reads outside the lock so independent files still
+# load in parallel.
+_CACHE_LOCK = threading.RLock()
 
 
 # In-memory cache for the prompt JSON text of a file, keyed by absolute path.
@@ -49,24 +56,32 @@ def get_cached_prompt_text(full_path: str) -> str:
         mtime = os.path.getmtime(full_path)
     except OSError:
         return ''
-    cached = _PROMPT_TEXT_CACHE.get(full_path)
+    with _CACHE_LOCK:
+        cached = _PROMPT_TEXT_CACHE.get(full_path)
     if cached is not None and cached[0] == mtime:
         return cached[1]
     text = _read_prompt_text(full_path)
-    if (
-        len(_PROMPT_TEXT_CACHE) >= _PROMPT_TEXT_CACHE_MAX
-        and full_path not in _PROMPT_TEXT_CACHE
-    ):
-        # Coarse eviction: drop the oldest-inserted ~10% (dict preserves order).
-        for key in list(_PROMPT_TEXT_CACHE)[: _PROMPT_TEXT_CACHE_MAX // 10]:
-            del _PROMPT_TEXT_CACHE[key]
-    _PROMPT_TEXT_CACHE[full_path] = (mtime, text)
+    with _CACHE_LOCK:
+        cached = _PROMPT_TEXT_CACHE.get(full_path)
+        if cached is not None and cached[0] == mtime:
+            return cached[1]
+        if (
+            len(_PROMPT_TEXT_CACHE) >= _PROMPT_TEXT_CACHE_MAX
+            and full_path not in _PROMPT_TEXT_CACHE
+        ):
+            # Coarse eviction: drop the oldest-inserted ~10% (dict preserves
+            # order). pop(..., None) also stays safe if this later moves to
+            # finer-grained locks.
+            for key in list(_PROMPT_TEXT_CACHE)[: max(1, _PROMPT_TEXT_CACHE_MAX // 10)]:
+                _PROMPT_TEXT_CACHE.pop(key, None)
+        _PROMPT_TEXT_CACHE[full_path] = (mtime, text)
     return text
 
 
 def clear_prompt_text_cache() -> None:
     """Drop the in-memory cache. Useful in tests."""
-    _PROMPT_TEXT_CACHE.clear()
+    with _CACHE_LOCK:
+        _PROMPT_TEXT_CACHE.clear()
 
 
 class MetadataPathError(ValueError):

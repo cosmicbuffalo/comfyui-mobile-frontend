@@ -16,7 +16,12 @@ const mocks = vi.hoisted(() => ({
     completionDurations: {},
     completing: [],
     autoRestoredPromptIds: {},
-    queueMetadata: {},
+    queueMetadata: {
+      'latent-prompt': {
+        promptId: 'latent-prompt',
+        workflowLabel: 'Neon greenhouse',
+      },
+    },
     setQueueItemExpanded: vi.fn(),
     setQueueItemUserToggled: vi.fn(),
   },
@@ -24,11 +29,11 @@ const mocks = vi.hoisted(() => ({
     favorites: [],
   },
   workflowState: {
-    promptToSession: {},
-    sessions: [],
-    activeSessionId: null,
+    promptToSession: { 'latent-prompt': 'active-session' },
+    sessions: [{ id: 'active-session' }],
+    activeSessionId: 'active-session',
     parkedSessions: {},
-    currentFilename: null,
+    currentFilename: 'Different workflow.json',
     workflowSource: null,
     latentPreviewByPrompt: {
       'latent-prompt': { url: 'blob:latent-frame', seq: 7 },
@@ -102,6 +107,8 @@ describe('QueueCard latent preview', () => {
     const img = container.querySelector('img');
     expect(img?.getAttribute('src')).toBe('blob:latent-frame');
     expect(container.textContent).toContain('LATENT');
+    expect(container.textContent).toContain('Neon greenhouse');
+    expect(container.textContent).not.toContain('Different workflow');
     // Latent-only: no thumbnail tab bar yet.
     expect(container.querySelector('.queue-media-tabs')).toBeNull();
   });

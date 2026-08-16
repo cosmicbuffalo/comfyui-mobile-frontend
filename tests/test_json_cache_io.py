@@ -17,6 +17,13 @@ def test_atomic_write_round_trips(tmp_path):
         assert json.load(handle) == {"version": 1, "hidden": {"output": ["a"]}}
 
 
+def test_atomic_write_supports_list_payloads(tmp_path):
+    path = str(tmp_path / "targets.json")
+    atomic_write_json(path, [{"pairing_code": "ABCD"}], prefix=".targets.")
+    with open(path, encoding="utf-8") as handle:
+        assert json.load(handle) == [{"pairing_code": "ABCD"}]
+
+
 def test_atomic_write_creates_missing_directory(tmp_path):
     path = str(tmp_path / "nested" / "deep" / "cache.json")
     atomic_write_json(path, {"a": 1}, prefix=".x.")

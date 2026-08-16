@@ -4,7 +4,14 @@ from pathlib import Path
 
 import pytest
 
-from mobile_input_aliases import ALIAS_PREFIX, ensure_aliases, migrate_legacy_cache, resolve_aliases
+from mobile_input_aliases import (
+    ALIAS_PREFIX,
+    ensure_aliases,
+    known_aliases,
+    migrate_legacy_cache,
+    resolve_aliases,
+    resolve_all_aliases,
+)
 
 
 def test_creates_stable_hard_link_without_copying_data(tmp_path: Path):
@@ -150,3 +157,182 @@ def test_migrate_legacy_cache_seeds_durable_path_once(tmp_path: Path):
     assert migrate_legacy_cache(str(dest), [str(tmp_path / "missing.json"), str(legacy)]) is True
     assert json.loads(dest.read_text())["aliases"] == payload["aliases"]
     assert migrate_legacy_cache(str(dest), [str(legacy)]) is False
+
+
+def test_resolve_all_aliases_maps_every_live_alias(tmp_path: Path):
+    input_dir = tmp_path / "input"
+    source = input_dir / "sub" / "photo.png"
+    source.parent.mkdir(parents=True)
+    source.write_bytes(b"pixels")
+    cache = tmp_path / "aliases.json"
+    alias = ensure_aliases(str(cache), str(input_dir), ["sub/photo.png"])[
+        "sub/photo.png"
+    ]
+
+    assert known_aliases(str(cache)) == {alias}
+    assert resolve_all_aliases(str(cache), str(input_dir)) == {
+        alias: "sub/photo.png"
+    }
+
+
+def test_alias_inventory_retains_an_unresolvable_cached_alias(tmp_path: Path):
+    input_dir = tmp_path / "input"
+    source = input_dir / "sub" / "photo.png"
+    source.parent.mkdir(parents=True)
+    source.write_bytes(b"pixels")
+    cache = tmp_path / "aliases.json"
+    alias = ensure_aliases(str(cache), str(input_dir), ["sub/photo.png"])[
+        "sub/photo.png"
+    ]
+    source.unlink()
+
+    assert known_aliases(str(cache)) == {alias}
+    assert resolve_all_aliases(str(cache), str(input_dir)) == {}
+
+
+def test_object_info_combo_lists_show_real_paths_and_drop_stale_aliases():
+    import importlib
+
+    mobile_init = importlib.import_module("__init__")
+    live = f"{ALIAS_PREFIX}live0123456789.png"
+    stale = f"{ALIAS_PREFIX}stale012345678.png"
+    unknown = f"{ALIAS_PREFIX}unknown12345678.png"
+    payload = {
+        "LoadImage": {
+            "input": {
+                "required": {
+                    "image": [[live, stale, unknown, "plain.png"], {"image_upload": True}]
+                }
+            }
+        }
+    }
+
+    remapped = mobile_init._remap_alias_strings(
+        payload,
+        {live: "sub/photo.png"},
+        {stale},
+    )
+
+    assert remapped["LoadImage"]["input"]["required"]["image"][0] == [
+        "sub/photo.png",
+        unknown,
+        "plain.png",
+    ]
+    assert mobile_init._remap_alias_strings(payload, {}, set()) is payload
+
+
+def test_build_remapped_object_info_uses_the_alias_cache(tmp_path: Path, monkeypatch):
+    import importlib
+
+    mobile_init = importlib.import_module("__init__")
+    input_dir = tmp_path / "input"
+    source = input_dir / "sub" / "photo.png"
+    source.parent.mkdir(parents=True)
+    source.write_bytes(b"pixels")
+    cache = tmp_path / "aliases.json"
+    alias = ensure_aliases(str(cache), str(input_dir), ["sub/photo.png"])[
+        "sub/photo.png"
+    ]
+    monkeypatch.setattr(mobile_init, "INPUT_ALIASES_CACHE_PATH", str(cache))
+    monkeypatch.setattr(
+        mobile_init.folder_paths,
+        "get_input_directory",
+        lambda: str(input_dir),
+    )
+    body = json.dumps({"LoadImage": {"choices": [alias, "plain.png"]}}).encode()
+
+    remapped = mobile_init._build_remapped_object_info(body)
+
+    assert json.loads(remapped)["LoadImage"]["choices"] == [
+        "sub/photo.png",
+        "plain.png",
+    ]
+
+
+def test_build_remapped_object_info_keeps_orphaned_hard_link_aliases(
+    tmp_path: Path, monkeypatch
+):
+    """An alias outlives its original path (it is a hard link). It must stay in
+    /object_info as long as the alias file exists; only a missing alias file
+    is dropped."""
+    import importlib
+
+    mobile_init = importlib.import_module("__init__")
+    input_dir = tmp_path / "input"
+    (input_dir / "sub").mkdir(parents=True)
+    (input_dir / "sub" / "kept.png").write_bytes(b"pixels")
+    (input_dir / "sub" / "moved.png").write_bytes(b"pixels2")
+    (input_dir / "sub" / "gone.png").write_bytes(b"pixels3")
+    cache = tmp_path / "aliases.json"
+    aliases = ensure_aliases(
+        str(cache), str(input_dir), ["sub/kept.png", "sub/moved.png", "sub/gone.png"]
+    )
+    kept, moved, gone = (
+        aliases["sub/kept.png"],
+        aliases["sub/moved.png"],
+        aliases["sub/gone.png"],
+    )
+    # Original disappears; the hard link is still a usable input.
+    (input_dir / "sub" / "moved.png").unlink()
+    # Both the original and the alias file itself are gone.
+    (input_dir / "sub" / "gone.png").unlink()
+    (input_dir / gone).unlink()
+    monkeypatch.setattr(mobile_init, "INPUT_ALIASES_CACHE_PATH", str(cache))
+    monkeypatch.setattr(
+        mobile_init.folder_paths, "get_input_directory", lambda: str(input_dir)
+    )
+    body = json.dumps({"LoadImage": {"choices": [kept, moved, gone, "plain.png"]}}).encode()
+
+    remapped = mobile_init._build_remapped_object_info(body)
+
+    assert json.loads(remapped)["LoadImage"]["choices"] == [
+        "sub/kept.png",
+        moved,
+        "plain.png",
+    ]
+
+
+def test_build_remapped_object_info_deduplicates_alias_source_collision(
+    tmp_path: Path, monkeypatch
+):
+    import importlib
+
+    mobile_init = importlib.import_module("__init__")
+    input_dir = tmp_path / "input"
+    source = input_dir / "photo.png"
+    source.parent.mkdir(parents=True)
+    source.write_bytes(b"pixels")
+    cache = tmp_path / "aliases.json"
+    alias = ensure_aliases(str(cache), str(input_dir), ["photo.png"])["photo.png"]
+    monkeypatch.setattr(mobile_init, "INPUT_ALIASES_CACHE_PATH", str(cache))
+    monkeypatch.setattr(
+        mobile_init.folder_paths,
+        "get_input_directory",
+        lambda: str(input_dir),
+    )
+
+    for choices in (["photo.png", alias], [alias, "photo.png"]):
+        body = json.dumps({"LoadImage": {"choices": choices}}).encode()
+        remapped = mobile_init._build_remapped_object_info(body)
+        assert json.loads(remapped)["LoadImage"]["choices"] == ["photo.png"]
+
+
+def test_object_info_remap_cache_expires_and_is_lru_bounded(monkeypatch):
+    import importlib
+
+    mobile_init = importlib.import_module("__init__")
+    mobile_init._object_info_remap_cache.clear()
+    for index in range(mobile_init._OBJECT_INFO_REMAP_MAX + 1):
+        mobile_init._object_info_remap_put((index,), bytes([index]))
+
+    assert len(mobile_init._object_info_remap_cache) == mobile_init._OBJECT_INFO_REMAP_MAX
+    assert mobile_init._object_info_remap_get((0,)) == (False, None)
+    latest = mobile_init._OBJECT_INFO_REMAP_MAX
+    assert mobile_init._object_info_remap_get((latest,)) == (True, bytes([latest]))
+
+    monkeypatch.setattr(
+        mobile_init.time,
+        "monotonic",
+        lambda: float("inf"),
+    )
+    assert mobile_init._object_info_remap_get((latest,)) == (False, None)

@@ -14,6 +14,20 @@ if (typeof globalThis.localStorage === 'undefined' || typeof globalThis.localSto
   } as Storage;
 }
 
+// jsdom doesn't implement the CSS interface, so `CSS.escape` — which every
+// browser we ship to has had for years, and which selector-building code like
+// QueuePanel's flashQueueCard uses — throws here. Escaping the characters that
+// are actually illegal in an identifier is enough for test ids.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const globalWithCSS = globalThis as any;
+if (typeof globalWithCSS.CSS === 'undefined') {
+  globalWithCSS.CSS = {};
+}
+if (typeof globalWithCSS.CSS.escape !== 'function') {
+  globalWithCSS.CSS.escape = (value: string) =>
+    String(value).replace(/[^a-zA-Z0-9_-]/g, (ch) => `\\${ch}`);
+}
+
 // React 19 act() environment hint for non-testing-library render tests.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;

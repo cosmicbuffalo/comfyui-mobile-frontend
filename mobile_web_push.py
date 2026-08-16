@@ -20,6 +20,7 @@ import os
 import threading
 
 import folder_paths
+from json_cache_io import atomic_write_json
 
 _LOG_PREFIX = "[\033[34mMobile Push\033[0m]"
 
@@ -167,9 +168,9 @@ def _load_or_create_vapid():
         serialization.PrivateFormat.PKCS8,
         serialization.NoEncryption(),
     ).decode("utf-8")
-    os.makedirs(_push_dir(), exist_ok=True)
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump({"private_pem": private_pem}, f)
+    # Atomic: a truncated VAPID file is rejected on the next load, which would
+    # regenerate the keypair and silently invalidate every live subscription.
+    atomic_write_json(path, {"private_pem": private_pem}, prefix=".vapid.")
     _vapid = _build_vapid(private_pem)
     print(f"{_LOG_PREFIX} generated new VAPID keypair", flush=True)
     return _vapid
@@ -193,9 +194,11 @@ def _load_subscriptions():
 
 
 def _save_subscriptions():
-    os.makedirs(_push_dir(), exist_ok=True)
-    with open(_subscriptions_path(), "w", encoding="utf-8") as f:
-        json.dump(_subscriptions, f)
+    atomic_write_json(
+        _subscriptions_path(),
+        _subscriptions,
+        prefix=".push_subscriptions.",
+    )
 
 
 def get_public_key() -> str:

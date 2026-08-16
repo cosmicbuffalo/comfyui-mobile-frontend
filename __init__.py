@@ -1,8 +1,12 @@
 print("[Mobile Frontend] Loading custom node...")
 import asyncio
+from collections import OrderedDict
 import mimetypes
 import os
 import shutil
+import threading
+import time
+import zlib
 import server
 from aiohttp import web
 import folder_paths
@@ -33,7 +37,9 @@ _mobile_image_preview = _import_module('mobile_image_preview')
 _mobile_push = _import_module('mobile_push')
 _mobile_web_push = _import_module('mobile_web_push')
 _mobile_app_push = _import_module('mobile_app_push')
+_mobile_progress_ws = _import_module('mobile_progress_ws')
 _mobile_push_prefs = _import_module('mobile_push_prefs')
+_mobile_capabilities = _import_module('mobile_capabilities')
 # General per-server frontend preferences (e.g. autocomplete opt-in).
 _mobile_app_prefs = _import_module('mobile_app_prefs')
 list_files = _file_utils.list_files
@@ -78,6 +84,120 @@ LEGACY_FILE_PREFIX_ALIASES_CACHE_PATHS = [
     os.path.join(EXTENSION_DIR, "file_prefix_aliases_cache.json"),
     os.path.join(CACHE_DIR, "file_prefix_aliases_cache.json"),
 ]
+
+
+def _remap_alias_strings(value, mapping, drop=frozenset()):
+    """Replace input aliases inside the lists used by /object_info combos.
+
+    Live aliases become their real input-relative paths. Aliases in ``drop``
+    (whose hard-link file no longer exists) disappear from combo lists. Aliases
+    whose original path moved away but whose hard link is still present stay as
+    they are, since they remain valid inputs. Unknown alias-shaped strings
+    remain untouched. Returning original objects for
+    unchanged subtrees avoids rebuilding a multi-megabyte object_info payload
+    when no known alias is present.
+    """
+    if isinstance(value, list):
+        alias_targets = {
+            mapping[item]
+            for item in value
+            if isinstance(item, str) and item in mapping
+        }
+        seen_alias_targets = set()
+        output = []
+        changed = False
+        for item in value:
+            if isinstance(item, str) and item.startswith(_mobile_input_aliases.ALIAS_PREFIX):
+                real_path = mapping.get(item)
+                if real_path:
+                    if real_path in seen_alias_targets:
+                        changed = True
+                        continue
+                    seen_alias_targets.add(real_path)
+                    output.append(real_path)
+                    changed = True
+                    continue
+                if item in drop:
+                    changed = True
+                    continue
+            if isinstance(item, str) and item in alias_targets:
+                if item in seen_alias_targets:
+                    changed = True
+                    continue
+                seen_alias_targets.add(item)
+            remapped = _remap_alias_strings(item, mapping, drop)
+            changed = changed or remapped is not item
+            output.append(remapped)
+        return output if changed else value
+    if isinstance(value, dict):
+        output = {}
+        changed = False
+        for key, item in value.items():
+            remapped = _remap_alias_strings(item, mapping, drop)
+            changed = changed or remapped is not item
+            output[key] = remapped
+        return output if changed else value
+    return value
+
+
+# /object_info can be several megabytes. Cache its rewritten bytes briefly so
+# desktop clients do not repeatedly parse the same payload. The key changes
+# with the alias file and upstream body; four entries bound the memory cost.
+_OBJECT_INFO_REMAP_TTL_S = 60
+_OBJECT_INFO_REMAP_MAX = 4
+_object_info_remap_lock = threading.Lock()
+_object_info_remap_cache = OrderedDict()
+
+
+def _alias_cache_stamp():
+    try:
+        stat = os.stat(INPUT_ALIASES_CACHE_PATH)
+    except OSError:
+        return None
+    return (stat.st_mtime_ns, stat.st_size)
+
+
+def _object_info_remap_get(key):
+    now = time.monotonic()
+    with _object_info_remap_lock:
+        entry = _object_info_remap_cache.get(key)
+        if entry is None:
+            return False, None
+        expires_at, body = entry
+        if expires_at <= now:
+            del _object_info_remap_cache[key]
+            return False, None
+        _object_info_remap_cache.move_to_end(key)
+        return True, body
+
+
+def _object_info_remap_put(key, body):
+    with _object_info_remap_lock:
+        _object_info_remap_cache[key] = (
+            time.monotonic() + _OBJECT_INFO_REMAP_TTL_S,
+            body,
+        )
+        _object_info_remap_cache.move_to_end(key)
+        while len(_object_info_remap_cache) > _OBJECT_INFO_REMAP_MAX:
+            _object_info_remap_cache.popitem(last=False)
+
+
+def _build_remapped_object_info(body):
+    """Build a desktop-friendly /object_info body, or None if unchanged."""
+    known = _mobile_input_aliases.known_aliases(INPUT_ALIASES_CACHE_PATH)
+    if not known:
+        return None
+    input_dir = folder_paths.get_input_directory()
+    live = _mobile_input_aliases.resolve_all_aliases(INPUT_ALIASES_CACHE_PATH, input_dir)
+    # Only aliases whose own file is gone are dropped. An alias that no longer
+    # resolves to its original path is still a valid hard-linked input, and
+    # dropping it from /object_info would break otherwise-runnable workflows.
+    gone = _mobile_input_aliases.missing_aliases(INPUT_ALIASES_CACHE_PATH, input_dir)
+    payload = json.loads(body)
+    remapped = _remap_alias_strings(payload, live, gone - set(live))
+    if remapped is payload:
+        return None
+    return json.dumps(remapped).encode("utf-8")
 
 
 def _safe_int(value, default):
@@ -1498,13 +1618,29 @@ def setup_mobile_route():
             return web.json_response({"error": str(e)}, status=500)
 
     # --- App push targets (native app pairs automatically via these) ---
-    # The pairing write endpoints accept an arbitrary https URL that this
-    # server then POSTs completion events to — an SSRF/exfiltration surface
-    # with zero legitimate callers until the native app ships. Off by
-    # default; app developers/testers opt in with COMFYUI_MOBILE_APP_PUSH=1.
-    _app_push_pairing_enabled = os.environ.get(
-        "COMFYUI_MOBILE_APP_PUSH", ""
-    ).strip().lower() in ("1", "true", "yes", "on")
+    # Pairing is on by default. mobile_app_push refuses any relay outside an
+    # allowlist (the official relay, plus whatever the admin adds via
+    # COMFYUI_MOBILE_APP_PUSH_RELAYS), so a paired client can only steer
+    # completion events at an origin the administrator already trusts, and no
+    # env var is needed before notifications work. Administrators who want it
+    # off entirely set COMFYUI_MOBILE_APP_PUSH=0.
+    _app_push_pairing_enabled = _mobile_app_push.pairing_enabled()
+
+    async def api_capabilities(request):
+        """Stable native-app compatibility contract.
+
+        The app probes this before requesting notification permission or
+        opening the installer, so an installed-but-disabled node is distinct
+        from an absent/outdated one.
+        """
+        try:
+            return web.json_response(_mobile_capabilities.build_capabilities(
+                app_push_available=_mobile_app_push.is_available(),
+                app_push_pairing_enabled=_app_push_pairing_enabled,
+                relay_origins=_mobile_app_push.allowed_relay_origins(),
+            ))
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=500)
 
     async def api_push_app_targets_get(request):
         # Gated with the writes: this lists the registered relay URLs and pairing
@@ -1526,12 +1662,18 @@ def setup_mobile_route():
             body = await request.json()
             if not isinstance(body, dict):
                 return web.json_response({"error": "invalid_body"}, status=400)
-            ok = _mobile_app_push.add_target(
+            # add_target now verifies the pairing code against the relay
+            # (blocking `requests` call) before persisting it — off the
+            # event loop, same as the other relay-touching handlers below.
+            loop = asyncio.get_running_loop()
+            ok = await loop.run_in_executor(
+                None,
+                _mobile_app_push.add_target,
                 body.get("relay_url"),
                 body.get("pairing_code"),
                 body.get("label"),
                 body.get("added"),
-                server_id=body.get("server_id"),
+                body.get("server_id"),
             )
             if not ok:
                 return web.json_response({"error": "invalid_target"}, status=400)
@@ -1591,6 +1733,7 @@ def setup_mobile_route():
             return web.json_response({"error": str(e)}, status=500)
 
     # Register API routes
+    mobile_app.router.add_get('/api/capabilities', api_capabilities)
     mobile_app.router.add_get('/api/push/config', api_push_config)
     mobile_app.router.add_post('/api/push/subscribe', api_push_subscribe)
     mobile_app.router.add_post('/api/push/unsubscribe', api_push_unsubscribe)
@@ -1623,6 +1766,7 @@ def setup_mobile_route():
     mobile_app.router.add_post('/api/input-aliases/resolve', api_resolve_input_aliases)
     mobile_app.router.add_post('/api/file-prefix-aliases', api_create_file_prefix_aliases)
     mobile_app.router.add_post('/api/file-prefix-aliases/resolve', api_resolve_file_prefix_aliases)
+    mobile_app.router.add_get('/ws/progress', _mobile_progress_ws.api_progress_ws)
     mobile_app.router.add_get('/api/thumbnail', api_get_thumbnail)
     mobile_app.router.add_get('/api/preview', api_get_preview)
     mobile_app.router.add_get('/api/video/playable', api_get_playable_video)
@@ -1741,6 +1885,48 @@ def setup_mobile_route():
     async def redirect_to_mobile(request):
         raise web.HTTPFound('/mobile/')
 
+    @web.middleware
+    async def _object_info_alias_middleware(request, handler):
+        """Show real input paths, rather than `.mi-…` aliases, on desktop."""
+        path = request.path
+        if path.startswith('/api/'):
+            path = path[4:]
+        if (
+            request.method != 'GET'
+            or not (path == '/object_info' or path.startswith('/object_info/'))
+        ):
+            return await handler(request)
+
+        response = await handler(request)
+        try:
+            if getattr(response, 'status', 0) != 200:
+                return response
+            body = getattr(response, 'body', None)
+            if not body:
+                return response
+            stamp = _alias_cache_stamp()
+            if stamp is None:
+                return response
+            body = bytes(body)
+            key = (stamp, len(body), zlib.crc32(body))
+            hit, remapped = _object_info_remap_get(key)
+            if not hit:
+                loop = asyncio.get_running_loop()
+                remapped = await loop.run_in_executor(
+                    None,
+                    _build_remapped_object_info,
+                    body,
+                )
+                _object_info_remap_put(key, remapped)
+            if remapped is not None:
+                response.body = remapped
+            return response
+        except Exception as error:
+            print(f'[Mobile Frontend] object_info alias remap skipped: {error}')
+            return response
+
+    server.PromptServer.instance.app.middlewares.append(_object_info_alias_middleware)
+
     server.PromptServer.instance.app.router.add_get('/mobile', redirect_to_mobile)
 
     # Mount the sub-application at /mobile
@@ -1750,6 +1936,12 @@ def setup_mobile_route():
     # main app's event loop so it works regardless of any client being connected.
     server.PromptServer.instance.app.on_startup.append(_mobile_push.on_startup)
     server.PromptServer.instance.app.on_cleanup.append(_mobile_push.on_cleanup)
+
+    # Live Activity progress channel: push-based, watches the same registry
+    # main.py's per-prompt hook already populates and streams changes to
+    # connected native-app clients over /mobile/ws/progress.
+    server.PromptServer.instance.app.on_startup.append(_mobile_progress_ws.on_startup)
+    server.PromptServer.instance.app.on_cleanup.append(_mobile_progress_ws.on_cleanup)
 
     print(f"[\033[34mMobile Frontend\033[0m] Mobile UI enabled at: \033[34m/mobile\033[0m")
 

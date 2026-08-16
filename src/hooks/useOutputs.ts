@@ -221,7 +221,14 @@ export interface OutputsTab {
 export const MAX_OUTPUTS_TABS = 3;
 
 let outputsTabSeq = 0;
-const newOutputsTabId = () => `otab-${outputsTabSeq++}`;
+const newOutputsTabId = (tabs: OutputsTab[]) => {
+  const existing = new Set(tabs.map((tab) => tab.id));
+  let id: string;
+  do {
+    id = `otab-${outputsTabSeq++}`;
+  } while (existing.has(id));
+  return id;
+};
 
 // Memoizes getDisplayedFiles by reference-equality of its store-field inputs, so
 // the full filter+sort over (up to 1000) files isn't recomputed on every render
@@ -414,7 +421,7 @@ export const useOutputsStore = create<OutputsState>()(
         const synced = state.tabs.map((t) =>
           t.id === state.activeTabId ? { ...t, source: state.source, folder: state.currentFolder } : t
         );
-        const id = newOutputsTabId();
+        const id = newOutputsTabId(synced);
         set({
           tabs: [...synced, { id, source: state.source, folder: state.currentFolder }],
           activeTabId: id,

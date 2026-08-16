@@ -20,6 +20,7 @@ import {
 import * as api from "@/api/client";
 import { useQueueStore } from "@/hooks/useQueue";
 import { computeQueueWorkflowDiff, selectDiffBase } from "@/utils/workflowDiff";
+import { QUEUE_WORKFLOW_LABEL_EXTRA_DATA_KEY } from "@/utils/queueWorkflowLabel";
 import { useNavigationStore } from "@/hooks/useNavigation";
 import { usePinnedWidgetStore } from "@/hooks/usePinnedWidget";
 import { useRecentWorkflowsStore } from "@/hooks/useRecentWorkflows";
@@ -752,7 +753,7 @@ interface WorkflowState {
     count: number,
     sessionId?: string | null,
     isInfiniteReEnqueue?: boolean,
-  ) => Promise<void>;
+  ) => Promise<boolean>;
   saveCurrentWorkflowState: () => void;
   setNodeOutput: (
     itemKey: HierarchicalKey,
@@ -3698,6 +3699,15 @@ export const useWorkflowStore = create<WorkflowState>()(
                 container.getBoundingClientRect().top
               : anchor.getBoundingClientRect().top;
 
+          // True once the container can't scroll any further down, in which
+          // case a positive offset is as close as the anchor will ever get and
+          // correcting toward it just re-runs the settle cycle for nothing.
+          const atScrollEnd = () =>
+            container
+              ? container.scrollTop + container.clientHeight >=
+                container.scrollHeight - 1
+              : false;
+
           const alignNow = () => {
             if (container) {
               const targetTop = Math.max(
@@ -3751,6 +3761,20 @@ export const useWorkflowStore = create<WorkflowState>()(
           let corrections = 0;
           const MAX_CORRECTIONS = 5;
 
+          // The flash is the arrival cue, so it fires as soon as the node is
+          // near enough to read as arrived — not when the scroll has fully
+          // settled. Smooth scrolling spends its last stretch easing over a
+          // handful of pixels, and waiting that out (plus the settle debounce,
+          // plus any corrective pass) put a visible dead beat between the node
+          // sliding into place and its outline lighting up.
+          const ARRIVAL_SLACK = 24;
+          let flashed = false;
+          const flashOnArrival = () => {
+            if (flashed) return;
+            flashed = true;
+            highlight();
+          };
+
           const cleanup = () => {
             if (scrollEndTimeout) {
               clearTimeout(scrollEndTimeout);
@@ -3767,22 +3791,27 @@ export const useWorkflowStore = create<WorkflowState>()(
             // User took over the scroll — stop correcting (and skip the arrival
             // highlight); they're deliberately looking somewhere else.
             if (userScrolledSince(startedAt)) return;
+            const offset = measureOffset();
+            // Flash before deciding on a corrective pass: the corrections are
+            // sub-card nudges, and gating the cue on them is what made the
+            // outline appear long after the node stopped moving.
+            flashOnArrival();
             if (
               container &&
-              Math.abs(measureOffset()) > 2 &&
-              corrections < MAX_CORRECTIONS
+              Math.abs(offset) > 2 &&
+              corrections < MAX_CORRECTIONS &&
+              !(offset > 0 && atScrollEnd())
             ) {
               corrections += 1;
               alignNow();
               watchForSettle();
-              return;
             }
-            highlight();
           };
 
           function handleScroll() {
             if (scrollEndTimeout) clearTimeout(scrollEndTimeout);
             scrollEndTimeout = setTimeout(finalize, 120);
+            if (Math.abs(measureOffset()) <= ARRIVAL_SLACK) flashOnArrival();
           }
 
           function watchForSettle() {
@@ -3795,8 +3824,30 @@ export const useWorkflowStore = create<WorkflowState>()(
             scrollEndTimeout = setTimeout(finalize, 200);
           }
 
-          alignNow();
-          watchForSettle();
+          // The destination's card un-collapses and its connections section
+          // unfolds as this runs, so measuring immediately aims at a layout
+          // that is still growing. Wait for the content height to hold still,
+          // then make one smooth move to a target that will not shift.
+          let lastHeight = -1;
+          let stableFrames = 0;
+          const settleThenAlign = (framesLeft: number) => {
+            if (userScrolledSince(startedAt)) return;
+            const height = container
+              ? container.scrollHeight
+              : document.documentElement.scrollHeight;
+            stableFrames = height === lastHeight ? stableFrames + 1 : 0;
+            lastHeight = height;
+            if (stableFrames >= 2 || framesLeft <= 0) {
+              alignNow();
+              // Already parked at the target: no scroll events are coming, so
+              // don't sit through the settle fallback before lighting it up.
+              if (Math.abs(measureOffset()) <= ARRIVAL_SLACK) flashOnArrival();
+              watchForSettle();
+              return;
+            }
+            requestAnimationFrame(() => settleThenAlign(framesLeft - 1));
+          };
+          settleThenAlign(30);
         };
 
         attemptScroll(10, 2);
@@ -6052,12 +6103,12 @@ export const useWorkflowStore = create<WorkflowState>()(
           ? useSeedStore.getState().seedLastValues
           : parked?.seedLastValues ?? {};
 
-        if (!isActive && !parked) return;
+        if (count < 1 || (!isActive && !parked)) return false;
         if (!sourceWorkflow || !nodeTypes) {
           useWorkflowErrorsStore
             .getState()
             .setError(t("Node types are still loading. Try again in a moment."));
-          return;
+          return false;
         }
 
         // Write helpers route per-iteration mutations to flat fields (active) or
@@ -6439,7 +6490,7 @@ export const useWorkflowStore = create<WorkflowState>()(
                 .setError(
                   t("Infinite generation stopped: the workflow would re-run an identical prompt (likely a fixed seed), producing the same result over and over. Set a seed widget to randomize — or change an input — to keep generating new outputs."),
                 );
-              return;
+              return false;
             }
 
             // Embed the canonical workflow (not expanded) so desktop ComfyUI can reload it correctly.
@@ -6481,6 +6532,7 @@ export const useWorkflowStore = create<WorkflowState>()(
               prompt: queuedPrompt,
               client_id: api.clientId,
               extra_data: {
+                [QUEUE_WORKFLOW_LABEL_EXTRA_DATA_KEY]: metadataWorkflowLabel,
                 extra_pnginfo: {
                   workflow: queuedWorkflow,
                 },
@@ -6681,9 +6733,8 @@ export const useWorkflowStore = create<WorkflowState>()(
               // to the active session in the websocket handler.
             }
 
-            // Clear any previous node errors on successful queue
-            useWorkflowErrorsStore.getState().clearNodeErrors();
           }
+          return true;
         } catch (err) {
           console.error("Failed to queue prompt:", err);
           useWorkflowErrorsStore
@@ -6691,10 +6742,19 @@ export const useWorkflowStore = create<WorkflowState>()(
             .setError(
               err instanceof Error ? err.message : t("Failed to queue workflow"),
             );
+          return false;
         } finally {
           // Keep the submit feedback visible until the queued prompt is
           // observable, instead of flashing back to Run while queue sync lags.
-          await useQueueStore.getState().fetchQueue();
+          // This refresh is best-effort. The prompt POST above is the source of
+          // truth for whether queueing succeeded; turning a later refresh
+          // failure into a rejected result can make native callers retry and
+          // accidentally submit the same generation twice.
+          try {
+            await useQueueStore.getState().fetchQueue();
+          } catch (refreshErr) {
+            console.warn("Failed to refresh queue after prompt submission:", refreshErr);
+          }
           if (liveTarget() === "active") set({ isLoading: false });
           if (sid) {
             set((s) => {

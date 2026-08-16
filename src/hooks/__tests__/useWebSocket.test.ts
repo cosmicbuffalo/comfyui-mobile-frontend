@@ -240,7 +240,7 @@ describe('backend reconnect notices', () => {
   });
 
   it('resumes a restored infinite loop when its session has no live prompt', async () => {
-    const queueWorkflow = vi.fn(async () => undefined);
+    const queueWorkflow = vi.fn(async () => true);
     useGenerationSettingsStore.setState({ infiniteModeEnabled: true });
     useWorkflowStore.setState({
       activeSessionId: 'loop-session',
@@ -275,7 +275,7 @@ describe('backend reconnect notices', () => {
   });
 
   it('does not auto-start or clear the arm guard from a pre-existing session run', async () => {
-    const queueWorkflow = vi.fn(async () => undefined);
+    const queueWorkflow = vi.fn(async () => true);
     useGenerationSettingsStore.setState({ infiniteModeEnabled: true });
     // infiniteLoopAwaitingRun mirrors what setInfiniteLoop(true) sets when the
     // user toggles the button live (vs a reload-restored loop, where it's false).
@@ -323,7 +323,7 @@ describe('backend reconnect notices', () => {
   });
 
   it('does not auto-start an armed loop owned by a parked tab', async () => {
-    const queueWorkflow = vi.fn(async () => undefined);
+    const queueWorkflow = vi.fn(async () => true);
     useGenerationSettingsStore.setState({ infiniteModeEnabled: true });
     // The loop was armed (never run) in 'loop-session', then the user switched
     // to another tab: the guard must survive the switch and block auto-start.
@@ -352,7 +352,7 @@ describe('backend reconnect notices', () => {
   });
 
   it('does not duplicate a restored infinite loop prompt still on the backend', async () => {
-    const queueWorkflow = vi.fn(async () => undefined);
+    const queueWorkflow = vi.fn(async () => true);
     mockGetQueue.mockResolvedValue({
       queue_running: [[3, 'loop-prompt', { sampler: {} }, {}, ['9']]],
       queue_pending: [],

@@ -1,5 +1,29 @@
 # Changelog
 
+## 3.2.0 - 2026-08-16
+
+### Added
+
+**Internationalization** ([#80](https://github.com/cosmicbuffalo/comfyui-mobile-frontend/pull/80), thanks @taochangle!)
+
+- The interface can now be switched between English, Simplified Chinese, Traditional Chinese, Japanese, and Korean from the Language section in the main menu
+- The node uses the saved language choice on future visits and otherwise follows the browser/device locale. Notification setup and status copy use the same translation layer
+- The non-English dictionaries are machine-translated; native-speaker corrections are especially welcome
+
+**Native app integration work**
+
+- Groundwork to power future native app features such as sharing images to workflows, saving outputs to Photos, native notifications, and Live Activities
+
+### Fixed
+
+- **Load Workflow** no longer appears on images with no embedded workflow to load
+- Stock desktop ComfyUI file pickers now show the real input paths for this node's `.mi-…` privacy aliases, instead of exposing opaque alias filenames alongside normal inputs. An alias whose original file has since moved or been deleted stays listed, since the alias itself remains a valid input
+- **Load Workflow** availability is re-checked when a file is replaced at the same path, instead of staying stale until reload
+
+### Notes
+
+- Push accepts only the production CueForge relay by default. Administrators running a self-hosted or development relay can add comma-separated HTTPS origins with `COMFYUI_MOBILE_APP_PUSH_RELAYS`
+
 ## 3.1.3 - 2026-08-12
 
 ### Added

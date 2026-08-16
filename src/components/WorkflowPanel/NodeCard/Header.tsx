@@ -78,6 +78,10 @@ export function NodeCardHeader({
       <div id={`node-title-container-${nodeId}`} className="flex items-center gap-1 min-w-0">
         <button
           onClick={handleFoldButtonClick}
+          type="button"
+          aria-label={isCollapsed
+            ? t('Unfold {name}', { name: displayName })
+            : t('Fold {name}', { name: displayName })}
           className="w-8 h-8 -ml-2 flex items-center justify-center text-slate-400 hover:text-slate-100 shrink-0"
         >
           <FoldIcon open={!isCollapsed} className="w-6 h-6" />

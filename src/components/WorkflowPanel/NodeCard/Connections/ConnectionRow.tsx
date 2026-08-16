@@ -18,6 +18,8 @@ interface ConnectionRowProps {
   buttonRef: RefObject<HTMLButtonElement | null>;
   /** Stable DOM id so navigation can flash this specific connection button. */
   buttonId?: string;
+  /** Spoken action for assistive tech and deterministic native UI driving. */
+  ariaLabel?: string;
   connectionCount: number;
   onClick: () => void;
   onPointerDown?: (event: ReactPointerEvent) => void;
@@ -39,6 +41,7 @@ export function ConnectionRow({
   typeClass,
   buttonRef,
   buttonId,
+  ariaLabel,
   connectionCount,
   onClick,
   onPointerDown,
@@ -74,6 +77,7 @@ export function ConnectionRow({
 
       <button
         id={buttonId}
+        aria-label={ariaLabel}
         onClick={onClick}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}

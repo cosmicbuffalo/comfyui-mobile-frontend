@@ -96,4 +96,22 @@ describe('Dialog keyboard actions', () => {
     expect(onConfirm).not.toHaveBeenCalled();
     expect(onCancel).not.toHaveBeenCalled();
   });
+
+  it('remains interactive when rendered inside a pointer-events-none overlay', async () => {
+    await act(async () => {
+      root.render(
+        <div className="pointer-events-none">
+          <Dialog
+            onClose={() => {}}
+            title="Download complete"
+            actions={[{ label: 'Got it', onClick: () => {} }]}
+          />
+        </div>,
+      );
+    });
+
+    expect(document.querySelector('[data-dialog-root="true"]')?.className).toContain(
+      'pointer-events-auto',
+    );
+  });
 });

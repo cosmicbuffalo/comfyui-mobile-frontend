@@ -19,6 +19,7 @@ import { HeartIcon, RejectedIcon } from '@/components/icons';
 import { MenuIcon } from '@/components/icons/MenuIcon';
 import { extractMetadata } from '@/utils/metadata';
 import { isVideoFilename } from '@/utils/media';
+import { canSaveToPhotosInNativeApp } from '@/utils/nativeSave';
 import {
   getFileWorkflowAvailability,
   getImageMetadata,
@@ -74,8 +75,21 @@ const PRELOAD_RETENTION_INDEX_BUFFER = 3;
 const LOADED_SRCS_MAX = 256;
 const workflowAvailabilityCache = new Map<string, boolean>();
 
-function makeWorkflowAvailabilityCacheKey(source: string, path: string): string {
-  return `${source}:${path}`;
+// How long the viewer must rest on a file before its workflow-availability
+// probe fires. Long enough that flicking through a folder skips the files
+// passed over, short enough to feel immediate once the user stops.
+const WORKFLOW_PROBE_SETTLE_MS = 300;
+
+// Keyed by path *and* the file's modification stamp, so replacing a file at
+// the same path (e.g. re-saving an image without embedded workflow metadata)
+// invalidates the cached answer instead of leaving Load Workflow stale until
+// the next page reload.
+function makeWorkflowAvailabilityCacheKey(
+  source: string,
+  path: string,
+  file?: { modifiedDate?: number; size?: number } | null,
+): string {
+  return `${source}:${path}:${file?.modifiedDate ?? ''}:${file?.size ?? ''}`;
 }
 
 function isEditableElement(element: HTMLElement | null): boolean {
@@ -162,9 +176,8 @@ export function MediaViewer({
   const [isIdle, setIsIdle] = useState(false);
   // In-viewer download toast (Saving / Saved / failed). Lives inside the
   // viewer so it only shows when the viewer is open and so it can be
-  // positioned right above the action-button row — the Flutter SnackBar
-  // we used to fire from the iOS app side anchored at the system bottom,
-  // far away from where the user just tapped.
+  // positioned right above the action-button row, close to where the user
+  // just tapped, rather than at the system bottom edge.
   const [downloadToast, setDownloadToast] = useState<{
     message: string;
     tone: 'info' | 'success' | 'error';
@@ -201,7 +214,6 @@ export function MediaViewer({
   const [metadataById, setMetadataById] = useState<Record<string, ReturnType<typeof extractMetadata> | null>>({});
   const [metadataLoading, setMetadataLoading] = useState<Record<string, boolean>>({});
   const [workflowAvailableById, setWorkflowAvailableById] = useState<Record<string, boolean>>({});
-  const [workflowLoadingById, setWorkflowLoadingById] = useState<Record<string, boolean>>({});
   const [videoError, setVideoError] = useState(false);
   // Pixel resolution of the currently displayed media, shown under the filename.
   const [naturalSize, setNaturalSize] = useState<{ width: number; height: number } | null>(null);
@@ -288,9 +300,7 @@ export function MediaViewer({
   const canToggleMetadata = showMetadataToggle;
   const metadataIsLoading = fileId ? Boolean(metadataLoading[fileId]) : false;
   const workflowAvailabilityKnown = fileId ? Object.prototype.hasOwnProperty.call(workflowAvailableById, fileId) : false;
-  const workflowIsLoading = fileId ? Boolean(workflowLoadingById[fileId]) : false;
-  const canLoadWorkflow = !isVideo
-    || Boolean(currentItem?.workflow)
+  const canLoadWorkflow = Boolean(currentItem?.workflow)
     || (fileId ? Boolean(workflowAvailableById[fileId]) : false);
 
   const resetIdleTimer = useCallback(() => {
@@ -346,21 +356,27 @@ export function MediaViewer({
       return undefined;
     }
     // Drive the in-viewer toast from the outcome. The "info" toast stays up for
-    // the duration; the success/error states auto-dismiss after a beat. (The
-    // Photos wording this used to describe arrives with the native bridge in
-    // 3.1.1 — this release only ever routes through the browser download.) The DownloadButton still uses the same
-    // returned Promise to hold its spinner — we just also tap it for the
-    // toast lifecycle.
+    // the duration; the success/error states auto-dismiss after a beat. The
+    // DownloadButton still uses the same returned Promise to hold its spinner —
+    // we just also tap it for the toast lifecycle.
     return (result as Promise<DownloadOutcome | undefined>).then(
       (outcome) => {
         if (!outcome) {
           setDownloadToast(null);
           return;
         }
-        // Only claim what this path can actually observe: the browser took the
-        // file. Whether it landed on disk is not knowable from an anchor click,
-        // so a definite "Downloaded." would be a guess the user may act on.
-        if (outcome.started) {
+        // Each route claims only what it can observe. The native app writes the
+        // asset itself and reports the real result, so "Saved to Photos." is a
+        // fact. The browser route only knows the anchor click happened — whether
+        // the file landed on disk is not knowable from here, so a definite
+        // "Downloaded." would be a guess the user may act on.
+        if (outcome.route === 'photos') {
+          if (outcome.ok) {
+            showDownloadToast(t('Saved to Photos.'), 'success', 2500);
+          } else {
+            showDownloadToast(t("Couldn't save to Photos."), 'error', 3000);
+          }
+        } else if (outcome.started) {
           showDownloadToast(t('Download started.'), 'success', 2000);
         } else {
           showDownloadToast(t('Download failed.'), 'error', 3000);
@@ -373,7 +389,8 @@ export function MediaViewer({
   // Show an in-flight message right when loading begins (DownloadButton
   // signals via onLoadingChange). Only the native-iOS path saves to Photos —
   // a slow web download (large video, slow proxy) must not claim it's
-  // "Saving to Photos".
+  // "Saving to Photos", and neither must an app session that has the UA
+  // marker but no savePhoto bridge (it falls back to the web download too).
   const handleDownloadLoadingChange = useCallback(
     (loading: boolean) => {
       if (loading) {
@@ -384,7 +401,13 @@ export function MediaViewer({
         setIsIdle(false);
         // Keep info-toast persistent — the result handler clears or
         // replaces it once the promise settles.
-        showDownloadToast(t('Downloading…'), 'info', null);
+        showDownloadToast(
+          canSaveToPhotosInNativeApp()
+            ? t('Saving to Photos…')
+            : t('Downloading…'),
+          'info',
+          null,
+        );
       } else {
         // Give the user time to read the completed toast, then return to the
         // viewer's normal chrome auto-hide behavior.
@@ -668,51 +691,60 @@ export function MediaViewer({
   /* eslint-enable react-hooks/set-state-in-effect */
 
   /* eslint-disable react-hooks/set-state-in-effect */
+  // Runs for stills as well as videos. `currentItem.workflow` is only
+  // populated from the loaded history window, so an older image with embedded
+  // workflow metadata has no in-memory signal — without probing it, the Load
+  // Workflow control would be hidden on a file that can load perfectly well.
+  //
+  // Structure matters here, because two earlier shapes of this effect broke:
+  // - A `workflowIsLoading` state guard in the dependency array made the
+  //   effect abort itself: setting the flag re-ran the effect, whose cleanup
+  //   cancelled the request it had just issued. Re-entry is instead prevented
+  //   by the effect's own lifecycle — any dep change aborts the old probe
+  //   before a new one can start, so no in-flight bookkeeping is needed.
+  // - Caching a failed probe as `false` turned a transient server blip into a
+  //   permanently hidden Load Workflow button. Failures now write nothing, so
+  //   the next view of the file retries.
   useEffect(() => {
     if (!open) return;
-    if (!isVideo) return;
     if (currentItem?.workflow) return;
-    if (!currentItem?.file) return;
-    if (!fileId) return;
-    if (workflowAvailabilityKnown || workflowIsLoading) return;
+    const file = currentItem?.file;
+    const id = fileId;
+    if (!file || !id) return;
+    if (workflowAvailabilityKnown) return;
 
-    const source = resolveFileSource(currentItem.file);
-    const path = resolveFilePath(currentItem.file, source);
-    const cacheKey = makeWorkflowAvailabilityCacheKey(source, path);
+    const source = resolveFileSource(file);
+    const path = resolveFilePath(file, source);
+    const cacheKey = makeWorkflowAvailabilityCacheKey(source, path, file);
     const cached = workflowAvailabilityCache.get(cacheKey);
     if (cached !== undefined) {
-      setWorkflowAvailableById((prev) => ({ ...prev, [fileId]: cached }));
+      setWorkflowAvailableById((prev) => ({ ...prev, [id]: cached }));
       return;
     }
 
+    // Wait for the swipe to settle before asking: each probe makes the server
+    // parse the file's embedded metadata, so a fast flick through a large
+    // folder must not fire one request per file passed over. Files swiped
+    // past never issue a request at all — cleanup cancels the timer.
     const controller = new AbortController();
-    setWorkflowLoadingById((prev) => ({ ...prev, [fileId]: true }));
-    getFileWorkflowAvailability(path, source, { signal: controller.signal })
-      .then((available) => {
-        workflowAvailabilityCache.set(cacheKey, available);
-        setWorkflowAvailableById((prev) => ({ ...prev, [fileId]: available }));
-      })
-      .catch(() => {
-        if (controller.signal.aborted) return;
-        workflowAvailabilityCache.set(cacheKey, false);
-        setWorkflowAvailableById((prev) => ({ ...prev, [fileId]: false }));
-      })
-      .finally(() => {
-        if (controller.signal.aborted) return;
-        setWorkflowLoadingById((prev) => ({ ...prev, [fileId]: false }));
-      });
+    const timer = window.setTimeout(() => {
+      getFileWorkflowAvailability(path, source, { signal: controller.signal })
+        .then((available) => {
+          workflowAvailabilityCache.set(cacheKey, available);
+          setWorkflowAvailableById((prev) => ({ ...prev, [id]: available }));
+        })
+        .catch(() => {
+          // Aborted (user moved on) or failed (server blip): the answer is
+          // unknown, not "no" — leave both caches untouched so a later view
+          // of this file can ask again.
+        });
+    }, WORKFLOW_PROBE_SETTLE_MS);
 
     return () => {
+      window.clearTimeout(timer);
       controller.abort();
     };
-  }, [
-    open,
-    isVideo,
-    currentItem,
-    fileId,
-    workflowAvailabilityKnown,
-    workflowIsLoading,
-  ]);
+  }, [open, currentItem, fileId, workflowAvailabilityKnown]);
   /* eslint-enable react-hooks/set-state-in-effect */
 
   /* eslint-disable react-hooks/set-state-in-effect */

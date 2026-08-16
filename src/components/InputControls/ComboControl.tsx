@@ -516,6 +516,7 @@ export function ComboControl({
         <div
           role="button"
           tabIndex={disabled ? -1 : 0}
+          aria-label={t('Select {name}', { name: name.replace(/_/g, " ") })}
           aria-disabled={disabled}
           className={`combo-control-trigger relative w-full p-3 comfy-input text-base flex items-center justify-between min-h-[46px] text-left ${controlStateClassName({ disabled, hasError, isPromoted })}`}
           onClick={() => !disabled && setInputPickerOpen(true)}

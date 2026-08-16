@@ -7,6 +7,7 @@ import { t as globalT, useI18n } from '@/i18n';
 import { useOutputsStore } from '@/hooks/useOutputs';
 import { useWorkflowStore, type WorkflowSource } from '@/hooks/useWorkflow';
 import { isWorkflowHidden } from '@/utils/workflowHidden';
+import { getEmbeddedQueueWorkflowLabel } from '@/utils/queueWorkflowLabel';
 import { extractMetadata } from '@/utils/metadata';
 import { CheckIcon, CornerDownRightIcon, EyeOffIcon, XSmallIcon } from '@/components/icons';
 import { FavoriteButton } from '@/components/buttons/FavoriteButton';
@@ -584,6 +585,13 @@ function getQueuedWorkflow(data: UnifiedItem['data']): Workflow | undefined {
   return extra?.extra_pnginfo?.workflow;
 }
 
+function getQueuedWorkflowLabel(data: UnifiedItem['data']): string | null {
+  const extraData = isHistoryEntryData(data)
+    ? data.queueRequest?.extra_data
+    : data.extra;
+  return getEmbeddedQueueWorkflowLabel(extraData);
+}
+
 function sessionDisplayLabel(
   filename: string | null,
   source: WorkflowSource | null,
@@ -806,6 +814,7 @@ function QueueCardComponent({
   const isGenerating = isRunning && !isCompleting;
   const isDone = item.status === 'done';
   const queuedWorkflow = useMemo(() => getQueuedWorkflow(item.data), [item.data]);
+  const queuedWorkflowLabel = useMemo(() => getQueuedWorkflowLabel(item.data), [item.data]);
   const owningWorkflow = useWorkflowStore(
     useShallow((s) => {
       const promptId = item.data.prompt_id || item.id;
@@ -831,7 +840,15 @@ function QueueCardComponent({
       };
     }),
   );
-  const workflowLabel = owningWorkflow.label ?? serverMetadata?.workflowLabel ?? null;
+  // The server record is the queued-time snapshot. The prompt-embedded label
+  // covers legacy history, other clients, and transient metadata failures;
+  // the live owning tab is only a last fallback because it may have since
+  // loaded a different workflow.
+  const workflowLabel =
+    serverMetadata?.workflowLabel
+    ?? queuedWorkflowLabel
+    ?? owningWorkflow.label
+    ?? t('Untitled');
 
   const prevIsDoneRef = useRef(isDone);
   // The default below is written at most once per mounted card. Without this,

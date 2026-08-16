@@ -882,6 +882,23 @@ describe('toggleSelectionMode', () => {
 });
 
 describe('multi-tab selection', () => {
+  it('does not reuse a persisted tab id after reload', () => {
+    useOutputsStore.setState({
+      source: 'output',
+      currentFolder: null,
+      tabs: [
+        { id: 'otab-0', source: 'output', folder: null },
+        { id: 'otab-1', source: 'input', folder: null },
+      ],
+      activeTabId: 'otab-0',
+    });
+
+    useOutputsStore.getState().addTab();
+
+    const ids = useOutputsStore.getState().tabs.map((tab) => tab.id);
+    expect(new Set(ids).size).toBe(ids.length);
+  });
+
   it('carries the selection across tabs that share the active source, accumulating across folders', () => {
     useOutputsStore.setState({
       source: 'output',

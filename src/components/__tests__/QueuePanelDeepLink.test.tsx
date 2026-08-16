@@ -285,6 +285,64 @@ describe('QueuePanel prompt_id deep link', () => {
     await act(async () => { await Promise.resolve(); });
 
     expect(onImageClick).not.toHaveBeenCalled();
+
+    // Disarmed means the user can leave the queue and stay gone — an armed
+    // deep link would snap the panel back on the next render.
+    await act(async () => {
+      useNavigationStore.getState().setCurrentPanel('workflow');
+      await Promise.resolve();
+    });
+    await act(async () => { await Promise.resolve(); });
+    expect(useNavigationStore.getState().currentPanel).toBe('workflow');
+  });
+
+  it('disarms the deep link even if fetchHistory rejects (contract-drift guard)', async () => {
+    // fetchHistory's contract is to never reject — it catches internally and
+    // resolves false, and that real blip path is covered by "gives up when the
+    // fetch comes back without the prompt" below. This deliberately violates
+    // the contract to pin the fail-open behavior: the one-shot fetch guard has
+    // already latched this prompt id, so if the store ever started rejecting
+    // and the deep link stayed armed, the re-assert effect would snap the
+    // panel back to the queue on every render for the rest of the session.
+    const onImageClick = vi.fn();
+    // Fail only the deep link's own fetch. The panel's routine refreshes call
+    // fetchHistory too, and blanket-rejecting those just adds unhandled
+    // rejections unrelated to what this test is pinning down.
+    let failFetch = false;
+    vi.spyOn(useHistoryStore.getState(), 'fetchHistory')
+      .mockImplementation(async () => {
+        if (failFetch) throw new Error('network down');
+        return true;
+      });
+
+    await act(async () => {
+      root.render(<QueuePanel visible onImageClick={onImageClick} />);
+      await Promise.resolve();
+    });
+    failFetch = true;
+    await act(async () => {
+      serviceWorkerMessages.dispatchEvent(new MessageEvent('message', {
+        data: {
+          type: 'mobile-notification-click',
+          url: `${window.location.origin}/mobile/?prompt_id=unreachable`,
+        },
+      }));
+      await Promise.resolve();
+    });
+    await act(async () => { await Promise.resolve(); });
+    failFetch = false;
+
+    expect(useNavigationStore.getState().currentPanel).toBe('queue');
+
+    // The user can now leave, and stay gone.
+    await act(async () => {
+      useNavigationStore.getState().setCurrentPanel('workflow');
+      await Promise.resolve();
+    });
+    await act(async () => { await Promise.resolve(); });
+
+    expect(useNavigationStore.getState().currentPanel).toBe('workflow');
+    expect(onImageClick).not.toHaveBeenCalled();
   });
 
   it('handles a notification deep link posted to an already-open app window', async () => {
@@ -310,6 +368,65 @@ describe('QueuePanel prompt_id deep link', () => {
     expect(onImageClick).toHaveBeenCalledTimes(1);
     const [images, index] = onImageClick.mock.calls[0];
     expect(images[index].promptId).toBe('posted-notification');
+  });
+
+  it('handles a native-app deep link posted through the window bridge', async () => {
+    // WKWebView has no service worker to relay through, so the app calls
+    // window.__cueforgeDeepLinkPromptId directly on an already-booted page
+    // (WebViewPool.swift) rather than forcing a full reload with the param.
+    const onImageClick = vi.fn();
+    await act(async () => {
+      root.render(<QueuePanel visible onImageClick={onImageClick} />);
+      await Promise.resolve();
+    });
+
+    const bridge = (window as unknown as { __cueforgeDeepLinkPromptId?: (id: string) => void })
+      .__cueforgeDeepLinkPromptId;
+    expect(typeof bridge).toBe('function');
+
+    await act(async () => {
+      useHistoryStore.setState({
+        history: [makeHistoryEntry('native-notification', true)] as never,
+      });
+      bridge!('native-notification');
+    });
+
+    expect(useNavigationStore.getState().currentPanel).toBe('queue');
+    expect(onImageClick).toHaveBeenCalledTimes(1);
+    const [images, index] = onImageClick.mock.calls[0];
+    expect(images[index].promptId).toBe('native-notification');
+  });
+
+  it('ignores an empty prompt id from the native bridge and leaves the panel alone', async () => {
+    const onImageClick = vi.fn();
+    await act(async () => {
+      root.render(<QueuePanel visible onImageClick={onImageClick} />);
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      (window as unknown as { __cueforgeDeepLinkPromptId: (id: string) => void })
+        .__cueforgeDeepLinkPromptId('');
+    });
+
+    expect(useNavigationStore.getState().currentPanel).toBe('workflow');
+    expect(onImageClick).not.toHaveBeenCalled();
+  });
+
+  it('removes the native bridge on unmount so a stale page cannot be driven', async () => {
+    await act(async () => {
+      root.render(<QueuePanel visible />);
+      await Promise.resolve();
+    });
+    expect('__cueforgeDeepLinkPromptId' in window).toBe(true);
+
+    await act(async () => {
+      root.unmount();
+    });
+    expect('__cueforgeDeepLinkPromptId' in window).toBe(false);
+
+    // afterEach unmounts too; re-root so that stays a no-op.
+    root = createRoot(container);
   });
 
   it('falls back to just the queue panel when the prompt has no outputs', async () => {

@@ -6,6 +6,7 @@ import { BottomBar } from './components/BottomBar';
 import { QueuePanel } from './components/QueuePanel';
 import { ImageViewer } from './components/ImageViewer';
 import { ConnectionLostOverlay } from './components/BackendStatusOverlay';
+import { ShareHandoffController } from './components/ShareHandoffController';
 import { NoWorkflowImageDialog } from './components/modals/NoWorkflowImageDialog';
 import { MissingNodesDialog } from './components/modals/MissingNodesDialog';
 import { useWebSocket } from './hooks/useWebSocket';
@@ -316,6 +317,7 @@ function App() {
       <ConnectionLostOverlay />
       <NoWorkflowImageDialog />
       <MissingNodesDialog />
+      <ShareHandoffController />
     </div>
   );
 }
