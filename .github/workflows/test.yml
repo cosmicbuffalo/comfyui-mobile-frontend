@@ -16,4 +16,13 @@ jobs:
           node-version: "22.12.0"
           cache: npm
       - run: npm ci
+      - run: npm run lint
       - run: npm run test
+      - run: npm run build
+      - name: Verify committed distribution matches the source build
+        run: |
+          # zlib/brotli output can differ byte-for-byte across Node/platform
+          # versions. The raw hashed assets and manifest must match exactly;
+          # compressed siblings must already be tracked (never newly generated).
+          git diff --exit-code -- dist ':(exclude)dist/**/*.gz' ':(exclude)dist/**/*.br'
+          test -z "$(git status --porcelain --untracked-files=all -- dist | grep '^[?][?]')"

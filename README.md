@@ -310,6 +310,8 @@ This mobile frontend supports LoRA Manager nodes and websocket integration. The 
 ## Development
 
 If you want to contribute or modify the frontend, you'll need Node.js installed.
+See [CONTRIBUTING.md](./CONTRIBUTING.md) for the pull-request checklist and the
+required localization updates for new or changed user-facing text.
 
 ### Setup
 

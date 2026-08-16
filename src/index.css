@@ -1,4 +1,8 @@
-@import "tailwindcss";
+/* Scan source inputs only. Including the generated dist tree makes a prior
+   build's CSS feed utility names into the next build, changing asset hashes. */
+@import "tailwindcss" source(none);
+@source "./";
+@source "../index.html";
 
 /* Base styles */
 :root {
