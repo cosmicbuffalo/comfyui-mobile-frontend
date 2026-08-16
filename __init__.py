@@ -37,7 +37,9 @@ _mobile_image_preview = _import_module('mobile_image_preview')
 _mobile_push = _import_module('mobile_push')
 _mobile_web_push = _import_module('mobile_web_push')
 _mobile_app_push = _import_module('mobile_app_push')
+_mobile_progress_ws = _import_module('mobile_progress_ws')
 _mobile_push_prefs = _import_module('mobile_push_prefs')
+_mobile_capabilities = _import_module('mobile_capabilities')
 # General per-server frontend preferences (e.g. autocomplete opt-in).
 _mobile_app_prefs = _import_module('mobile_app_prefs')
 list_files = _file_utils.list_files
@@ -1616,13 +1618,29 @@ def setup_mobile_route():
             return web.json_response({"error": str(e)}, status=500)
 
     # --- App push targets (native app pairs automatically via these) ---
-    # The pairing write endpoints accept an arbitrary https URL that this
-    # server then POSTs completion events to — an SSRF/exfiltration surface
-    # with zero legitimate callers until the native app ships. Off by
-    # default; app developers/testers opt in with COMFYUI_MOBILE_APP_PUSH=1.
-    _app_push_pairing_enabled = os.environ.get(
-        "COMFYUI_MOBILE_APP_PUSH", ""
-    ).strip().lower() in ("1", "true", "yes", "on")
+    # Pairing is on by default. mobile_app_push refuses any relay outside an
+    # allowlist (the official relay, plus whatever the admin adds via
+    # COMFYUI_MOBILE_APP_PUSH_RELAYS), so a paired client can only steer
+    # completion events at an origin the administrator already trusts, and no
+    # env var is needed before notifications work. Administrators who want it
+    # off entirely set COMFYUI_MOBILE_APP_PUSH=0.
+    _app_push_pairing_enabled = _mobile_app_push.pairing_enabled()
+
+    async def api_capabilities(request):
+        """Stable native-app compatibility contract.
+
+        The app probes this before requesting notification permission or
+        opening the installer, so an installed-but-disabled node is distinct
+        from an absent/outdated one.
+        """
+        try:
+            return web.json_response(_mobile_capabilities.build_capabilities(
+                app_push_available=_mobile_app_push.is_available(),
+                app_push_pairing_enabled=_app_push_pairing_enabled,
+                relay_origins=_mobile_app_push.allowed_relay_origins(),
+            ))
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=500)
 
     async def api_push_app_targets_get(request):
         # Gated with the writes: this lists the registered relay URLs and pairing
@@ -1715,6 +1733,7 @@ def setup_mobile_route():
             return web.json_response({"error": str(e)}, status=500)
 
     # Register API routes
+    mobile_app.router.add_get('/api/capabilities', api_capabilities)
     mobile_app.router.add_get('/api/push/config', api_push_config)
     mobile_app.router.add_post('/api/push/subscribe', api_push_subscribe)
     mobile_app.router.add_post('/api/push/unsubscribe', api_push_unsubscribe)
@@ -1747,6 +1766,7 @@ def setup_mobile_route():
     mobile_app.router.add_post('/api/input-aliases/resolve', api_resolve_input_aliases)
     mobile_app.router.add_post('/api/file-prefix-aliases', api_create_file_prefix_aliases)
     mobile_app.router.add_post('/api/file-prefix-aliases/resolve', api_resolve_file_prefix_aliases)
+    mobile_app.router.add_get('/ws/progress', _mobile_progress_ws.api_progress_ws)
     mobile_app.router.add_get('/api/thumbnail', api_get_thumbnail)
     mobile_app.router.add_get('/api/preview', api_get_preview)
     mobile_app.router.add_get('/api/video/playable', api_get_playable_video)
@@ -1916,6 +1936,12 @@ def setup_mobile_route():
     # main app's event loop so it works regardless of any client being connected.
     server.PromptServer.instance.app.on_startup.append(_mobile_push.on_startup)
     server.PromptServer.instance.app.on_cleanup.append(_mobile_push.on_cleanup)
+
+    # Live Activity progress channel: push-based, watches the same registry
+    # main.py's per-prompt hook already populates and streams changes to
+    # connected native-app clients over /mobile/ws/progress.
+    server.PromptServer.instance.app.on_startup.append(_mobile_progress_ws.on_startup)
+    server.PromptServer.instance.app.on_cleanup.append(_mobile_progress_ws.on_cleanup)
 
     print(f"[\033[34mMobile Frontend\033[0m] Mobile UI enabled at: \033[34m/mobile\033[0m")
 

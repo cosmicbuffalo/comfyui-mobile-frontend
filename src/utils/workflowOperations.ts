@@ -2,6 +2,7 @@ import { getFileWorkflow, type AssetSource, type FileItem } from '@/api/client';
 import type { NodeTypes, Workflow, WorkflowNode } from '@/api/types';
 import { getWidgetIndexForInput } from '@/hooks/useWorkflow';
 import type { WorkflowSource } from '@/hooks/useWorkflow';
+import { getScopedWorkflowView } from '@/utils/canonicalWorkflowOps';
 import { resolveWorkflowNodeDisplayName } from '@/utils/subgraphPlaceholderLabels';
 import type { ViewerImage } from '@/utils/viewerImages';
 
@@ -92,14 +93,17 @@ export function resolveInputWidget(params: {
   workflow: Workflow | null;
   nodeTypes: NodeTypes | null;
   nodeId: number;
+  /** Owning subgraph definition id; null/undefined resolves against root nodes. */
+  subgraphId?: string | null;
 }): { node: WorkflowNode; index: number; name: string } | null {
-  const { workflow, nodeTypes, nodeId } = params;
+  const { workflow, nodeTypes, nodeId, subgraphId = null } = params;
   if (!workflow || !nodeTypes) return null;
-  const node = workflow.nodes.find((entry) => entry.id === nodeId);
+  const scoped = getScopedWorkflowView(workflow, subgraphId);
+  const node = scoped.nodes.find((entry) => entry.id === nodeId);
   if (!node) return null;
   const inputNames = ['image', 'filename', 'file'];
   for (const name of inputNames) {
-    const index = getWidgetIndexForInput(workflow, nodeTypes, node, name);
+    const index = getWidgetIndexForInput(scoped, nodeTypes, node, name);
     if (index !== null) {
       return { node, index, name };
     }

@@ -19,6 +19,7 @@ import { HeartIcon, RejectedIcon } from '@/components/icons';
 import { MenuIcon } from '@/components/icons/MenuIcon';
 import { extractMetadata } from '@/utils/metadata';
 import { isVideoFilename } from '@/utils/media';
+import { canSaveToPhotosInNativeApp } from '@/utils/nativeSave';
 import {
   getFileWorkflowAvailability,
   getImageMetadata,
@@ -162,9 +163,8 @@ export function MediaViewer({
   const [isIdle, setIsIdle] = useState(false);
   // In-viewer download toast (Saving / Saved / failed). Lives inside the
   // viewer so it only shows when the viewer is open and so it can be
-  // positioned right above the action-button row — the Flutter SnackBar
-  // we used to fire from the iOS app side anchored at the system bottom,
-  // far away from where the user just tapped.
+  // positioned right above the action-button row, close to where the user
+  // just tapped, rather than at the system bottom edge.
   const [downloadToast, setDownloadToast] = useState<{
     message: string;
     tone: 'info' | 'success' | 'error';
@@ -346,21 +346,27 @@ export function MediaViewer({
       return undefined;
     }
     // Drive the in-viewer toast from the outcome. The "info" toast stays up for
-    // the duration; the success/error states auto-dismiss after a beat. (The
-    // Photos wording this used to describe arrives with the native bridge in
-    // 3.1.1 — this release only ever routes through the browser download.) The DownloadButton still uses the same
-    // returned Promise to hold its spinner — we just also tap it for the
-    // toast lifecycle.
+    // the duration; the success/error states auto-dismiss after a beat. The
+    // DownloadButton still uses the same returned Promise to hold its spinner —
+    // we just also tap it for the toast lifecycle.
     return (result as Promise<DownloadOutcome | undefined>).then(
       (outcome) => {
         if (!outcome) {
           setDownloadToast(null);
           return;
         }
-        // Only claim what this path can actually observe: the browser took the
-        // file. Whether it landed on disk is not knowable from an anchor click,
-        // so a definite "Downloaded." would be a guess the user may act on.
-        if (outcome.started) {
+        // Each route claims only what it can observe. The native app writes the
+        // asset itself and reports the real result, so "Saved to Photos." is a
+        // fact. The browser route only knows the anchor click happened — whether
+        // the file landed on disk is not knowable from here, so a definite
+        // "Downloaded." would be a guess the user may act on.
+        if (outcome.route === 'photos') {
+          if (outcome.ok) {
+            showDownloadToast(t('Saved to Photos.'), 'success', 2500);
+          } else {
+            showDownloadToast(t("Couldn't save to Photos."), 'error', 3000);
+          }
+        } else if (outcome.started) {
           showDownloadToast(t('Download started.'), 'success', 2000);
         } else {
           showDownloadToast(t('Download failed.'), 'error', 3000);
@@ -373,7 +379,8 @@ export function MediaViewer({
   // Show an in-flight message right when loading begins (DownloadButton
   // signals via onLoadingChange). Only the native-iOS path saves to Photos —
   // a slow web download (large video, slow proxy) must not claim it's
-  // "Saving to Photos".
+  // "Saving to Photos", and neither must an app session that has the UA
+  // marker but no savePhoto bridge (it falls back to the web download too).
   const handleDownloadLoadingChange = useCallback(
     (loading: boolean) => {
       if (loading) {
@@ -384,7 +391,13 @@ export function MediaViewer({
         setIsIdle(false);
         // Keep info-toast persistent — the result handler clears or
         // replaces it once the promise settles.
-        showDownloadToast(t('Downloading…'), 'info', null);
+        showDownloadToast(
+          canSaveToPhotosInNativeApp()
+            ? t('Saving to Photos…')
+            : t('Downloading…'),
+          'info',
+          null,
+        );
       } else {
         // Give the user time to read the completed toast, then return to the
         // viewer's normal chrome auto-hide behavior.

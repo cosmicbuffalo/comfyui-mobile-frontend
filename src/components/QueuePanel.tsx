@@ -63,6 +63,24 @@ function promptIdFromNotificationUrl(value: unknown): string | null {
   }
 }
 
+// Same treatment as the workflow panel's connection-jump highlight (see
+// useWorkflow's `scrollToNode`): scroll the card into view, then ring-pulse
+// it via the shared `.highlight-pulse` keyframes so a notification landing on
+// the queue reads as one continuous jump instead of a silent scroll.
+function flashQueueCard(promptId: string) {
+  const card = document.querySelector<HTMLElement>(
+    `[data-scroll-anchor-id="${CSS.escape(promptId)}"]`,
+  );
+  if (!card) return;
+  card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  document
+    .querySelectorAll('.highlight-pulse')
+    .forEach((el) => el.classList.remove('highlight-pulse'));
+  card.classList.add('highlight-pulse');
+  setTimeout(() => card.classList.remove('highlight-pulse'), 1200);
+  if ('vibrate' in navigator) navigator.vibrate(10);
+}
+
 export const QueuePanel = memo(function QueuePanel({ visible, onImageClick }: QueuePanelProps) {
   const { t } = useI18n();
   const running = useQueueStore((s) => s.running);
@@ -354,6 +372,36 @@ export const QueuePanel = memo(function QueuePanel({ visible, onImageClick }: Qu
     return () => serviceWorker.removeEventListener('message', handleNotificationClick);
   }, [setCurrentPanel]);
 
+  // Same idea for the native iOS app: WKWebView has no service worker to
+  // relay through, so the app calls this directly (window.__comfyuiMobile*
+  // bridge, same shape as the savePhoto completion callback in
+  // WebViewPool.swift) when the page is already booted, instead of forcing
+  // the full-page reload `enter()` otherwise falls back to.
+  useEffect(() => {
+    (window as unknown as { __cueforgeDeepLinkPromptId?: (id: string) => void })
+      .__cueforgeDeepLinkPromptId = (promptId: string) => {
+        if (!promptId) return;
+        setDeepLinkPromptId(promptId);
+        setCurrentPanel('queue');
+      };
+    return () => {
+      delete (window as unknown as { __cueforgeDeepLinkPromptId?: (id: string) => void })
+        .__cueforgeDeepLinkPromptId;
+    };
+  }, [setCurrentPanel]);
+
+  // A pending deep link re-asserts the queue panel for as long as it's armed.
+  // Setting it once above isn't enough: startup session restore (loadWorkflow)
+  // and the navigation store's own persisted-state rehydration both land after
+  // this component's mount effect and default back to 'workflow', clobbering
+  // the one-shot set above before the user ever sees the queue.
+  const currentPanel = useNavigationStore((s) => s.currentPanel);
+  useEffect(() => {
+    if (deepLinkPromptId && currentPanel !== 'queue') {
+      setCurrentPanel('queue');
+    }
+  }, [deepLinkPromptId, currentPanel, setCurrentPanel]);
+
   // Queue view is embedded; no modal scroll locking.
 
   useQueueMenuDismiss(Boolean(menuState?.open), () => setMenuState(null), 'queue-image-menu');
@@ -491,6 +539,10 @@ export const QueuePanel = memo(function QueuePanel({ visible, onImageClick }: Qu
     const entry = history.find((item) => item.prompt_id === deepLinkPromptId);
     if (entry) {
       setDeepLinkPromptId(null);
+      // Flash the underlying queue card in the same beat as opening the
+      // viewer, so closing the viewer lands back on a card that still reads
+      // as "that's the one that just finished" instead of an unmarked list.
+      flashQueueCard(deepLinkPromptId);
       const index = viewerImages.findIndex((image) => image.promptId === deepLinkPromptId);
       if (index >= 0) {
         onImageClick?.(viewerImages, index, firstDoneItemId === deepLinkPromptId);
@@ -511,14 +563,28 @@ export const QueuePanel = memo(function QueuePanel({ visible, onImageClick }: Qu
     // strand the deep link armed forever (the re-run bails at the ref guard
     // above). The handler is safe to let finish because it re-reads the store
     // and only clears a deep link still pointing at this same prompt.
-    void fetchHistory().then(() => {
-      const arrived = useHistoryStore
-        .getState()
-        .history.some((item) => item.prompt_id === deepLinkPromptId);
-      // Arrived: the store update re-runs this effect, which opens the viewer.
-      if (arrived) return;
+    const disarmIfStillPending = () => {
       setDeepLinkPromptId((current) => (current === deepLinkPromptId ? null : current));
-    });
+    };
+    void fetchHistory().then(
+      () => {
+        const arrived = useHistoryStore
+          .getState()
+          .history.some((item) => item.prompt_id === deepLinkPromptId);
+        // Arrived: the store update re-runs this effect, which opens the viewer.
+        if (arrived) return;
+        disarmIfStillPending();
+      },
+      () => {
+        // Defense-in-depth: fetchHistory's contract is to never reject (it
+        // catches internally and resolves false, so a real server blip takes
+        // the arrived-false branch above). But the ref above has already
+        // latched this prompt, so if that contract ever drifts, an armed deep
+        // link would pin the panel to the queue for the rest of the session —
+        // fail open by disarming.
+        disarmIfStillPending();
+      },
+    );
   }, [deepLinkPromptId, history, viewerImages, fetchHistory, firstDoneItemId, onImageClick]);
 
   useEffect(() => {

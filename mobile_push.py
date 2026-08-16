@@ -32,6 +32,11 @@ try:
 except Exception:  # pragma: no cover - module should always be importable
     _mobile_push_prefs = None
 
+try:
+    import mobile_progress_ws as _mobile_progress_ws
+except Exception:  # pragma: no cover - module should always be importable
+    _mobile_progress_ws = None
+
 from urllib.parse import urlencode
 
 # How often to scan history. 1s is plenty for "your render is done" — the cost
@@ -150,6 +155,16 @@ async def _handle_completion(prompt_id, entry):
         f"prompt_id={prompt_id} status={status} outputs={outputs}",
         flush=True,
     )
+
+    # Fire before the push sends below (which hop through a blocking
+    # executor + a relay round-trip) so a connected app client can resolve
+    # its Live Activity in lockstep with the notification dispatch rather
+    # than trailing behind it.
+    if _mobile_progress_ws is not None:
+        try:
+            await _mobile_progress_ws.broadcast_finished(prompt_id)
+        except Exception as exc:
+            print(f"{_LOG_PREFIX} progress-ws finished broadcast error: {exc}", flush=True)
 
     prefs = _mobile_push_prefs.get_prefs() if _mobile_push_prefs is not None else {}
     is_error = status == "error"

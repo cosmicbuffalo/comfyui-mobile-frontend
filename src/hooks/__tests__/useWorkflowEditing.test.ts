@@ -244,6 +244,82 @@ describe('queue prompt link/slot repair', () => {
     };
     expect(body.prompt?.['2']?.inputs?.model).toEqual(['1', 0]);
   });
+
+  it('keeps node errors returned with a partially accepted prompt', async () => {
+    const workflow = makeWorkflow([makeNode(1)], []);
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input).includes('/api/queue')) {
+        return {
+          ok: true,
+          json: async () => ({ queue_running: [], queue_pending: [] }),
+        };
+      }
+      return {
+        ok: true,
+        json: async () => ({
+          prompt_id: 'partial-prompt',
+          number: 1,
+          node_errors: {
+            1: {
+              errors: [{
+                type: 'value_not_in_list',
+                message: 'Value not in list',
+                details: 'model_name: missing.safetensors',
+                extra_info: { input_name: 'model_name' },
+              }],
+            },
+          },
+        }),
+      };
+    });
+    vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch);
+    useWorkflowStore.setState({
+      workflow,
+      nodeTypes: queueNodeTypes,
+      ...rootNodeStableRegistry([1]),
+    });
+
+    const queued = await useWorkflowStore.getState().queueWorkflow(1);
+
+    expect(queued).toBe(true);
+    expect(useWorkflowErrorsStore.getState()).toMatchObject({
+      nodeErrorsFromRun: true,
+      nodeErrors: {
+        1: [{
+          type: 'value_not_in_list',
+          message: 'Value not in list',
+          details: 'model_name: missing.safetensors',
+          inputName: 'model_name',
+        }],
+      },
+    });
+  });
+
+  it('returns false when ComfyUI rejects the prompt', async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input).includes('/api/queue')) {
+        return {
+          ok: true,
+          json: async () => ({ queue_running: [], queue_pending: [] }),
+        };
+      }
+      return {
+        ok: false,
+        json: async () => ({ error: 'share queue rejected' }),
+      };
+    });
+    vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch);
+    useWorkflowStore.setState({
+      workflow: makeWorkflow([makeNode(1)], []),
+      nodeTypes: queueNodeTypes,
+      ...rootNodeStableRegistry([1]),
+    });
+
+    const queued = await useWorkflowStore.getState().queueWorkflow(1);
+
+    expect(queued).toBe(false);
+    expect(useWorkflowErrorsStore.getState().error).toBe('share queue rejected');
+  });
 });
 
 describe('useWorkflow editing actions', () => {

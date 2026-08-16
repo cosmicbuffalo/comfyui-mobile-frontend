@@ -11,6 +11,7 @@ import { queueAndGetPromptRequest } from './helpers/queueAndGetEmbeddedWorkflow'
 import { useWorkflowHiddenStore } from '@/hooks/useWorkflowHidden';
 import { HIDDEN_WORKFLOW_EXTRA_DATA_KEY } from '@/utils/workflowHidden';
 import { useGenerationSettingsStore } from '@/hooks/useGenerationSettings';
+import { QUEUE_WORKFLOW_LABEL_EXTRA_DATA_KEY } from '@/utils/queueWorkflowLabel';
 
 function loadFixtureWorkflow(): Workflow {
   const fixturePath = resolve(
@@ -80,6 +81,21 @@ describe('embed workflow metadata', () => {
     expect(embeddedNode).toBeDefined();
     expect(Array.isArray(embeddedNode?.widgets_values)).toBe(true);
     expect((embeddedNode?.widgets_values as string[])[0]).toBe(updatedValue);
+  });
+
+  it('keeps the queue workflow label outside embedded PNG metadata', async () => {
+    const workflow = loadFixtureWorkflow();
+    useWorkflowStore.getState().setNodeTypes({} as NodeTypes);
+    useWorkflowStore.getState().loadWorkflow(workflow, 'examples/Portrait Studio.json', {
+      fresh: true,
+    });
+
+    const request = await queueAndGetPromptRequest();
+
+    expect(request.extra_data?.[QUEUE_WORKFLOW_LABEL_EXTRA_DATA_KEY]).toBe('Portrait Studio');
+    expect(request.extra_data?.extra_pnginfo).not.toHaveProperty(
+      QUEUE_WORKFLOW_LABEL_EXTRA_DATA_KEY,
+    );
   });
 
   it('marks queued payloads from hidden workflows', async () => {
