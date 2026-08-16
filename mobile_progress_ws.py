@@ -143,8 +143,14 @@ async def on_startup(app):
 
 
 async def on_cleanup(app):
+    global _watch_task
     if _watch_task is not None:
         _watch_task.cancel()
+        try:
+            await _watch_task
+        except (asyncio.CancelledError, Exception):
+            pass
+        _watch_task = None
     for ws in list(_clients):
         await ws.close()
     _clients.clear()

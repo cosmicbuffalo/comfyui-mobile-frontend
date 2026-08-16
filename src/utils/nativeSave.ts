@@ -18,15 +18,17 @@ import { isInNativeApp } from '@/utils/nativeApp';
 type SavePhotoComplete = (requestId: number, ok: boolean) => void;
 
 let nextRequestId = 0;
-const pending = new Map<number, (ok: boolean) => void>();
+const pending = new Map<number, { resolve: (ok: boolean) => void; timeoutId: number }>();
 
 if (typeof window !== 'undefined') {
   (window as unknown as { __comfyuiMobileSavePhotoComplete?: SavePhotoComplete })
     .__comfyuiMobileSavePhotoComplete = (requestId, ok) => {
-    const resolve = pending.get(requestId);
-    if (!resolve) return;
+    const entry = pending.get(requestId);
+    if (!entry) return;
     pending.delete(requestId);
-    resolve(ok);
+    // Native answered — the outer ceiling timer has nothing left to guard.
+    window.clearTimeout(entry.timeoutId);
+    entry.resolve(ok);
   };
 }
 
@@ -72,10 +74,10 @@ export function saveToPhotosInNativeApp(
     const id = ++nextRequestId;
     requestId = id;
     const promise = new Promise<boolean>((resolve) => {
-      pending.set(id, resolve);
       timeoutId = window.setTimeout(() => {
         if (pending.delete(id)) resolve(false);
       }, NATIVE_SAVE_TIMEOUT_MS);
+      pending.set(id, { resolve, timeoutId });
     });
     channel.postMessage(JSON.stringify({ url: absoluteUrl, filename, requestId: id }));
     return promise;

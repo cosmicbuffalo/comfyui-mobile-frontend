@@ -108,6 +108,15 @@ describe('saveToPhotosInNativeApp', () => {
     await expect(saved).resolves.toBe(false);
   });
 
+  it('clears the ceiling timer once native reports back', async () => {
+    vi.useFakeTimers();
+    const posted = installChannel();
+    const saved = saveToPhotosInNativeApp('/api/view?filename=a.png', 'a.png');
+    completeRequest(posted[0].requestId, true);
+    await expect(saved).resolves.toBe(true);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
   it('does not resolve twice when a late completion follows the timeout', async () => {
     vi.useFakeTimers();
     const posted = installChannel();

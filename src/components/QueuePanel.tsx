@@ -78,7 +78,7 @@ function flashQueueCard(promptId: string) {
     .forEach((el) => el.classList.remove('highlight-pulse'));
   card.classList.add('highlight-pulse');
   setTimeout(() => card.classList.remove('highlight-pulse'), 1200);
-  if ('vibrate' in navigator) navigator.vibrate(10);
+  if (typeof navigator.vibrate === 'function') navigator.vibrate(10);
 }
 
 export const QueuePanel = memo(function QueuePanel({ visible, onImageClick }: QueuePanelProps) {

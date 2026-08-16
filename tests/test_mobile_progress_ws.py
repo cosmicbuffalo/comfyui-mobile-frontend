@@ -299,3 +299,5 @@ def test_cleanup_closes_every_socket_and_cancels_the_watch(monkeypatch):
     asyncio.run(main())
     assert client.closed
     assert m._clients == set()
+    # The watch task is awaited to completion, not just cancelled and dropped.
+    assert m._watch_task is None
