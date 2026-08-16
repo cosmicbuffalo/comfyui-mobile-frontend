@@ -18,8 +18,8 @@ def now_ms() -> int:
     return int(time.time() * 1000)
 
 
-def atomic_write_json(cache_path: str, cache: dict[str, Any], *, prefix: str) -> None:
-    """Atomically write ``cache`` as compact JSON to ``cache_path``.
+def atomic_write_json(cache_path: str, value: Any, *, prefix: str) -> None:
+    """Atomically write ``value`` as compact JSON to ``cache_path``.
 
     Writes to a temp file in the same directory then ``os.replace()``s it into
     place, so a concurrent reader never observes a half-written file. ``prefix``
@@ -33,7 +33,7 @@ def atomic_write_json(cache_path: str, cache: dict[str, Any], *, prefix: str) ->
     fd, temp_path = tempfile.mkstemp(prefix=prefix, suffix=".json", dir=directory, text=True)
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            json.dump(cache, handle, separators=(",", ":"), ensure_ascii=False)
+            json.dump(value, handle, separators=(",", ":"), ensure_ascii=False)
         os.replace(temp_path, cache_path)
     except Exception:
         try:

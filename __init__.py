@@ -1526,12 +1526,18 @@ def setup_mobile_route():
             body = await request.json()
             if not isinstance(body, dict):
                 return web.json_response({"error": "invalid_body"}, status=400)
-            ok = _mobile_app_push.add_target(
+            # add_target now verifies the pairing code against the relay
+            # (blocking `requests` call) before persisting it — off the
+            # event loop, same as the other relay-touching handlers below.
+            loop = asyncio.get_running_loop()
+            ok = await loop.run_in_executor(
+                None,
+                _mobile_app_push.add_target,
                 body.get("relay_url"),
                 body.get("pairing_code"),
                 body.get("label"),
                 body.get("added"),
-                server_id=body.get("server_id"),
+                body.get("server_id"),
             )
             if not ok:
                 return web.json_response({"error": "invalid_target"}, status=400)
