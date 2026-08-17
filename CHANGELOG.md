@@ -1,5 +1,21 @@
 # Changelog
 
+## 3.2.1 - 2026-08-17
+
+### Added
+
+**Use Everywhere support** ([cg-use-everywhere](https://github.com/chrisgoringe/cg-use-everywhere))
+
+- Inputs fed by an **Anything Everywhere** node now show what they are actually connected to on the node card, instead of looking unconnected
+- Those broadcast connections are resolved when the workflow is queued, so workflows built around them run from mobile rather than failing on missing inputs
+- Covers the group/title/type match rules, priority and ambiguity handling, bypassed and muted nodes, and the older node names still saved in existing workflows
+
+### Fixed
+
+- **Latent previews work again.** With VideoHelperSuite installed, turning previews on sent every sampler's frames — plain image workflows included — through VHS's animated preview format, which this node was reading four bytes out of step. Nothing ever rendered. Broken since 3.1.2
+- **A batch previews every image side by side** instead of flickering between them in one slot. Batched runs now tile their live previews; video latents keep animating as before
+- A preview frame that can't be decoded is dropped with a console warning rather than handed to the page as a broken image, so a future format change shows up as an error instead of an empty slot
+
 ## 3.2.0 - 2026-08-16
 
 ### Added
