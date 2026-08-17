@@ -825,6 +825,8 @@ export const ja: Record<string, string> = {
   'Install missing node': '不明なノードをインストール',
   'Loading tag suggestions…': 'タグの候補を読み込み中…',
   'Unable to play this video.': 'この動画を再生できません。',
+  'Unable to load this image.': 'この画像を読み込めません。',
+  'It may have been moved, renamed, or deleted.': '移動、名前変更、または削除された可能性があります。',
   'Show video preview': '動画プレビューを表示',
   'Close a workflow': 'ワークフローを閉じる',
   'You can have up to {count} workflows open at once. Choose one to close to make room for the new one.':
