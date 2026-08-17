@@ -1,5 +1,11 @@
 # Changelog
 
+## 3.2.2 - 2026-08-17
+
+### Fixed
+
+- **Swiping onto an output that has been moved no longer hangs on a spinner.** The viewer's image had no error handler, so a file whose old path was still in the list left the spinner running forever instead of settling. It now says the image could not be loaded — refreshing the outputs panel picks up the new location. Most likely to bite when you move files on one device and swipe on another
+
 ## 3.2.1 - 2026-08-17
 
 ### Added
