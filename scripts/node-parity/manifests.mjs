@@ -296,6 +296,86 @@ export const MANIFESTS = [
       },
     ],
   },
+
+  // ---------------------------------------------------------------------
+  // ComfyUI-VideoHelperSuite — animated latent previews.
+  // The riskiest port in this list, because it is the only one where upstream
+  // defines a *binary* format nobody documents, and because its hook is
+  // global: once graph.extra.VHS_latentpreview is set, VHS wraps the previewer
+  // for EVERY sampler, so plain image workflows stop emitting stock preview
+  // frames too. Getting this envelope wrong takes latent previews down
+  // everywhere, which is exactly what happened in 3.1.2 — the parser was
+  // written from a prose description that dropped one 4-byte word, and stayed
+  // broken for six days because the unit fixtures restated the same mistake.
+  // The golden fixture (scripts/capture-vhs-latent-frame.py) now derives the
+  // bytes from upstream; these assumptions guard the derivation.
+  // ---------------------------------------------------------------------
+  {
+    pack: 'comfyui-videohelpersuite',
+    repo: 'https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite',
+    verifiedVersion: '1.7.7',
+    versionFile: 'pyproject.toml',
+    versionPattern: /^version\s*=\s*"([^"]+)"/m,
+    assumptions: [
+      {
+        id: 'latent-frame-packing',
+        why: 'The exact byte layout parseBinaryPreviewMessage decodes. VHS writes TWO leading uint32s and PromptServer.encode_bytes prepends a third, which puts the frame index at 12, the Pascal node id at 16 and the JPEG at 32. Dropping any one of these writes shifts every offset.',
+        ours: 'src/hooks/useWebSocket.ts',
+        file: 'videohelpersuite/latent_preview.py',
+        contains: [
+          /message\.write\(\(1\)\.to_bytes\(length=4, byteorder='big'\)\*2\)/,
+          /message\.write\(ind\.to_bytes\(length=4, byteorder='big'\)\)/,
+          /message\.write\(struct\.pack\('16p', serv\.last_node_id\.encode\('ascii'\)\)\)/,
+          /send_sync\(\s*server\.BinaryEventTypes\.PREVIEW_IMAGE/,
+        ],
+      },
+      {
+        id: 'latent-frame-reference-decoder',
+        why: "Upstream's own JS reader is the oracle our offsets were checked against. It reads the frame relative to the Blob Comfy's api.js hands it (the wire frame from offset 8), so its 4/8/9/24 are our 12/16/17/32. If these move, ours move by the same amount.",
+        ours: 'src/hooks/useWebSocket.ts',
+        file: 'web/js/VHS.core.js',
+        contains: [
+          /const index = dv\.getUint32\(4\)/,
+          /const idlen = dv\.getUint8\(8\)/,
+          /dv\.buffer\.slice\(9,\s*9\+idlen\)/,
+          /createImageBitmap\(e\.detail\.slice\(24\)\)/,
+        ],
+      },
+      {
+        id: 'latentpreview-event-shape',
+        why: 'startVhsLatentSequence() sizes its frame buffer from `length`, drives its interval from `rate`, and keys the sequence on `id` — which must be the same node id the binary frames carry in their Pascal field, or every frame is dropped as unroutable.',
+        ours: 'src/hooks/useWebSocket.ts',
+        file: 'videohelpersuite/latent_preview.py',
+        contains: [
+          /send_sync\('VHS_latentpreview',\s*\{'length':num_images,\s*'rate':\s*self\.rate,\s*'id':\s*serv\.last_node_id\}\)/,
+        ],
+      },
+      {
+        id: 'previewer-wrap-gate',
+        why: 'This is why the envelope is load-bearing rather than optional. useWorkflow.ts writes extra.VHS_latentpreview on every queued workflow when previews are on, and this hook turns that into "wrap the previewer for every sampler in the graph" — including plain image KSamplers.',
+        ours: 'src/hooks/useWorkflow.ts',
+        file: 'videohelpersuite/latent_preview.py',
+        contains: [
+          /@hook\(latent_preview, 'get_previewer'\)/,
+          /prev_setting = extra_info\.get\('VHS_latentpreview', False\)/,
+          /return WrappedPreviewer\(previewer, rate_setting\)/,
+        ],
+      },
+      {
+        id: 'wrapped-previewer-suppresses-stock-frames',
+        why: 'decode_latent_to_preview_image() returns None on every path, so a wrapped sampler emits NO stock preview envelope at all — the VHS frames are the only ones we will ever receive. If upstream ever returns an image here we would start getting both, and the stock branch would need to win.',
+        ours: 'src/hooks/useWebSocket.ts',
+        file: 'videohelpersuite/latent_preview.py',
+        contains: [
+          /def decode_latent_to_preview_image\(self, preview_format, x0\):/,
+          // Both exits: the throttled early return and the fall-through after
+          // the frames have been dispatched on their own thread.
+          /elif num_previews <= 0:\s*\n\s*return None/,
+          /return None\s*\n\s*def process_previews/,
+        ],
+      },
+    ],
+  },
 ];
 
 /** Look up one manifest by pack name. */

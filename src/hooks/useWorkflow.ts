@@ -422,6 +422,7 @@ const SESSION_STATE_FIELDS = [
   "nodeComparerOutputs",
   "nodeTextOutputs",
   "latentPreviews",
+  "latentPreviewTiles",
   "promptOutputs",
   "runCount",
   "isStopping",
@@ -491,6 +492,7 @@ function clearedWorkflowContent(): Partial<WorkflowState> {
     nodeComparerOutputs: {},
     nodeTextOutputs: {},
     latentPreviews: {},
+    latentPreviewTiles: {},
     promptOutputs: {},
     followQueue: false,
     connectionHighlightModes: {},
@@ -505,7 +507,7 @@ function stripLatentPreviewsFromSnapshots(
 ): Record<string, WorkflowSessionSnapshot> {
   const result: Record<string, WorkflowSessionSnapshot> = {};
   for (const [id, snapshot] of Object.entries(parkedSessions)) {
-    result[id] = { ...snapshot, latentPreviews: {} };
+    result[id] = { ...snapshot, latentPreviews: {}, latentPreviewTiles: {} };
   }
   return result;
 }
@@ -773,7 +775,15 @@ interface WorkflowState {
   ) => void;
   clearNodeOutputs: () => void;
   latentPreviews: Record<string, string>;
+  // Batched runs preview every image in the batch, so a node can hold several
+  // live previews at once. `latentPreviews` keeps the first of them (every
+  // consumer that only has room for one reads it); `latentPreviewTiles` carries
+  // the full set, and only exists for keys with more than one. A null entry is
+  // a tile whose first frame has not arrived yet — the slot is held so tiles
+  // don't reshuffle as the batch fills in.
+  latentPreviewTiles: Record<string, (string | null)[]>;
   setLatentPreview: (url: string, itemKey: string | null) => void;
+  setLatentPreviewTiles: (urls: (string | null)[], itemKey: string | null) => void;
   clearAllLatentPreviews: () => void;
   // Live latent preview keyed by prompt_id (global, not per-session) so the queue
   // card for an actively-generating prompt can show it — even for a run started
@@ -782,8 +792,16 @@ interface WorkflowState {
   // `prevUrl` is the immediately-previous frame, kept alive one extra generation
   // so the queue card never references a revoked blob while React commits the
   // new src (the card reads only `url`/`seq`).
-  latentPreviewByPrompt: Record<string, { url: string; prevUrl?: string; seq: number }>;
+  latentPreviewByPrompt: Record<string, {
+    url: string;
+    prevUrl?: string;
+    seq: number;
+    // Present only for a batch: every live preview in the run, in batch order.
+    tiles?: (string | null)[];
+    prevTiles?: (string | null)[];
+  }>;
   setQueueLatentPreview: (promptId: string | null, url: string) => void;
+  setQueueLatentPreviewTiles: (promptId: string | null, urls: (string | null)[]) => void;
   clearQueueLatentPreviews: () => void;
   addPromptOutputs: (
     promptId: string,
@@ -4191,15 +4209,18 @@ export const useWorkflowStore = create<WorkflowState>()(
         // Revoke the closing session's latent-preview object URLs. They live in
         // the active flat field or the parked snapshot and are otherwise dropped
         // (snapshot discarded / flat field overwritten) without revoking.
-        const closingPreviews =
-          id === state.activeSessionId
-            ? state.latentPreviews
-            : state.parkedSessions[id]?.latentPreviews;
-        if (closingPreviews) {
-          for (const url of Object.values(closingPreviews)) {
-            URL.revokeObjectURL(url);
-          }
+        const isActive = id === state.activeSessionId;
+        const closingPreviews = isActive
+          ? state.latentPreviews
+          : state.parkedSessions[id]?.latentPreviews;
+        const closingTiles = isActive
+          ? state.latentPreviewTiles
+          : state.parkedSessions[id]?.latentPreviewTiles;
+        const closingUrls = new Set<string>(Object.values(closingPreviews ?? {}));
+        for (const tiles of Object.values(closingTiles ?? {})) {
+          for (const url of tiles) if (url) closingUrls.add(url);
         }
+        closingUrls.forEach((url) => URL.revokeObjectURL(url));
         const remaining = state.sessions.filter((s) => s.id !== id);
         const nextParked = { ...state.parkedSessions };
         delete nextParked[id];
@@ -4413,6 +4434,7 @@ export const useWorkflowStore = create<WorkflowState>()(
               nodeComparerOutputs: {},
               nodeTextOutputs: {},
               latentPreviews: {},
+              latentPreviewTiles: {},
               promptOutputs: {},
               currentFilename: null,
               currentWorkflowKey: null,
@@ -4935,39 +4957,87 @@ export const useWorkflowStore = create<WorkflowState>()(
         set({ nodeOutputs: {}, nodeComparerOutputs: {}, nodeTextOutputs: {} });
       };
 
+      const setLatentPreviewTiles: WorkflowState["setLatentPreviewTiles"] = (urls, itemKey) => {
+        const fresh = urls.filter((url): url is string => Boolean(url));
+        if (!itemKey) { fresh.forEach((url) => URL.revokeObjectURL(url)); return; }
+        // The node card renders whatever is current, so the outgoing frames are
+        // never referenced again once this set() commits — unlike the queue
+        // card, which needs the one-generation buffer below.
+        const previousTiles = get().latentPreviewTiles[itemKey];
+        const previousSingle = get().latentPreviews[itemKey];
+        const retired = new Set<string>(previousTiles
+          ? previousTiles.filter((url): url is string => Boolean(url))
+          : (previousSingle ? [previousSingle] : []));
+        for (const url of fresh) retired.delete(url);
+        retired.forEach((url) => URL.revokeObjectURL(url));
+
+        const first = fresh[0];
+        set((state) => {
+          const latentPreviews = { ...state.latentPreviews };
+          if (first) latentPreviews[itemKey] = first;
+          else delete latentPreviews[itemKey];
+          const latentPreviewTiles = { ...state.latentPreviewTiles };
+          if (urls.length > 1) latentPreviewTiles[itemKey] = urls;
+          else delete latentPreviewTiles[itemKey];
+          return { latentPreviews, latentPreviewTiles };
+        });
+      };
+
       const setLatentPreview: WorkflowState["setLatentPreview"] = (url, itemKey) => {
-        if (!itemKey) { URL.revokeObjectURL(url); return; }
-        const prev = get().latentPreviews[itemKey];
-        if (prev) URL.revokeObjectURL(prev);
-        set((state) => ({
-          latentPreviews: { ...state.latentPreviews, [itemKey]: url },
-        }));
+        setLatentPreviewTiles([url], itemKey);
       };
 
       const clearAllLatentPreviews: WorkflowState["clearAllLatentPreviews"] = () => {
-        const previews = get().latentPreviews;
-        for (const url of Object.values(previews)) {
-          URL.revokeObjectURL(url);
+        const { latentPreviews, latentPreviewTiles } = get();
+        const revoked = new Set<string>(Object.values(latentPreviews));
+        for (const tiles of Object.values(latentPreviewTiles)) {
+          for (const url of tiles) if (url) revoked.add(url);
         }
-        set({ latentPreviews: {} });
+        revoked.forEach((url) => URL.revokeObjectURL(url));
+        set({ latentPreviews: {}, latentPreviewTiles: {} });
       };
 
-      const setQueueLatentPreview: WorkflowState["setQueueLatentPreview"] = (promptId, url) => {
-        if (!promptId) { URL.revokeObjectURL(url); return; }
+      const setQueueLatentPreviewTiles: WorkflowState["setQueueLatentPreviewTiles"] = (
+        promptId,
+        urls,
+      ) => {
+        const fresh = urls.filter((url): url is string => Boolean(url));
+        if (!promptId || fresh.length === 0) { fresh.forEach((url) => URL.revokeObjectURL(url)); return; }
         const prev = get().latentPreviewByPrompt[promptId];
-        // Keep a one-frame buffer: revoke the frame TWO generations back (which the
+        // Keep a one-frame buffer: revoke the frames TWO generations back (which the
         // card has long stopped referencing) but keep the immediately-previous
-        // frame alive, so a still-decoding displayed frame is never revoked out
+        // set alive, so a still-decoding displayed frame is never revoked out
         // from under the <img>. Without this the streaming previews would still be
         // freed each step, but the currently-shown one stays valid.
-        if (prev?.prevUrl) URL.revokeObjectURL(prev.prevUrl);
+        const retired = new Set<string>();
+        if (prev?.prevTiles) {
+          for (const url of prev.prevTiles) {
+            if (url) retired.add(url);
+          }
+        } else if (prev?.prevUrl) {
+          retired.add(prev.prevUrl);
+        }
+        // A tile that has not changed this generation is carried forward by
+        // reference, so it must survive the retirement sweep.
+        for (const url of fresh) retired.delete(url);
+        retired.forEach((url) => URL.revokeObjectURL(url));
+
         queueLatentSeq += 1;
         set((state) => ({
           latentPreviewByPrompt: {
             ...state.latentPreviewByPrompt,
-            [promptId]: { url, prevUrl: prev?.url, seq: queueLatentSeq },
+            [promptId]: {
+              url: fresh[0],
+              prevUrl: prev?.url,
+              seq: queueLatentSeq,
+              ...(urls.length > 1 ? { tiles: urls, prevTiles: prev?.tiles } : {}),
+            },
           },
         }));
+      };
+
+      const setQueueLatentPreview: WorkflowState["setQueueLatentPreview"] = (promptId, url) => {
+        setQueueLatentPreviewTiles(promptId, [url]);
       };
 
       // Revoke + drop every prompt's latent preview. Called at run start (not at
@@ -4977,10 +5047,14 @@ export const useWorkflowStore = create<WorkflowState>()(
       const clearQueueLatentPreviews: WorkflowState["clearQueueLatentPreviews"] = () => {
         const previews = get().latentPreviewByPrompt;
         if (Object.keys(previews).length === 0) return;
+        const revoked = new Set<string>();
         for (const entry of Object.values(previews)) {
-          URL.revokeObjectURL(entry.url);
-          if (entry.prevUrl) URL.revokeObjectURL(entry.prevUrl);
+          revoked.add(entry.url);
+          if (entry.prevUrl) revoked.add(entry.prevUrl);
+          for (const url of entry.tiles ?? []) if (url) revoked.add(url);
+          for (const url of entry.prevTiles ?? []) if (url) revoked.add(url);
         }
+        revoked.forEach((url) => URL.revokeObjectURL(url));
         set({ latentPreviewByPrompt: {} });
       };
 
@@ -6807,6 +6881,7 @@ export const useWorkflowStore = create<WorkflowState>()(
         nodeComparerOutputs: {},
         nodeTextOutputs: {},
         latentPreviews: {},
+        latentPreviewTiles: {},
         promptOutputs: {},
         runCount: 1,
         infiniteLoop: false,
@@ -6863,8 +6938,10 @@ export const useWorkflowStore = create<WorkflowState>()(
         setNodeTextOutput,
         clearNodeOutputs,
         setLatentPreview,
+        setLatentPreviewTiles,
         clearAllLatentPreviews,
         setQueueLatentPreview,
+        setQueueLatentPreviewTiles,
         clearQueueLatentPreviews,
         requestAddNodeModal,
         clearAddNodeModalRequest,

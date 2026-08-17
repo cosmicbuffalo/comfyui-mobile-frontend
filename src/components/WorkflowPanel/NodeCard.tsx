@@ -122,6 +122,10 @@ export const NodeCard = memo(function NodeCard({
   const latentPreviewUrl = useWorkflowStore((s) =>
     s.latentPreviews[nodeHierarchicalKey] ?? null
   );
+  // Present only when the run previews a batch: one live preview per image.
+  const latentPreviewTiles = useWorkflowStore((s) =>
+    s.latentPreviewTiles[nodeHierarchicalKey] ?? null
+  );
   const nodeTextOutput = useWorkflowStore((s) => s.nodeTextOutputs[String(node.id)] ?? null);
   const nodeErrors = useWorkflowErrorsStore((s) => s.nodeErrors[String(node.id)]);
   // Execution-state subscriptions are gated on THIS card executing. Ungated,
@@ -1261,6 +1265,7 @@ export const NodeCard = memo(function NodeCard({
               previewImages={batchTiles}
               frontendPreview={effectiveFrontendMediaPreview}
               latentPreviewUrl={latentPreviewUrl}
+              latentPreviewTiles={latentPreviewTiles}
               previewText={showTextPreview ? nodeTextOutput : null}
               displayName={displayName}
               onImageClick={() => onImageClick?.(previewList, 0)}

@@ -187,8 +187,41 @@ export type ParsedBinaryPreview =
   | { kind: 'vhs'; nodeId: string; index: number; blob: Blob }
   | null;
 
+/** Magic numbers for every container a preview could plausibly arrive in.
+ * Core Comfy only ever sends JPEG or PNG (`PromptServer.send_image` hardcodes
+ * both), but a custom node can push anything through the same envelope, so the
+ * list stays permissive — its job is to separate images from protocol bytes,
+ * not to police formats. Add to it rather than loosening the check. */
+const looksLikeImage = (bytes: Uint8Array, offset: number): boolean => {
+  const at = (i: number) => bytes[offset + i];
+  if (at(0) === 0xff && at(1) === 0xd8) return true; // JPEG
+  if (at(0) === 0x89 && at(1) === 0x50 && at(2) === 0x4e && at(3) === 0x47) return true; // PNG
+  if (at(0) === 0x47 && at(1) === 0x49 && at(2) === 0x46) return true; // GIF
+  if (at(0) === 0x52 && at(1) === 0x49 && at(2) === 0x46 && at(3) === 0x46) return true; // RIFF/WebP
+  if (at(0) === 0x42 && at(1) === 0x4d) return true; // BMP
+  return false;
+};
+
+// One line the first time a frame arrives that we cannot decode. The bug this
+// guards against was silent for six days precisely because an unparseable
+// frame degraded into a mislabeled Blob and a broken <img> instead of an
+// error, so the interesting event is "it happened at all", not the count.
+let warnedUnparseablePreview = false;
+const warnUnparseablePreview = (data: ArrayBuffer) => {
+  if (warnedUnparseablePreview) return;
+  warnedUnparseablePreview = true;
+  const head = Array.from(new Uint8Array(data.slice(0, 20)))
+    .map((b) => b.toString(16).padStart(2, '0'))
+    .join(' ');
+  console.warn(
+    `[preview] dropped an undecodable binary preview frame (${data.byteLength} bytes): ${head}`,
+  );
+};
+
 /** Decode stock Comfy preview envelopes and VHS's extended animated-latent
- * envelope without ever feeding protocol bytes into an image Blob. */
+ * envelope without ever feeding protocol bytes into an image Blob. Returns
+ * null rather than guessing: a frame we cannot place is a protocol mismatch to
+ * be fixed, and passing it through as an image only hides that. */
 export function parseBinaryPreviewMessage(data: ArrayBuffer): ParsedBinaryPreview {
   if (data.byteLength < 8) return null;
   const view = new DataView(data);
@@ -197,7 +230,7 @@ export function parseBinaryPreviewMessage(data: ArrayBuffer): ParsedBinaryPrevie
     const imageType = view.getUint32(4, false);
     const bytes = new Uint8Array(data);
     // Prefer an ordinary Comfy preview when its payload begins with real image
-    // magic. This prevents random JPEG bytes at offset 28 from looking like a
+    // magic. This prevents random JPEG bytes at offset 32 from looking like a
     // plausible VHS header.
     const stockJpeg = bytes[8] === 0xff && bytes[9] === 0xd8;
     const stockPng = bytes[8] === 0x89 && bytes[9] === 0x50;
@@ -207,20 +240,32 @@ export function parseBinaryPreviewMessage(data: ArrayBuffer): ParsedBinaryPrevie
         blob: new Blob([data.slice(8)], { type: stockPng ? 'image/png' : 'image/jpeg' }),
       };
     }
-    // VHS: [type][imageType][index][16-byte Pascal node id][JPEG].
-    if (data.byteLength > 30 && imageType === 1) {
-      const idLength = view.getUint8(12);
-      const jpegOffset = 28;
+    // VHS: [type][imageType][pad][index][16-byte Pascal node id][JPEG].
+    // VHS writes TWO leading uint32s of its own into the payload, and
+    // PromptServer.encode_bytes prepends the event type on top — three in all,
+    // so the frame index starts at 32 bytes in, not 28. (Desktop reads the same
+    // fields 8 bytes into the Blob Comfy's api.js hands it; that Blob is this
+    // buffer from offset 8, which is where the extra word goes.)
+    if (data.byteLength > 34 && imageType === 1) {
+      const idLength = view.getUint8(16);
+      const jpegOffset = 32;
       const jpegHeader = bytes[jpegOffset] === 0xff && bytes[jpegOffset + 1] === 0xd8;
       if (idLength > 0 && idLength <= 15 && jpegHeader) {
-        const nodeId = new TextDecoder().decode(data.slice(13, 13 + idLength));
+        const nodeId = new TextDecoder().decode(data.slice(17, 17 + idLength));
         return {
           kind: 'vhs',
           nodeId,
-          index: view.getUint32(8, false),
+          index: view.getUint32(12, false),
           blob: new Blob([data.slice(jpegOffset)], { type: 'image/jpeg' }),
         };
       }
+    }
+    // Neither envelope matched. If the payload is still recognisably an image
+    // (an exotic container from a custom node) pass it through; otherwise it is
+    // protocol we don't speak, and handing it to an <img> just paints nothing.
+    if (!looksLikeImage(bytes, 8)) {
+      warnUnparseablePreview(data);
+      return null;
     }
     const mime = imageType === 2 ? 'image/png' : 'image/jpeg';
     return { kind: 'image', blob: new Blob([data.slice(8)], { type: mime }) };
@@ -232,8 +277,12 @@ export function parseBinaryPreviewMessage(data: ArrayBuffer): ParsedBinaryPrevie
       // Require at least the sniffed header: no real image is under 4 bytes,
       // and a truncated payload must not become a mislabeled Blob.
       if (offset + 4 > data.byteLength) return null;
-      const header = new Uint8Array(data.slice(offset, offset + 4));
-      const mime = header[0] === 0x89 && header[1] === 0x50
+      const bytes = new Uint8Array(data);
+      if (!looksLikeImage(bytes, offset)) {
+        warnUnparseablePreview(data);
+        return null;
+      }
+      const mime = bytes[offset] === 0x89 && bytes[offset + 1] === 0x50
         ? 'image/png'
         : 'image/jpeg';
       return { kind: 'image', blob: new Blob([data.slice(offset)], { type: mime }) };
@@ -288,8 +337,10 @@ function snapshotStoreActions() {
     setNodeTextOutput: useWorkflowStore.getState().setNodeTextOutput,
     clearNodeOutputs: useWorkflowStore.getState().clearNodeOutputs,
     setLatentPreview: useWorkflowStore.getState().setLatentPreview,
+    setLatentPreviewTiles: useWorkflowStore.getState().setLatentPreviewTiles,
     clearAllLatentPreviews: useWorkflowStore.getState().clearAllLatentPreviews,
     setQueueLatentPreview: useWorkflowStore.getState().setQueueLatentPreview,
+    setQueueLatentPreviewTiles: useWorkflowStore.getState().setQueueLatentPreviewTiles,
     clearQueueLatentPreviews: useWorkflowStore.getState().clearQueueLatentPreviews,
     addPromptOutputs: useWorkflowStore.getState().addPromptOutputs,
     clearPromptOutputs: useWorkflowStore.getState().clearPromptOutputs,
@@ -472,15 +523,51 @@ export function useWebSocket() {
     ): string | null =>
       resolveNodeHierarchicalKeysForOutput(rawNodeId, ctx)[0] ?? null;
 
+    // Authoritative latent shape from our own ComfyUI extension
+    // (mobile_latent_shape.py), keyed by `promptId|nodeId`. Preview frames
+    // arrive as a flat run of N images whether they are N separate results or N
+    // frames of one animation, and nothing in the frames themselves says which;
+    // this is the only thing that does. Absent means unknown, and unknown keeps
+    // the previous single-slot behaviour rather than guessing.
+    type LatentShape = { batch: number; frames: number };
+    const latentShapes = new Map<string, LatentShape>();
+    const latentShapeKey = (promptId: string | null, nodeId: string) =>
+      `${promptId ?? ''}|${nodeId}`;
+    const lookupLatentShape = (nodeId: string): LatentShape | null => {
+      const promptId = executingPromptIdRef.current;
+      return latentShapes.get(latentShapeKey(promptId, nodeId))
+        ?? latentShapes.get(latentShapeKey(null, nodeId))
+        ?? null;
+    };
+
     type VhsLatentSequence = {
       frames: Array<Blob | undefined>;
+      // A batch of B results is drawn as B tiles; an animation of T frames is
+      // drawn in one. VHS flattens [B, C, T, H, W] batch-major, so the frame at
+      // index `tile * framesPerTile + displayIndex` belongs to `tile`.
+      tiles: number;
+      framesPerTile: number;
       displayIndex: number;
-      timer: ReturnType<typeof setInterval>;
+      nodeId: string;
+      timer: ReturnType<typeof setInterval> | null;
     };
     const vhsLatentSequences = new Map<string, VhsLatentSequence>();
-    const clearVhsLatentSequences = () => {
-      for (const sequence of vhsLatentSequences.values()) clearInterval(sequence.timer);
+    /** Stop every running sequence, keeping the shape hints. A new sequence
+     *  supersedes the old one but is described by a hint that has already
+     *  arrived, so opening one must not discard it. */
+    const stopVhsLatentSequences = () => {
+      for (const sequence of vhsLatentSequences.values()) {
+        if (sequence.timer) clearInterval(sequence.timer);
+      }
       vhsLatentSequences.clear();
+    };
+    /** Run/node boundary: drop the sequences AND the hints that described them.
+     *  Hints arrive after the `executing` frame for their node, so clearing here
+     *  keeps the map to the sampler in flight rather than letting it grow for
+     *  the life of the socket. */
+    const clearVhsLatentSequences = () => {
+      stopVhsLatentSequences();
+      latentShapes.clear();
     };
     const startVhsLatentSequence = (detail: Record<string, unknown>) => {
       const rawId = typeof detail.id === 'string' || typeof detail.id === 'number'
@@ -493,39 +580,73 @@ export function useWebSocket() {
       // every earlier one, even when its node id differs. Leaving an older
       // interval alive lets it keep racing the new sampler for the prompt's
       // queue preview (and repeatedly repaint its old workflow card).
-      clearVhsLatentSequences();
-      const sequence = {
+      stopVhsLatentSequences();
+
+      // Split the flat frame run into tiles using the shape our extension
+      // reported. Without it, or if the numbers disagree with what VHS actually
+      // sent, fall back to one tile carrying every frame — the pre-existing
+      // behaviour, never a guess at a different one.
+      const shape = lookupLatentShape(rawId);
+      const splits = shape && shape.batch > 1 && shape.batch * shape.frames === length
+        ? { tiles: shape.batch, framesPerTile: shape.frames }
+        : { tiles: 1, framesPerTile: length };
+
+      const sequence: VhsLatentSequence = {
         frames: new Array<Blob | undefined>(length),
+        tiles: splits.tiles,
+        framesPerTile: splits.framesPerTile,
         displayIndex: 0,
-        timer: 0 as unknown as ReturnType<typeof setInterval>,
+        nodeId: rawId,
+        timer: null,
       };
-      sequence.timer = setInterval(() => {
-        const frame = sequence.frames[sequence.displayIndex];
-        if (!frame) return;
-        const promptId = executingPromptIdRef.current;
-        const ctx = getSessionContext(promptId);
-        if (ctx.orphaned) return;
-        // Queue previews are global, but workflow-card latent previews belong
-        // only to the foreground session. A parked run must not paint onto an
-        // active card whose numeric/pointer key happens to coincide.
-        if (ctx.sessionId === useWorkflowStore.getState().activeSessionId) {
-          const idParts = rawId.split(':');
-          const routedKeys = new Set<string>();
-          for (let index = 1; index <= idParts.length; index += 1) {
-            const prefix = idParts.slice(0, index).join(':');
-            const key = resolveNodeHierarchicalKey(prefix, ctx);
-            if (key) routedKeys.add(key);
-          }
-          for (const key of routedKeys) {
-            storeActionsRef.current.setLatentPreview(URL.createObjectURL(frame), key);
-          }
-        }
-        if (promptId) {
-          storeActionsRef.current.setQueueLatentPreview(promptId, URL.createObjectURL(frame));
-        }
-        sequence.displayIndex = (sequence.displayIndex + 1) % sequence.frames.length;
-      }, 1000 / rate);
+      // A still-image batch has one frame per tile, so there is nothing to
+      // animate: painting on arrival avoids both the flicker of cycling
+      // unrelated images through one slot and a timer that would mint a fresh
+      // object URL for unchanged frames several times a second.
+      if (sequence.framesPerTile > 1) {
+        sequence.timer = setInterval(() => {
+          // Paint the current frame, then advance — the first tick shows frame
+          // 0, not frame 1.
+          paintVhsLatentSequence(sequence);
+          sequence.displayIndex = (sequence.displayIndex + 1) % sequence.framesPerTile;
+        }, 1000 / rate);
+      }
       vhsLatentSequences.set(rawId, sequence);
+    };
+
+    /** Push the sequence's currently-visible frame (one per tile) to the node
+     *  card and the queue card. Each consumer gets its own object URL from the
+     *  same blob: they have independent lifecycles, so revoking one must never
+     *  invalidate the other. */
+    const paintVhsLatentSequence = (sequence: VhsLatentSequence) => {
+      const visible = Array.from({ length: sequence.tiles }, (_, tile) => (
+        sequence.frames[tile * sequence.framesPerTile + sequence.displayIndex]
+      ));
+      if (!visible.some(Boolean)) return;
+      const promptId = executingPromptIdRef.current;
+      const ctx = getSessionContext(promptId);
+      if (ctx.orphaned) return;
+      const urlsFor = (frames: Array<Blob | undefined>) =>
+        frames.map((frame) => (frame ? URL.createObjectURL(frame) : null));
+
+      // Queue previews are global, but workflow-card latent previews belong
+      // only to the foreground session. A parked run must not paint onto an
+      // active card whose numeric/pointer key happens to coincide.
+      if (ctx.sessionId === useWorkflowStore.getState().activeSessionId) {
+        const idParts = sequence.nodeId.split(':');
+        const routedKeys = new Set<string>();
+        for (let index = 1; index <= idParts.length; index += 1) {
+          const prefix = idParts.slice(0, index).join(':');
+          const key = resolveNodeHierarchicalKey(prefix, ctx);
+          if (key) routedKeys.add(key);
+        }
+        for (const key of routedKeys) {
+          storeActionsRef.current.setLatentPreviewTiles(urlsFor(visible), key);
+        }
+      }
+      if (promptId) {
+        storeActionsRef.current.setQueueLatentPreviewTiles(promptId, urlsFor(visible));
+      }
     };
 
     const clearExecutionAfterBackendRestart = (preserveInfiniteLoop = false) => {
@@ -909,6 +1030,22 @@ export function useWebSocket() {
           break;
         }
 
+        // Sent by our own extension (mobile_latent_shape.py) just before the
+        // sampler's first preview, so the shape is always known by the time a
+        // sequence opens below.
+        case 'mobile_latent_shape': {
+          const detail = asRecord(msg.data);
+          const nodeId = asText(detail?.node_id);
+          if (!nodeId) break;
+          const batch = Math.max(1, Math.trunc(finiteNumber(detail?.batch, 1)));
+          const frames = Math.max(1, Math.trunc(finiteNumber(detail?.frames, 1)));
+          latentShapes.set(
+            latentShapeKey(asText(detail?.prompt_id) || null, nodeId),
+            { batch, frames },
+          );
+          break;
+        }
+
         case 'VHS_latentpreview': {
           startVhsLatentSequence(msg.data);
           break;
@@ -1126,6 +1263,11 @@ export function useWebSocket() {
       const sequence = vhsLatentSequences.get(parsed.nodeId);
       if (!sequence || parsed.index < 0 || parsed.index >= sequence.frames.length) return;
       sequence.frames[parsed.index] = parsed.blob;
+      // A still batch runs no timer, so each arriving frame paints its own tile
+      // as it lands. VHS dribbles a batch out a frame at a time (its throttle
+      // sends only as many as the elapsed time allows), which is exactly what
+      // made a single slot flicker between unrelated images.
+      if (!sequence.timer) paintVhsLatentSequence(sequence);
     };
 
     const connect = () => {
