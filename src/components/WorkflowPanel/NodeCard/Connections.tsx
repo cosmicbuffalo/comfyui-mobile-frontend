@@ -123,7 +123,12 @@ export function NodeCardConnections({
             <div className="flex flex-col gap-1.5 w-full items-end">
               {outputs.map((output, visibleIdx) => {
                 const originalIdx = allOutputs.indexOf(output);
-                const slotIndex = originalIdx >= 0 ? originalIdx : visibleIdx;
+                // Synthesized outputs (an Anything Everywhere node's broadcast
+                // side) are not in `allOutputs`, so they carry the slot they
+                // stand for in `slot_index` rather than relying on position.
+                const slotIndex = originalIdx >= 0
+                  ? originalIdx
+                  : output.slot_index ?? visibleIdx;
                 return (
                   <ConnectionButton
                     key={`output-${slotIndex}`}

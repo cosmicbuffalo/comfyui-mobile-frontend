@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { HistoryOutputImage, WorkflowInput, WorkflowNode } from '@/api/types';
+import type { HistoryOutputImage, WorkflowInput, WorkflowNode, WorkflowOutput } from '@/api/types';
 import { useWildcards } from '@/hooks/useWildcards';
 import {
   appendWildcard,
@@ -40,6 +40,7 @@ import { NodeCardOutputPreview } from './NodeCard/OutputPreview';
 import { NodeCardImageComparer } from './NodeCard/ImageComparer';
 import { DenoVideoCompare } from './NodeCard/DenoVideoCompare';
 import { isGetNode, isSetGetNode, isSetNode } from '@/utils/setGetNodes';
+import { isUseEverywhereNode } from '@/utils/useEverywhere';
 import { isUninstalledNodeType } from '@/utils/missingNodes';
 import { useCustomNodesManager } from '@/hooks/useCustomNodesManager';
 import { useSetGetNameEditStore } from '@/hooks/useSetGetNameEdit';
@@ -272,6 +273,9 @@ export const NodeCard = memo(function NodeCard({
   // SetNode/GetNode (KJNodes wireless relays) render a compact relay control in
   // place of their parameters; their real slots still use the connections section.
   const isSetGet = isSetGetNode(node);
+  // Anything Everywhere nodes broadcast rather than wire; their outgoing side is
+  // synthesized below because the node type declares no outputs at all.
+  const isUseEverywhere = isUseEverywhereNode(node);
   const isBypassed = node.mode === 4;
   const isCollapsed = Boolean(collapsedItems[nodeHierarchicalKey]);
   const expandConnectionsSection = useConnectionSectionFoldsStore((s) => s.expand);
@@ -598,16 +602,37 @@ export const NodeCard = memo(function NodeCard({
 
 
   // Filter outputs to exclude helper outputs like "show_help"
-  const visibleOutputs = useMemo(() =>
-    node.outputs.filter(output => {
+  const visibleOutputs = useMemo(() => {
+    const real = node.outputs.filter(output => {
       const name = (output.name || '').toLowerCase().replace(/[_\s]/g, '');
       if (name === 'showhelp') return false;
       const isOptConnection = String(output.type).toUpperCase() === 'OPT_CONNECTION';
       if (isOptConnection && !(output.links?.length)) return false;
       return true;
-    }),
-    [node.outputs]
-  );
+    });
+    // An Anything Everywhere node declares no outputs, yet its whole purpose is
+    // outgoing: each connected input re-publishes to every matching input in the
+    // scope. Synthesize one output per broadcasting slot so the card has
+    // somewhere to show where the value actually goes — the same trick the
+    // GetNode input uses. `slot_index` carries the controller slot through, since
+    // these are not in `node.outputs` for the usual index lookup.
+    //
+    // The type stays the wildcard the slot declares: resolving it needs this
+    // scope's link table, and ConnectionButton — which is scope-aware — derives
+    // both the label and the colour from the controller's input instead.
+    if (!isUseEverywhere) return real;
+    const synthetic: WorkflowOutput[] = [];
+    node.inputs.forEach((input, slotIndex) => {
+      if (input.link == null) return;
+      synthetic.push({
+        name: 'broadcast',
+        type: String(input.type),
+        links: null,
+        slot_index: slotIndex,
+      });
+    });
+    return [...real, ...synthetic];
+  }, [node.outputs, node.inputs, isUseEverywhere]);
 
   // Helper to check if a widget is pinned
   const isWidgetPinned = (widgetIndex: number) => {

@@ -11,6 +11,13 @@ import { ConnectionModal } from '@/components/modals/ConnectionModal';
 import { resolveRerouteConnectionLabel } from '@/utils/rerouteLabels';
 import { resolveSetGetConnectionLabel } from '@/utils/setGetLabels';
 import { getSetGetName, isGetNode, isSetGetNode, isSetNode } from '@/utils/setGetNodes';
+import {
+  getScopedUeLinkMap,
+  isUseEverywhereNode,
+  listUeReceivers,
+  ueSlotKey,
+} from '@/utils/useEverywhere';
+import { resolveUseEverywhereConnectionLabel } from '@/utils/useEverywhereLabels';
 import { useSetGetNameEditStore } from '@/hooks/useSetGetNameEdit';
 import {
   findWorkflowNodeInScope,
@@ -81,6 +88,44 @@ export const ConnectionButton = memo(function ConnectionButton({
     () => scopedWorkflow?.nodes.find((n) => n.id === nodeId) ?? null,
     [scopedWorkflow, nodeId],
   );
+
+  // Use Everywhere feeds inputs that carry no link at all. The broadcast is a
+  // real data connection, so this slot must read as connected and navigate to
+  // the true upstream node — not to the Anything Everywhere node routing it.
+  const ueLinks = useMemo(
+    () => getScopedUeLinkMap(workflow, currentSubgraphId, scopedWorkflow),
+    [workflow, currentSubgraphId, scopedWorkflow],
+  );
+  const ueResolution = useMemo(() => {
+    if (direction !== 'input') return null;
+    if ((slot as WorkflowInput).link != null) return null;
+    return ueLinks.get(ueSlotKey(nodeId, slotIndex)) ?? null;
+  }, [direction, slot, ueLinks, nodeId, slotIndex]);
+
+  const isBroadcastOutput = Boolean(
+    direction === 'output' && ownNode && isUseEverywhereNode(ownNode),
+  );
+
+  // Anything Everywhere slots are declared as the wildcard "*", which would paint
+  // every one of them the same grey. Colour them by what is actually flowing
+  // through, resolved from the link feeding the controller in THIS scope's link
+  // table, so both halves of the card agree with each other and with the
+  // consumers downstream. Works for either direction: the synthesized output
+  // carries the controller's input index, so the lookup is the same.
+  const slotTypeForColour = useMemo(() => {
+    if (!ownNode || !isUseEverywhereNode(ownNode)) return slot.type;
+    const linkId = ownNode.inputs?.[slotIndex]?.link;
+    if (linkId == null) return slot.type;
+    return scopedWorkflow?.links.find((l) => l[0] === linkId)?.[5] || slot.type;
+  }, [ownNode, slot.type, slotIndex, scopedWorkflow]);
+
+  // The other end: on an Anything Everywhere node, the synthesized output slot
+  // stands for one broadcast, and its "connections" are every input the resolver
+  // routed to it. There is no link table entry for any of them.
+  const ueReceivers = useMemo(() => {
+    if (!isBroadcastOutput) return [];
+    return listUeReceivers(ueLinks, nodeId, slotIndex);
+  }, [isBroadcastOutput, ueLinks, nodeId, slotIndex]);
   // A SetNode's outgoing side is jump-only: its connection is the relay name (no
   // link to create/modify here; the name is edited via the node menu). A
   // GetNode's incoming side, by contrast, IS modifiable — its long-press/empty
@@ -153,6 +198,13 @@ export const ConnectionButton = memo(function ConnectionButton({
     if (node && isSetGetNode(node)) {
       return resolveSetGetConnectionLabel(scopedWorkflow, nodeId, direction, placeholderLabel);
     }
+    const broadcastLabel = resolveUseEverywhereConnectionLabel(
+      scopedWorkflow,
+      nodeId,
+      slotIndex,
+      placeholderLabel,
+    );
+    if (broadcastLabel !== placeholderLabel) return broadcastLabel;
     return resolveRerouteConnectionLabel(scopedWorkflow, nodeId, direction, placeholderLabel);
   }, [workflow, currentSubgraphId, scopedWorkflow, direction, slot.label, slot.localized_name, slot.name, slotIndex, nodeId]);
 
@@ -177,10 +229,18 @@ export const ConnectionButton = memo(function ConnectionButton({
           : undefined;
         if (setNode && !nodes.some((n) => n.id === setNode.id)) nodes.push(setNode);
       }
+      if (ueResolution) {
+        const source = scopedWorkflow.nodes.find((n) => n.id === ueResolution.originId);
+        if (source && !nodes.some((n) => n.id === source.id)) nodes.push(source);
+      }
     } else {
       const connections = findConnectedOutputNodes(scopedWorkflow, nodeId, slotIndex);
       for (const conn of connections) {
         nodes.push(conn.node);
+      }
+      for (const receiver of ueReceivers) {
+        const target = scopedWorkflow.nodes.find((n) => n.id === receiver.nodeId);
+        if (target && !nodes.some((n) => n.id === target.id)) nodes.push(target);
       }
       if (ownNode && isSetNode(ownNode)) {
         const setName = getSetGetName(ownNode);
@@ -198,7 +258,7 @@ export const ConnectionButton = memo(function ConnectionButton({
       }
     }
     return nodes;
-  }, [scopedWorkflow, nodeId, direction, slot, slotIndex]);
+  }, [scopedWorkflow, nodeId, direction, slot, slotIndex, ueResolution, ueReceivers]);
 
   const { effectiveNodes, directNodes, bypassedTargets } = useMemo(() => {
     if (!scopedWorkflow) {
@@ -319,7 +379,18 @@ export const ConnectionButton = memo(function ConnectionButton({
     // Links are [id, origin_id, origin_slot, target_id, target_slot, type].
     if (direction === 'input') {
       const input = slot as WorkflowInput;
-      if (input.link == null) return null;
+      if (input.link == null) {
+        // Broadcast connections have no link to read the slot from; the resolver
+        // already knows which output of the source is feeding us.
+        if (ueResolution && ueResolution.originId === targetNodeId) {
+          return {
+            nodeId: ueResolution.originId,
+            direction: 'output' as const,
+            slotIndex: ueResolution.originSlot,
+          };
+        }
+        return null;
+      }
       const link = scopedWorkflow.links.find((l) => l[0] === input.link);
       if (!link || link[1] !== targetNodeId) return null;
       return { nodeId: link[1], direction: 'output' as const, slotIndex: link[2] };
@@ -331,8 +402,14 @@ export const ConnectionButton = memo(function ConnectionButton({
         return { nodeId: link[3], direction: 'input' as const, slotIndex: link[4] };
       }
     }
+    // Broadcast receivers have no link either; the resolver knows which input
+    // slot on the target this broadcast lands in.
+    const receiver = ueReceivers.find((r) => r.nodeId === targetNodeId);
+    if (receiver) {
+      return { nodeId: receiver.nodeId, direction: 'input' as const, slotIndex: receiver.slotIndex };
+    }
     return null;
-  }, [scopedWorkflow, slot, direction]);
+  }, [scopedWorkflow, slot, direction, ueResolution, ueReceivers]);
 
   // Shared navigation: unfold the destination's connections section, reveal +
   // scroll to it, and flash the reciprocal connection button in sync with the
@@ -385,7 +462,7 @@ export const ConnectionButton = memo(function ConnectionButton({
     }
     if (!hasConnection) {
       // Wireless relays have no link to create/modify from this button.
-      if (isSetOutputRelay) return;
+      if (isSetOutputRelay || isBroadcastOutput) return;
       // Empty input/output: open the connection editor.
       setConnectionModalOpen(true);
       return;
@@ -405,7 +482,7 @@ export const ConnectionButton = memo(function ConnectionButton({
   // relays (Set output / Get input) have no link to edit here, so long-press is a
   // no-op for them.
   const handlePointerDown = useCallback((event: React.PointerEvent) => {
-    if (isSetOutputRelay) return;
+    if (isSetOutputRelay || isBroadcastOutput) return;
     const canOpenByLongPress = direction === 'input' ? hasConnection : true;
     if (!canOpenByLongPress) return;
     pointerStartRef.current = { x: event.clientX, y: event.clientY };
@@ -415,7 +492,7 @@ export const ConnectionButton = memo(function ConnectionButton({
       longPressTriggeredRef.current = true;
       setConnectionModalOpen(true);
     }, 500);
-  }, [direction, hasConnection, isSetOutputRelay]);
+  }, [direction, hasConnection, isSetOutputRelay, isBroadcastOutput]);
 
   const handlePointerMove = useCallback((event: React.PointerEvent) => {
     if (!pointerStartRef.current) return;
@@ -512,17 +589,35 @@ export const ConnectionButton = memo(function ConnectionButton({
       const targetLabel = target
         ? resolveWorkflowNodeDisplayName(workflow, target, nodeTypes)
         : t('connected node');
+      if (ueResolution) {
+        // Name the broadcast explicitly: the value arrives from `target` but is
+        // routed by an Anything Everywhere node, which is not otherwise visible.
+        return t('Go to {target}, broadcast to {label}', {
+          target: targetLabel,
+          label: resolvedLabel,
+        });
+      }
+      if (isBroadcastOutput) {
+        return t('Go to {target}, which receives this broadcast', { target: targetLabel });
+      }
       return t('Go to {target} from {label}', {
         target: targetLabel,
         label: resolvedLabel,
       });
     }
     if (connectionCount > 1) {
+      if (isBroadcastOutput) {
+        return t('Show {count} inputs receiving this broadcast', { count: connectionCount });
+      }
       return t('Show {count} connections from {label}', {
         count: connectionCount,
         label: resolvedLabel,
       });
     }
+    // A broadcast output cannot be wired by hand, so never offer to connect it.
+    // Reaching nothing is a normal state — a bypassed controller, or a type no
+    // unconnected input wants — so name the broadcast rather than the absence.
+    if (isBroadcastOutput) return t('Broadcast output: {label}', { label: resolvedLabel });
     return direction === 'input'
       ? t('Connect input {label}', { label: resolvedLabel })
       : t('Connect output {label}', { label: resolvedLabel });
@@ -557,13 +652,14 @@ export const ConnectionButton = memo(function ConnectionButton({
         hasConnection={hasConnection}
         isEmptyRequiredInput={isEmptyRequiredInput}
         isBoundaryConnection={isBoundaryConnection}
+        isBroadcastConnection={ueResolution != null || isBroadcastOutput}
         hideLabel={hideLabel}
         resolvedLabel={resolvedLabel}
         labelEditor={setNameEditor}
         shouldWrapResolvedLabel={shouldWrapResolvedLabel}
         sizeClass={sizeClass}
         arrowClass={arrowClass}
-        typeClass={getTypeClass(slot.type)}
+        typeClass={getTypeClass(slotTypeForColour)}
         buttonRef={buttonRef}
         buttonId={connectionButtonDomId(nodeId, direction, slotIndex)}
         ariaLabel={buttonAriaLabel}

@@ -7,6 +7,12 @@ interface ConnectionRowProps {
   isEmptyRequiredInput?: boolean;
   /** True when the connection crosses the subgraph boundary (sentinel -10/-20). */
   isBoundaryConnection?: boolean;
+  /**
+   * True when a Use Everywhere broadcast feeds this input rather than a drawn
+   * link. It is a real connection, so it reads as filled — the dashed ring just
+   * distinguishes "arrives over the air" from "wired".
+   */
+  isBroadcastConnection?: boolean;
   hideLabel: boolean;
   resolvedLabel: string;
   /** When set, replaces the label text with this node (e.g. an inline name editor). */
@@ -32,6 +38,7 @@ export function ConnectionRow({
   hasConnection,
   isEmptyRequiredInput = false,
   isBoundaryConnection = false,
+  isBroadcastConnection = false,
   hideLabel,
   resolvedLabel,
   labelEditor,
@@ -91,8 +98,11 @@ export function ConnectionRow({
           ${sizeClass} flex-shrink-0
           transition-opacity
           ${typeClass}
+          ${isBroadcastConnection ? 'connection-broadcast' : ''}
           ${isInput && isEmptyRequiredInput ? 'opacity-100 cursor-pointer border-red-500'
-            : (isBoundaryConnection ? 'border-cyan-400' : 'border-transparent')}
+            : isBoundaryConnection ? 'border-cyan-400'
+            : isBroadcastConnection ? 'border-dashed border-violet-400/80'
+            : 'border-transparent'}
           ${!isInput && isInactiveOutput ? 'border-dashed border-slate-500/70' : ''}
           ${isVisuallyDisabled ? 'opacity-40 cursor-pointer active:scale-95' : ''}
           ${!isVisuallyDisabled && isInactiveOutput ? 'opacity-50 cursor-pointer active:scale-95' : ''}

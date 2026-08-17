@@ -234,18 +234,31 @@ input, textarea, select {
 }
 
 /* Type colors for connection buttons */
-.type-IMAGE { background-color: #a855f7; color: white; }
-.type-LATENT { background-color: #ec4899; color: white; }
-.type-MODEL { background-color: #f97316; color: white; }
-.type-CLIP { background-color: #eab308; color: black; }
-.type-VAE { background-color: #ef4444; color: white; }
-.type-CONDITIONING { background-color: #22c55e; color: white; }
-.type-INT { background-color: #3b82f6; color: white; }
-.type-FLOAT { background-color: #06b6d4; color: white; }
-.type-STRING { background-color: #8b5cf6; color: white; }
-.type-BOOLEAN { background-color: #6366f1; color: white; }
-.type-MASK { background-color: #64748b; color: white; }
-.type-default { background-color: #9ca3af; color: white; }
+/* Slot colours are declared through --conn-slot-fill so the Use Everywhere
+   modifier below can thin any of them without restating the palette. */
+.type-IMAGE { --conn-slot-fill: #a855f7; background-color: var(--conn-slot-fill); color: white; }
+.type-LATENT { --conn-slot-fill: #ec4899; background-color: var(--conn-slot-fill); color: white; }
+.type-MODEL { --conn-slot-fill: #f97316; background-color: var(--conn-slot-fill); color: white; }
+.type-CLIP { --conn-slot-fill: #eab308; background-color: var(--conn-slot-fill); color: black; }
+.type-VAE { --conn-slot-fill: #ef4444; background-color: var(--conn-slot-fill); color: white; }
+.type-CONDITIONING { --conn-slot-fill: #22c55e; background-color: var(--conn-slot-fill); color: white; }
+.type-INT { --conn-slot-fill: #3b82f6; background-color: var(--conn-slot-fill); color: white; }
+.type-FLOAT { --conn-slot-fill: #06b6d4; background-color: var(--conn-slot-fill); color: white; }
+.type-STRING { --conn-slot-fill: #8b5cf6; background-color: var(--conn-slot-fill); color: white; }
+.type-BOOLEAN { --conn-slot-fill: #6366f1; background-color: var(--conn-slot-fill); color: white; }
+.type-MASK { --conn-slot-fill: #64748b; background-color: var(--conn-slot-fill); color: white; }
+.type-default { --conn-slot-fill: #9ca3af; background-color: var(--conn-slot-fill); color: white; }
+
+/* A Use Everywhere broadcast is a real connection that was never drawn, so it
+   keeps its slot colour but sits at partial fill behind a dashed ring — legible
+   at a glance as "arrives over the air" next to a solid wired neighbour.
+   Browsers without color-mix() keep the solid fill above and still get the ring. */
+.connection-broadcast {
+  background-color: color-mix(in srgb, var(--conn-slot-fill) 40%, transparent);
+  /* CLIP and friends set a black glyph for their solid fill; at 40% over the
+     dark card that would be unreadable, so the arrow goes light for every type. */
+  color: #e2e8f0;
+}
 
 /* Fullscreen widget modal backdrop: span the full LAYOUT viewport so nothing
    shows through in the strip behind the on-screen keyboard. WebKit shrinks

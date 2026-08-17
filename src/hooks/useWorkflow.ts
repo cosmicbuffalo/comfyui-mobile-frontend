@@ -130,6 +130,7 @@ import {
   ensureOasisPreviewIoIds,
 } from "@/utils/nodeFrontendPreviews";
 import { getSetGetName, isGetNode, isSetGetNode, isSetNode } from "@/utils/setGetNodes";
+import { isUseEverywhereNode, resolveUseEverywhereForPrompt } from "@/utils/useEverywhere";
 import {
   type ScopeFrame,
   resolveCurrentScope,
@@ -6432,6 +6433,13 @@ export const useWorkflowStore = create<WorkflowState>()(
             const allowedNodeIds = new Set<number>();
             const classTypeById = new Map<number, string>();
 
+            // Use Everywhere broadcasts feed inputs that carry no link at all, so
+            // they have to be resolved up front and handed to the input builder.
+            const ueLinks = resolveUseEverywhereForPrompt(
+              expandedForQueue,
+              promptKeyMap,
+            );
+
             for (const node of expandedForQueue.nodes) {
               if (node.mode === 4) continue;
               // SetNode/GetNode are virtual relays: consumers already resolve
@@ -6440,6 +6448,10 @@ export const useWorkflowStore = create<WorkflowState>()(
               // emit loop below skips them too. Works whether or not the backend
               // has the KJNodes types installed.
               if (isSetGetNode(node)) continue;
+              // Anything Everywhere nodes are no-op broadcasters with no outputs;
+              // their routing is already baked into ueLinks. A `ue_convert` node
+              // is a real node that also broadcasts, so it stays.
+              if (isUseEverywhereNode(node)) continue;
               let classType: string | null = null;
               if (nodeTypes[node.type]) {
                 classType = node.type;
@@ -6469,6 +6481,7 @@ export const useWorkflowStore = create<WorkflowState>()(
                 getNodeWidgetIndexMap(expandedForQueue, node),
                 expandedSeedOverrides,
                 promptKeyMap,
+                ueLinks,
               );
               const promptKey = promptKeyMap.get(node.id) ?? String(node.id);
               prompt[promptKey] = { class_type: classType, inputs };
