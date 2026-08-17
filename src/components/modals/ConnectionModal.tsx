@@ -5,12 +5,18 @@ import { runUndoTransaction } from '@/utils/undoTransaction';
 import { useConnectionSectionFoldsStore } from '@/hooks/useConnectionSectionFolds';
 import { useI18n } from '@/i18n';
 import {
+  areTypesCompatible,
   findCompatibleSourceNodes,
   findCompatibleNodeTypesForInput,
   findCompatibleNodeTypesForOutput,
   findCompatibleTargetNodesForOutput,
   isWildcardOnlyMatch
 } from '@/utils/connectionUtils';
+import {
+  getScopedUeLinkMap,
+  listUeBroadcasts,
+  ueSlotKey
+} from '@/utils/useEverywhere';
 import { CheckIcon, PlusIcon } from '@/components/icons';
 import {
   fuzzyMatch,
@@ -142,19 +148,52 @@ export function ConnectionModal(props: ConnectionModalProps) {
   const [multiInputPickerNodeId, setMultiInputPickerNodeId] = useState<number | null>(null);
   const [multiInputPickerSelection, setMultiInputPickerSelection] = useState<Set<string>>(new Set());
 
+  // Every Use Everywhere broadcast available in this scope, plus the one (if any)
+  // already feeding the input being edited. A broadcast is a real data
+  // connection even though nothing is drawn, so the picker has to account for
+  // both: show what is arriving now, and offer the broadcast sources as choices.
+  const ueLinks = useMemo(
+    () => getScopedUeLinkMap(workflow, currentSubgraphId, scopedWorkflow),
+    [workflow, currentSubgraphId, scopedWorkflow],
+  );
+  const ueResolution = useMemo(() => {
+    if (mode !== 'input' || !scopedWorkflow) return null;
+    const inputIndex = (props as InputConnectionModalProps).inputIndex;
+    const node = scopedWorkflow.nodes.find((n) => n.id === nodeId);
+    if (node?.inputs?.[inputIndex]?.link != null) return null;
+    return ueLinks.get(ueSlotKey(nodeId, inputIndex)) ?? null;
+  }, [mode, scopedWorkflow, nodeId, props, ueLinks]);
+
+  // Which broadcast, if any, carries a given (node, output slot) — so a source
+  // that is already on the air can be labelled as such wherever it is listed.
+  const broadcastBySource = useMemo(() => {
+    const bySource = new Map<string, number>();
+    if (mode !== 'input' || !scopedWorkflow) return bySource;
+    for (const broadcast of listUeBroadcasts(scopedWorkflow)) {
+      const key = `${broadcast.originId}:${broadcast.originSlot}`;
+      if (!bySource.has(key)) bySource.set(key, broadcast.controllerId);
+    }
+    return bySource;
+  }, [mode, scopedWorkflow]);
+
   // The source this input is actually wired to right now (origin node + slot),
-  // resolved from the scoped link list. Used both to pre-select the form and to
-  // tell when the staged selection has changed.
+  // resolved from the scoped link list, or from the broadcast feeding it when no
+  // link is drawn. Used both to pre-select the form and to tell when the staged
+  // selection has changed.
   const initialInputSource = useMemo<{ nodeId: number; outputIndex: number } | null>(() => {
     if (mode !== 'input' || !scopedWorkflow) return null;
     const inputIndex = (props as InputConnectionModalProps).inputIndex;
     const node = scopedWorkflow.nodes.find((n) => n.id === nodeId);
     const linkId = node?.inputs?.[inputIndex]?.link;
-    if (linkId == null) return null;
+    if (linkId == null) {
+      return ueResolution
+        ? { nodeId: ueResolution.originId, outputIndex: ueResolution.originSlot }
+        : null;
+    }
     const link = scopedWorkflow.links.find((l) => l[0] === linkId);
     if (!link) return null;
     return { nodeId: link[1], outputIndex: link[2] };
-  }, [mode, scopedWorkflow, nodeId, props]);
+  }, [mode, scopedWorkflow, nodeId, props, ueResolution]);
   // Staged single-selection for the input picker: tapping a candidate selects
   // it (tapping the connected one clears it), and Apply commits — mirroring the
   // output picker so editing a wired input updates the form in place instead of
@@ -186,7 +225,26 @@ export function ConnectionModal(props: ConnectionModalProps) {
 
   const compatibleNodes = useMemo(() => {
     if (mode !== 'input' || !scopedWorkflow || !nodeTypes) return [];
-    return findCompatibleSourceNodes(scopedWorkflow, nodeId, props.inputIndex);
+    const found = findCompatibleSourceNodes(scopedWorkflow, nodeId, props.inputIndex);
+    // A broadcast source is usually already here — it is an ordinary node with a
+    // matching output. Not always, though: `findCompatibleSourceNodes` drops
+    // bypassed nodes and anything downstream of the target, and it stops at the
+    // first matching output per node, so a second matching slot never surfaces.
+    // Anything currently on the air is a legitimate choice, so add what is
+    // missing rather than leaving the user unable to pick it.
+    const seen = new Set(found.map((entry) => `${entry.node.id}:${entry.outputIndex}`));
+    const inputType = (props as InputConnectionModalProps).inputType;
+    for (const broadcast of listUeBroadcasts(scopedWorkflow)) {
+      if (broadcast.originId === nodeId) continue;
+      const key = `${broadcast.originId}:${broadcast.originSlot}`;
+      if (seen.has(key)) continue;
+      if (!areTypesCompatible(broadcast.type, inputType)) continue;
+      const source = scopedWorkflow.nodes.find((n) => n.id === broadcast.originId);
+      if (!source?.outputs?.[broadcast.originSlot]) continue;
+      seen.add(key);
+      found.push({ node: source, outputIndex: broadcast.originSlot });
+    }
+    return found;
   }, [mode, scopedWorkflow, nodeTypes, nodeId, props]);
 
   const filteredNodes = useMemo(() => {
@@ -435,7 +493,12 @@ export function ConnectionModal(props: ConnectionModalProps) {
     if (mode !== 'input') return;
     if (!currentNodeHierarchicalKey) return;
     if (!selectedInputSource) {
-      if (initialInputSource) disconnectInput(currentNodeHierarchicalKey, props.inputIndex);
+      // A broadcast has no link to remove — it would simply be re-resolved on the
+      // next render. Clearing the selection is a no-op for it; the way to stop a
+      // broadcast is at the Anything Everywhere node that sends it.
+      if (initialInputSource && !ueResolution) {
+        disconnectInput(currentNodeHierarchicalKey, props.inputIndex);
+      }
       onClose();
       return;
     }
@@ -729,9 +792,15 @@ export function ConnectionModal(props: ConnectionModalProps) {
         initialInputSource.nodeId === node.id &&
         initialInputSource.outputIndex === outputIndex,
       );
+      const broadcastControllerId = broadcastBySource.get(`${node.id}:${outputIndex}`);
+      const broadcastVia = broadcastControllerId === undefined
+        ? null
+        : currentlyConnected && ueResolution
+          ? t('Broadcast to this input via Anything Everywhere #{id}', { id: broadcastControllerId })
+          : t('Broadcast via Anything Everywhere #{id}', { id: broadcastControllerId });
       return (
         <ConnectionSearchResult
-          key={node.id}
+          key={`${node.id}:${outputIndex}`}
           nodeId={node.id}
           displayName={displayName}
           pack={pack}
@@ -740,6 +809,7 @@ export function ConnectionModal(props: ConnectionModalProps) {
           inputName={inputProps.inputName}
           selected={selected}
           currentlyConnected={currentlyConnected}
+          broadcastVia={broadcastVia}
           onSelect={() => toggleInputSelection(node.id, outputIndex)}
         />
       );
@@ -775,7 +845,10 @@ export function ConnectionModal(props: ConnectionModalProps) {
           <span className="text-sm font-semibold text-slate-100">Add new node...</span>
         </button>
 
-        {inputProps.currentlyConnectedNodeId !== null && (
+        {/* No Disconnect for a broadcast: there is no link here to remove, and
+            it would just be re-resolved. Stopping it is a job for the sending
+            Anything Everywhere node. */}
+        {inputProps.currentlyConnectedNodeId !== null && !ueResolution && (
           <button
             type="button"
             className="w-full text-left rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm font-semibold text-red-300 hover:bg-red-500/20 active:scale-[0.998] transition"
@@ -1130,6 +1203,9 @@ export function ConnectionModal(props: ConnectionModalProps) {
       {mode === 'output' && showOverwriteConfirm && (
         <Dialog
           onClose={() => setShowOverwriteConfirm(false)}
+          // Above the SearchActionModal that hosts it (z-2200) and its
+          // multi-input picker (z-2250).
+          zIndex={2260}
           title={t('Overwrite existing connections?')}
           description={t('Some selected inputs are already connected. Continuing will disconnect their current source and reconnect to this output.')}
           actions={[

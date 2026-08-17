@@ -16,6 +16,7 @@ import { LoadingSpinner } from '../LoadingSpinner';
 import { MenuSubPageHeader } from './MenuSubPageHeader';
 import { MenuErrorNotice } from './MenuErrorNotice';
 import { Dialog } from '@/components/modals/Dialog';
+import { Z_LAYERS } from '@/components/zLayers';
 import { type ContextMenuItemDefinition } from '@/components/menus/ContextMenuBuilder';
 import { useWorkflowFavoritesStore } from '@/hooks/useWorkflowFavorites';
 import { useWorkflowHiddenStore } from '@/hooks/useWorkflowHidden';
@@ -446,6 +447,8 @@ export function UserWorkflowsPanel({
       )}
       {deleteTarget && (
         <Dialog
+          // Opened from inside the app menu, so it has to clear the menu panel.
+          zIndex={Z_LAYERS.panelDialog}
           title={deleteTarget.type === 'directory' ? t('Delete folder?') : t('Delete workflow?')}
           description={
             deleteTarget.type === 'directory'

@@ -38,6 +38,7 @@ _mobile_push = _import_module('mobile_push')
 _mobile_web_push = _import_module('mobile_web_push')
 _mobile_app_push = _import_module('mobile_app_push')
 _mobile_progress_ws = _import_module('mobile_progress_ws')
+_mobile_latent_shape = _import_module('mobile_latent_shape')
 _mobile_push_prefs = _import_module('mobile_push_prefs')
 _mobile_capabilities = _import_module('mobile_capabilities')
 # General per-server frontend preferences (e.g. autocomplete opt-in).
@@ -1942,6 +1943,12 @@ def setup_mobile_route():
     # connected native-app clients over /mobile/ws/progress.
     server.PromptServer.instance.app.on_startup.append(_mobile_progress_ws.on_startup)
     server.PromptServer.instance.app.on_cleanup.append(_mobile_progress_ws.on_cleanup)
+
+    # Latent preview shape hints. Preview frames reach the client as a flat run
+    # of N images whether they are a batch of N results or N frames of one
+    # animation; this reads the tensor before anything flattens it and says
+    # which, so the client can tile the first and animate the second.
+    _mobile_latent_shape.install()
 
     print(f"[\033[34mMobile Frontend\033[0m] Mobile UI enabled at: \033[34m/mobile\033[0m")
 

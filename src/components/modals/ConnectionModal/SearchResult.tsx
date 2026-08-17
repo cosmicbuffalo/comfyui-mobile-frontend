@@ -13,6 +13,12 @@ interface ConnectionSearchResultProps {
   selected: boolean;
   // The source this input is actually wired to right now (before any edit).
   currentlyConnected: boolean;
+  /**
+   * Label of the Anything Everywhere node broadcasting this source, when the
+   * value reaches the input over the air instead of through a drawn link.
+   * Picking such a source replaces the broadcast with an explicit link.
+   */
+  broadcastVia?: string | null;
   onSelect: () => void;
 }
 
@@ -25,6 +31,7 @@ export function ConnectionSearchResult({
   inputName,
   selected,
   currentlyConnected,
+  broadcastVia = null,
   onSelect
 }: ConnectionSearchResultProps) {
   return (
@@ -53,6 +60,11 @@ export function ConnectionSearchResult({
           <div className="text-xs text-slate-400 truncate mt-0.5">
             {pack || 'Core'}
           </div>
+          {broadcastVia && (
+            <div className="connection-broadcast-source text-xs text-violet-300/90 truncate mt-0.5">
+              {broadcastVia}
+            </div>
+          )}
           <div className="text-xs text-slate-300 mt-1 inline-flex items-center gap-1.5">
             <span className={`inline-flex h-5 w-5 items-center justify-center rounded-full text-[11px] font-bold ${getTypeClass(outputType)}`}>
               →

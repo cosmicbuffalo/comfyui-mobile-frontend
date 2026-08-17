@@ -1,5 +1,6 @@
 import type { Workflow, WorkflowNode, NodeTypes, NodeTypeDefinition } from '@/api/types';
 import { collectAllWorkflowNodes } from '@/utils/workflowNodes';
+import { ueSlotKey, type UeLinkMap } from '@/utils/useEverywhere';
 import { extractLoraList, findLoraListIndex, isPowerLoraLoaderNodeType } from '@/utils/loraManager';
 import {
   extractTriggerWordList,
@@ -1106,36 +1107,44 @@ export function buildWorkflowPromptInputs(
   allowedNodeIds: Set<number>,
   widgetIndexMap: Record<string, number> | null,
   seedOverrides?: Record<number, number>,
-  promptKeyMap?: Map<number, string>
+  promptKeyMap?: Map<number, string>,
+  ueLinks?: UeLinkMap
 ): Record<string, unknown> {
   const inputs: Record<string, unknown> = {};
 
-  for (const input of node.inputs) {
-    if (input.link != null) {
-      const resolved = resolveSource(workflow, input.link, new Set(), promptKeyMap);
-      if (resolved) {
-        if (allowedNodeIds.has(resolved.nodeId)) {
-          const nodeKey = promptKeyMap?.get(resolved.nodeId) ?? String(resolved.nodeId);
-          inputs[input.name] = [nodeKey, resolved.slotIndex];
-        } else {
-          const sourceNode = workflow.nodes.find((n) => n.id === resolved.nodeId);
-          if (sourceNode) {
-            const value = getPrimitiveInlineValue(sourceNode);
-            if (value !== undefined) {
-              inputs[input.name] = value;
-            } else {
-              console.warn(
-                `[workflowInputs] Missing source node for input '${input.name}' on node ${node.id} (${node.type}).`,
-                {
-                  sourceNodeId: resolved.nodeId,
-                  sourceNodeType: sourceNode.type,
-                  sourceAllowed: false
-                }
-              );
-            }
-          }
+  for (const [slotIndex, input] of node.inputs.entries()) {
+    // An input with no link may still be fed by a Use Everywhere broadcast. UE
+    // is resolved rather than drawn, so the source has to be looked up instead
+    // of followed — see `useEverywhere.ts`.
+    if (input.link == null) {
+      const broadcast = ueLinks?.get(ueSlotKey(node.id, slotIndex));
+      if (!broadcast) continue;
+      if (!allowedNodeIds.has(broadcast.originId)) continue;
+      const nodeKey = promptKeyMap?.get(broadcast.originId) ?? String(broadcast.originId);
+      inputs[input.name] = [nodeKey, broadcast.originSlot];
+      continue;
+    }
+    const resolved = resolveSource(workflow, input.link, new Set(), promptKeyMap);
+    if (!resolved) continue;
+    if (allowedNodeIds.has(resolved.nodeId)) {
+      const nodeKey = promptKeyMap?.get(resolved.nodeId) ?? String(resolved.nodeId);
+      inputs[input.name] = [nodeKey, resolved.slotIndex];
+      continue;
+    }
+    const sourceNode = workflow.nodes.find((n) => n.id === resolved.nodeId);
+    if (!sourceNode) continue;
+    const value = getPrimitiveInlineValue(sourceNode);
+    if (value !== undefined) {
+      inputs[input.name] = value;
+    } else {
+      console.warn(
+        `[workflowInputs] Missing source node for input '${input.name}' on node ${node.id} (${node.type}).`,
+        {
+          sourceNodeId: resolved.nodeId,
+          sourceNodeType: sourceNode.type,
+          sourceAllowed: false
         }
-      }
+      );
     }
   }
 

@@ -245,11 +245,100 @@ describe('validateAndNormalizeWorkflow — root link slot repair', () => {
   });
 
   it('skips missing nodes gracefully', () => {
-    // Link references node 99 which does not exist
+    // Link references node 99 which does not exist. Nothing points at it either,
+    // so the garbage collector drops it rather than leaving it in the table.
     const link: WorkflowLink = [10, 99, 0, 98, 0, 'INT'];
     const wf = makeWorkflow({ links: [link] });
     expect(() => validateAndNormalizeWorkflow(wf)).not.toThrow();
     const result = validateAndNormalizeWorkflow(wf);
-    expect(result).toBe(wf);
+    expect(result.links).toEqual([]);
+    expect(result.nodes).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Root link-table garbage collection
+// ---------------------------------------------------------------------------
+
+describe('validateAndNormalizeWorkflow — root link garbage collection', () => {
+  it('drops a link no node slot references', () => {
+    const src = makeNode(1, 0, 1);
+    const dst = makeNode(2, 1, 0);
+    // Neither endpoint knows about link 10 — it is leftover, not a stale
+    // reference, so repairing from it would re-create a connection that is gone.
+    const orphan: WorkflowLink = [10, 1, 0, 2, 0, 'INT'];
+    const wf = makeWorkflow({ nodes: [src, dst], links: [orphan] });
+    const result = validateAndNormalizeWorkflow(wf);
+    expect(result.links).toEqual([]);
+    expect(result.nodes.find((n) => n.id === 2)!.inputs[0]!.link).toBeNull();
+    expect(result.nodes.find((n) => n.id === 1)!.outputs[0]!.links).toEqual([]);
+  });
+
+  it('keeps a link the origin still references, so a stale input is still repaired', () => {
+    const src = makeNode(1, 0, 1);
+    src.outputs[0]!.links = [10];
+    const dst = makeNode(2, 1, 0);
+    dst.inputs[0]!.link = null; // stale on the target side only
+    const link: WorkflowLink = [10, 1, 0, 2, 0, 'INT'];
+    const wf = makeWorkflow({ nodes: [src, dst], links: [link] });
+    const result = validateAndNormalizeWorkflow(wf);
+    expect(result.links).toHaveLength(1);
+    expect(result.nodes.find((n) => n.id === 2)!.inputs[0]!.link).toBe(10);
+  });
+
+  it('keeps a link the target still references', () => {
+    const src = makeNode(1, 0, 1);
+    const dst = makeNode(2, 1, 0);
+    dst.inputs[0]!.link = 10;
+    const link: WorkflowLink = [10, 1, 0, 2, 0, 'INT'];
+    const wf = makeWorkflow({ nodes: [src, dst], links: [link] });
+    const result = validateAndNormalizeWorkflow(wf);
+    expect(result.links).toHaveLength(1);
+    expect(result.nodes.find((n) => n.id === 1)!.outputs[0]!.links).toContain(10);
+  });
+
+  it('de-duplicates repeated link ids on an output slot', () => {
+    const src = makeNode(1, 0, 1);
+    src.outputs[0]!.links = [10, 10, 10];
+    const dst = makeNode(2, 1, 0);
+    dst.inputs[0]!.link = 10;
+    const link: WorkflowLink = [10, 1, 0, 2, 0, 'INT'];
+    const wf = makeWorkflow({ nodes: [src, dst], links: [link] });
+    const result = validateAndNormalizeWorkflow(wf);
+    expect(result.nodes.find((n) => n.id === 1)!.outputs[0]!.links).toEqual([10]);
+  });
+
+  /**
+   * Use Everywhere materialises its virtual broadcasts as real links to serialise
+   * a prompt and then removes them again, but the cleanup does not always run.
+   * Affected workflows accumulate the same edge on every save; without the GC,
+   * `repairRootLinkSlots` resurrects the whole pile into the node slots and the
+   * next save writes it to disk.
+   */
+  it('clears an accumulated pile of leaked Use Everywhere links', () => {
+    const src = makeNode(1, 0, 1);
+    const dst = makeNode(2, 1, 0);
+    const leaked: WorkflowLink[] = Array.from(
+      { length: 70 },
+      (_, i) => [100 + i, 1, 0, 2, 0, 'INT'] as WorkflowLink,
+    );
+    const wf = makeWorkflow({ nodes: [src, dst], links: leaked });
+    const result = validateAndNormalizeWorkflow(wf);
+    expect(result.links).toEqual([]);
+    expect(result.nodes.find((n) => n.id === 1)!.outputs[0]!.links).toEqual([]);
+    expect(result.nodes.find((n) => n.id === 2)!.inputs[0]!.link).toBeNull();
+  });
+
+  it('is idempotent', () => {
+    const src = makeNode(1, 0, 1);
+    const dst = makeNode(2, 1, 0);
+    dst.inputs[0]!.link = 10;
+    const wf = makeWorkflow({
+      nodes: [src, dst],
+      links: [[10, 1, 0, 2, 0, 'INT'], [11, 1, 0, 2, 0, 'INT']] as WorkflowLink[],
+    });
+    const once = validateAndNormalizeWorkflow(wf);
+    const twice = validateAndNormalizeWorkflow(once);
+    expect(twice).toBe(once);
   });
 });

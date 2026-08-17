@@ -1,7 +1,7 @@
 {
   "name": "comfyui-mobile-frontend",
   "private": true,
-  "version": "3.2.0",
+  "version": "3.2.1",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -9,8 +9,11 @@
     "lint": "eslint .",
     "preview": "vite preview",
     "test": "vitest run",
+    "parity": "node scripts/check-node-parity.mjs",
+    "fixture:vhs-frame": "python scripts/capture-vhs-latent-frame.py",
     "smoke": "node scripts/smoke-test.mjs",
     "smoke:workflow-video": "node scripts/workflow-video-preview-smoke.mjs",
+    "smoke:latent-preview": "node scripts/latent-preview-smoke.mjs",
     "smoke:wildcards": "node scripts/wildcard-picker-smoke.mjs"
   },
   "dependencies": {

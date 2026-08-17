@@ -18,6 +18,7 @@ import {
   type ManagerQueueStatusEvent,
 } from '@/api/customNodesManagerClient';
 import { useWorkflowStore } from '@/hooks/useWorkflow';
+import { Z_LAYERS } from '@/components/zLayers';
 import {
   buildAlternativesHashMap,
   buildCustomNodeRows,
@@ -501,7 +502,12 @@ export function CustomNodesManagerModal({
   if (!isOpen) return null;
 
   return createPortal(
-    <div ref={modalRef} className="fixed inset-0 z-[2600] bg-slate-950 flex flex-col safe-area-top text-slate-100">
+    <div
+      ref={modalRef}
+      className="fixed inset-0 bg-slate-950 flex flex-col safe-area-top text-slate-100"
+      style={{ zIndex: Z_LAYERS.fullscreenPanel }}
+      data-custom-nodes-modal="true"
+    >
       <FullscreenModalHeader
         title={t('Custom nodes')}
         onClose={onClose}
@@ -621,8 +627,8 @@ export function CustomNodesManagerModal({
       {uninstallTarget && (
         <Dialog
           onClose={() => setUninstallTarget(null)}
-          // Above this fullscreen modal (z-2600).
-          zIndex={2700}
+          // Above this fullscreen modal.
+          zIndex={Z_LAYERS.panelDialog}
           fullscreen
           title={t('Uninstall {title}?', { title: rowTitle(uninstallTarget) })}
           actions={[

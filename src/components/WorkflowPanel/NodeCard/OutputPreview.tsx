@@ -41,6 +41,9 @@ interface NodeCardOutputPreviewProps {
   previewImages?: NodeCardBatchPreview[] | null;
   frontendPreview?: FrontendNodeMediaPreview | null;
   latentPreviewUrl?: string | null;
+  // A batched run previews every image at once; `latentPreviewUrl` is the first
+  // of them and this is the full set, with null for tiles yet to arrive.
+  latentPreviewTiles?: (string | null)[] | null;
   previewText?: string | null;
   displayName: string;
   onImageClick?: () => void;
@@ -310,6 +313,7 @@ export function NodeCardOutputPreview({
   previewImages = null,
   frontendPreview = null,
   latentPreviewUrl = null,
+  latentPreviewTiles = null,
   previewText = null,
   displayName,
   onImageClick,
@@ -331,6 +335,12 @@ export function NodeCardOutputPreview({
     !previewImage && !previewText && !latentPreviewUrl && !isTiled && !frontendPreview
   )) return null;
 
+  // Real output beats a live latent, so tiles only render while nothing final
+  // has arrived for this node.
+  const latentTiles = !previewImage && !frontendPreview
+    && latentPreviewTiles && latentPreviewTiles.length > 1
+    ? latentPreviewTiles
+    : null;
   const previewIsVideo = Boolean(previewImage && isVideoFilename(previewImage.filename));
   const displaySrc = previewImage && !previewIsVideo
     ? getImagePreviewUrl(previewImage.filename, previewImage.subfolder, previewImage.type)
@@ -404,6 +414,23 @@ export function NodeCardOutputPreview({
           className="w-full h-auto rounded-lg border border-white/10"
           loading="lazy"
         />
+      ) : latentTiles ? (
+        <div className="output-batch-grid grid grid-cols-2 gap-2">
+          {latentTiles.map((tile, index) => (tile ? (
+            <img
+              key={index}
+              src={tile}
+              alt={t('{name} output', { name: displayName })}
+              className="w-full h-auto rounded-lg border border-white/10"
+            />
+          ) : (
+            <div
+              key={index}
+              className="w-full rounded-lg border border-white/10 bg-white/5"
+              style={{ aspectRatio: '1 / 1' }}
+            />
+          )))}
+        </div>
       ) : displaySrc && (
         <div className="relative">
           <img

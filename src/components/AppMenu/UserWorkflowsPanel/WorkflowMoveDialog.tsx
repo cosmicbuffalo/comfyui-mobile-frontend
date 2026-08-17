@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { ChevronLeftBoldIcon, FolderIcon } from '@/components/icons';
 import { Dialog } from '@/components/modals/Dialog';
+import { Z_LAYERS } from '@/components/zLayers';
 import { type UserDataFile } from '@/api/client';
 import { useI18n } from '@/i18n';
 import {
@@ -44,6 +45,8 @@ export function WorkflowMoveDialog({
   return (
     <Dialog
       size="md"
+      // Opened from inside the app menu, so it has to clear the menu panel.
+      zIndex={Z_LAYERS.panelDialog}
       title={target.type === 'directory' ? t('Move folder') : t('Move workflow')}
       description={
         <div className="mt-2 space-y-2">

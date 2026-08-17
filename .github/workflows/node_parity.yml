@@ -1,0 +1,35 @@
+name: Custom node parity
+
+# This frontend reimplements behaviour that lives in other people's custom-node
+# packs (see scripts/node-parity/manifests.mjs). Those packs move; when they do,
+# our port silently diverges. Re-clone them weekly and re-verify every assumption
+# so drift surfaces as a named failure instead of a bug report months later.
+
+on:
+  schedule:
+    - cron: "0 6 * * 1" # Mondays, 06:00 UTC
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "scripts/node-parity/**"
+      - "scripts/check-node-parity.mjs"
+      - ".github/workflows/node_parity.yml"
+
+jobs:
+  parity:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22.12.0"
+      - name: Check upstream parity
+        run: node scripts/check-node-parity.mjs
+
+      - name: Explain a failure
+        if: failure()
+        run: |
+          echo "::warning::A custom-node pack changed in a way our port depends on."
+          echo "Re-read the upstream source named in the failure, update our"
+          echo "implementation, then update the assumption in"
+          echo "scripts/node-parity/manifests.mjs (and bump verifiedVersion)."

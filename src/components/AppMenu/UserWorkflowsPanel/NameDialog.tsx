@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { Dialog } from '@/components/modals/Dialog';
+import { Z_LAYERS } from '@/components/zLayers';
 import { menuInputClassName } from '../menuStyles';
 import { useI18n } from '@/i18n';
 
@@ -23,6 +24,8 @@ export function NameDialog({
   const invalid = trimmed.length === 0 || /[/\\]/.test(trimmed);
   return (
     <Dialog
+      // Opened from inside the app menu, so it has to clear the menu panel.
+      zIndex={Z_LAYERS.panelDialog}
       title={title}
       description={
         // p-1 gives the input's focus ring room inside the Dialog's

@@ -1,0 +1,31 @@
+{
+  "id": "latent-preview-probe-smoke",
+  "revision": 0,
+  "last_node_id": 1,
+  "last_link_id": 0,
+  "nodes": [
+    {
+      "id": 1,
+      "type": "MobileLatentPreviewProbe",
+      "pos": [0, 0],
+      "size": [320, 150],
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "inputs": [
+        { "name": "steps", "type": "INT", "widget": { "name": "steps" }, "link": null },
+        { "name": "batch", "type": "INT", "widget": { "name": "batch" }, "link": null },
+        { "name": "latent_size", "type": "INT", "widget": { "name": "latent_size" }, "link": null },
+        { "name": "step_delay_ms", "type": "INT", "widget": { "name": "step_delay_ms" }, "link": null }
+      ],
+      "outputs": [],
+      "properties": { "Node name for S&R": "MobileLatentPreviewProbe" },
+      "widgets_values": [8, 1, 512, 200]
+    }
+  ],
+  "links": [],
+  "groups": [],
+  "config": {},
+  "extra": {},
+  "version": 0.4
+}

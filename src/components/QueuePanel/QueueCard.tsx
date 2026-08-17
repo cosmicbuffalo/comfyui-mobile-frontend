@@ -55,6 +55,11 @@ interface MediaTab {
   // Set for the live latent-preview tab: a blob: URL rendered directly instead
   // of resolving `img` to a server file. `img` is then a placeholder.
   rawSrc?: string;
+  // Set when a run previews several latents at once (a batch): every live
+  // preview in batch order, `null` for a tile whose first frame has not landed.
+  // `rawSrc` is the first of them, for the code paths that only have room for
+  // one (thumbnail, scroll anchor, aspect memo).
+  rawTiles?: (string | null)[];
   isLatent?: boolean;
 }
 
@@ -139,6 +144,12 @@ function QueueMediaEntry({
   const { t } = useI18n();
   const { img, index, isPreview } = entry;
   const isLatent = Boolean(entry.rawSrc);
+  const latentTiles = isLatent && entry.rawTiles && entry.rawTiles.length > 1
+    ? entry.rawTiles
+    : null;
+  // Tiles fill in as the batch streams, so settle the loading overlay on the
+  // first one that actually exists rather than always on index 0.
+  const firstLoadedTile = latentTiles ? latentTiles.findIndex(Boolean) : -1;
   // The latent preview is a streamed blob: URL, not a server file or video.
   const isVideo = !isLatent && isVideoFilename(img.filename);
   // Both durable outputs and completed temp media are real server files the
@@ -458,6 +469,31 @@ function QueueMediaEntry({
             </button>
           )}
         </>
+      ) : latentTiles ? (
+        // A batch previews every image at once. Two columns matches the batch
+        // grid the finished outputs use, so the layout does not jump when the
+        // real results replace these.
+        <div className="queue-latent-tiles grid grid-cols-2 gap-1">
+          {latentTiles.map((tile, tileIndex) => (
+            <div
+              key={tileIndex}
+              className="queue-latent-tile relative w-full overflow-hidden bg-slate-900/60"
+              style={{ aspectRatio: '1 / 1' }}
+            >
+              {tile && (
+                <img
+                  src={tile}
+                  alt={t('Generation')}
+                  className="absolute inset-0 h-full w-full object-contain"
+                  onLoad={tileIndex === firstLoadedTile ? () => {
+                    setMediaLoaded(true);
+                    onMediaReady?.();
+                  } : undefined}
+                />
+              )}
+            </div>
+          ))}
+        </div>
       ) : (
         <img
           ref={imgRef}
@@ -914,6 +950,10 @@ function QueueCardComponent({
   // also works for runs started in a parked tab). Only while generating.
   const latentEntry = useWorkflowStore((s) => s.latentPreviewByPrompt?.[previewPromptId]);
   const latentUrl = isGenerating ? latentEntry?.url ?? null : null;
+  // A batched run previews every image in the batch. They arrive interleaved on
+  // one stream, so showing them in a single slot cycles between unrelated
+  // images; tiling gives each its own.
+  const latentTiles = isGenerating ? latentEntry?.tiles ?? null : null;
   const latentSeq = latentEntry?.seq ?? 0;
   const historyData = isDone && isHistoryEntryData(item.data) ? item.data : null;
   const isFailedDoneItem = isDone && historyData?.success === false;
@@ -1185,9 +1225,10 @@ function QueueCardComponent({
       isPreview: true,
       isLatent: true,
       rawSrc: latentUrl,
+      ...(latentTiles && latentTiles.length > 1 ? { rawTiles: latentTiles } : {}),
       label: t('Latent'),
     };
-  }, [latentUrl, t]);
+  }, [latentUrl, latentTiles, t]);
 
   // Latent appended last so it sits at the end of the thumbnail tab bar; the bar
   // appears whenever there's more than one entry (e.g. a latent + a real preview).

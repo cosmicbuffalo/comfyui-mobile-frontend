@@ -2,6 +2,7 @@ import type { NodeTypes, Workflow } from '@/api/types';
 import { expandWorkflowSubgraphs } from '@/utils/expandWorkflowSubgraphs';
 import { buildWorkflowPromptInputs, getNodeWidgetIndexMap } from '@/utils/workflowInputs';
 import { isSetGetNode } from '@/utils/setGetNodes';
+import { isUseEverywhereNode, resolveUseEverywhereForPrompt } from '@/utils/useEverywhere';
 import { validateAndNormalizeWorkflow } from '@/utils/workflowValidator';
 
 /**
@@ -30,6 +31,10 @@ export function buildPromptFromWorkflow(
   // Expand subgraph placeholders to flat prompt keys (e.g. "50:7").
   const { workflow: expanded, promptKeyMap } = expandWorkflowSubgraphs(validated, nodeTypes);
 
+  // Use Everywhere feeds inputs that carry no link, so resolve its broadcasts up
+  // front and hand the map to the input builder.
+  const ueLinks = resolveUseEverywhereForPrompt(expanded, promptKeyMap);
+
   const prompt: Record<string, unknown> = {};
   const allowedNodeIds = new Set<number>();
   const classTypeById = new Map<number, string>();
@@ -39,6 +44,10 @@ export function buildPromptFromWorkflow(
     // SetNode/GetNode are virtual relays; consumers resolve through them to the
     // real source, so they never appear in the executed prompt.
     if (isSetGetNode(node)) continue;
+    // Anything Everywhere nodes are no-ops with no outputs — the broadcast has
+    // already been resolved into the consuming inputs. (A `ue_convert` node is a
+    // real node that also broadcasts, so it is deliberately not excluded here.)
+    if (isUseEverywhereNode(node)) continue;
     let classType: string | null = null;
     if (nodeTypes[node.type]) {
       classType = node.type;
@@ -67,6 +76,7 @@ export function buildPromptFromWorkflow(
       getNodeWidgetIndexMap(expanded, node),
       undefined,
       promptKeyMap,
+      ueLinks,
     );
     const promptKey = promptKeyMap.get(node.id) ?? String(node.id);
     prompt[promptKey] = { class_type: classType, inputs };

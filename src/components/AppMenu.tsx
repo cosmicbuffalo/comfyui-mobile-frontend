@@ -3,6 +3,7 @@ import { BackendStatusOverlay } from './BackendStatusOverlay';
 import { useConnectionStatusStore } from '@/hooks/useConnectionStatus';
 import { SlidePanel } from './AppMenu/SlidePanel';
 import { Dialog } from './modals/Dialog';
+import { Z_LAYERS } from './zLayers';
 import { MenuLegend } from './AppMenu/MenuLegend';
 import { MainMenuPanel } from './AppMenu/MainMenuPanel';
 import { PasteJsonPanel } from './AppMenu/PasteJsonPanel';
@@ -580,8 +581,9 @@ export function AppMenu({
     {restartConfirmOpen && (
       <Dialog
         onClose={() => setRestartConfirmOpen(false)}
-        // Above the menu SlidePanel (z-2300), covering the whole viewport.
-        zIndex={2700}
+        // Above the menu SlidePanel and its backdrop blur, covering the whole
+        // viewport.
+        zIndex={Z_LAYERS.panelDialog}
         fullscreen
         title={t('Restart ComfyUI?')}
         description={t('This will interrupt any running jobs and briefly disconnect the mobile UI.')}
