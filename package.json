@@ -9,6 +9,7 @@
     "lint": "eslint .",
     "preview": "vite preview",
     "test": "vitest run",
+    "parity": "node scripts/check-node-parity.mjs",
     "smoke": "node scripts/smoke-test.mjs",
     "smoke:workflow-video": "node scripts/workflow-video-preview-smoke.mjs",
     "smoke:wildcards": "node scripts/wildcard-picker-smoke.mjs"
