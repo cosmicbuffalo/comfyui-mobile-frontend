@@ -1203,6 +1203,9 @@ export function ConnectionModal(props: ConnectionModalProps) {
       {mode === 'output' && showOverwriteConfirm && (
         <Dialog
           onClose={() => setShowOverwriteConfirm(false)}
+          // Above the SearchActionModal that hosts it (z-2200) and its
+          // multi-input picker (z-2250).
+          zIndex={2260}
           title={t('Overwrite existing connections?')}
           description={t('Some selected inputs are already connected. Continuing will disconnect their current source and reconnect to this output.')}
           actions={[

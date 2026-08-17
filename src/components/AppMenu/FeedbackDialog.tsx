@@ -4,6 +4,7 @@ import type { SystemStats } from '@/api/client';
 import type { Workflow } from '@/api/types';
 import { Dialog } from '@/components/modals/Dialog';
 import { FullscreenModalHeader } from '@/components/modals/FullscreenModalHeader';
+import { Z_LAYERS } from '@/components/zLayers';
 import { buildDiagnosticsBlock, buildFeedbackIssueUrl } from '@/utils/feedbackUrl';
 import {
   FEEDBACK_ENDPOINT,
@@ -80,6 +81,8 @@ export function FeedbackDialog({ systemStats, workflow, onClose }: FeedbackDialo
     return (
       <Dialog
         onClose={onClose}
+        // Opened from inside the app menu, so it has to clear the menu panel.
+        zIndex={Z_LAYERS.panelDialog}
         title={t('Thanks for the feedback!')}
         description={
           <div className="space-y-3">
@@ -115,6 +118,8 @@ export function FeedbackDialog({ systemStats, workflow, onClose }: FeedbackDialo
     return (
       <Dialog
         onClose={onClose}
+        // Opened from inside the app menu, so it has to clear the menu panel.
+        zIndex={Z_LAYERS.panelDialog}
         title={t('Send Feedback')}
         description={
           <div className="space-y-3">
@@ -130,7 +135,10 @@ export function FeedbackDialog({ systemStats, workflow, onClose }: FeedbackDialo
   }
 
   return createPortal(
-    <div className="fixed inset-x-0 top-0 z-[2600] h-[100dvh] bg-slate-950 text-slate-100 flex flex-col safe-area-top">
+    <div
+      className="fixed inset-x-0 top-0 h-[100dvh] bg-slate-950 text-slate-100 flex flex-col safe-area-top"
+      style={{ zIndex: Z_LAYERS.fullscreenPanel }}
+    >
       <FullscreenModalHeader
         title={t('Send Feedback')}
         onClose={onClose}

@@ -15,6 +15,7 @@
 - **Latent previews work again.** With VideoHelperSuite installed, turning previews on sent every sampler's frames — plain image workflows included — through VHS's animated preview format, which this node was reading four bytes out of step. Nothing ever rendered. Broken since 3.1.2
 - **A batch previews every image side by side** instead of flickering between them in one slot. Batched runs now tile their live previews; video latents keep animating as before
 - A preview frame that can't be decoded is dropped with a console warning rather than handed to the page as a broken image, so a future format change shows up as an error instead of an empty slot
+- **The Restart ComfyUI confirmation opens on top of the menu**, not behind it and its background blur. Every confirmation raised from the main menu — restart, delete, rename, move, new folder, uninstall, feedback — now sits above the panel that opened it
 
 ## 3.2.0 - 2026-08-16
 

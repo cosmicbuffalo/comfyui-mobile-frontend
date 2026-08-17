@@ -2,6 +2,7 @@ import { useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { useBodyScrollLock } from '@/hooks/useBodyScrollLock';
 import { useEscapeKey } from '@/hooks/useEscapeKey';
+import { Z_LAYERS } from '@/components/zLayers';
 
 interface SlidePanelProps {
   open: boolean;
@@ -20,7 +21,11 @@ export function SlidePanel({ open, onClose, side, title, children }: SlidePanelP
   if (!open) return null;
 
   return createPortal(
-    <div className="fixed inset-0 z-[2300]">
+    <div
+      className="fixed inset-0"
+      style={{ zIndex: Z_LAYERS.slidePanel }}
+      data-slide-panel-root="true"
+    >
       {/* Backdrop */}
       <div
         className="absolute inset-0 bg-black/40 backdrop-blur-sm"

@@ -1,4 +1,5 @@
 import { useEffect, useRef, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 
 interface DialogAction {
   label: string;
@@ -194,7 +195,12 @@ export function Dialog({
     return () => document.removeEventListener('keydown', handler, true);
   }, [disableClose, onClose]);
 
-  return (
+  // Portalled to the body so `zIndex` ranks the dialog against every other
+  // overlay in the app. Rendered in place it would join the nearest stacking
+  // context instead — e.g. a dialog owned by the app menu lives under the top
+  // bar's `z-[2000]` element, which pins it beneath the menu's own body-level
+  // portal no matter how high its z-index is.
+  return createPortal(
     <div
       ref={dialogRootRef}
       data-dialog-root="true"
@@ -238,6 +244,7 @@ export function Dialog({
           ))}
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
