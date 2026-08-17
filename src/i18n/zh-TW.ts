@@ -825,6 +825,8 @@ export const zhTW: Record<string, string> = {
   'Install missing node': '安裝缺少的節點',
   'Loading tag suggestions…': '正在載入標籤建議…',
   'Unable to play this video.': '無法播放此影片。',
+  'Unable to load this image.': '無法載入此圖片。',
+  'It may have been moved, renamed, or deleted.': '它可能已被移動、重新命名或刪除。',
   'Show video preview': '顯示影片預覽',
   'Close a workflow': '關閉一個工作流',
   'You can have up to {count} workflows open at once. Choose one to close to make room for the new one.':

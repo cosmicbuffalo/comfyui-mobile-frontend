@@ -573,4 +573,121 @@ describe('MediaViewer workflow availability', () => {
 
     expect(document.querySelector('[role="status"]')).toBeNull();
   });
+
+  // The spinner clears only when a src lands in `loadedSrcs`, and every route a
+  // src can take to become "current" has to put it there — including the routes
+  // that end in failure. The visible <img> once handled onLoad and not onError,
+  // so a 404 (a moved output, whose old URL is still in the list) hung the
+  // spinner forever. Asserting the invariant per route rather than per bug is
+  // what keeps the next route honest.
+  describe('a src that fails to load still settles the spinner', () => {
+    const broken = () => makeImageItem('output/moved-away.png', 'moved-away.png');
+    const fine = () => makeImageItem('output/still-here.png', 'still-here.png');
+
+    const viewer = (items: ViewerImage[], index: number) =>
+      act(async () => {
+        root.render(
+          <MediaViewer
+            open={true}
+            items={items}
+            index={index}
+            onIndexChange={() => {}}
+            onClose={() => {}}
+            onDelete={() => {}}
+            onLoadWorkflow={() => {}}
+            onLoadInWorkflow={() => {}}
+          />,
+        );
+      });
+
+    const settle = async () => {
+      await act(async () => {
+        vi.advanceTimersByTime(2000);
+      });
+    };
+
+    const failCurrentImage = async () => {
+      const img = document.querySelector<HTMLImageElement>('#media-viewer-overlay img')!;
+      await act(async () => {
+        img.dispatchEvent(new Event('error'));
+      });
+      await settle();
+    };
+
+    beforeEach(() => vi.useFakeTimers());
+    afterEach(() => vi.useRealTimers());
+
+    it('when it is the image the viewer opened on', async () => {
+      await viewer([broken()], 0);
+      await settle();
+      expect(document.querySelector('.image-loading-spinner')).not.toBeNull();
+
+      await failCurrentImage();
+      expect(document.querySelector('.image-loading-spinner')).toBeNull();
+      expect(document.querySelector('.image-load-error')).not.toBeNull();
+    });
+
+    it('when it is swiped onto from a working image', async () => {
+      // The swap between two different srcs preloads the incoming one and only
+      // then advances the visible image — and its `finish` runs on rejection as
+      // well as success (`decode().then(finish, finish)`), marking the src
+      // loaded either way. So this route was already covered; the test pins it
+      // so a future refactor of the swap cannot quietly drop the error half.
+      // jsdom never fails `new Image()`, so the mock does — through `decode()`,
+      // which is the branch a real browser takes. Mocking only onload/onerror
+      // would leave the decode path unpinned: removing its rejection handler
+      // would not fail this test.
+      class ImageMock {
+        naturalWidth = 0;
+        naturalHeight = 0;
+        onload: (() => void) | null = null;
+        onerror: (() => void) | null = null;
+        src = '';
+        decode() {
+          return Promise.reject(new Error('404'));
+        }
+      }
+      vi.stubGlobal('Image', ImageMock);
+      try {
+        const items = [fine(), broken()];
+        await viewer(items, 0);
+        await settle();
+        await viewer(items, 1);
+        await settle();
+
+        expect(document.querySelector('.image-loading-spinner')).toBeNull();
+      } finally {
+        vi.unstubAllGlobals();
+      }
+    });
+
+    it('when the adjacent preload already errored before the swipe', async () => {
+      // The preload path has always treated an error as settled; this pins it so
+      // the two routes cannot drift apart again.
+      const errored: Array<() => void> = [];
+      class ImageMock {
+        naturalWidth = 0;
+        naturalHeight = 0;
+        onload: (() => void) | null = null;
+        onerror: (() => void) | null = null;
+        set src(_value: string) {
+          if (this.onerror) errored.push(this.onerror);
+        }
+      }
+      vi.stubGlobal('Image', ImageMock);
+      try {
+        const items = [fine(), broken()];
+        await viewer(items, 0);
+        await act(async () => {
+          errored.forEach((fire) => fire());
+        });
+        await viewer(items, 1);
+        await settle();
+        expect(document.querySelector('.image-loading-spinner')).toBeNull();
+      } finally {
+        vi.unstubAllGlobals();
+      }
+    });
+  });
+
 });

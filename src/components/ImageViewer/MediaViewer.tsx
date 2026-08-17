@@ -223,6 +223,9 @@ export function MediaViewer({
   // so swiping back to an already-loaded image hides it even though a
   // swiped-past image keeps loading in the background.
   const [loadedSrcs, setLoadedSrcs] = useState<Record<string, true>>({});
+  // The src whose load failed, so the viewer can say so instead of showing an
+  // empty frame. Compared against the current src, which clears it on swipe.
+  const [failedSrc, setFailedSrc] = useState<string | null>(null);
   const markLoaded = useCallback((src: string | null | undefined) => {
     if (!src) return;
     setLoadedSrcs((prev) => {
@@ -1022,6 +1025,18 @@ export function MediaViewer({
     applyZoomModeRef.current = applyZoomMode;
   }, [applyZoomMode]);
 
+  const handleImageError = () => {
+    // An error is "settled" too. The visible <img> is the only thing that marks
+    // the current src loaded, so without this a src that 404s leaves the
+    // spinner running forever — which is exactly what a moved output does: its
+    // old URL is still in the item list and answers 404 immediately.
+    // The adjacent-preload path has treated error as settled all along; this is
+    // the same rule for the image actually on screen.
+    const src = renderItem ? getFullScreenImageSrc(renderItem) : null;
+    markLoaded(src);
+    setFailedSrc(src ?? null);
+  };
+
   const handleImageLoad = (event: React.SyntheticEvent<HTMLImageElement>) => {
     const img = event.currentTarget;
     // The visible <img> is the only thing that marks the *current* src loaded on
@@ -1476,6 +1491,7 @@ export function MediaViewer({
                   className="w-full h-auto block select-none relative"
                   draggable={false}
                   onLoad={handleImageLoad}
+                  onError={handleImageError}
                   style={{
                     transform: imageTransform,
                     transformOrigin: 'top left',
@@ -1501,6 +1517,13 @@ export function MediaViewer({
                   }}
                 />
               </>
+            ) : failedSrc && renderItem && failedSrc === getFullScreenImageSrc(renderItem) ? (
+              <div className="image-load-error flex flex-col items-center justify-center gap-1 p-8 text-center text-white/80">
+                <div className="text-sm">{t('Unable to load this image.')}</div>
+                <div className="text-xs text-white/50">
+                  {t('It may have been moved, renamed, or deleted.')}
+                </div>
+              </div>
             ) : (
               <img
                 ref={imageRef}
@@ -1509,6 +1532,7 @@ export function MediaViewer({
                 className="w-full h-auto block select-none relative"
                 draggable={false}
                 onLoad={handleImageLoad}
+                onError={handleImageError}
                 style={{
                   transform: imageTransform,
                   transformOrigin: 'top left',

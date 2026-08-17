@@ -825,6 +825,8 @@ export const ko: Record<string, string> = {
   'Install missing node': '누락된 노드 설치',
   'Loading tag suggestions…': '태그 제안을 불러오는 중…',
   'Unable to play this video.': '이 동영상을 재생할 수 없습니다.',
+  'Unable to load this image.': '이 이미지를 불러올 수 없습니다.',
+  'It may have been moved, renamed, or deleted.': '이동, 이름 변경 또는 삭제되었을 수 있습니다.',
   'Show video preview': '동영상 미리보기 표시',
   'Close a workflow': '워크플로우 하나 닫기',
   'You can have up to {count} workflows open at once. Choose one to close to make room for the new one.':

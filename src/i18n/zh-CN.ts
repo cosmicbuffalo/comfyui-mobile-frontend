@@ -826,6 +826,8 @@ export const zhCN: Record<string, string> = {
   'Install missing node': '安装缺失的节点',
   'Loading tag suggestions…': '正在加载标签建议…',
   'Unable to play this video.': '无法播放此视频。',
+  'Unable to load this image.': '无法加载此图片。',
+  'It may have been moved, renamed, or deleted.': '它可能已被移动、重命名或删除。',
   'Show video preview': '显示视频预览',
   'Close a workflow': '关闭一个工作流',
   'You can have up to {count} workflows open at once. Choose one to close to make room for the new one.':
