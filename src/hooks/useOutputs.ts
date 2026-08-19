@@ -365,7 +365,7 @@ export const useOutputsStore = create<OutputsState>()(
         type: 'all'
       },
       sort: {
-        mode: 'modified'
+        mode: 'created'
       },
       favorites: [],
       migratedFavoriteSources: [],
@@ -1260,7 +1260,7 @@ export const useOutputsStore = create<OutputsState>()(
     }),
     {
       name: 'outputs-storage',
-      version: 5,
+      version: 6,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       migrate: (persistedState: any, version: number) => {
         if (version === 0) {
@@ -1302,6 +1302,15 @@ export const useOutputsStore = create<OutputsState>()(
         // rejected" actions for files the server does not consider rejected.
         if (version < 3) {
           delete persistedState.rejected;
+        }
+        // Creation date replaced modified date as the default in v6. Existing
+        // stores using the former descending default should move with it;
+        // reverse-modified remains an intentional, explicit choice. This runs
+        // after the v0 block on purpose, so a store old enough to still hold
+        // the `{field, order}` shape lands here through the same rule rather
+        // than a second copy of it.
+        if (version < 6 && persistedState.sort?.mode === 'modified') {
+          persistedState.sort = { mode: 'created' };
         }
         return persistedState;
       },

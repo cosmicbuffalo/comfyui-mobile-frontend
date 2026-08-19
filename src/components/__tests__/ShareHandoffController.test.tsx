@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { NodeTypes, Workflow, WorkflowNode } from '@/api/types';
 import { makeLocationPointer } from '@/utils/mobileLayout';
 import { useWorkflowStore } from '@/hooks/useWorkflow';
+import { useWorkflowErrorsStore } from '@/hooks/useWorkflowErrors';
 import { ShareHandoffController } from '@/components/ShareHandoffController';
 import { NATIVE_APP_UA_MARKER } from '@/utils/nativeApp';
 
@@ -120,6 +121,7 @@ describe('ShareHandoffController', () => {
     document.body.appendChild(container);
     root = createRoot(container);
     useWorkflowStore.getState().unloadWorkflow();
+    useWorkflowErrorsStore.getState().setError(null);
     act(() => {
       useWorkflowStore.setState({ queueWorkflow: originalQueueWorkflow });
       useWorkflowStore.getState().setNodeTypes(nodeTypes);
@@ -154,8 +156,30 @@ describe('ShareHandoffController', () => {
     expect(container.textContent).toBe('');
   });
 
-  it('ignores a half-specified hand-off (workflow but no image)', async () => {
+  it('loadWorkflow alone is a plain open — load, strip, no chrome', async () => {
+    // A bare link to a saved workflow: no staged image means no share-handoff
+    // banner, just the workflow loaded into the panel.
+    loadUserWorkflow.mockResolvedValue(makeWorkflow([makeNode(1, 'LoadImage')]));
     setHandoffParams('?loadWorkflow=shared.json');
+    await mountAndSettle();
+    expect(loadUserWorkflow).toHaveBeenCalledWith('shared.json');
+    expect(useWorkflowStore.getState().workflow).not.toBeNull();
+    expect(container.textContent).toBe('');
+    expect(window.location.search).toBe('');
+  });
+
+  it('surfaces a failed plain open instead of doing nothing', async () => {
+    // There is no hand-off banner on this path, so a stale link would otherwise
+    // be indistinguishable from a link that did nothing.
+    loadUserWorkflow.mockRejectedValue(new Error('Failed to load workflow'));
+    setHandoffParams('?loadWorkflow=deleted.json');
+    await mountAndSettle();
+    expect(useWorkflowErrorsStore.getState().error).toBeTruthy();
+    expect(window.location.search).toBe('');
+  });
+
+  it('useImage alone is still ignored', async () => {
+    setHandoffParams('?useImage=orphan.png');
     await mountAndSettle();
     expect(loadUserWorkflow).not.toHaveBeenCalled();
     expect(container.textContent).toBe('');

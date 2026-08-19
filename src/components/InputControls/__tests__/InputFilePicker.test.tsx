@@ -69,6 +69,16 @@ describe('InputFilePicker options menu', () => {
     expect(menu?.classList.contains('z-40')).toBe(true);
   });
 
+  it('loads with created date as its default sort', async () => {
+    getUserImagesMock.mockClear();
+    await act(async () => {
+      root.render(<InputFilePicker open onClose={() => {}} onPick={() => {}} />);
+    });
+    await flushUntil(() => getUserImagesMock.mock.calls.length > 0);
+
+    expect(getUserImagesMock.mock.calls.at(-1)?.[3]).toBe('created');
+  });
+
   it('switches to the outputs source when the Outputs tab is selected', async () => {
     await act(async () => {
       root.render(<InputFilePicker open onClose={() => {}} onPick={() => {}} />);

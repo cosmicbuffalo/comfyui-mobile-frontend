@@ -168,6 +168,11 @@ const COMPLETING_TTL_MS = 30_000;
 // awaits the same fetch instead of racing a second one.
 let fetchQueueInFlight: Promise<boolean> | null = null;
 
+/** Test seam: drop the shared in-flight fetch between test files. */
+export function resetQueueModuleState(): void {
+  fetchQueueInFlight = null;
+}
+
 
 export const useQueueStore = create<QueueState>()(
   persist(

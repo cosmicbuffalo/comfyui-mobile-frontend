@@ -57,12 +57,12 @@ function formatDateLabel(timestamp?: number): string {
   return date.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
 }
 
-function nextSortMode(current: SortMode, field: "name" | "modified" | "size"): SortMode {
+function nextSortMode(current: SortMode, field: "name" | "created" | "size"): SortMode {
   if (current === field) return `${field}-reverse` as SortMode;
   return field;
 }
 
-function sortDirection(mode: SortMode, field: "name" | "modified" | "size"): string | undefined {
+function sortDirection(mode: SortMode, field: "name" | "created" | "size"): string | undefined {
   if (!mode.startsWith(field)) return undefined;
   return mode.endsWith("-reverse") ? "↑" : "↓";
 }
@@ -87,7 +87,7 @@ export function InputFilePicker({
   const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
   const [showHidden, setShowHidden] = useState(false);
   const [favoritesOnly, setFavoritesOnly] = useState(false);
-  const [sortMode, setSortMode] = useState<SortMode>("modified");
+  const [sortMode, setSortMode] = useState<SortMode>("created");
   const [isLoading, setIsLoading] = useState(false);
   const [isCopying, setIsCopying] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -245,8 +245,12 @@ export function InputFilePicker({
         key = roundedMb === 0 ? "<1MB" : `${roundedMb}MB`;
         label = key;
       } else {
-        key = file.date ? new Date(file.date).toISOString().slice(0, 10) : "unknown";
-        label = formatDateLabel(file.date);
+        // Date grouping is only reachable under the created sort — the menu
+        // offers name, created and size — so the headings key off the same
+        // field the list is ordered by.
+        const timestamp = file.createdDate ?? file.date;
+        key = timestamp ? new Date(timestamp).toISOString().slice(0, 10) : "unknown";
+        label = formatDateLabel(timestamp);
       }
       const last = sections[sections.length - 1];
       if (last?.key === key) last.files.push(file);
@@ -328,9 +332,9 @@ export function InputFilePicker({
                       },
                       {
                         key: "sort-date",
-                        label: t("Sort by Date"),
-                        rightSlot: sortDirection(sortMode, "modified"),
-                        onClick: () => setSortMode((current) => nextSortMode(current, "modified")),
+                        label: t("Sort by Created Date"),
+                        rightSlot: sortDirection(sortMode, "created"),
+                        onClick: () => setSortMode((current) => nextSortMode(current, "created")),
                       },
                       {
                         key: "sort-size",

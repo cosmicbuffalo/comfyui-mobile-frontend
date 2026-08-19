@@ -21,7 +21,7 @@
  */
 
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { MANIFESTS } from './node-parity/manifests.mjs';
 
@@ -43,11 +43,25 @@ function log(...parts) {
   if (!asJson) console.log(...parts);
 }
 
+/**
+ * Resolve a pack's directory under --local. Manifest names are lower-case, but
+ * a pack is installed under whatever case its repository uses
+ * (ComfyUI-Autocomplete-Plus, not comfyui-autocomplete-plus), so an exact
+ * lookup reports a pack that is sitting right there as "not installed".
+ */
+function findLocalPack(pack) {
+  const exact = resolve(localRoot, pack);
+  if (existsSync(exact)) return exact;
+  const match = readdirSync(localRoot, { withFileTypes: true })
+    .find((entry) => entry.isDirectory() && entry.name.toLowerCase() === pack.toLowerCase());
+  return match ? resolve(localRoot, match.name) : null;
+}
+
 /** Shallow-clone (or reuse) a pack at its default branch, returning its path. */
 function fetchPack(manifest) {
   if (localRoot) {
-    const path = resolve(localRoot, manifest.pack);
-    if (!existsSync(path)) throw new Error(`not installed at ${path}`);
+    const path = findLocalPack(manifest.pack);
+    if (!path) throw new Error(`not installed under ${localRoot}`);
     return { path, ref: 'local' };
   }
   mkdirSync(CACHE, { recursive: true });

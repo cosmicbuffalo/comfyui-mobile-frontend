@@ -376,6 +376,117 @@ export const MANIFESTS = [
       },
     ],
   },
+
+  // ---------------------------------------------------------------------
+  // ComfyUI-Autocomplete-Plus — one of the two tag sources behind the mobile
+  // autocomplete. We do not port its logic; we consume its HTTP routes and
+  // parse its CSV, which makes the *shape* of both the thing that can drift.
+  // ---------------------------------------------------------------------
+  {
+    pack: 'comfyui-autocomplete-plus',
+    repo: 'https://github.com/newtextdoc1111/ComfyUI-Autocomplete-Plus',
+    verifiedVersion: '1.11.0',
+    versionFile: 'pyproject.toml',
+    versionPattern: /^version\s*=\s*"([^"]+)"/m,
+    assumptions: [
+      {
+        id: 'csv-routes',
+        why: 'The three routes autocompletePlusClient calls. A rename gives the mobile user an autocomplete that silently offers nothing — the client treats a 404 as "pack absent", which is indistinguishable from "route moved".',
+        ours: 'src/api/autocompletePlusClient.ts',
+        file: 'modules/api.py',
+        contains: [
+          /"\/autocomplete-plus\/csv"/,
+          /"\/autocomplete-plus\/csv\/\{source\}\/\{suffix\}\/base"/,
+          /"\/autocomplete-plus\/embeddings"/,
+        ],
+      },
+      {
+        id: 'tag-csv-column-order',
+        why: 'fetchDanbooruTags parses positionally: tag, category, count, then a comma-joined alias list. A reordered or inserted column would not fail — it would rank suggestions by the wrong number and show aliases as categories.',
+        ours: 'src/api/autocompletePlusClient.ts',
+        file: 'web/js/data.js',
+        contains: [/const TAGS_CSV_HEADER = 'tag,category,count,alias'/],
+      },
+    ],
+  },
+
+  // ---------------------------------------------------------------------
+  // ComfyUI-Custom-Scripts — the other autocomplete source, and the lora
+  // name list. Same relationship: their routes, our parser.
+  // ---------------------------------------------------------------------
+  {
+    pack: 'comfyui-custom-scripts',
+    repo: 'https://github.com/pythongosssss/ComfyUI-Custom-Scripts',
+    verifiedVersion: '1.2.5',
+    versionFile: 'pyproject.toml',
+    versionPattern: /^version\s*=\s*"([^"]+)"/m,
+    assumptions: [
+      {
+        id: 'autocomplete-and-lora-routes',
+        why: 'customScriptsClient reads the user word list from one and lora names from the other. Both 404 silently into "pack not installed", so a rename removes the feature without an error anywhere.',
+        ours: 'src/api/customScriptsClient.ts',
+        file: 'py/autocomplete.py',
+        contains: [
+          /routes\.get\("\/pysssss\/autocomplete"\)/,
+          /routes\.get\("\/pysssss\/loras"\)/,
+        ],
+      },
+    ],
+  },
+
+  // ---------------------------------------------------------------------
+  // ComfyUI-Impact-Pack — wildcard widgets. Desktop's extension hardcodes a
+  // widget index per node class; we match on the placeholder option instead,
+  // so Inspire Pack and Easy-Use nodes work without being enumerated. That
+  // makes the placeholder STRING our entire detection mechanism.
+  // ---------------------------------------------------------------------
+  {
+    pack: 'comfyui-impact-pack',
+    repo: 'https://github.com/ltdrdata/ComfyUI-Impact-Pack',
+    verifiedVersion: '8.28.3',
+    versionFile: 'pyproject.toml',
+    versionPattern: /^version\s*=\s*"([^"]+)"/m,
+    assumptions: [
+      {
+        id: 'wildcard-placeholder-sentinel',
+        why: 'WILDCARD_SELECT_SENTINEL is matched verbatim. If upstream rewords this string, every wildcard dropdown stops being recognised at once, on every pack that copied the convention — and the failure is silent: the widget renders as an ordinary combo with one useless option.',
+        ours: 'src/utils/wildcardWidgets.ts',
+        file: 'modules/impact/pipe.py',
+        contains: [/"Select to add Wildcard": \(\["Select the Wildcard to add to the text"\]/],
+      },
+    ],
+  },
+
+  // ---------------------------------------------------------------------
+  // ComfyUI-Lora-Manager — the rich model picker's metadata source. Optional:
+  // without it the picker falls back to shared sidecars, so a drift here
+  // degrades rather than breaks. Recorded anyway, because "degraded" here
+  // means silently losing trigger words and previews.
+  // ---------------------------------------------------------------------
+  {
+    pack: 'comfyui-lora-manager',
+    repo: 'https://github.com/willmiao/ComfyUI-Lora-Manager',
+    verifiedVersion: '1.2.1',
+    versionFile: 'pyproject.toml',
+    versionPattern: /^version\s*=\s*"([^"]+)"/m,
+    assumptions: [
+      {
+        id: 'trigger-words-route',
+        why: 'requestTriggerWords POSTs this exact path and useLoraManager swallows the rejection, so a rename drops trigger words with no error anywhere. Pinned as the registration line rather than the handler name: upstream has a second, GET, hyphenated get-trigger-words route on a different handler, so a bare identifier match would keep passing while ours 404s. The `{prefix}` we substitute is `loras`; how upstream supplies it has already changed shape once, so it is not pinned here.',
+        ours: 'src/api/client/models.ts',
+        file: 'py/routes/lora_routes.py',
+        contains: [/"POST", "\/api\/lm\/\{prefix\}\/get_trigger_words", prefix/],
+      },
+      {
+        id: 'dom-widget-value-envelope',
+        why: 'We send the lora list and the trigger-word list as { __value__: [...] } -- the shape ComfyUI gives a DOM widget, and therefore what the desktop frontend sends. The bare array we used to send is ambiguous with a [node_id, slot] link and broke Impact Pack\'s on-prompt hook (issue #87). If upstream stops unwrapping the envelope, every lora we send is ignored and the node quietly loads none of them.',
+        ours: 'src/utils/workflowInputs.ts',
+        file: 'py/nodes/utils.py',
+        // Quote style differs across releases; the shape is what matters.
+        contains: [/isinstance\(loras_data, dict\) and ['"]__value__['"] in loras_data/],
+      },
+    ],
+  },
 ];
 
 /** Look up one manifest by pack name. */

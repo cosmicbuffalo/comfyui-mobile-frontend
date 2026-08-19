@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { loadUserWorkflow } from '@/api/client';
 import { useWorkflowStore } from '@/hooks/useWorkflow';
+import { useWorkflowErrorsStore } from '@/hooks/useWorkflowErrors';
 import { resolveInputWidget } from '@/utils/workflowOperations';
 import { collectScopedWorkflowNodes } from '@/utils/workflowNodes';
 import { isLoadImageType } from '@/utils/bulkProcess';
@@ -139,6 +140,29 @@ export function ShareHandoffController() {
     const params = new URLSearchParams(window.location.search);
     const workflowPath = params.get('loadWorkflow');
     const imageFilename = params.get('useImage');
+    // loadWorkflow alone (no staged image) is the app's plain open-a-workflow
+    // link: there is nothing to hand off, so it loads the workflow and gets out
+    // of the way without any share-handoff chrome. Like every other branch here
+    // it is behind the native gate above — this is not a general web deep link.
+    if (workflowPath && !imageFilename) {
+      (async () => {
+        try {
+          const data = await loadUserWorkflow(workflowPath);
+          loadWorkflowAction(data, workflowPath, {
+            fresh: true,
+            source: { type: 'user', filename: workflowPath },
+          });
+        } catch (err) {
+          // No banner to fail into on this path, and a stale bookmark is the
+          // likely cause — so say so where the user is looking rather than
+          // leaving the tap doing nothing at all.
+          console.error('Failed to open workflow from link:', err);
+          useWorkflowErrorsStore.getState().setError(t('Failed to load workflow'));
+        }
+        clearHandoffParams();
+      })();
+      return;
+    }
     if (!workflowPath || !imageFilename) return;
     const enqueueOnly = params.get('enqueueOnly') === '1';
     const alreadyQueued = params.get('shareAlreadyQueued') === '1';

@@ -118,6 +118,26 @@ let historyFetchInFlight: { limit: number; promise: Promise<boolean> } | null = 
 // refetch would both miss this cache and truncate the loaded list.
 let lastRawHistorySignature: { limit: number; value: string } | null = null;
 
+/**
+ * Test seam: forget the in-flight fetch, the payload signature, and the
+ * per-session dedupe sets.
+ *
+ * These live at module scope on purpose — they must survive component remounts
+ * within a session — which also means they survive a *test file* within a
+ * worker. A previous file that fetched history leaves a signature here, and the
+ * next file's first fetch short-circuits as "nothing changed" and never enters
+ * its loading state. That is a test-order bug, not a product one, and it only
+ * shows up when the runner happens to pick that order.
+ */
+export function resetHistoryModuleState(): void {
+  historyFetchInFlight = null;
+  lastRawHistorySignature = null;
+  notifiedFailedHistoryPromptIds.clear();
+  markedHiddenOutputIds.clear();
+  pendingHiddenOutputIds.clear();
+  abandonedHiddenOutputIds.clear();
+}
+
 function rawHistorySignature(data: Record<string, { status?: { status_str?: string; completed?: boolean }; outputs?: Record<string, unknown> }>): string {
   const parts: string[] = [];
   for (const id of Object.keys(data)) {
