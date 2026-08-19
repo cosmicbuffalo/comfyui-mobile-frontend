@@ -27,7 +27,7 @@ export function FilterModal({
   if (!open) return null;
 
   // Derived state for UI - handle potential undefined mode from old persisted state
-  const mode = sort?.mode || 'modified';
+  const mode = sort?.mode || 'created';
   const currentField = mode.startsWith('name')
     ? 'name'
     : mode.startsWith('size')
@@ -113,12 +113,12 @@ export function FilterModal({
               },
               {
                 value: 'created',
-                label: 'Created',
+                label: t('Created'),
                 suffix: currentField === 'created' ? (currentOrder === 'desc' ? ' ↓' : ' ↑') : undefined
               },
               {
                 value: 'modified',
-                label: 'Modified',
+                label: t('Modified'),
                 suffix: currentField === 'modified' ? (currentOrder === 'desc' ? ' ↓' : ' ↑') : undefined
               }
             ]}

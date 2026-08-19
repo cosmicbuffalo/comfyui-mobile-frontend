@@ -75,6 +75,16 @@ describe('buildFileSections', () => {
     expect(sections).toHaveLength(1);
     expect(sections[0].key).toBe('2026-01-02');
   });
+
+  it('uses creation date when a date grouping field is not specified', () => {
+    const created = Date.UTC(2026, 0, 2);
+    const modified = Date.UTC(2026, 1, 3);
+    const sections = buildFileSections([
+      file({ name: 'a', date: modified, createdDate: created, modifiedDate: modified }),
+    ], opts({ shouldGroupByDate: true }));
+
+    expect(sections[0].key).toBe('2026-01-02');
+  });
 });
 
 describe('buildBreadcrumbs', () => {

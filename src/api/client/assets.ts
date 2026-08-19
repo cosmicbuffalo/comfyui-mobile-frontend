@@ -309,7 +309,7 @@ export async function getUserImages(
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   _offset = 0,
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  _sort: SortMode = 'modified',
+  _sort: SortMode = 'created',
   includeSubfolders = false,
   subfolder: string | null = null,
   showHidden?: boolean

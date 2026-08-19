@@ -69,7 +69,7 @@ export function buildFileSections(
     dateField?: 'createdDate' | 'modifiedDate';
   },
 ): FileSection[] {
-  const { isNameSort, isSizeSort, shouldGroupByDate, dateField = 'modifiedDate' } = opts;
+  const { isNameSort, isSizeSort, shouldGroupByDate, dateField = 'createdDate' } = opts;
 
   const pushGrouped = (keyOf: (file: FileItem) => { key: string; label: string }): FileSection[] => {
     const sections: FileSection[] = [];

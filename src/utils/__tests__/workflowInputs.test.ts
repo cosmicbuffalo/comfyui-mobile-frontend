@@ -1228,8 +1228,46 @@ describe('lora manager prompt serialization', () => {
 
     expect(inputs).toMatchObject({
       text: 'prompt',
-      loras,
+      loras: { __value__: loras },
     });
+  });
+
+  // Regression, issue #87. A two-element array is a `[node_id, slot]` link in
+  // ComfyUI's prompt format, so a bare two-lora list reads as a wired input to
+  // anything that walks the prompt. Impact Pack's on-prompt hook does exactly
+  // that and dies on it, which stops ImpactWildcardProcessor populating its
+  // wildcards for the whole workflow.
+  it('never emits a lora list as a bare array, whatever its length', () => {
+    for (const count of [0, 1, 2, 3]) {
+      const loras = Array.from({ length: count }, (_, i) => ({
+        name: `lora${i}.safetensors`,
+        strength: 1,
+      }));
+      const node = makeNode(1, 'Lora Loader (LoraManager)', {
+        widgets_values: ['prompt', loras],
+      });
+      const workflow: Workflow = {
+        last_node_id: 1,
+        last_link_id: 0,
+        nodes: [node],
+        links: [],
+        groups: [],
+        config: {},
+        version: 1,
+      };
+
+      const inputs = buildWorkflowPromptInputs(
+        workflow,
+        nodeTypes,
+        node,
+        'Lora Loader (LoraManager)',
+        new Set([1]),
+        { text: 0, loras: 1 },
+      );
+
+      expect(Array.isArray(inputs.loras), `${count} lora(s)`).toBe(false);
+      expect(inputs.loras).toEqual({ __value__: loras });
+    }
   });
 
 });
@@ -1270,6 +1308,48 @@ describe('trigger word prompt serialization', () => {
     };
   }
 
+  // Regression, issue #87. Lora Manager adds `trigger_words` as an input SLOT and
+  // keeps its five widget values as group_mode / default_active /
+  // allow_strength_adjustment / the toggle DOM widget / orinalMessage. object_info
+  // declares `trigger_words` all the same, so the positional fallback used to hand
+  // it the toggle list — a two-element array of objects on the wire, which is the
+  // shape that breaks Impact Pack's prompt hook. Lora Manager ignored the value
+  // (it only honours a string override), so dropping it changes nothing but the
+  // wire shape.
+  it('drops the mis-mapped trigger_words slot and wraps the toggle list', () => {
+    const declaringNodeTypes: NodeTypes = {
+      'TriggerWord Toggle (LoraManager)': {
+        ...nodeTypes['TriggerWord Toggle (LoraManager)'],
+        input: {
+          required: {
+            group_mode: ['BOOLEAN', {}],
+            default_active: ['BOOLEAN', {}],
+            allow_strength_adjustment: ['BOOLEAN', {}],
+            trigger_words: ['STRING', {}],
+          },
+        },
+      },
+    };
+    const list = [{ text: 'one', active: true }, { text: 'two', active: true }];
+    const node = makeNode(5, 'TriggerWord Toggle (LoraManager)', {
+      widgets_values: [true, true, false, list, 'one, two'],
+    });
+    const inputs = buildWorkflowPromptInputs(
+      makeTriggerWorkflow(node),
+      declaringNodeTypes,
+      node,
+      'TriggerWord Toggle (LoraManager)',
+      new Set([5]),
+      null,
+    );
+
+    expect('trigger_words' in inputs).toBe(false);
+    expect(inputs.toggle_trigger_words).toEqual({ __value__: list });
+    expect(inputs.orinalMessage).toBe('one, two');
+    const bareArrays = Object.entries(inputs).filter(([, v]) => Array.isArray(v));
+    expect(bareArrays).toEqual([]);
+  });
+
   it('uses originalMessage key when present in widgetIndexMap', () => {
     const list = [{ text: 'foo', active: true }];
     const node = makeNode(5, 'TriggerWord Toggle (LoraManager)', {
@@ -1285,7 +1365,7 @@ describe('trigger word prompt serialization', () => {
       { group_mode: 0, default_active: 1, allow_strength_adjustment: 2, toggle_trigger_words: 3, originalMessage: 4 },
     );
 
-    expect(inputs.toggle_trigger_words).toEqual(list);
+    expect(inputs.toggle_trigger_words).toEqual({ __value__: list });
     expect(inputs.originalMessage).toBe('foo');
   });
 
@@ -1304,7 +1384,7 @@ describe('trigger word prompt serialization', () => {
       { group_mode: 0, default_active: 1, allow_strength_adjustment: 2, toggle_trigger_words: 3 },
     );
 
-    expect(inputs.toggle_trigger_words).toEqual(list);
+    expect(inputs.toggle_trigger_words).toEqual({ __value__: list });
     expect(inputs.orinalMessage).toBe('foo');
   });
 
@@ -1323,7 +1403,7 @@ describe('trigger word prompt serialization', () => {
       { group_mode: 0, default_active: 2, toggle_trigger_words: 3, originalMessage: 4 },
     );
 
-    expect(inputs.toggle_trigger_words).toEqual(list);
+    expect(inputs.toggle_trigger_words).toEqual({ __value__: list });
     expect(inputs.originalMessage).toBe('mapped');
   });
 });

@@ -2,9 +2,21 @@ import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { QueuePanel } from '@/components/QueuePanel';
-import { useHistoryStore } from '@/hooks/useHistory';
+import { resetHistoryModuleState, useHistoryStore } from '@/hooks/useHistory';
+import { resetQueueModuleState } from '@/hooks/useQueue';
 import { useNavigationStore } from '@/hooks/useNavigation';
 
+// KNOWN ISSUE — this file is order-dependent. It passes alone and in the
+// default order; under `vitest --sequence.shuffle` roughly three of its cases
+// can still fail, always with "expected 'Queue is empty…' to contain
+// 'Loading...'" — the panel's first fetch resolves when the test wants it to
+// stall. Clearing the two modules' scope-level caches below removed most of it
+// (nine failures down to three); the remainder was not isolated. Resetting the
+// history store's other fields was tried and made it *worse* (three up to
+// five), so something in the current shape is compensating and the obvious next
+// guess is wrong. Left as-is rather than papered over: a test that passes for a
+// reason nobody understands is worse than one that is honestly flaky.
+//
 // Exercise the ?prompt_id=<id> push-notification deep link end-to-end at the
 // component level: the panel must switch navigation to the queue, strip the
 // param from the URL, and — once the prompt's history entry is present — open
@@ -57,6 +69,17 @@ describe('QueuePanel prompt_id deep link', () => {
     }));
     useHistoryStore.setState({ history: [] });
     useNavigationStore.setState({ currentPanel: 'workflow' });
+    // Both hooks memoise at module scope — an in-flight fetch and a signature of
+    // the last /history payload — which is deliberate (the caches must survive
+    // component remounts within a session) and which also means they survive a
+    // whole test FILE. Whichever file happens to run before this one leaves a
+    // signature behind, and the panel's first fetch then short-circuits as
+    // "nothing changed" and never shows its loading state. Clearing the state
+    // this file depends on belongs here rather than in a global hook: a dozen
+    // other files `vi.mock` these modules, and reaching into their registries
+    // would break them.
+    resetHistoryModuleState();
+    resetQueueModuleState();
   });
 
   afterEach(async () => {

@@ -1,10 +1,11 @@
 import type { Workflow, WorkflowNode, NodeTypes, NodeTypeDefinition } from '@/api/types';
 import { collectAllWorkflowNodes } from '@/utils/workflowNodes';
 import { ueSlotKey, type UeLinkMap } from '@/utils/useEverywhere';
-import { extractLoraList, findLoraListIndex, isPowerLoraLoaderNodeType } from '@/utils/loraManager';
+import { extractLoraList, findLoraListIndex, isLoraList, isPowerLoraLoaderNodeType } from '@/utils/loraManager';
 import {
   extractTriggerWordList,
   extractTriggerWordListLoose,
+  isTriggerWordList,
   extractTriggerWordMessage,
   findTriggerWordListIndex,
   findTriggerWordMessageIndex,
@@ -1256,13 +1257,34 @@ export function buildWorkflowPromptInputs(
   return inputs;
 }
 
+/**
+ * Lora Manager's list widgets are DOM widgets, and ComfyUI serializes those into
+ * the prompt as `{ __value__: <value> }`. Sending the bare array instead is not
+ * just a cosmetic divergence from the desktop frontend: in ComfyUI's prompt
+ * format a two-element array IS a `[node_id, slot]` link, so a node holding
+ * exactly two loras hands every consumer something that looks like a wired
+ * input. Impact Pack's on-prompt hook walks each input for links and evaluates
+ * `vv[0] in <set>` on it, which raises `unhashable type: 'dict'` and takes down
+ * that hook's whole try block -- so ImpactWildcardProcessor silently stops
+ * populating its wildcards whenever a two-lora Lora Loader shares the workflow
+ * (issue #87). Every Lora Manager node reads both shapes (`get_loras_list`,
+ * `_get_toggle_data`), so the wrapped one is safe and unambiguous.
+ *
+ * Only wrapped when the value is genuinely one of these lists -- an unrelated
+ * node with a `loras` input that really is a link must be left alone.
+ */
+const asDomWidgetValue = (value: unknown): Record<string, unknown> => ({ __value__: value });
+
 function appendLoraManagerInputs(
   node: WorkflowNode,
   inputs: Record<string, unknown>,
   widgetValuesArray: unknown[] | null,
   widgetIndexMap: Record<string, number> | null
 ) {
-  if ('loras' in inputs) return;
+  if ('loras' in inputs) {
+    if (isLoraList(inputs.loras)) inputs.loras = asDomWidgetValue(inputs.loras);
+    return;
+  }
 
   const mappedIndex = widgetIndexMap?.loras;
   const listIndex = mappedIndex !== undefined ? mappedIndex : findLoraListIndex(node);
@@ -1271,7 +1293,7 @@ function appendLoraManagerInputs(
   const rawValue = widgetValuesArray?.[listIndex];
   const loraList = extractLoraList(rawValue);
   if (loraList) {
-    inputs.loras = loraList;
+    inputs.loras = asDomWidgetValue(loraList);
   }
 }
 
@@ -1283,17 +1305,37 @@ function appendTriggerWordToggleInputs(
 ) {
   if (!isTriggerWordToggleNodeType(node.type)) return;
 
+  // `trigger_words` is an input SLOT on this node, not a widget: Lora Manager
+  // adds it with `addInput(...)`, and the node's five widget values are
+  // group_mode / default_active / allow_strength_adjustment / the toggle DOM
+  // widget / orinalMessage. object_info still declares it, so our positional
+  // fallback -- which cannot see the undeclared DOM widget -- shifts up by one
+  // and hands `trigger_words` the toggle list. Lora Manager ignores a non-string
+  // override, so the value never did anything, but it put a two-element array of
+  // objects on the wire, which is the shape that breaks Impact Pack's prompt hook
+  // (see the note on `asDomWidgetValue`). Dropping it is what the desktop
+  // frontend sends for an unlinked optional; a genuine link is a
+  // [promptKey, slot] pair and fails the list check below, so it survives.
+  if (isTriggerWordList(inputs.trigger_words, false)) {
+    delete inputs.trigger_words;
+  }
+
   const mappedListIndex = widgetIndexMap?.toggle_trigger_words;
   const listIndex = mappedListIndex !== undefined
     ? mappedListIndex
     : findTriggerWordListIndex(node);
   if (listIndex === null) return;
 
-  if (!('toggle_trigger_words' in inputs)) {
+  if ('toggle_trigger_words' in inputs) {
+    // Same DOM-widget wrapping as `loras` above, for the same reason.
+    if (Array.isArray(inputs.toggle_trigger_words)) {
+      inputs.toggle_trigger_words = asDomWidgetValue(inputs.toggle_trigger_words);
+    }
+  } else {
     const rawValue = widgetValuesArray?.[listIndex];
     const triggerList = extractTriggerWordList(rawValue) ?? extractTriggerWordListLoose(rawValue);
     if (triggerList) {
-      inputs.toggle_trigger_words = triggerList;
+      inputs.toggle_trigger_words = asDomWidgetValue(triggerList);
     }
   }
 

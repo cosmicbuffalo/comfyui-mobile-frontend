@@ -1,5 +1,22 @@
 # Changelog
 
+## 3.2.3 - 2026-08-17
+
+### Changed
+
+- **Outputs and the input picker now sort by newest-created first**, instead of by last-modified. Moving or renaming a file no longer jumps it to the top of the list. If your sort was still on the old default it moves across with this release; an explicit **Modified** choice is left alone, and both fields remain selectable in the outputs filter
+
+### Fixed
+
+- **Wildcards populate again when a Lora Manager node shares the workflow** ([#87](https://github.com/cosmicbuffalo/comfyui-mobile-frontend/issues/87)). Lora Manager's list widgets were sent as bare arrays, which in ComfyUI's prompt format are indistinguishable from a `[node_id, slot]` link once a list holds exactly two entries — enough to break Impact Pack's prompt hook and silently stop `ImpactWildcardProcessor` expanding anything. Two loras on a Lora Loader triggered it, and so did two trigger-word groups on a TriggerWord Toggle, whatever the lora count. Both lists are now sent the way the desktop frontend sends them
+- **TriggerWord Toggle no longer receives its toggle list in the `trigger_words` slot.** That input is a link socket, not a widget, so a workflow that left it unconnected was sending Lora Manager a value it discarded — and it was the second route into the wildcard bug above
+- The outputs filter's **Created** and **Modified** labels are translated rather than left in English in the four non-English locales
+
+### Notes
+
+- Further groundwork for the CueForge iOS app
+- The upstream-drift check (`npm run parity`) now covers eight custom-node packs instead of four, and `CONTRIBUTING.md` documents what belongs in a manifest
+
 ## 3.2.2 - 2026-08-17
 
 ### Fixed

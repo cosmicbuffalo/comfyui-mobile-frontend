@@ -47,7 +47,7 @@ beforeEach(async () => {
     currentFolder: null,
     files: [],
     filter: { search: '', favoritesMode: 'off', rejectsMode: 'off', type: 'all' },
-    sort: { mode: 'modified' },
+    sort: { mode: 'created' },
     favorites: [],
     rejected: [],
     migratedFavoriteSources: [],
@@ -818,6 +818,36 @@ describe('persistence', () => {
 
     expect(useOutputsStore.getState().viewMode).toBe('list');
     expect(useOutputsStore.getState().rejected).toEqual([]);
+  });
+
+  it('migrates the former modified-date default to created date', async () => {
+    localStorage.setItem('outputs-storage', JSON.stringify({
+      version: 5,
+      state: { sort: { mode: 'modified' } },
+    }));
+
+    await useOutputsStore.persist.rehydrate();
+
+    expect(useOutputsStore.getState().sort).toEqual({ mode: 'created' });
+  });
+
+  it('carries the oldest {field, order} sort through the same default change', async () => {
+    // v0 stores predate `mode` entirely. They convert to the historical value
+    // first and reach the new default through the v6 rule, so the descending
+    // default moves and an explicit ascending choice does not.
+    localStorage.setItem('outputs-storage', JSON.stringify({
+      version: 0,
+      state: { sort: { field: 'modified', order: 'desc' } },
+    }));
+    await useOutputsStore.persist.rehydrate();
+    expect(useOutputsStore.getState().sort).toEqual({ mode: 'created' });
+
+    localStorage.setItem('outputs-storage', JSON.stringify({
+      version: 0,
+      state: { sort: { field: 'modified', order: 'asc' } },
+    }));
+    await useOutputsStore.persist.rehydrate();
+    expect(useOutputsStore.getState().sort).toEqual({ mode: 'modified-reverse' });
   });
 });
 
