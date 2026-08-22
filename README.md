@@ -1,3 +1,5 @@
+
+
 <p align="center">
   <img src="icon.png" alt="" width="128" height="128" />
 </p>
@@ -46,7 +48,7 @@ So this mobile frontend is my attempt at improving upon the user experience of C
   - infinite-generation mode that auto-queues the next run (per-workflow, with a safety stop for fixed-seed loops)
   - automatic reconnect when the backend drops, plus recovery of jobs lost to a ComfyUI restart
   - scroll through generation history and load or copy workflows of anything you want to iterate on
-### ☑️ **Media Viewer:** Full-screen viewer with convenient controls and familar gesture support
+### ☑️ **Media Viewer:** Full-screen viewer with convenient controls and familiar gesture support
   - support for images and videos
   - inspect image metadata (just a few core attributes for now)
   - mark outputs as favorites so you can find them with filters later
