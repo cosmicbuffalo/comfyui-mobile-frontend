@@ -10,10 +10,10 @@ import { useIsDesktop } from '@/hooks/useIsDesktop';
 import { useOverallProgress } from '@/hooks/useOverallProgress';
 import type { Workflow } from '@/api/types';
 import { buildOutputPreferredViewerImages, buildViewerImages } from '@/utils/viewerImages';
-import type { ItemStatus, QueueItemData, UnifiedItem, ViewerImage } from './QueuePanel/types';
+import type { ItemStatus, UnifiedItem, ViewerImage } from './QueuePanel/types';
 import { QueueImageMenu } from './QueuePanel/QueueImageMenu';
 import { QueueToast } from './QueuePanel/QueueToast';
-import { getBatchSources } from './QueuePanel/queueUtils';
+import { compareUnifiedQueueItems, getBatchSources } from './QueuePanel/queueUtils';
 import { downloadBatch, downloadImage, filenameFromSrc } from '@/utils/downloads';
 import { copyTextToClipboard } from '@/utils/clipboard';
 import { QueueList } from './QueuePanel/QueueList';
@@ -451,21 +451,7 @@ export const QueuePanel = memo(function QueuePanel({ visible, onImageClick }: Qu
     }
 
     const list = Object.values(items);
-    list.sort((a, b) => {
-      const statusOrder = { 'pending': 0, 'running': 1, 'done': 2 };
-      if(statusOrder[a.status] !== statusOrder[b.status]) {
-        return statusOrder[a.status] - statusOrder[b.status];
-      }
-      if (a.status === 'pending') {
-        const aNumber = (a.data as QueueItemData).number;
-        const bNumber = (b.data as QueueItemData).number;
-        return bNumber - aNumber; // Highest number (newest) first
-      }
-      if (a.status === 'done') {
-        return (b.timestamp || 0) - (a.timestamp || 0); // Newest timestamp first
-      }
-      return 0;
-    });
+    list.sort(compareUnifiedQueueItems);
 
     return list;
   }, [pending, running, completing, history, executingPromptId]);

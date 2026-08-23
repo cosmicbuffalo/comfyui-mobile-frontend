@@ -167,11 +167,18 @@ export function FullscreenWidgetModal({
             // Sizes to its content (no flex-1) so the panel hugs short widgets;
             // min-h-0 + overflow-y-auto make this the scroll container once the
             // panel hits max-h-full, so tall content scrolls while the header stays put.
-            className="pointer-events-auto min-h-0 overflow-y-auto overscroll-contain px-4 pt-2 text-slate-100"
+            className="scroll-container pointer-events-auto min-h-0 overflow-y-auto overscroll-contain px-4 pt-2 text-slate-100"
             // Pad past the bottom bar so the tail of scrollable content (e.g. the
             // last combo options / bottom of a textarea) can scroll clear of it.
             style={{ paddingBottom: 'calc(1rem + var(--bottom-bar-offset, 0px))' }}
-            onClick={(e) => e.stopPropagation()}
+            onClick={(event) => {
+              // This element includes the empty side/bottom padding around the
+              // widget. Treat that visible backdrop exactly like the outer
+              // backdrop, while clicks originating in the actual control keep
+              // their normal behavior.
+              if (event.target === event.currentTarget) onClose();
+              event.stopPropagation();
+            }}
           >
             <div className="flex flex-col">{children}</div>
           </div>

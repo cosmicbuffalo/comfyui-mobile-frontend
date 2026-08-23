@@ -43,6 +43,7 @@ import {
 } from '@/utils/triggerWordToggle';
 import { resolveWorkflowNodeDisplayName } from '@/utils/subgraphPlaceholderLabels';
 import { FastGroupsBypasserControls } from './FastGroupsBypasserControls';
+import { supportsPinnedWidgetEditor } from '@/utils/pinnedWidgetSupport';
 
 interface WidgetDescriptor {
   widgetIndex: number;
@@ -427,11 +428,15 @@ export function NodeCardParameters({
   const hasWidgetError = (widget: WidgetDescriptor) =>
     errorInputNames.has(widget.inputName ?? widget.name) || errorInputNames.has(widget.name);
 
-  const canPinWidget = (widgetType: string, widgetName: string) => {
+  const canPinWidget = (
+    widgetType: string,
+    widgetName: string,
+    options?: Record<string, unknown> | unknown[],
+  ) => {
     if (widgetType.startsWith('LM_LORA')) return false;
     if (widgetType.startsWith('TW_')) return false;
     if (isLoraManagerNode && widgetName === 'text') return false;
-    return true;
+    return supportsPinnedWidgetEditor(widgetType, options);
   };
 
   const handleWidgetChange = (widget: WidgetDescriptor) => (newValue: unknown) => {
@@ -976,7 +981,7 @@ export function NodeCardParameters({
                           <Collapsible open={!folded} className="space-y-2 pt-2">
                             {bodyWidgets.map((widget) => {
                               const groupMeta = getCrLoraStackGroupMeta(widget.name);
-                              const pinAllowed = canPinWidget(widget.type, widget.name);
+                              const pinAllowed = canPinWidget(widget.type, widget.name, widget.options);
                               const widgetOptions = applyCrLoraComboDisplayOptions(widget);
                               const displayName = (() => {
                                 const base = groupMeta?.base ?? '';
@@ -1016,7 +1021,7 @@ export function NodeCardParameters({
                 ))}
               </div>
               {crStackGroupedWidgets.ungrouped.map((widget) => {
-                const pinAllowed = canPinWidget(widget.type, widget.name);
+                const pinAllowed = canPinWidget(widget.type, widget.name, widget.options);
                 const widgetOptions = applyCrLoraComboDisplayOptions(widget);
                 return (
                   <div key={getWidgetKey(widget, 'cr-lora-ungrouped')} className={isBypassed ? 'opacity-80' : ''}>
@@ -1047,8 +1052,8 @@ export function NodeCardParameters({
                     options={inputWidget.options}
                     onChange={handleInputWidgetChange(inputWidget)}
                     disabled={isBypassed}
-                    isPinned={canPinWidget(inputWidget.type, inputWidget.name) ? isWidgetPinned(inputWidget.widgetIndex) : false}
-                    onTogglePin={canPinWidget(inputWidget.type, inputWidget.name) ? () => toggleWidgetPin(inputWidget.widgetIndex, inputWidget.name, inputWidget.type, inputWidget.options, inputWidget.inputName) : undefined}
+                    isPinned={canPinWidget(inputWidget.type, inputWidget.name, inputWidget.options) ? isWidgetPinned(inputWidget.widgetIndex) : false}
+                    onTogglePin={canPinWidget(inputWidget.type, inputWidget.name, inputWidget.options) ? () => toggleWidgetPin(inputWidget.widgetIndex, inputWidget.name, inputWidget.type, inputWidget.options, inputWidget.inputName) : undefined}
                     hasError={hasWidgetError(inputWidget)}
                     isPromoted={isPromotedWidget(inputWidget.name)}
                   />
@@ -1066,8 +1071,8 @@ export function NodeCardParameters({
                       options={widget.options}
                       onChange={handleWidgetChange(widget)}
                       disabled={isBypassed || widget.disabled === true}
-                      isPinned={canPinWidget(widget.type, widget.name) ? isWidgetPinned(widget.widgetIndex) : false}
-                      onTogglePin={canPinWidget(widget.type, widget.name) ? () => toggleWidgetPin(widget.widgetIndex, widget.name, widget.type, widget.options, widget.inputName) : undefined}
+                      isPinned={canPinWidget(widget.type, widget.name, widget.options) ? isWidgetPinned(widget.widgetIndex) : false}
+                      onTogglePin={canPinWidget(widget.type, widget.name, widget.options) ? () => toggleWidgetPin(widget.widgetIndex, widget.name, widget.type, widget.options, widget.inputName) : undefined}
                       hasError={hasWidgetError(widget)}
                       isPromoted={isPromotedWidget(widget.name)}
                       labelAccessory={canPopOut ? (

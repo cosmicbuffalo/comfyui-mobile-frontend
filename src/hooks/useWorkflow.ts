@@ -756,6 +756,7 @@ interface WorkflowState {
     count: number,
     sessionId?: string | null,
     isInfiniteReEnqueue?: boolean,
+    queueFront?: boolean,
   ) => Promise<boolean>;
   saveCurrentWorkflowState: () => void;
   setNodeOutput: (
@@ -6160,6 +6161,7 @@ export const useWorkflowStore = create<WorkflowState>()(
         count,
         sessionId,
         isInfiniteReEnqueue,
+        queueFront,
       ) => {
         const state = get();
         const sid = sessionId ?? state.activeSessionId;
@@ -6368,6 +6370,13 @@ export const useWorkflowStore = create<WorkflowState>()(
             return node;
           };
 
+          // ComfyUI implements `front` by assigning successively more-negative
+          // queue numbers. Sending every member of a batch with `front: true`
+          // therefore executes the batch backwards. The first response gives
+          // us its authoritative priority; place later members fractionally
+          // after it (but before the next integer priority) to retain the
+          // workflow/seed order while the whole batch remains at the front.
+          let frontBatchBaseNumber: number | null = null;
           for (let i = 0; i < count; i++) {
             const seedOverrides: Record<string, number> = {};
             // Handle seed modes for root nodes and inner subgraph nodes.
@@ -6618,6 +6627,11 @@ export const useWorkflowStore = create<WorkflowState>()(
             const promptRequest: api.PromptQueueRequest = {
               prompt: queuedPrompt,
               client_id: api.clientId,
+              ...(queueFront
+                ? frontBatchBaseNumber == null
+                  ? { front: true }
+                  : { number: frontBatchBaseNumber + i / (count + 1) }
+                : {}),
               extra_data: {
                 [QUEUE_WORKFLOW_LABEL_EXTRA_DATA_KEY]: metadataWorkflowLabel,
                 extra_pnginfo: {
@@ -6694,8 +6708,17 @@ export const useWorkflowStore = create<WorkflowState>()(
             try {
               const okData = (await response.json()) as {
                 prompt_id?: string;
+                number?: unknown;
                 node_errors?: unknown;
               };
+              if (
+                queueFront
+                && i === 0
+                && typeof okData.number === 'number'
+                && Number.isFinite(okData.number)
+              ) {
+                frontBatchBaseNumber = okData.number;
+              }
               // A 200 with node_errors means ComfyUI queued the valid outputs but
               // SILENTLY dropped the branches it couldn't validate. Surface those
               // loudly (fromRun) so the user sees which node failed — with

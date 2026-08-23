@@ -16,8 +16,10 @@ Sending is blocking (requests), so callers on the event loop must invoke
 send_completion / send_test via run_in_executor.
 """
 import json
+import math
 import os
 import threading
+import time
 from urllib.parse import urlsplit
 
 import folder_paths
@@ -33,6 +35,7 @@ except Exception:  # pragma: no cover
 
 _lock = threading.Lock()
 _targets = None  # cached list of {relay_url, pairing_code, label, added}
+_last_live_routine_sent = {}
 
 # App builds use this relay. Self-hosted/development relays must be opted in by
 # the ComfyUI administrator as a comma-separated list of HTTPS origins; a web
@@ -174,6 +177,7 @@ def list_targets():
                 "added": t.get("added"),
             }
             for t in targets
+            if t.get("notifications", True) is not False
         ]
 
 
@@ -182,18 +186,25 @@ def target_count() -> int:
         return len(_load_targets())
 
 
-def _verify_pairing(relay_url: str, pairing_code: str) -> bool:
+def live_activity_target_count() -> int:
+    """Targets that opted into server-driven ActivityKit state."""
+    with _lock:
+        return sum(1 for target in _load_targets() if target.get("live_activity") is True)
+
+
+def _verify_pairing(relay_url: str, pairing_code: str,
+                    live_activity: bool = False) -> bool:
     """Best-effort check that `pairing_code` is a real, known pairing on
-    `relay_url` before this server starts sending it every completion.
+    `relay_url` before this server starts sending it events.
 
     Without this, any non-empty string would be accepted: a typo or garbage
     code self-heals after one wasted POST (the relay's 404 prunes it via
     `_send`), but a code an attacker actually controls — paired with their
     own device via the relay's own /pair flow — would sit there
     indefinitely, and this server would notify them of every completion
-    forever. The relay has no dedicated "does this exist" endpoint, so this
-    reuses the /event path with a test-style payload — which doubles as the
-    pairing-confirmation push a legitimate new pairing wants anyway.
+    forever. Notification targets reuse /event with a test payload (which also
+    confirms the pairing on-device); live-only targets use the side-effect-free
+    /live-activity/verify endpoint.
 
     Fails OPEN on anything other than a definitive rejection — a relay
     hiccup during verification shouldn't block a legitimate pairing the way
@@ -209,13 +220,14 @@ def _verify_pairing(relay_url: str, pairing_code: str) -> bool:
     """
     if not _REQUESTS_AVAILABLE:
         return True
-    url = relay_url + "/event"
-    body = {
-        "pairing_code": pairing_code,
-        "status": "test",
-        "title": "CueForge paired",
-        "body": "This device will be notified when a generation finishes.",
-    }
+    url = relay_url + ("/live-activity/verify" if live_activity else "/event")
+    body = {"pairing_code": pairing_code}
+    if not live_activity:
+        body.update({
+            "status": "test",
+            "title": "CueForge paired",
+            "body": "This device will be notified when a generation finishes.",
+        })
     try:
         resp = requests.post(url, json=body, timeout=10)
     except Exception as exc:
@@ -265,7 +277,8 @@ def _refuse_if_full(deduped_targets) -> bool:
 
 
 def add_target(relay_url, pairing_code, label=None, added=None,
-               server_id=None) -> bool:
+               server_id=None, live_activity=False, server_label=None,
+               frequent_updates=None, relevance_score=None) -> bool:
     relay_url = _normalize_relay_url(relay_url)
     if relay_url is None:
         return False
@@ -286,7 +299,8 @@ def add_target(relay_url, pairing_code, label=None, added=None,
         if _refuse_if_full(_without_target(_load_targets(), relay_url, pairing_code)):
             return False
 
-    if not _verify_pairing(relay_url, pairing_code):
+    live_activity = live_activity is True
+    if not _verify_pairing(relay_url, pairing_code, live_activity=live_activity):
         print(
             f"{_LOG_PREFIX} refusing to add target: relay reports unknown pairing code",
             flush=True,
@@ -296,7 +310,15 @@ def add_target(relay_url, pairing_code, label=None, added=None,
     with _lock:
         # Re-check under the lock — the list can have changed while the
         # verification request was in flight.
-        targets = _without_target(_load_targets(), relay_url, pairing_code)
+        current = _load_targets()
+        existing = next((
+            target for target in current
+            if (
+                _normalize_relay_url(target.get("relay_url")) == relay_url
+                and target.get("pairing_code") == pairing_code
+            )
+        ), None)
+        targets = _without_target(current, relay_url, pairing_code)
         if _refuse_if_full(targets):
             return False
         entry = {
@@ -305,10 +327,40 @@ def add_target(relay_url, pairing_code, label=None, added=None,
             "label": (label or "Device") if isinstance(label, str) else "Device",
             "added": added,
         }
+        # Legacy entries omitted `notifications` and therefore mean true.
+        # A Live-Activity-only target stays hidden from notification settings
+        # and never receives ordinary completion events.
+        existing_notifications = (
+            existing.get("notifications", True) is not False
+            if isinstance(existing, dict) else False
+        )
+        entry["notifications"] = True if not live_activity else existing_notifications
+        if live_activity or (
+            isinstance(existing, dict) and existing.get("live_activity") is True
+        ):
+            entry["live_activity"] = True
         # Carried through to the relay's /event POST so the iOS app can route
         # a notification tap to the right server when several are paired.
         if isinstance(server_id, str) and server_id:
             entry["server_id"] = server_id
+        elif isinstance(existing, dict) and existing.get("server_id"):
+            entry["server_id"] = existing["server_id"]
+        if isinstance(server_label, str) and server_label.strip():
+            entry["server_label"] = server_label.strip()[:200]
+        elif isinstance(existing, dict) and existing.get("server_label"):
+            entry["server_label"] = existing["server_label"]
+        if isinstance(frequent_updates, bool):
+            entry["frequent_updates"] = frequent_updates
+        elif isinstance(existing, dict) and isinstance(existing.get("frequent_updates"), bool):
+            entry["frequent_updates"] = existing["frequent_updates"]
+        if (
+            isinstance(relevance_score, (int, float))
+            and not isinstance(relevance_score, bool)
+            and math.isfinite(relevance_score)
+        ):
+            entry["relevance_score"] = min(max(float(relevance_score), 0.0), 10000.0)
+        elif isinstance(existing, dict) and isinstance(existing.get("relevance_score"), (int, float)):
+            entry["relevance_score"] = existing["relevance_score"]
         targets.append(entry)
         _targets[:] = targets
         _save_targets()
@@ -339,7 +391,7 @@ def _relay_match_keys(value):
     return keys
 
 
-def remove_target(pairing_code, relay_url=None) -> int:
+def remove_target(pairing_code, relay_url=None, notifications_only=False) -> int:
     if not isinstance(pairing_code, str) or not pairing_code:
         return 0
     if relay_url is None:
@@ -359,26 +411,39 @@ def remove_target(pairing_code, relay_url=None) -> int:
 
     with _lock:
         targets = _load_targets()
-        before = len(targets)
-        remaining = [
-            t for t in targets
-            if not (t.get("pairing_code") == pairing_code and matches_relay(t))
-        ]
-        removed = before - len(remaining)
-        if removed:
+        affected = 0
+        remaining = []
+        for target in targets:
+            matches = (
+                target.get("pairing_code") == pairing_code and matches_relay(target)
+            )
+            if not matches:
+                remaining.append(target)
+            elif notifications_only is True and target.get("live_activity") is True:
+                affected += 1
+                remaining.append({**target, "notifications": False})
+            else:
+                affected += 1
+        changed = remaining != targets
+        if changed:
             _targets[:] = remaining
             _save_targets()
-    return removed
+    return affected
 
 
-def _post_event(target, payload) -> str:
+def _post_event(target, payload, path="/event") -> str:
     """POST one event to a target's relay. Returns 'ok', 'gone', or 'error'."""
     relay_url = _normalize_relay_url(target.get("relay_url"))
     if relay_url is None:
         # Prune targets written by older releases if they no longer satisfy the
         # relay allowlist. Most importantly, never POST to them.
         return "gone"
-    url = relay_url + "/event"
+    # `path` is selected only by this module's two public send functions. Keep
+    # it closed over the relay API surface rather than accepting an arbitrary
+    # caller-provided URL suffix.
+    if path not in ("/event", "/live-activity/event"):
+        return "error"
+    url = relay_url + path
     body = dict(payload)
     body["pairing_code"] = target.get("pairing_code")
     # Forward the server_id (if registered) so the relay can include it in the
@@ -386,6 +451,12 @@ def _post_event(target, payload) -> str:
     server_id = target.get("server_id")
     if server_id:
         body["server_id"] = server_id
+    server_label = target.get("server_label")
+    if server_label:
+        body["server_label"] = server_label
+    relevance_score = target.get("relevance_score")
+    if isinstance(relevance_score, (int, float)) and not isinstance(relevance_score, bool):
+        body["relevance_score"] = relevance_score
     try:
         resp = requests.post(url, json=body, timeout=10)
         if resp.status_code == 200:
@@ -395,28 +466,59 @@ def _post_event(target, payload) -> str:
         if resp.status_code == 404:
             return "gone"
         print(f"{_LOG_PREFIX} app push relay returned {resp.status_code} for {url}", flush=True)
+        if path == "/live-activity/event" and (
+            resp.status_code in (408, 429) or resp.status_code >= 500
+        ):
+            return "retry"
         return "error"
     except Exception as exc:
         print(f"{_LOG_PREFIX} app push request failed: {exc}", flush=True)
-        return "error"
+        return "retry" if path == "/live-activity/event" else "error"
 
 
-def _send(payload) -> dict:
+def _send(payload, path="/event") -> dict:
     if not _REQUESTS_AVAILABLE:
         return {"sent": 0, "pruned": 0, "total": 0}
     with _lock:
         targets = list(_load_targets())
+    if path == "/live-activity/event":
+        targets = [t for t in targets if t.get("live_activity") is True]
+        if payload.get("delivery") == "routine":
+            now = time.monotonic()
+            selected = []
+            for target in targets:
+                key = (target.get("relay_url"), target.get("pairing_code"))
+                # iOS reports whether the user/system granted frequent Live
+                # Activity updates. Keep the smooth two-second stream when it
+                # did; otherwise reduce only replaceable routine snapshots.
+                if target.get("frequent_updates") is False:
+                    if now - _last_live_routine_sent.get(key, 0.0) < 10.0:
+                        continue
+                    _last_live_routine_sent[key] = now
+                selected.append(target)
+            targets = selected
+    else:
+        targets = [t for t in targets if t.get("notifications", True) is not False]
     if not targets:
         return {"sent": 0, "pruned": 0, "total": 0}
 
     sent = 0
+    retryable = 0
+    failed = 0
     dead = []
     for target in targets:
-        result = _post_event(target, payload)
+        result = _post_event(target, payload, path=path)
         if result == "ok":
             sent += 1
         elif result == "gone":
             dead.append((target.get("relay_url"), target.get("pairing_code")))
+        elif result == "retry":
+            retryable += 1
+        else:
+            # "error": a non-retryable rejection (400/401/403/422 ...). Retrying
+            # cannot fix it, but it is NOT a delivery either, and counting it
+            # nowhere made a partial failure read as a clean success upstream.
+            failed += 1
 
     if dead:
         with _lock:
@@ -428,7 +530,11 @@ def _send(payload) -> dict:
             _targets[:] = remaining
             _save_targets()
 
-    return {"sent": sent, "pruned": len(dead), "total": len(targets)}
+    result = {"sent": sent, "pruned": len(dead), "total": len(targets)}
+    if path == "/live-activity/event":
+        result["retryable"] = retryable
+        result["failed"] = failed
+    return result
 
 
 def send_completion(prompt_id: str, status: str, outputs: int,
@@ -442,6 +548,17 @@ def send_completion(prompt_id: str, status: str, outputs: int,
     if click_url:
         payload["url"] = click_url
     return _send(payload)
+
+
+def send_live_activity(payload: dict) -> dict:
+    """Send one coalesced ActivityKit state snapshot to every paired device.
+
+    The caller runs this blocking relay request in an executor. Unlike the
+    ordinary completion-notification path, a non-200 result matters most for a
+    terminal state: mobile_progress_ws uses the returned counts to retain and
+    retry that `done`/`error` snapshot until APNs accepts it.
+    """
+    return _send(payload, path="/live-activity/event")
 
 
 def send_test() -> dict:

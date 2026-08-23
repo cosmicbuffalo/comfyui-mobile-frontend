@@ -343,7 +343,12 @@ export function NodeCardOutputPreview({
     : null;
   const previewIsVideo = Boolean(previewImage && isVideoFilename(previewImage.filename));
   const displaySrc = previewImage && !previewIsVideo
-    ? getImagePreviewUrl(previewImage.filename, previewImage.subfolder, previewImage.type)
+    ? getImagePreviewUrl(
+      previewImage.filename,
+      previewImage.subfolder,
+      previewImage.type,
+      previewImage.cacheToken,
+    )
     : latentPreviewUrl;
   const videoSrc = previewImage && previewIsVideo
     ? getPlayableVideoUrl(getImageUrl(

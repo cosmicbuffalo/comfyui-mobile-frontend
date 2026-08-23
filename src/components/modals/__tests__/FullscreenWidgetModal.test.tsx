@@ -87,4 +87,29 @@ describe('FullscreenWidgetModal viewer sidebar', () => {
     modal?.click();
     expect(onClose).toHaveBeenCalledTimes(1);
   });
+
+  it('dismisses from empty content padding but not from the widget itself', async () => {
+    const onClose = vi.fn();
+    await act(async () => {
+      root.render(
+        <FullscreenWidgetModal
+          isOpen
+          title="Text widget"
+          onClose={onClose}
+        >
+          <input data-testid="widget-input" />
+        </FullscreenWidgetModal>,
+      );
+    });
+
+    const input = document.body.querySelector<HTMLInputElement>('[data-testid="widget-input"]');
+    input?.click();
+    expect(onClose).not.toHaveBeenCalled();
+
+    const contentBackdrop = document.body.querySelector<HTMLElement>(
+      '.fullscreen-widget-modal .scroll-container',
+    );
+    contentBackdrop?.click();
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
 });

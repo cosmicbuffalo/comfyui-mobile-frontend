@@ -204,6 +204,58 @@ describe('setSavedWorkflow hidden carry-over', () => {
 });
 
 describe('queue prompt link/slot repair', () => {
+  it('uses ComfyUI native front priority for front-of-queue submissions', async () => {
+    useWorkflowStore.setState({
+      workflow: makeWorkflow([makeNode(1)], []),
+      nodeTypes: queueNodeTypes,
+      ...rootNodeStableRegistry([1]),
+    });
+
+    const body = await queueAndGetPromptRequest(true);
+
+    expect(body.front).toBe(true);
+  });
+
+  it('keeps a multi-run front batch in its original iteration order', async () => {
+    useWorkflowStore.setState({
+      workflow: makeWorkflow([makeNode(1)], []),
+      nodeTypes: queueNodeTypes,
+      ...rootNodeStableRegistry([1]),
+    });
+
+    const promptBodies: Array<{ front?: boolean; number?: number }> = [];
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes('/api/prompt') && init?.method === 'POST') {
+        const body = JSON.parse(String(init.body)) as { front?: boolean; number?: number };
+        promptBodies.push(body);
+        return {
+          ok: true,
+          json: async () => ({
+            prompt_id: `front-${promptBodies.length}`,
+            number: body.front ? -25 : body.number,
+          }),
+        };
+      }
+      if (url.includes('/api/queue')) {
+        return {
+          ok: true,
+          json: async () => ({ queue_running: [], queue_pending: [] }),
+        };
+      }
+      return { ok: true, json: async () => ({}) };
+    });
+    vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch);
+
+    expect(await useWorkflowStore.getState().queueWorkflow(3, undefined, false, true)).toBe(true);
+
+    expect(promptBodies.map(({ front, number }) => ({ front, number }))).toEqual([
+      { front: true, number: undefined },
+      { front: undefined, number: -24.75 },
+      { front: undefined, number: -24.5 },
+    ]);
+  });
+
   it('includes a connection whose link is in the table even if inputs[].link was left stale', async () => {
     // Reproduces the paste/connect bug: link 100 wires Source[0] -> Sink.model in
     // the links table, but Sink's inputs[0].link was left null (out of sync). The

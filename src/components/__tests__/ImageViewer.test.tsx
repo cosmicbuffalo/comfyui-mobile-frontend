@@ -46,9 +46,15 @@ const mocks = vi.hoisted(() => {
       pending: [] as Array<{ prompt_id: string }>,
       localPromptOrder: {} as Record<string, number>,
       livePromptOutputs: {} as Record<string, Array<{ filename: string; subfolder: string; type: string }>>,
+      previewVisibility: {} as Record<string, boolean>,
+      previewVisibilityDefault: false,
     },
     historyState: {
       history: [] as HistoryEntry[],
+      isLoading: false,
+      historyLimit: 40,
+      hasMoreHistory: true,
+      loadMoreHistory: vi.fn(async () => {}),
       deleteItem: vi.fn(),
       removeOutputImages: vi.fn(),
     },
@@ -119,14 +125,14 @@ vi.mock('@/api/client', () => ({
     `/api/view?filename=${filename}&subfolder=${subfolder}&type=${type}&preview=webp;90`,
 }));
 
-function makeHistoryEntry(promptId: string): HistoryEntry {
+function makeHistoryEntry(promptId: string, filename = 'first.png'): HistoryEntry {
   return {
     prompt_id: promptId,
     timestamp: Date.now(),
     outputs: {
       images: [
         {
-          filename: 'first.png',
+          filename,
           subfolder: '',
           type: 'output',
         },
@@ -163,7 +169,13 @@ describe('ImageViewer follow queue mode', () => {
     mocks.queueState.pending = [];
     mocks.queueState.localPromptOrder = {};
     mocks.queueState.livePromptOutputs = {};
+    mocks.queueState.previewVisibility = {};
+    mocks.queueState.previewVisibilityDefault = false;
     mocks.historyState.history = [];
+    mocks.historyState.isLoading = false;
+    mocks.historyState.historyLimit = 40;
+    mocks.historyState.hasMoreHistory = true;
+    mocks.historyState.loadMoreHistory.mockClear();
     mocks.setViewerState.mockClear();
     mocks.historyState.deleteItem.mockClear();
     mocks.historyState.removeOutputImages.mockClear();
@@ -204,6 +216,40 @@ describe('ImageViewer follow queue mode', () => {
       return Array.isArray(viewerImages) && viewerImages.length > 0;
     });
     expect(jumped).toBe(false);
+  });
+
+  it('does not treat an older paginated same-session entry as a fresh completion', async () => {
+    mocks.workflowState.activeSessionId = 'session-A';
+    mocks.workflowState.promptToSession = {
+      visible: 'session-A',
+      older: 'session-A',
+    };
+    mocks.historyState.history = [makeHistoryEntry('visible', 'visible.png')];
+    mocks.viewerState.viewerImages = [makeViewerImage('visible', 'visible.png')];
+    mocks.viewerState.viewerIndex = 0;
+
+    await act(async () => {
+      root.render(<ImageViewer onClose={() => {}} />);
+    });
+    await flushEffects();
+    mocks.setViewerState.mockClear();
+
+    // Loading another page adds this old mapped prompt at the tail. Retained
+    // prompt routing alone must not make it a Follow Queue event.
+    mocks.historyState.history = [
+      ...mocks.historyState.history,
+      makeHistoryEntry('older', 'older.png'),
+    ];
+    await act(async () => {
+      root.render(<ImageViewer onClose={() => {}} />);
+    });
+    await flushEffects();
+
+    const jumpedToOlder = mocks.setViewerState.mock.calls.some(([next]) => {
+      const images = next.viewerImages as Array<Record<string, unknown>> | undefined;
+      return next.viewerIndex === 0 && images?.[0]?.filename === 'older.png';
+    });
+    expect(jumpedToOlder).toBe(false);
   });
 
   it('displays a followed output that already existed when follow mode opened', async () => {
@@ -293,6 +339,131 @@ describe('ImageViewer follow queue mode', () => {
       filename: 'first.png',
       promptId: 'external-prompt',
     });
+  });
+
+  it('follows a session-owned completion when the live-to-history handoff is batched away', async () => {
+    // A fast history refresh can add the completed entry and clear the queue's
+    // live/pending maps before React commits an intermediate render. The prompt
+    // is still known to belong to this workflow session, so Follow Queue must
+    // not mistake it for unrelated history and remain stuck on the old image.
+    mocks.workflowState.activeSessionId = 'session-A';
+    mocks.viewerState.viewerImages = [makeViewerImage('old-prompt')];
+    mocks.viewerState.viewerIndex = 0;
+    mocks.historyState.history = [makeHistoryEntry('old-prompt')];
+
+    await act(async () => {
+      root.render(<ImageViewer onClose={() => {}} />);
+    });
+    await flushEffects();
+    mocks.setViewerState.mockClear();
+
+    // Final post-refresh state only: there is no render where the new prompt is
+    // still running or has a live output for the old tracking effect to catch.
+    mocks.workflowState.promptToSession = { 'new-prompt': 'session-A' };
+    mocks.historyState.history = [
+      makeHistoryEntry('new-prompt', 'new.png'),
+      makeHistoryEntry('old-prompt'),
+    ];
+    await act(async () => {
+      root.render(<ImageViewer onClose={() => {}} />);
+    });
+    await flushEffects();
+
+    const jumpedToNew = mocks.setViewerState.mock.calls.some(([next]) => {
+      const viewerImages = next.viewerImages as Array<Record<string, unknown>> | undefined;
+      return viewerImages?.[0]?.filename === 'new.png';
+    });
+    expect(jumpedToNew).toBe(true);
+  });
+
+  it('reconsiders history when its session routing arrives one render later', async () => {
+    mocks.workflowState.activeSessionId = 'session-A';
+    mocks.viewerState.viewerImages = [makeViewerImage('old-prompt')];
+    mocks.viewerState.viewerIndex = 0;
+    mocks.historyState.history = [makeHistoryEntry('old-prompt')];
+
+    const render = async () => {
+      await act(async () => {
+        root.render(<ImageViewer onClose={() => {}} />);
+      });
+      await flushEffects();
+    };
+
+    await render();
+    mocks.setViewerState.mockClear();
+
+    // History polling wins the race, after the prompt has already disappeared
+    // from running/pending but before queueWorkflow publishes its session map.
+    mocks.historyState.history = [
+      makeHistoryEntry('new-prompt', 'new.png'),
+      makeHistoryEntry('old-prompt'),
+    ];
+    await render();
+    expect(mocks.setViewerState.mock.calls.some(([next]) => (
+      (next.viewerImages as Array<Record<string, unknown>> | undefined)?.[0]?.filename === 'new.png'
+    ))).toBe(false);
+
+    // The next store update supplies the missing ownership information. The
+    // same history id must still be eligible for following at this point.
+    mocks.workflowState.promptToSession = { 'new-prompt': 'session-A' };
+    await render();
+
+    expect(mocks.setViewerState.mock.calls.some(([next]) => (
+      (next.viewerImages as Array<Record<string, unknown>> | undefined)?.[0]?.filename === 'new.png'
+    ))).toBe(true);
+  });
+
+  it('follows an older pending prompt after a prepended prompt overtakes it', async () => {
+    const render = async () => {
+      await act(async () => {
+        root.render(<ImageViewer onClose={() => {}} />);
+      });
+      await flushEffects();
+    };
+    const lastJumpFilename = () => {
+      const updates = mocks.setViewerState.mock.calls
+        .map(([next]) => next)
+        .filter((next) => Array.isArray(next.viewerImages) && next.viewerIndex === 0);
+      const images = updates.at(-1)?.viewerImages as Array<Record<string, unknown>> | undefined;
+      return images?.[0]?.filename ?? null;
+    };
+
+    mocks.historyState.history = [makeHistoryEntry('old', 'old.png')];
+    mocks.viewerState.viewerImages = [makeViewerImage('old', 'old.png')];
+    mocks.viewerState.viewerIndex = 0;
+    mocks.queueState.pending = [{ prompt_id: 'append-first' }];
+    mocks.queueState.localPromptOrder = { 'append-first': 1 };
+    await render();
+
+    // This prompt was submitted later but ComfyUI executes it first because it
+    // was put at the front. Merely seeing both prompts pending must not freeze
+    // their eventual completion order.
+    mocks.queueState.running = [{ prompt_id: 'front' }];
+    mocks.queueState.pending = [{ prompt_id: 'append-first' }];
+    mocks.queueState.localPromptOrder = { 'append-first': 1, front: 2 };
+    await render();
+    mocks.queueState.livePromptOutputs = {
+      front: [{ filename: 'front.png', subfolder: '', type: 'output' }],
+    };
+    await render();
+    expect(lastJumpFilename()).toBe('front.png');
+
+    // The original pending prompt now completes after the front item. Follow
+    // Queue must advance again even though it was submitted/observed earlier.
+    mocks.historyState.history = [
+      makeHistoryEntry('front', 'front.png'),
+      ...mocks.historyState.history,
+    ];
+    mocks.queueState.running = [{ prompt_id: 'append-first' }];
+    mocks.queueState.pending = [];
+    mocks.queueState.livePromptOutputs = {};
+    await render();
+    mocks.queueState.livePromptOutputs = {
+      'append-first': [{ filename: 'append-first.png', subfolder: '', type: 'output' }],
+    };
+    await render();
+
+    expect(lastJumpFilename()).toBe('append-first.png');
   });
 
   it('shows live video outputs before history refresh when follow queue is active', async () => {
@@ -439,21 +610,70 @@ describe('ImageViewer follow queue mode', () => {
     });
   });
 
-  function makeViewerImage(promptId?: string) {
+  function makeViewerImage(promptId?: string, filename = 'first.png') {
     return {
-      src: '/api/view?filename=first.png&subfolder=&type=output',
+      src: `/api/view?filename=${filename}&subfolder=&type=output`,
       alt: 'x',
       mediaType: 'image' as const,
       promptId,
-      filename: 'first.png',
+      filename,
       file: {
-        id: 'output/first.png',
-        name: 'first.png',
+        id: `output/${filename}`,
+        name: filename,
         type: 'image' as const,
-        fullUrl: '/api/view?filename=first.png&subfolder=&type=output',
+        fullUrl: `/api/view?filename=${filename}&subfolder=&type=output`,
       },
     };
   }
+
+  it('loads more history near the end of a queue viewer even when follow mode is off', async () => {
+    mocks.workflowState.followQueue = false;
+    mocks.historyState.history = Array.from({ length: 40 }, (_, index) =>
+      makeHistoryEntry(`prompt-${index}`, `image-${index}.png`));
+    mocks.viewerState.viewerImages = Array.from({ length: 40 }, (_, index) =>
+      makeViewerImage(`prompt-${index}`, `image-${index}.png`));
+    mocks.viewerState.viewerIndex = 36;
+
+    await act(async () => {
+      root.render(<ImageViewer onClose={() => {}} />);
+    });
+    await flushEffects();
+
+    const props = mocks.mediaViewerProps.at(-1) as {
+      onIndexChange?: (nextIndex: number) => void;
+    };
+    await act(async () => {
+      props.onIndexChange?.(37);
+    });
+    await act(async () => {
+      root.render(<ImageViewer onClose={() => {}} />);
+    });
+    await flushEffects();
+
+    expect(mocks.historyState.loadMoreHistory).toHaveBeenCalledWith(5);
+
+    mocks.setViewerState.mockClear();
+    mocks.historyState.historyLimit = 45;
+    mocks.historyState.history = [
+      makeHistoryEntry('newly-completed', 'newly-completed.png'),
+      ...mocks.historyState.history,
+      ...Array.from({ length: 4 }, (_, offset) => {
+        const index = 40 + offset;
+        return makeHistoryEntry(`prompt-${index}`, `image-${index}.png`);
+      }),
+    ];
+    await act(async () => {
+      root.render(<ImageViewer onClose={() => {}} />);
+    });
+    await flushEffects();
+
+    const expandedImages = mocks.setViewerState.mock.calls
+      .map(([next]) => next.viewerImages as Array<Record<string, unknown>> | undefined)
+      .find((viewerImages) => viewerImages?.length === 44);
+    expect(expandedImages?.[43]?.filename).toBe('image-43.png');
+    expect(expandedImages?.some((image) => image.filename === 'newly-completed.png')).toBe(false);
+    expect(mocks.viewerState.viewerIndex).toBe(37);
+  });
 
   async function confirmDeleteFromViewer(item: ReturnType<typeof makeViewerImage>) {
     // Drive the delete: MediaViewer's onDelete sets the target, then the

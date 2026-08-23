@@ -9,6 +9,7 @@ import {
   controlStateClassName,
 } from "./controlStyles";
 import { useI18n } from "@/i18n";
+import { FullscreenWidgetModal } from "../modals/FullscreenWidgetModal";
 
 interface NumberControlProps {
   containerClass?: string;
@@ -27,6 +28,8 @@ interface NumberControlProps {
   hasError?: boolean;
   isPromoted?: boolean;
   labelAccessory?: ReactNode;
+  forceModalOpen?: boolean;
+  onModalClose?: () => void;
   // Reserved for future seed mode UI
   seedMode?: "fixed" | "randomize" | "increment" | "decrement";
   onSeedModeChange?: (
@@ -50,6 +53,8 @@ export function NumberControl({
   hasError = false,
   isPromoted = false,
   labelAccessory,
+  forceModalOpen = false,
+  onModalClose,
 }: NumberControlProps) {
   const { t } = useI18n();
   const [localValue, setLocalValue] = useState(String(value || 0));
@@ -102,7 +107,7 @@ export function NumberControl({
     .filter(Boolean)
     .join(" ");
 
-  return (
+  const control = (
     <div className={`${containerClass ?? ""} number-control-${name} pt-2`}>
       {!hideLabel && (
         <label className={`${controlLabelClassName} mb-1`}>
@@ -150,5 +155,17 @@ export function NumberControl({
         </button>
       </div>
     </div>
+  );
+
+  if (!forceModalOpen) return control;
+  return (
+    <FullscreenWidgetModal
+      isOpen
+      title={name}
+      onClose={() => onModalClose?.()}
+      viewerSidebar
+    >
+      {control}
+    </FullscreenWidgetModal>
   );
 }

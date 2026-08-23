@@ -6,9 +6,10 @@ PNG) that still streamed several MB and decoded a 14-megapixel image on the
 phone, which is what made opening/swiping lag.
 
 This renders a preview capped to the device's screen size (longest edge), and
-caches the result on disk keyed by file identity + max edge so the expensive
-source decode happens at most once per (image, size). Heavy deps (PIL) are
-imported lazily so importing this module stays cheap.
+caches the result on disk keyed by source-file identity + max edge so the
+expensive source decode happens at most once per (image, size), without allowing
+a replaced file at the same path to inherit the prior file's preview. Heavy deps
+(PIL) are imported lazily so importing this module stays cheap.
 """
 
 import hashlib
@@ -16,6 +17,7 @@ import io
 import os
 
 import binary_cache_io as _binary_cache_io
+import file_utils as _file_utils
 
 DEFAULT_MAX_EDGE = 2048
 MIN_MAX_EDGE = 256
@@ -43,8 +45,8 @@ def _cache_dir():
 def _cache_path(file_path, max_edge):
     try:
         stat = os.stat(file_path)
-        key = '{}|{}|{}|{}'.format(
-            os.path.abspath(file_path), int(stat.st_mtime), stat.st_size, max_edge
+        key = '{}|{}|{}'.format(
+            os.path.abspath(file_path), _file_utils.file_cache_token(stat), max_edge
         )
     except OSError:
         key = '{}|{}'.format(os.path.abspath(file_path), max_edge)
@@ -96,7 +98,8 @@ def get_or_render(file_path, max_edge):
     if cached is not None:
         return cached
     # Collapse concurrent misses for the same preview to a single render.
-    with _binary_cache_io.render_lock(_cache_path(file_path, max_edge)):
+    cache_path = _cache_path(file_path, max_edge)
+    with _binary_cache_io.render_lock(cache_path):
         cached = get_cached(file_path, max_edge)
         if cached is not None:
             return cached

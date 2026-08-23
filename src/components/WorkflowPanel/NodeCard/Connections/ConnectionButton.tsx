@@ -5,6 +5,7 @@ import { getScopedWorkflowView } from '@/utils/canonicalWorkflowOps';
 import { useWorkflowStore } from '@/hooks/useWorkflow';
 import { useI18n } from '@/i18n';
 import { useConnectionSectionFoldsStore } from '@/hooks/useConnectionSectionFolds';
+import { useLongPress } from '@/hooks/useLongPress';
 import { connectionButtonDomId } from '@/utils/connectionFlash';
 import { findConnectedNode, findConnectedOutputNodes } from '@/utils/nodeOrdering';
 import { ConnectionModal } from '@/components/modals/ConnectionModal';
@@ -173,9 +174,6 @@ export const ConnectionButton = memo(function ConnectionButton({
   const buttonRef = useRef<HTMLButtonElement>(null);
   const [menuPosition, setMenuPosition] = useState<{ top: number; right?: number; left?: number } | null>(null);
   const updatePositionRef = useRef<(() => void) | null>(null);
-  const longPressTimerRef = useRef<number | null>(null);
-  const pointerStartRef = useRef<{ x: number; y: number } | null>(null);
-  const longPressTriggeredRef = useRef(false);
 
   const resolvedLabel = useMemo(() => {
     const node = findWorkflowNodeInScope(workflow, nodeId, currentSubgraphId);
@@ -360,13 +358,6 @@ export const ConnectionButton = memo(function ConnectionButton({
   const hasConnection = connectionCount > 0 || isBoundaryConnection;
   const isEmptyRequiredInput = direction === 'input' && !hasConnection && isRequired;
 
-  const clearLongPress = useCallback(() => {
-    if (longPressTimerRef.current != null) {
-      window.clearTimeout(longPressTimerRef.current);
-      longPressTimerRef.current = null;
-    }
-  }, []);
-
   const getNodeHierarchicalKey = useCallback((targetNode: Workflow['nodes'][number]): string | null => {
     return targetNode.itemKey ?? null;
   }, []);
@@ -451,10 +442,8 @@ export const ConnectionButton = memo(function ConnectionButton({
   }, [scopeStack, workflow, exitSubgraph, navigateToConnectedNode]);
 
   const handleClick = () => {
-    if (longPressTriggeredRef.current) {
-      longPressTriggeredRef.current = false;
-      return;
-    }
+    // The click that follows a hold must not also act on the tap behaviour.
+    if (consumeLongPress()) return;
     // Boundary connection: exit subgraph to the placeholder node.
     if (isBoundaryConnection) {
       handleBoundaryClick();
@@ -481,32 +470,13 @@ export const ConnectionButton = memo(function ConnectionButton({
   // Long-press opens connection editor: populated inputs, or any output. Wireless
   // relays (Set output / Get input) have no link to edit here, so long-press is a
   // no-op for them.
-  const handlePointerDown = useCallback((event: React.PointerEvent) => {
-    if (isSetOutputRelay || isBroadcastOutput) return;
-    const canOpenByLongPress = direction === 'input' ? hasConnection : true;
-    if (!canOpenByLongPress) return;
-    pointerStartRef.current = { x: event.clientX, y: event.clientY };
-    longPressTriggeredRef.current = false;
-    longPressTimerRef.current = window.setTimeout(() => {
-      longPressTimerRef.current = null;
-      longPressTriggeredRef.current = true;
-      setConnectionModalOpen(true);
-    }, 500);
-  }, [direction, hasConnection, isSetOutputRelay, isBroadcastOutput]);
-
-  const handlePointerMove = useCallback((event: React.PointerEvent) => {
-    if (!pointerStartRef.current) return;
-    const dx = event.clientX - pointerStartRef.current.x;
-    const dy = event.clientY - pointerStartRef.current.y;
-    if (Math.hypot(dx, dy) > 8) {
-      clearLongPress();
-    }
-  }, [clearLongPress]);
-
-  const handlePointerUp = useCallback(() => {
-    clearLongPress();
-    pointerStartRef.current = null;
-  }, [clearLongPress]);
+  const { handlers: longPressHandlers, consumeLongPress } = useLongPress({
+    onLongPress: () => setConnectionModalOpen(true),
+    enabled:
+      !isSetOutputRelay &&
+      !isBroadcastOutput &&
+      (direction === 'input' ? hasConnection : true),
+  });
 
   const handleMenuNodeClick = (targetId: number) => (event: React.MouseEvent<HTMLButtonElement>) => {
     event.stopPropagation();
@@ -565,11 +535,6 @@ export const ConnectionButton = memo(function ConnectionButton({
       window.removeEventListener('resize', updatePosition);
     };
   }, [menuOpen]);
-
-  // Clean up long press on unmount
-  useEffect(() => {
-    return () => clearLongPress();
-  }, [clearLongPress]);
 
   const sizeClass = compact ? 'w-7 h-7' : 'w-10 h-10';
   const arrowClass = compact ? 'text-sm' : 'text-base';
@@ -665,9 +630,7 @@ export const ConnectionButton = memo(function ConnectionButton({
         ariaLabel={buttonAriaLabel}
         connectionCount={connectionCount}
         onClick={handleClick}
-        onPointerDown={handlePointerDown}
-        onPointerMove={handlePointerMove}
-        onPointerUp={handlePointerUp}
+        {...longPressHandlers}
       />
 
       {menuOpen && menuPosition && createPortal(

@@ -27,8 +27,9 @@ export function getImageUrl(
   explicitCacheToken?: string | number,
 ): string {
   const url = `/view?filename=${encodeURIComponent(filename)}&subfolder=${encodeURIComponent(subfolder)}&type=${encodeURIComponent(type)}`;
-  // Append a cache-bust token if this filename was deleted and (possibly) reused
-  // by a later generation, so the browser doesn't serve the stale deleted image.
+  // Prefer a descriptor's per-execution identity. Fall back to the local token
+  // bumped by in-app deletion, so either kind of filename reuse misses an older
+  // browser cache entry.
   const token = explicitCacheToken ?? getImageCacheToken(filename, subfolder, type);
   return token === undefined || token === ''
     ? url
@@ -108,8 +109,13 @@ export function getPlayableVideoUrl(assetUrl: string): string {
 // want the original file), videos (this param is image-only), or anywhere a
 // pixel-exact PNG is required. Metadata is unaffected — it's read server-side
 // from the original file via a separate endpoint.
-export function getImagePreviewUrl(filename: string, subfolder: string, type: string): string {
-  return withWebpPreview(getImageUrl(filename, subfolder, type));
+export function getImagePreviewUrl(
+  filename: string,
+  subfolder: string,
+  type: string,
+  explicitCacheToken?: string | number,
+): string {
+  return withWebpPreview(getImageUrl(filename, subfolder, type, explicitCacheToken));
 }
 
 // Queue cards can mount several previews while the rest of the application is
@@ -126,8 +132,12 @@ export function getQueueImagePreviewUrl(
   filename: string,
   subfolder: string,
   type: string,
+  explicitCacheToken?: string | number,
 ): string {
-  return withMobilePreview(getImageUrl(filename, subfolder, type), QUEUE_PREVIEW_MAX_EDGE);
+  return withMobilePreview(
+    getImageUrl(filename, subfolder, type, explicitCacheToken),
+    QUEUE_PREVIEW_MAX_EDGE,
+  );
 }
 
 // Append the WebP preview param to an existing `/view` URL. Same effect as

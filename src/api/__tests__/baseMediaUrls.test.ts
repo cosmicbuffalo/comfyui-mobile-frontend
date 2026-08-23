@@ -4,6 +4,7 @@ import {
   getMediaThumbnailUrl,
   getMediaThumbnailUrlFromAssetUrl,
   getPlayableVideoUrl,
+  getScreenPreviewUrl,
 } from '@/api/client/base';
 import { bustImageCache } from '@/utils/imageCacheBust';
 
@@ -11,6 +12,12 @@ describe('media thumbnail URLs', () => {
   it('routes queue images through the bounded mobile preview cache', () => {
     expect(getQueueImagePreviewUrl('image one.png', 'nested/folder', 'output')).toBe(
       '/mobile/api/preview?filename=image%20one.png&subfolder=nested%2Ffolder&type=output&maxedge=1280',
+    );
+  });
+
+  it('gives each queue execution its own preview-cache identity', () => {
+    expect(getQueueImagePreviewUrl('reused.png', '', 'output', 'prompt-new')).toBe(
+      '/mobile/api/preview?filename=reused.png&subfolder=&type=output&cb=prompt-new&maxedge=1280',
     );
   });
 
@@ -26,6 +33,15 @@ describe('media thumbnail URLs', () => {
     )).toBe(
       '/mobile/api/thumbnail?filename=clip.mp4&subfolder=video%2F2026&source=output&cb=123',
     );
+  });
+
+  it('preserves a listed file identity in the Outputs viewer preview', () => {
+    const url = getScreenPreviewUrl(
+      '/view?filename=reused.png&subfolder=&type=output&cb=current-file',
+    );
+
+    expect(url).toContain('/mobile/api/preview?');
+    expect(url).toContain('&cb=current-file&');
   });
 
   it('cache-busts direct thumbnail URLs when a filename is reused', () => {

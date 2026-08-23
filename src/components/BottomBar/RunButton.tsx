@@ -1,8 +1,12 @@
-import { useEffect } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import type { MouseEvent } from 'react';
 import { useWorkflowStore } from '@/hooks/useWorkflow';
 import { useQueueStore } from '@/hooks/useQueue';
+import { useLongPress } from '@/hooks/useLongPress';
 import { appChromePrimaryButtonClassName, appChromePrimaryButtonDisabledClassName } from '@/components/chromeStyles';
 import { useI18n } from '@/i18n';
+
+const FRONT_QUEUE_CONFIRMATION_MS = 1800;
 
 export function RunButton() {
   const { t } = useI18n();
@@ -40,15 +44,58 @@ export function RunButton() {
     }
   }, [hasActiveRun, isStopping, setIsStopping]);
 
-  const handleRun = () => {
+  const frontConfirmationTimerRef = useRef<number | null>(null);
+  const [showFrontConfirmation, setShowFrontConfirmation] = useState(false);
+
+  const clearFrontConfirmationTimer = useCallback(() => {
+    if (frontConfirmationTimerRef.current !== null) {
+      window.clearTimeout(frontConfirmationTimerRef.current);
+      frontConfirmationTimerRef.current = null;
+    }
+  }, []);
+
+  const confirmFrontQueue = useCallback(() => {
+    clearFrontConfirmationTimer();
+    setShowFrontConfirmation(true);
+    frontConfirmationTimerRef.current = window.setTimeout(() => {
+      frontConfirmationTimerRef.current = null;
+      setShowFrontConfirmation(false);
+    }, FRONT_QUEUE_CONFIRMATION_MS);
+  }, [clearFrontConfirmationTimer]);
+
+  const handleRun = useCallback(async (queueFront = false) => {
     if (canRun) {
       setIsStopping(false);
-      queueWorkflow(infiniteLoop ? 1 : runCount);
+      const queuePromise = queueFront
+        ? queueWorkflow(infiniteLoop ? 1 : runCount, undefined, false, true)
+        : queueWorkflow(infiniteLoop ? 1 : runCount);
       if ('vibrate' in navigator) {
         navigator.vibrate(20);
       }
+      const queued = await queuePromise;
+      if (queueFront && queued) confirmFrontQueue();
     }
+  }, [canRun, confirmFrontQueue, infiniteLoop, queueWorkflow, runCount, setIsStopping]);
+
+  // Long-press queues at the front of the queue instead of appending.
+  const { handlers: longPressHandlers, consumeLongPress } = useLongPress({
+    onLongPress: () => { void handleRun(true); },
+    enabled: canRun && !isLoading,
+  });
+
+  const handleRunClick = (event: MouseEvent<HTMLButtonElement>) => {
+    // A real pointer click follows pointerup. Once the hold already submitted,
+    // consume that click so release cannot also append the same run. Keyboard
+    // activation has detail=0 and remains a normal append action.
+    const triggered = consumeLongPress();
+    if (event.detail !== 0 && triggered) {
+      event.preventDefault();
+      return;
+    }
+    void handleRun();
   };
+
+  useEffect(() => clearFrontConfirmationTimer, [clearFrontConfirmationTimer]);
 
   const handleStop = async () => {
     if (isStopping) return;
@@ -60,28 +107,48 @@ export function RunButton() {
     }
   };
 
+  const frontConfirmation = showFrontConfirmation ? (
+    <div
+      role="status"
+      aria-live="polite"
+      className="pointer-events-none absolute bottom-full left-1/2 z-[2100] mb-2 -translate-x-1/2 whitespace-nowrap rounded-lg border border-cyan-200/60 bg-cyan-400 px-3 py-1.5 text-xs font-semibold text-slate-950 shadow-lg animate-in fade-in slide-in-from-bottom-2 duration-200"
+    >
+      {t('Queued at front')}
+      <span className="absolute left-1/2 top-full -translate-x-1/2 border-x-[6px] border-t-[6px] border-x-transparent border-t-cyan-400" />
+    </div>
+  ) : null;
+
   if (showStop) {
     return (
+      <div className="relative min-w-0 flex-1">
+        {frontConfirmation}
       <button
         onClick={handleStop}
         disabled={isStopping}
-        className="flex-1 py-3 px-6 rounded-xl font-semibold text-lg min-h-[48px] transition-all bg-red-500 text-white active:bg-red-600 disabled:opacity-70"
+        className="w-full py-3 px-6 rounded-xl font-semibold text-lg min-h-[48px] transition-all bg-red-500 text-white active:bg-red-600 disabled:opacity-70"
       >
         {isStopping ? 'Stopping...' : 'Stop'}
       </button>
+      </div>
     );
   }
 
   return (
+    <div className="relative min-w-0 flex-1">
+      {frontConfirmation}
     <button
-      onClick={handleRun}
+      onClick={handleRunClick}
+      {...longPressHandlers}
+      onContextMenu={(event) => event.preventDefault()}
       disabled={!canRun || isLoading}
       aria-busy={isLoading}
+      aria-description={t('Tap to queue; hold to run next')}
+      title={t('Tap to queue; hold to run next')}
       // The visible "Queueing..." label is desktop-only (see below), so on a
       // phone the button would otherwise have no accessible name while loading.
       aria-label={isLoading ? 'Queueing...' : undefined}
       className={
-        `flex-1 py-3 px-6 rounded-xl font-semibold text-lg min-h-[48px] transition-all `
+        `w-full select-none py-3 px-6 rounded-xl font-semibold text-lg min-h-[48px] transition-all `
         + (canRun && !isLoading
           ? appChromePrimaryButtonClassName
           : appChromePrimaryButtonDisabledClassName)
@@ -103,5 +170,6 @@ export function RunButton() {
         )}
       </span>
     </button>
+    </div>
   );
 }
