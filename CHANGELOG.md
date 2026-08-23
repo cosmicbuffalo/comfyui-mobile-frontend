@@ -1,5 +1,27 @@
 # Changelog
 
+## 3.2.4 - 2026-08-23
+
+### Added
+
+- **Overall prompt progress on `/mobile/ws/progress`** — `nodes_total`, `nodes_done` and the executing `node_name` alongside `value`/`max`, so a single progress bar counts finished nodes instead of resetting on every node. Cached nodes count as done
+- **Long-press Run to queue at the front.** Multi-run batches keep their seed/run order, and their pending cards sit immediately above the active generation
+- **File moves ask before overwriting.** A name already in the destination offers **Keep Both** or **Overwrite**, with apply-to-all for batches. Two files in the same move sharing a name are auto-suffixed without asking
+
+### Fixed
+
+- **Follow Queue advances reliably as prompts finish**, including fast history/session handoffs, prepended and infinite-loop runs, and work queued after the viewer was already open
+- **Queue/history cards start unfolded** unless you folded them yourself
+- **The queue image viewer keeps paging backward through history** instead of stopping at the first page
+- **Pinned widgets share one editor state**, so the bottom pin button closes the open editor rather than stacking another. Numeric widgets now render there, and unsupported controls are no longer offered as pins
+- **Full-screen widget editors close when their backdrop is tapped**
+- **Combo/model searches stay usable above the iOS keyboard** — results scroll to the end, and dismissing the keyboard keeps the filter
+- **No more stale thumbnails or previews after a file is moved, renamed or replaced.** Cache identity now folds in ctime and inode, and each generation carries its own browser-cache token
+
+### Notes
+
+- Server-side groundwork for Live Activity support in the CueForge iOS app
+
 ## 3.2.3 - 2026-08-17
 
 ### Changed

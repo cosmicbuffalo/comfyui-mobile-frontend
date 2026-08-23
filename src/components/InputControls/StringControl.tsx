@@ -89,6 +89,8 @@ interface StringControlProps {
   hasError?: boolean;
   isPromoted?: boolean;
   forceModalOpen?: boolean;
+  /** Route modal opening through a parent-owned editor when provided. */
+  onRequestModalOpen?: () => void;
   onModalClose?: () => void;
   labelAccessory?: ReactNode;
 }
@@ -108,6 +110,7 @@ export function StringControl({
   isPromoted = false,
   labelAccessory,
   forceModalOpen = false,
+  onRequestModalOpen,
   onModalClose
 }: StringControlProps) {
   const getOption = (key: string): unknown => {
@@ -172,6 +175,15 @@ export function StringControl({
     onModalClose?.();
   };
 
+  const handleOpen = () => {
+    if (disabled) return;
+    if (onRequestModalOpen) {
+      onRequestModalOpen();
+      return;
+    }
+    setInternalModalOpen(true);
+  };
+
   if (useModalFlow) {
     return (
       // The top padding sits on the container so it applies to the multiline
@@ -204,7 +216,7 @@ export function StringControl({
             </div>
             <div
               className={`relative ${controlInputBaseClassName} min-h-[100px] group cursor-text ${hasPin ? 'pr-10' : ''} ${controlStateClassName({ disabled, hasError, isPromoted })}`}
-              onClick={() => !disabled && setInternalModalOpen(true)}
+              onClick={handleOpen}
             >
               <div
                 className="whitespace-pre-wrap break-words text-slate-100"
@@ -236,7 +248,7 @@ export function StringControl({
             )}
             <div
               className={`relative ${controlInputBaseClassName} min-h-[46px] flex items-center cursor-text ${hasPin ? 'pr-16' : 'pr-6'} ${controlStateClassName({ disabled, hasError, isPromoted })}`}
-              onClick={() => !disabled && setInternalModalOpen(true)}
+              onClick={handleOpen}
             >
               <div
                 className="truncate min-w-0 flex-1 text-slate-100"

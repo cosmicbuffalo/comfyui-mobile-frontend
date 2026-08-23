@@ -172,15 +172,20 @@ function QueueMediaEntry({
   // glyph. A display failure never mutates history: a transient network or
   // browser decoding failure is not proof that the underlying output is gone.
   const [mediaError, setMediaError] = useState(false);
-  const src = entry.rawSrc ?? getImageUrl(img.filename, img.subfolder, img.type);
+  const src = entry.rawSrc ?? getImageUrl(
+    img.filename,
+    img.subfolder,
+    img.type,
+    img.cacheToken,
+  );
   const videoPosterSrc = isVideo
-    ? getMediaThumbnailUrl(img.filename, img.subfolder, img.type)
+    ? getMediaThumbnailUrl(img.filename, img.subfolder, img.type, img.cacheToken)
     : null;
   const baseDisplaySrc = isLatent
     ? entry.rawSrc!
     : isVideo
       ? videoPosterSrc!
-      : getQueueImagePreviewUrl(img.filename, img.subfolder, img.type);
+      : getQueueImagePreviewUrl(img.filename, img.subfolder, img.type, img.cacheToken);
   const [imageRetryAttempt, setImageRetryAttempt] = useState(0);
   const [usingOriginalFallback, setUsingOriginalFallback] = useState(false);
   const retryTimerRef = useRef<number | null>(null);
@@ -427,7 +432,12 @@ function QueueMediaEntry({
         <>
           <video
             src={getPlayableVideoUrl(src)}
-            poster={getMediaThumbnailUrl(img.filename, img.subfolder, img.type)}
+            poster={getMediaThumbnailUrl(
+              img.filename,
+              img.subfolder,
+              img.type,
+              img.cacheToken,
+            )}
             className="w-full h-auto block"
             style={mediaElementStyle}
             muted
@@ -788,11 +798,23 @@ function QueueCardComponent({
   // 1920x1080 output correctly. One batched request per card, only for outputs
   // whose size we can't already vouch for.
   const historyImages = isHistoryEntryData(item.data) ? item.data.outputs.images : null;
+  const isPending = item.status === 'pending' && !isActuallyRunning;
+  const isRunning = item.status === 'running' || isActuallyRunning;
+  const isGenerating = isRunning && !isCompleting;
+  const isDone = item.status === 'done';
   const hasStoredExpanded = queueItemExpanded !== undefined;
-  const expanded = hasStoredExpanded ? queueItemExpanded : false;
+  // Running and completed items are open by default regardless of whether the
+  // queue panel was visible when their status changed. Only an explicit user
+  // fold (the per-item toggle marker paired with `false`) can keep one closed.
+  // Pending items retain the compact default unless prompt previews are on or
+  // the user previously opened them.
+  const defaultExpanded = isRunning || isDone || showPromptPreview;
+  const expanded = queueItemUserToggled
+    ? (queueItemExpanded ?? defaultExpanded)
+    : defaultExpanded || queueItemExpanded === true;
   useEffect(() => {
-    // Only for a card the user can actually see the badge on. A long history
-    // is mostly collapsed cards, and each would otherwise cost a request.
+    // Only for a card the user can actually see the badge on. An explicitly
+    // folded card should not spend a request on hidden resolution metadata.
     if (!expanded) return;
     if (!historyImages || historyImages.length === 0) return;
     // Any still the card can label, not just type 'output': PreviewImage nodes
@@ -802,7 +824,7 @@ function QueueCardComponent({
     );
     if (wanted.length === 0) return;
     const missing = wanted.filter((img) => {
-      const src = getImageUrl(img.filename, img.subfolder, img.type);
+      const src = getImageUrl(img.filename, img.subfolder, img.type, img.cacheToken);
       return !outputDimensions[src]?.exact;
     });
     if (missing.length === 0) return;
@@ -831,7 +853,7 @@ function QueueCardComponent({
           const size = byPath[rel];
           if (!size) continue;
           recordDimensions(
-            getImageUrl(img.filename, img.subfolder, img.type),
+            getImageUrl(img.filename, img.subfolder, img.type, img.cacheToken),
             size.width,
             size.height,
             'exact',
@@ -845,10 +867,6 @@ function QueueCardComponent({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [historyImages, expanded]);
 
-  const isPending = item.status === 'pending' && !isActuallyRunning;
-  const isRunning = item.status === 'running' || isActuallyRunning;
-  const isGenerating = isRunning && !isCompleting;
-  const isDone = item.status === 'done';
   const queuedWorkflow = useMemo(() => getQueuedWorkflow(item.data), [item.data]);
   const queuedWorkflowLabel = useMemo(() => getQueuedWorkflowLabel(item.data), [item.data]);
   const owningWorkflow = useWorkflowStore(
@@ -886,7 +904,6 @@ function QueueCardComponent({
     ?? owningWorkflow.label
     ?? t('Untitled');
 
-  const prevIsDoneRef = useRef(isDone);
   // The default below is written at most once per mounted card. Without this,
   // losing the stored entry makes the card write it straight back — and since
   // the store caps these maps, a queue with more mounted cards than the cap
@@ -896,41 +913,26 @@ function QueueCardComponent({
   useEffect(() => {
     if (!hasStoredExpanded && !wroteDefaultExpandedRef.current) {
       wroteDefaultExpandedRef.current = true;
-      // History entries already default open when they are hydrated. Do the
-      // same for a newly observed pending/running item so its progress, prompt
-      // preview, and inputs are visible before completion when that feature is
-      // enabled. Preserve the previous compact default otherwise, and once a
-      // value is stored leave explicit per-card / "Collapse all" choices alone.
-      setQueueItemExpanded(item.id, showPromptPreview);
+      setQueueItemExpanded(item.id, expanded);
     } else if (
       hasStoredExpanded &&
-      showPromptPreview &&
-      !isDone &&
-      !expanded &&
-      !queueItemUserToggled
+      !queueItemUserToggled &&
+      queueItemExpanded !== expanded
     ) {
-      // The card may have mounted while the preference was off (including
-      // before async persisted-state hydration finished), which stores the
-      // automatic compact default above. Reveal active prompt content when the
-      // preference subsequently turns on, but never override an explicit fold.
-      setQueueItemExpanded(item.id, true);
+      // Replace stale automatic state when a pending item starts running, an
+      // item completes outside the queue panel, or prompt previews turn on.
+      // Explicit per-card and Fold All choices are marked separately above and
+      // are never overridden here.
+      setQueueItemExpanded(item.id, expanded);
     }
   }, [
     expanded,
     hasStoredExpanded,
-    isDone,
     item.id,
+    queueItemExpanded,
     queueItemUserToggled,
     setQueueItemExpanded,
-    showPromptPreview,
   ]);
-
-  useEffect(() => {
-    if (!prevIsDoneRef.current && isDone && !queueItemUserToggled) {
-      setQueueItemExpanded(item.id, true);
-    }
-    prevIsDoneRef.current = isDone;
-  }, [isDone, item.id, queueItemUserToggled, setQueueItemExpanded]);
 
   useEffect(() => {
     playedVideoSources.current.clear();
@@ -1045,11 +1047,6 @@ function QueueCardComponent({
     }
   }, [item.id]);
 
-  useEffect(() => {
-    if (!isRunning || (visibleImages.length === 0 && !latentUrl) || expanded || queueItemUserToggled) return;
-    setQueueItemExpanded(item.id, true);
-  }, [expanded, isRunning, item.id, latentUrl, queueItemUserToggled, setQueueItemExpanded, visibleImages.length]);
-
   const placeholderClass ='aspect-square w-full bg-slate-950/80 flex flex-col items-center justify-center text-slate-400';
   const durationSeconds = historyData?.durationSeconds ?? completionDurationSeconds;
   const hasCompleted = isDone || completionDurationSeconds !== undefined;
@@ -1070,10 +1067,10 @@ function QueueCardComponent({
 
   const cardViewerImages = useMemo(() => (
     visibleImages.map((img: HistoryOutputImage) => ({
-      src: getImageUrl(img.filename, img.subfolder, img.type),
+      src: getImageUrl(img.filename, img.subfolder, img.type, img.cacheToken),
       displaySrc: isVideoFilename(img.filename)
         ? undefined
-        : getQueueImagePreviewUrl(img.filename, img.subfolder, img.type),
+        : getQueueImagePreviewUrl(img.filename, img.subfolder, img.type, img.cacheToken),
       alt: t('Generation'),
       mediaType: getMediaType(img.filename)
     }))
@@ -1089,7 +1086,7 @@ function QueueCardComponent({
     if (!expanded) return;
     let cancelled = false;
     visibleImages.forEach((img: HistoryOutputImage) => {
-      const src = getImageUrl(img.filename, img.subfolder, img.type);
+      const src = getImageUrl(img.filename, img.subfolder, img.type, img.cacheToken);
       if (sizeFetchRef.current.has(src)) return;
       sizeFetchRef.current.add(src);
       fetch(src, { method: 'HEAD' })
@@ -1119,7 +1116,9 @@ function QueueCardComponent({
     const right = Math.max(8, window.innerWidth - rect.right);
     const menuSourceImages = savedImages.length > 0 ? savedImages : visibleImages;
     const menuImages = menuSourceImages.map(
-      (img: HistoryOutputImage) => getImageUrl(img.filename, img.subfolder, img.type),
+      (img: HistoryOutputImage) => (
+        getImageUrl(img.filename, img.subfolder, img.type, img.cacheToken)
+      ),
     );
     const firstSrc = menuImages[0] || '';
     onOpenMenu({
@@ -1271,6 +1270,7 @@ function QueueCardComponent({
       activeMediaTab.img.filename,
       activeMediaTab.img.subfolder,
       activeMediaTab.img.type,
+      activeMediaTab.img.cacheToken,
     )
     : null;
   const wantsQueueVideoPlayback = Boolean(
@@ -1408,7 +1408,12 @@ function QueueCardComponent({
     const { slotA: liveA, slotB: liveB, frontSlot: liveFront } = slotsRef.current;
     const back = liveFront === 'A' ? liveB : liveA;
     if (!back || back.rawSrc || !isVideoFilename(back.img.filename)) return;
-    if (getImageUrl(back.img.filename, back.img.subfolder, back.img.type) !== src) return;
+    if (getImageUrl(
+      back.img.filename,
+      back.img.subfolder,
+      back.img.type,
+      back.img.cacheToken,
+    ) !== src) return;
     promoteBack(back.key);
   }, [promoteBack]);
 
@@ -1501,7 +1506,12 @@ function QueueCardComponent({
     if (!shouldActivateQueueVideo) return;
     const slotImg = activeMediaTab?.img;
     if (!slotImg || !isVideoFilename(slotImg.filename)) return;
-    const src = getImageUrl(slotImg.filename, slotImg.subfolder, slotImg.type);
+    const src = getImageUrl(
+      slotImg.filename,
+      slotImg.subfolder,
+      slotImg.type,
+      slotImg.cacheToken,
+    );
     if (playedVideoSources.current.has(src)) {
       // play() is skipped (typically a naturally-ended video being revisited,
       // which keeps its guard so the replay overlay shows). Nothing will fire
@@ -1574,11 +1584,17 @@ function QueueCardComponent({
         activeMediaTab.img.filename,
         activeMediaTab.img.subfolder,
         activeMediaTab.img.type,
+        activeMediaTab.img.cacheToken,
       ));
     }
     for (const entry of [slotA, slotB]) {
       if (!entry || entry.rawSrc || !isVideoFilename(entry.img.filename)) continue;
-      liveSrcs.add(getImageUrl(entry.img.filename, entry.img.subfolder, entry.img.type));
+      liveSrcs.add(getImageUrl(
+        entry.img.filename,
+        entry.img.subfolder,
+        entry.img.type,
+        entry.img.cacheToken,
+      ));
     }
     for (const src of [...playedVideoSources.current]) {
       if (!liveSrcs.has(src) && !endedVideoSources.has(src)) {
@@ -1588,11 +1604,16 @@ function QueueCardComponent({
   }, [slotA, slotB, endedVideoSources, queueOutputLayout, activeMediaTab]);
   const promptInputImages = useMemo<PromptPreviewInputImage[]>(
     () => inputMediaEntries.map(({ img, index }) => {
-      const src = getImageUrl(img.filename, img.subfolder, img.type);
+      const src = getImageUrl(img.filename, img.subfolder, img.type, img.cacheToken);
       return {
         key: `input-${index}`,
         src,
-        displaySrc: getQueueImagePreviewUrl(img.filename, img.subfolder, img.type),
+        displaySrc: getQueueImagePreviewUrl(
+          img.filename,
+          img.subfolder,
+          img.type,
+          img.cacheToken,
+        ),
         fileId: getHistoryImageFileId(img),
         index,
       };
@@ -1644,7 +1665,12 @@ function QueueCardComponent({
   // The props every QueueMediaEntry needs, derived per media tab. Shared by the
   // tabbed slot and the stacked column/row so the overlay badges stay identical.
   const mediaEntryCommonProps = (tab: MediaTab) => {
-    const src = getImageUrl(tab.img.filename, tab.img.subfolder, tab.img.type);
+    const src = getImageUrl(
+      tab.img.filename,
+      tab.img.subfolder,
+      tab.img.type,
+      tab.img.cacheToken,
+    );
     const fileId = getHistoryImageFileId(tab.img);
     const sizeBytes = outputFileSizes[src];
     return {
@@ -1772,7 +1798,12 @@ function QueueCardComponent({
                 // shrink, no horizontal scroll); mobile stacks them in a column.
                 <div className={isDesktop ? 'flex flex-nowrap items-start justify-center gap-1' : 'flex flex-col gap-1'}>
                   {mediaTabs.map((tab) => {
-                    const stackSrc = tab.rawSrc ?? getImageUrl(tab.img.filename, tab.img.subfolder, tab.img.type);
+                    const stackSrc = tab.rawSrc ?? getImageUrl(
+                      tab.img.filename,
+                      tab.img.subfolder,
+                      tab.img.type,
+                      tab.img.cacheToken,
+                    );
                     const stackDims = outputDimensions[stackSrc];
                     const aspect = stackDims && stackDims.h > 0 ? stackDims.w / stackDims.h : 1;
                     if (isDesktop) {
@@ -1886,7 +1917,12 @@ function QueueCardComponent({
                         >
                           {isVideoThumb ? (
                             <img
-                              src={getMediaThumbnailUrl(tab.img.filename, tab.img.subfolder, tab.img.type)}
+                              src={getMediaThumbnailUrl(
+                                tab.img.filename,
+                                tab.img.subfolder,
+                                tab.img.type,
+                                tab.img.cacheToken,
+                              )}
                               alt={tab.label}
                               loading="lazy"
                               decoding="async"
@@ -1894,7 +1930,12 @@ function QueueCardComponent({
                             />
                           ) : (
                             <img
-                              src={tab.rawSrc ?? getQueueImagePreviewUrl(tab.img.filename, tab.img.subfolder, tab.img.type)}
+                              src={tab.rawSrc ?? getQueueImagePreviewUrl(
+                                tab.img.filename,
+                                tab.img.subfolder,
+                                tab.img.type,
+                                tab.img.cacheToken,
+                              )}
                               alt={tab.label}
                               loading="lazy"
                               className="block h-16 w-20 object-cover"

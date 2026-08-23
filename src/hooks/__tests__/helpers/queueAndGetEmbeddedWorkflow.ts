@@ -3,7 +3,9 @@ import type { Workflow } from '@/api/types';
 import type { PromptQueueRequest } from '@/api/client';
 import { useWorkflowStore } from '@/hooks/useWorkflow';
 
-export async function queueAndGetPromptRequest(): Promise<PromptQueueRequest> {
+export async function queueAndGetPromptRequest(
+  queueFront = false,
+): Promise<PromptQueueRequest> {
   const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
     const url = String(input);
     if (url.includes('/api/queue')) {
@@ -19,7 +21,7 @@ export async function queueAndGetPromptRequest(): Promise<PromptQueueRequest> {
   });
   vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch);
 
-  await useWorkflowStore.getState().queueWorkflow(1);
+  await useWorkflowStore.getState().queueWorkflow(1, undefined, false, queueFront);
   const promptCall = fetchMock.mock.calls.find(([input]) =>
     String(input).includes('/api/prompt')
   );

@@ -30,7 +30,10 @@ interface ConnectionRowProps {
   onClick: () => void;
   onPointerDown?: (event: ReactPointerEvent) => void;
   onPointerMove?: (event: ReactPointerEvent) => void;
-  onPointerUp?: () => void;
+  // The event matters: the long-press hook matches it against the pointer it
+  // captured, so a second finger can't end the first one's hold.
+  onPointerUp?: (event: ReactPointerEvent) => void;
+  onPointerCancel?: (event: ReactPointerEvent) => void;
 }
 
 export function ConnectionRow({
@@ -53,7 +56,8 @@ export function ConnectionRow({
   onClick,
   onPointerDown,
   onPointerMove,
-  onPointerUp
+  onPointerUp,
+  onPointerCancel
 }: ConnectionRowProps) {
   const isInput = direction === 'input';
   const isVisuallyDisabled = isInput ? (!hasConnection && !isEmptyRequiredInput) : false;
@@ -89,7 +93,7 @@ export function ConnectionRow({
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
-        onPointerCancel={onPointerUp}
+        onPointerCancel={onPointerCancel ?? onPointerUp}
         disabled={false}
         ref={buttonRef}
         className={`

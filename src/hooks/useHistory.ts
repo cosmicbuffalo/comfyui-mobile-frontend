@@ -36,6 +36,19 @@ function historySignature(entries: HistoryEntry[]): string {
   return parts.join('|');
 }
 
+// History hydration can encounter a stale automatic `false` written while an
+// item was still pending. Completed items default open; only the separate user
+// toggle marker makes a stored fold authoritative.
+function ensureHistoryItemExpandedByDefault(promptId: string): void {
+  const queueStore = useQueueStore.getState();
+  if (
+    !queueStore.queueItemUserToggled[promptId] &&
+    queueStore.queueItemExpanded[promptId] !== true
+  ) {
+    queueStore.setQueueItemExpanded(promptId, true);
+  }
+}
+
 export interface HistoryEntry {
   prompt_id: string;
   timestamp: number;
@@ -72,8 +85,10 @@ interface HistoryState {
   // reported as false (rather than thrown) because websocket handlers also call
   // this fire-and-forget; the queue panel uses the flag to retry initial load.
   fetchHistory: (maxItems?: number) => Promise<boolean>;
-  // Grow the loaded window by one page and refetch.
-  loadMoreHistory: () => Promise<void>;
+  // Grow the loaded window and refetch. Callers may request a smaller page for
+  // latency-sensitive surfaces (the fullscreen viewer uses five); the queue
+  // panel defaults to the standard ten-item page.
+  loadMoreHistory: (pageSize?: number) => Promise<void>;
   // Internal: the actual fetch body, wrapped by fetchHistory's in-flight dedupe.
   _runFetchHistory: (maxItems: number) => Promise<boolean>;
   deleteItem: (promptId: string) => Promise<void>;
@@ -169,7 +184,10 @@ function isHistoryOutputImage(value: unknown): value is HistoryOutputImage {
  */
 const HISTORY_MEDIA_KEYS = ['images', 'gifs', 'videos'] as const;
 
-function collectHistoryOutputImages(outputs: HistoryItem['outputs']): HistoryOutputImage[] {
+function collectHistoryOutputImages(
+  outputs: HistoryItem['outputs'],
+  executionCacheToken: string,
+): HistoryOutputImage[] {
   const images: HistoryOutputImage[] = [];
   const seen = new Set<string>();
 
@@ -182,7 +200,13 @@ function collectHistoryOutputImages(outputs: HistoryItem['outputs']): HistoryOut
         const id = getHistoryImageFileId(candidate);
         if (seen.has(id)) continue;
         seen.add(id);
-        images.push(candidate);
+        // ComfyUI can reuse an output path after the previous file is moved or
+        // deleted outside this app. Tie the media URL to the prompt that wrote
+        // it so a new run never inherits the older run's browser cache entry.
+        images.push({
+          ...candidate,
+          cacheToken: candidate.cacheToken ?? executionCacheToken,
+        });
       }
     }
   }
@@ -306,10 +330,7 @@ export const useHistoryStore = create<HistoryState>((set, get) => ({
       // Add to top
       return { history: [entry, ...state.history] };
     });
-    const queueStore = useQueueStore.getState();
-    if (queueStore.queueItemExpanded[entry.prompt_id] === undefined) {
-      queueStore.setQueueItemExpanded(entry.prompt_id, true);
-    }
+    ensureHistoryItemExpandedByDefault(entry.prompt_id);
     if (entry.workflow && entry.durationSeconds) {
       const signature = getWorkflowSignature(entry.workflow);
       useWorkflowStore.getState().updateWorkflowDuration(signature, entry.durationSeconds * 1000);
@@ -339,10 +360,13 @@ export const useHistoryStore = create<HistoryState>((set, get) => ({
     }
   },
 
-  loadMoreHistory: async () => {
+  loadMoreHistory: async (pageSize) => {
     const { historyLimit, hasMoreHistory, isLoading } = get();
     if (!hasMoreHistory || isLoading) return;
-    await get().fetchHistory(historyLimit + HISTORY_PAGE_SIZE);
+    const increment = typeof pageSize === 'number' && Number.isFinite(pageSize)
+      ? Math.max(1, Math.floor(pageSize))
+      : HISTORY_PAGE_SIZE;
+    await get().fetchHistory(historyLimit + increment);
   },
 
   _runFetchHistory: async (maxItems: number) => {
@@ -409,7 +433,7 @@ export const useHistoryStore = create<HistoryState>((set, get) => ({
       };
 
       const entries: HistoryEntry[] = Object.entries(data).map(([prompt_id, item]) => {
-        const images = collectHistoryOutputImages(item.outputs);
+        const images = collectHistoryOutputImages(item.outputs, prompt_id);
 
         // Extract timestamp and duration from status messages if available
         let timestamp = Date.now();
@@ -531,9 +555,7 @@ export const useHistoryStore = create<HistoryState>((set, get) => ({
             .getState()
             .setError(entry.errorMessage || t('Execution did not complete. Some outputs may be missing.'));
         }
-        if (queueStore.queueItemExpanded[entry.prompt_id] === undefined) {
-          queueStore.setQueueItemExpanded(entry.prompt_id, true);
-        }
+        ensureHistoryItemExpandedByDefault(entry.prompt_id);
         if (entry.workflow && entry.durationSeconds) {
           durationUpdates.push({ workflow: entry.workflow, durationMs: entry.durationSeconds * 1000 });
         }

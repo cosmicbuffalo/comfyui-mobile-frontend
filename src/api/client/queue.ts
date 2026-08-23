@@ -83,6 +83,13 @@ export interface PromptQueueRequest {
   prompt: Record<string, unknown>;
   client_id?: string;
   extra_data?: Record<string, unknown>;
+  // Explicit priorities are used only for the remaining members of a
+  // multi-prompt front batch. The first response supplies the authoritative
+  // backend number, and fractional successors preserve the batch's run order.
+  number?: number;
+  // ComfyUI assigns front submissions a negative queue number, placing them
+  // ahead of prompts that are still pending (without interrupting a running one).
+  front?: boolean;
 }
 
 export interface PromptQueueResponse {

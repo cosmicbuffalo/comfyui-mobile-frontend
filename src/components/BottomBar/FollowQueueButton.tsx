@@ -2,6 +2,7 @@ import { useCallback, useMemo } from "react";
 import { ProgressRing, QueueStackIcon } from "@/components/icons";
 import { appChromeIconButtonClassName, chromeBarButtonClassName } from "@/components/chromeStyles";
 import { useI18n } from "@/i18n";
+import { usePinnedWidgetStore } from "@/hooks/usePinnedWidget";
 
 interface FollowQueueButtonProps {
   viewerOpen: boolean;
@@ -23,13 +24,17 @@ export function FollowQueueButton({
   onOpenFollowQueue,
 }: FollowQueueButtonProps) {
   const { t } = useI18n();
+  const setPinOverlayOpen = usePinnedWidgetStore((s) => s.setPinOverlayOpen);
   const handleClick = useCallback(() => {
+    // The pinned editor sits above the viewer. Close it before changing/opening
+    // Follow Queue so the viewer never starts invisibly behind the widget.
+    setPinOverlayOpen(false);
     if (viewerOpen) {
       onToggleFollowQueue?.();
     } else {
       onOpenFollowQueue?.();
     }
-  }, [viewerOpen, onToggleFollowQueue, onOpenFollowQueue]);
+  }, [viewerOpen, onToggleFollowQueue, onOpenFollowQueue, setPinOverlayOpen]);
 
   const ariaLabel = useMemo(() => {
     if (!viewerOpen) return t("Open image viewer");

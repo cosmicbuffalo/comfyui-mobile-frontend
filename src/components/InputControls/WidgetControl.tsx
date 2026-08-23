@@ -17,6 +17,7 @@ import {
   controlToggleButtonClassName,
 } from "./controlStyles";
 import { useI18n } from "@/i18n";
+import { usePinnedWidgetStore } from "@/hooks/usePinnedWidget";
 
 interface WidgetControlProps {
   name: string;
@@ -78,6 +79,7 @@ export function WidgetControl({
 }: WidgetControlProps) {
   const { t } = useI18n();
   const [modalOpen, setModalOpen] = useState(false);
+  const setPinOverlayOpen = usePinnedWidgetStore((s) => s.setPinOverlayOpen);
 
   const handleOpenModal = () => {
     if (disabled) return;
@@ -115,6 +117,13 @@ export function WidgetControl({
 
   const resolvedHasPin =
     hasPin ?? (Boolean(onTogglePin) || isPinned);
+  // A pinned workflow control and the bottom-bar pin button must address one
+  // editor instance. Route a direct tap on the original control into the global
+  // pin overlay; otherwise its local modal would be invisible to the button and
+  // the next button tap would stack a duplicate editor on top.
+  const onRequestModalOpen = isPinned && !forceModalOpen
+    ? () => setPinOverlayOpen(true)
+    : undefined;
   const controlContainerClass = containerClass ?? "space-y-2 w-full";
   const layoutContainerClass = containerClass ?? (compact ? "mb-0" : "mb-3");
 
@@ -128,6 +137,7 @@ export function WidgetControl({
     hasError,
     isPromoted,
     forceModalOpen,
+    onRequestModalOpen,
     onModalClose,
     compactTrailingControls,
     containerClass: controlContainerClass,

@@ -103,7 +103,10 @@ export function collectExecutedMediaOutputs(
       ) continue;
       const normalized: HistoryOutputImage = {
         ...(candidate as HistoryOutputImage),
-        ...(key === 'deno_video_preview' && executionCacheToken !== undefined
+        // Every execution gets its own browser-cache identity. This matters for
+        // ordinary outputs too: ComfyUI may reuse a path whose previous file
+        // was moved outside the app, where our delete invalidation cannot run.
+        ...(executionCacheToken !== undefined && descriptor.cacheToken === undefined
           ? { cacheToken: executionCacheToken }
           : {}),
       };

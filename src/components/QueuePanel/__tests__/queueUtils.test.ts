@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { HistoryOutputImage } from '@/api/types';
 import {
+  compareUnifiedQueueItems,
   getBatchSources,
   getDisplayableQueueOutputs,
   getPromptInputImages,
@@ -19,6 +20,51 @@ const output = (
 });
 
 describe('queueUtils', () => {
+  it('shows pending above running with the next-to-run prompt at the pending bottom', () => {
+    const queueItem = (
+      id: string,
+      status: UnifiedItem['status'],
+      number: number,
+    ): UnifiedItem => ({
+      id,
+      status,
+      data: {
+        number,
+        prompt_id: id,
+        prompt: {},
+        extra: {},
+        outputs_to_execute: [],
+      },
+    });
+    const items: UnifiedItem[] = [
+      queueItem('append-newer', 'pending', 8),
+      queueItem('front-older', 'pending', -4),
+      queueItem('running', 'running', 2),
+      queueItem('append-older', 'pending', 7),
+      queueItem('front-newer', 'pending', -5),
+      {
+        id: 'done',
+        status: 'done',
+        timestamp: 10,
+        data: {
+          prompt_id: 'done',
+          timestamp: 10,
+          outputs: { images: [] },
+          prompt: {},
+        },
+      },
+    ];
+
+    expect(items.sort(compareUnifiedQueueItems).map((item) => item.id)).toEqual([
+      'append-newer',
+      'append-older',
+      'front-older',
+      'front-newer',
+      'running',
+      'done',
+    ]);
+  });
+
   it('filters temporary video refs but keeps saved video outputs and image previews', () => {
     const items = [
       output('saved-video.mp4'),

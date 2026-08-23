@@ -1,6 +1,6 @@
 import { getImageUrl } from '@/api/client';
 import type { HistoryOutputImage } from '@/api/types';
-import { isHistoryEntryData, type UnifiedItem } from './types';
+import { isHistoryEntryData, type QueueItemData, type UnifiedItem } from './types';
 import { isVideoFilename } from '@/utils/media';
 
 interface QueueOutputDisplayOptions {
@@ -8,6 +8,33 @@ interface QueueOutputDisplayOptions {
 }
 
 const LOAD_IMAGE_INPUT_KEYS = ['image', 'filename', 'file'];
+
+const QUEUE_STATUS_ORDER: Record<UnifiedItem['status'], number> = {
+  pending: 0,
+  running: 1,
+  done: 2,
+};
+
+/**
+ * Display the queue as a downward-moving stack: newly appended prompts enter at
+ * the top, the next prompt to execute sits at the bottom of Pending immediately
+ * above the active generation, and completed history follows newest-first.
+ *
+ * ComfyUI pops the smallest pending queue number first, including increasingly
+ * negative front submissions. Sorting pending numbers descending is therefore
+ * deliberately the reverse of execution order; backend priority is unchanged.
+ */
+export function compareUnifiedQueueItems(a: UnifiedItem, b: UnifiedItem): number {
+  const statusDifference = QUEUE_STATUS_ORDER[a.status] - QUEUE_STATUS_ORDER[b.status];
+  if (statusDifference !== 0) return statusDifference;
+  if (a.status === 'pending') {
+    return (b.data as QueueItemData).number - (a.data as QueueItemData).number;
+  }
+  if (a.status === 'done') {
+    return (b.timestamp ?? 0) - (a.timestamp ?? 0);
+  }
+  return 0;
+}
 
 export function isDisplayableQueueOutput(
   img: HistoryOutputImage,
@@ -94,7 +121,9 @@ export function getBatchSources(promptId: string, list: UnifiedItem[]): string[]
   const images = getDisplayableQueueOutputs(match.data.outputs.images ?? []);
   return images
     .filter((img: HistoryOutputImage) => img.type === 'output')
-    .map((img: HistoryOutputImage) => getImageUrl(img.filename, img.subfolder, img.type));
+    .map((img: HistoryOutputImage) => (
+      getImageUrl(img.filename, img.subfolder, img.type, img.cacheToken)
+    ));
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {

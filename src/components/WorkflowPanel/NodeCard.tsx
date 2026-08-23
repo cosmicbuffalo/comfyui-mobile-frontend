@@ -60,6 +60,7 @@ import {
 import { requireHierarchicalKey } from '@/utils/itemKeys';
 import { hexToRgba } from '@/utils/grouping';
 import { resolveWorkflowColor, themeColors } from '@/theme/colors';
+import { supportsPinnedWidgetEditor } from '@/utils/pinnedWidgetSupport';
 
 const EMPTY_IMAGES: HistoryOutputImage[] = [];
 type ImageLike = (typeof EMPTY_IMAGES)[number];
@@ -237,7 +238,12 @@ export const NodeCard = memo(function NodeCard({
     if (latestOutputIsVideo) return;
     // Preload the same WebP preview the inline OutputPreview displays, so the
     // gate reflects (and primes the cache for) the fast image, not the full PNG.
-    const nextSrc = getImagePreviewUrl(latestImage.filename, latestImage.subfolder, latestImage.type);
+    const nextSrc = getImagePreviewUrl(
+      latestImage.filename,
+      latestImage.subfolder,
+      latestImage.type,
+      latestImage.cacheToken,
+    );
     const img = new Image();
     let cancelled = false;
     img.onload = () => {
@@ -551,18 +557,22 @@ export const NodeCard = memo(function NodeCard({
   // Collect all pinnable widgets for the pin submenu
   const pinnableWidgets = useMemo(() => {
     const items: Array<{ widgetIndex: number; name: string; inputName?: string; type: string; options?: Record<string, unknown> | unknown[] }> = [];
-    const isPinEligible = (widgetType: string, widgetName: string) => {
+    const isPinEligible = (
+      widgetType: string,
+      widgetName: string,
+      options?: Record<string, unknown> | unknown[],
+    ) => {
       if (widgetType.startsWith('LM_LORA')) return false;
       if (widgetType.startsWith('TW_')) return false;
       if (isLoraManagerNode && widgetName === 'text') return false;
-      return true;
+      return supportsPinnedWidgetEditor(widgetType, options);
     };
     visibleInputWidgets.forEach((w) => {
-      if (!isPinEligible(w.type, w.name)) return;
+      if (!isPinEligible(w.type, w.name, w.options)) return;
       items.push({ widgetIndex: w.widgetIndex, name: w.name, inputName: w.inputName, type: w.type, options: w.options });
     });
     visibleWidgets.forEach((w) => {
-      if (!isPinEligible(w.type, w.name)) return;
+      if (!isPinEligible(w.type, w.name, w.options)) return;
       items.push({ widgetIndex: w.widgetIndex, name: w.name, inputName: w.inputName, type: w.type, options: w.options });
     });
     return items;
@@ -708,7 +718,7 @@ export const NodeCard = memo(function NodeCard({
       return {
         src,
         displaySrc: mediaType === 'image'
-          ? getImagePreviewUrl(filename, subfolder, type)
+          ? getImagePreviewUrl(filename, subfolder, type, img.cacheToken)
           : undefined,
         alt: displayName,
         filename,
@@ -743,7 +753,12 @@ export const NodeCard = memo(function NodeCard({
         };
       }
       return {
-        displaySrc: getImagePreviewUrl(img.filename, img.subfolder, img.type),
+        displaySrc: getImagePreviewUrl(
+          img.filename,
+          img.subfolder,
+          img.type,
+          img.cacheToken,
+        ),
         mediaType,
         alt: displayName,
       };

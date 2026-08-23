@@ -1,4 +1,5 @@
 import type { Workflow } from '../types';
+import { getImageUrl, getMediaThumbnailUrl } from './base';
 
 export async function uploadImageFile(
   file: File,
@@ -134,6 +135,9 @@ export interface FileItem {
   date?: number;
   createdDate?: number;
   modifiedDate?: number;
+  // Filesystem identity returned by the listing API. Included in media URLs so
+  // a replacement at the same path cannot inherit the prior browser cache.
+  cacheToken?: string;
   size?: number;
   // Only populated for synthetic folder entries surfaced by the prompt-search
   // projection — counts descendant files in this folder that match the
@@ -183,6 +187,7 @@ interface MobileFileItem {
   date: number;
   createdDate?: number;
   modifiedDate?: number;
+  cacheToken?: string;
   folder?: string;
   count?: number; // for directories
   hidden?: boolean; // effectively hidden (self or inherited); only present when showHidden
@@ -196,6 +201,22 @@ interface MobileFilesResponse {
   total: number;
   offset: number;
   limit: number;
+}
+
+function mediaUrlsForListedFile(
+  file: MobileFileItem,
+  folder: string,
+  source: AssetSource,
+): Pick<FileItem, 'previewUrl' | 'fullUrl' | 'cacheToken'> {
+  // Date+size keeps a mixed-version deployment safe before the backend restart
+  // that adds cacheToken. `date` is raw file mtime, unlike modifiedDate, which
+  // may advance for favorite/rename activity without content changing.
+  const cacheToken = file.cacheToken ?? `${file.date}-${file.size ?? ''}`;
+  return {
+    previewUrl: getMediaThumbnailUrl(file.name, folder, source, cacheToken),
+    fullUrl: getImageUrl(file.name, folder, source, cacheToken),
+    cacheToken,
+  };
 }
 
 async function fetchMobileFiles(
@@ -273,8 +294,7 @@ export async function searchUserImagesByPrompt(
       id: `${source}/${f.path}`,
       name: f.name,
       type: f.type as 'image' | 'video',
-      previewUrl: `/mobile/api/thumbnail?filename=${encodeURIComponent(f.name)}&subfolder=${encodeURIComponent(folderPath)}&source=${source}`,
-      fullUrl: `/view?filename=${encodeURIComponent(f.name)}&type=${source}&subfolder=${encodeURIComponent(folderPath)}`,
+      ...mediaUrlsForListedFile(f, folderPath, source),
       date: f.modifiedDate ?? f.date,
       createdDate: f.createdDate ?? f.date,
       modifiedDate: f.modifiedDate ?? f.date,
@@ -340,8 +360,7 @@ export async function getUserImages(
       id: `${mode}/${f.path}`,
       name: f.name,
       type: f.type as 'image' | 'video',
-      previewUrl: `/mobile/api/thumbnail?filename=${encodeURIComponent(f.name)}&subfolder=${encodeURIComponent(folder)}&source=${mode}`,
-      fullUrl: `/view?filename=${encodeURIComponent(f.name)}&type=${mode}&subfolder=${encodeURIComponent(folder)}`,
+      ...mediaUrlsForListedFile(f, folder, mode),
       date: f.modifiedDate ?? f.date,
       createdDate: f.createdDate ?? f.date,
       modifiedDate: f.modifiedDate ?? f.date,
@@ -533,18 +552,46 @@ export async function getImageMetadata(
   return response.json();
 }
 
+export interface MoveFileConflict {
+  // Relative source path, matching an entry in moveFiles' `paths` argument —
+  // used as the key when resubmitting per-file resolutions.
+  source: string;
+  name: string;
+}
+
+// Thrown instead of a plain Error when the destination already has a file
+// with the same name as one being moved. Nothing was moved when this is
+// thrown — the caller resolves each conflict and resubmits via `resolutions`.
+export class MoveConflictError extends Error {
+  conflicts: MoveFileConflict[];
+  constructor(conflicts: MoveFileConflict[]) {
+    super('Move requires conflict resolution');
+    this.name = 'MoveConflictError';
+    this.conflicts = conflicts;
+  }
+}
+
 export async function moveFiles(
   paths: string[],
   destination: string | null,
-  source: AssetSource = 'output'
+  source: AssetSource = 'output',
+  resolutions?: Record<string, 'overwrite' | 'rename'>,
 ): Promise<void> {
   const response = await fetch(`/mobile/api/files/move`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ sources: paths, destination: destination ?? '', source })
+    body: JSON.stringify({
+      sources: paths,
+      destination: destination ?? '',
+      source,
+      ...(resolutions && Object.keys(resolutions).length > 0 ? { resolutions } : {}),
+    })
   });
   if (!response.ok) {
     const error = await response.json().catch(() => ({}));
+    if (response.status === 409 && error.error === 'conflict' && Array.isArray(error.conflicts)) {
+      throw new MoveConflictError(error.conflicts);
+    }
     throw new Error(error.error || 'Failed to move files');
   }
 }

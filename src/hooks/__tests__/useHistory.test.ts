@@ -46,6 +46,8 @@ beforeEach(() => {
   useHistoryStore.setState({
     history: [],
     isLoading: false,
+    historyLimit: 10,
+    hasMoreHistory: true,
   });
   useQueueStore.setState({
     running: [],
@@ -72,6 +74,38 @@ beforeEach(() => {
 });
 
 describe('useHistoryStore', () => {
+  it('reopens completed history whose stored fold was only an automatic default', () => {
+    useQueueStore.setState({
+      queueItemExpanded: { completed: false },
+      queueItemUserToggled: {},
+    });
+
+    useHistoryStore.getState().addHistoryEntry({
+      prompt_id: 'completed',
+      timestamp: Date.now(),
+      outputs: { images: [] },
+      prompt: {},
+    });
+
+    expect(useQueueStore.getState().queueItemExpanded.completed).toBe(true);
+  });
+
+  it('preserves an explicitly folded completed history item', () => {
+    useQueueStore.setState({
+      queueItemExpanded: { completed: false },
+      queueItemUserToggled: { completed: true },
+    });
+
+    useHistoryStore.getState().addHistoryEntry({
+      prompt_id: 'completed',
+      timestamp: Date.now(),
+      outputs: { images: [] },
+      prompt: {},
+    });
+
+    expect(useQueueStore.getState().queueItemExpanded.completed).toBe(false);
+  });
+
   it('does not surface Image Compare side outputs as queue images', async () => {
     const promptId = '92391d2a-cb46-4e3a-bb08-487a3e892b3d';
     const item = makeHistoryItem(promptId, {
@@ -94,7 +128,12 @@ describe('useHistoryStore', () => {
     await useHistoryStore.getState().fetchHistory();
 
     expect(useHistoryStore.getState().history[0].outputs.images).toEqual([
-      { filename: 'result.png', subfolder: '', type: 'output' },
+      {
+        filename: 'result.png',
+        subfolder: '',
+        type: 'output',
+        cacheToken: promptId,
+      },
     ]);
   });
 
@@ -118,8 +157,42 @@ describe('useHistoryStore', () => {
     await useHistoryStore.getState().fetchHistory();
 
     expect(useHistoryStore.getState().history[0].outputs.images).toEqual([
-      { filename: 'clip.mp4', subfolder: '', type: 'output' },
+      {
+        filename: 'clip.mp4',
+        subfolder: '',
+        type: 'output',
+        cacheToken: 'mixed-files',
+      },
     ]);
+  });
+
+  it('partitions reused output paths by the prompt that generated them', async () => {
+    const older = makeHistoryItem('older-prompt', {
+      status_str: 'success', completed: true, messages: [],
+    });
+    const newer = makeHistoryItem('newer-prompt', {
+      status_str: 'success', completed: true, messages: [],
+    });
+    const reused = [{ filename: 'reused.png', subfolder: '', type: 'output' }];
+    older.outputs = { saver: { images: reused } };
+    newer.outputs = { saver: { images: reused } };
+    mockGetHistory.mockResolvedValue({
+      'newer-prompt': newer,
+      'older-prompt': older,
+    } satisfies History);
+
+    await useHistoryStore.getState().fetchHistory();
+
+    const cacheTokens = Object.fromEntries(
+      useHistoryStore.getState().history.map((entry) => [
+        entry.prompt_id,
+        entry.outputs.images[0]?.cacheToken,
+      ]),
+    );
+    expect(cacheTokens).toEqual({
+      'newer-prompt': 'newer-prompt',
+      'older-prompt': 'older-prompt',
+    });
   });
 
   it('reports a failed fetch so the queue panel can retry it', async () => {
@@ -150,6 +223,19 @@ describe('useHistoryStore', () => {
     await expect(larger).resolves.toBe(true);
     expect(mockGetHistory).toHaveBeenCalledTimes(2);
     expect(mockGetHistory).toHaveBeenNthCalledWith(2, 20);
+  });
+
+  it('grows the history window by a caller-requested page size', async () => {
+    useHistoryStore.setState({
+      historyLimit: 40,
+      hasMoreHistory: true,
+      isLoading: false,
+    });
+    mockGetHistory.mockResolvedValue({});
+
+    await useHistoryStore.getState().loadMoreHistory(5);
+
+    expect(mockGetHistory).toHaveBeenCalledWith(45);
   });
 
   it('warns when an observed prompt lands in history as incomplete without an execution error', async () => {
@@ -190,6 +276,7 @@ describe('useHistoryStore', () => {
         filename: `${promptId}.mp4`,
         subfolder: '',
         type: 'output',
+        cacheToken: promptId,
       },
     ]);
     expect(useWorkflowErrorsStore.getState().error).toBe(

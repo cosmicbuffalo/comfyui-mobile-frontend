@@ -36,7 +36,12 @@ const PRELOAD_TIMEOUT_MS = 6000;
 export type PreloadDims = { w: number; h: number } | null;
 
 function preloadImage(image: HistoryOutputImage): Promise<PreloadDims> {
-  const url = getQueueImagePreviewUrl(image.filename, image.subfolder, image.type);
+  const url = getQueueImagePreviewUrl(
+    image.filename,
+    image.subfolder,
+    image.type,
+    image.cacheToken,
+  );
   return new Promise((resolve) => {
     let settled = false;
     let attempts = 0;
@@ -94,7 +99,12 @@ export async function preloadQueueMedia(
   images: readonly HistoryOutputImage[],
 ): Promise<QueueMediaPreload[]> {
   return Promise.all(images.map(async (image) => {
-    const url = getImageUrl(image.filename, image.subfolder, image.type);
+    const url = getImageUrl(
+      image.filename,
+      image.subfolder,
+      image.type,
+      image.cacheToken,
+    );
     // Images only. Video targets never reach here: QueueCard stages them
     // immediately rather than serializing a poster preload ahead of the
     // playable-video request, so a video branch in this function would be dead.

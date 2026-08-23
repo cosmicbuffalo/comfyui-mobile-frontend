@@ -277,6 +277,106 @@ def _stat_dates_ms(stat):
     return int(created * 1000), int(mtime * 1000)
 
 
+def file_cache_token(stat):
+    """Compact identity for browser/media caches, safe to serialize as text.
+
+    Millisecond timestamps alone collide when a path is replaced quickly, and
+    mtime can be deliberately preserved by moves/restores. ctime + inode make a
+    replacement distinct while size covers in-place writes on coarse filesystems.
+    Hex keeps the listing payload smaller than decimal nanosecond strings.
+
+    This is the single definition of "which file is this, exactly" for every
+    cache in the node — the outputs listing's cacheToken, the screen-sized
+    image previews, and the video thumbnails all key off it, so a change here
+    invalidates all three together instead of leaving them to disagree about
+    what counts as the same file.
+    """
+    return '{:x}-{:x}-{:x}-{:x}'.format(
+        int(stat.st_mtime_ns),
+        int(stat.st_ctime_ns),
+        int(stat.st_ino),
+        int(stat.st_size),
+    )
+
+
+# Backwards-compatible alias for the pre-3.2.4 private name.
+_file_cache_token = file_cache_token
+
+
+def unique_basename(dest_dir, basename, claimed_names):
+    """`basename`, suffixed `_1`, `_2`, ... until it is free in `dest_dir`.
+
+    `claimed_names` covers names spoken for by earlier items in the same batch
+    that have not been written to disk yet, so planning a whole move up front
+    can't hand two files the same target.
+    """
+    stem, ext = os.path.splitext(basename)
+    candidate = basename
+    n = 1
+    while os.path.exists(os.path.join(dest_dir, candidate)) or candidate in claimed_names:
+        candidate = '{}_{}{}'.format(stem, n, ext)
+        n += 1
+    return candidate
+
+
+def _replaces_destination_file(dest_dir, basename, src_path):
+    """True when landing `src_path` as `basename` would replace a *different*
+    file already in `dest_dir`. Moving a file onto its own current path is not
+    a conflict."""
+    target = os.path.join(dest_dir, basename)
+    if not os.path.exists(target):
+        return False
+    return os.path.realpath(target) != os.path.realpath(src_path)
+
+
+def plan_moves(move_specs, dest_dir, resolutions=None):
+    """Resolve every source in a batch move to the basename it will land under.
+
+    Two kinds of name collision are possible, and they are deliberately NOT
+    treated alike:
+
+      * **Two sources in this same batch share a basename.** Only one of them
+        can keep it. Overwriting here would destroy a file the user explicitly
+        asked us to move, and no answer to a prompt could make that the right
+        outcome — so the later source is silently auto-suffixed and the user is
+        never asked.
+      * **A file already in the destination holds the basename.** That file is
+        not part of this move, so replacing it is a real decision: the client
+        resolves it as 'overwrite' or 'rename'.
+
+    Batch collisions are keyed on the *original* basenames, not the resolved
+    ones, so two sources named `a.png` still count as colliding with each other
+    even after the first one is renamed out of the way.
+
+    Returns `(plan, conflicts)`. `plan` is `[(rel, src_path, basename), ...]` in
+    input order. A non-empty `conflicts` means the caller must move nothing:
+    each entry needs a resolution from the client, which then resubmits the
+    whole batch. Sources that have vanished since selection are dropped.
+    """
+    resolutions = resolutions or {}
+    plan = []
+    conflicts = []
+    seen_originals = set()
+    claimed = set()
+    for rel, src_path in move_specs:
+        if not os.path.exists(src_path):
+            continue
+        original = os.path.basename(src_path)
+        basename = original
+        if original in seen_originals:
+            basename = unique_basename(dest_dir, basename, claimed)
+        elif _replaces_destination_file(dest_dir, basename, src_path):
+            resolution = resolutions.get(rel)
+            if resolution == 'rename':
+                basename = unique_basename(dest_dir, basename, claimed)
+            elif resolution != 'overwrite':
+                conflicts.append({"source": rel, "name": basename})
+        seen_originals.add(original)
+        claimed.add(basename)
+        plan.append((rel, src_path, basename))
+    return plan, conflicts
+
+
 def list_files(base_dir, target_path, *, recursive=False, show_hidden=False,
                search='', start_date=None, end_date=None, dirs_only=False,
                hidden_paths=None):
@@ -341,6 +441,7 @@ def list_files(base_dir, target_path, *, recursive=False, show_hidden=False,
             "date": mtime_ms,
             "createdDate": created_ms,
             "modifiedDate": modified_ms,
+            "cacheToken": _file_cache_token(stat),
             "folder": _rel_fwd(root, base_dir) if root != base_dir else ""
         }
 

@@ -1,7 +1,7 @@
 import { useMemo, useRef, useState } from "react";
 import type { ChangeEvent } from "react";
 import Select, { components, createFilter } from "react-select";
-import type { OnChangeValue, OptionProps } from "react-select";
+import type { InputActionMeta, OnChangeValue, OptionProps } from "react-select";
 import { FullscreenWidgetModal } from "../modals/FullscreenWidgetModal";
 import { PinButton } from "./PinButton";
 import { ChevronDownIcon, PlusIcon, FolderIcon, PromotedWidgetIcon, FunnelIcon, CheckIcon } from "@/components/icons";
@@ -61,6 +61,12 @@ interface ComboControlProps {
   hasError?: boolean;
   isPromoted?: boolean;
   forceModalOpen?: boolean;
+  /**
+   * Lets a parent-owned editor handle modal opening. Pinned widgets use this
+   * to route both the workflow control and the bottom-bar button through the
+   * same overlay instead of mounting two independent editors.
+   */
+  onRequestModalOpen?: () => void;
   onModalClose?: () => void;
   compactTrailingControls?: boolean;
 }
@@ -79,6 +85,7 @@ export function ComboControl({
   hasError = false,
   isPromoted = false,
   forceModalOpen = false,
+  onRequestModalOpen,
   onModalClose,
   compactTrailingControls = false,
 }: ComboControlProps) {
@@ -370,6 +377,32 @@ export function ComboControl({
     onModalClose?.();
   };
 
+  const handleOpen = () => {
+    if (disabled) return;
+    if (onRequestModalOpen) {
+      onRequestModalOpen();
+      return;
+    }
+    if (useInputBrowser) {
+      setInputPickerOpen(true);
+    } else {
+      setInternalModalOpen(true);
+    }
+  };
+
+  // react-select clears its internal input for both `input-blur` and the
+  // immediately-following `menu-close`. On iOS, tapping the keyboard's Done
+  // button produces exactly that sequence, so returning the previous value for
+  // those actions keeps the user's filter while still allowing selections to
+  // clear it through the normal `set-value` action.
+  const handleModalInputChange = (
+    nextValue: string,
+    actionMeta: InputActionMeta,
+  ) =>
+    actionMeta.action === "input-blur" || actionMeta.action === "menu-close"
+      ? actionMeta.prevInputValue
+      : nextValue;
+
   const handleSelectChange = (next: OnChangeValue<SelectOption, boolean>) => {
     const nextValue = comboSelectionToValue(next, isMultiSelect);
     if (nextValue === undefined) return;
@@ -519,11 +552,11 @@ export function ComboControl({
           aria-label={t('Select {name}', { name: name.replace(/_/g, " ") })}
           aria-disabled={disabled}
           className={`combo-control-trigger relative w-full p-3 comfy-input text-base flex items-center justify-between min-h-[46px] text-left ${controlStateClassName({ disabled, hasError, isPromoted })}`}
-          onClick={() => !disabled && setInputPickerOpen(true)}
+          onClick={handleOpen}
           onKeyDown={(event) => {
             if (!disabled && (event.key === "Enter" || event.key === " ")) {
               event.preventDefault();
-              setInputPickerOpen(true);
+              handleOpen();
             }
           }}
         >
@@ -583,7 +616,7 @@ export function ComboControl({
 
         <div
           className={`combo-control-trigger relative w-full p-3 comfy-input text-base flex items-center justify-between min-h-[46px] ${controlStateClassName({ disabled, hasError, isPromoted })}`}
-          onClick={() => !disabled && setInternalModalOpen(true)}
+          onClick={handleOpen}
         >
           {isModelMode && selectedOption?.model ? (
             <div
@@ -676,6 +709,7 @@ export function ComboControl({
               menuIsOpen={forceModalOpen ? undefined : true}
               controlShouldRenderValue={true}
               placeholder={t("Search...")}
+              onInputChange={handleModalInputChange}
               filterOption={createFilter({
                 ignoreAccents: true,
                 ignoreCase: true,
@@ -694,13 +728,14 @@ export function ComboControl({
                 }),
                 menuList: (base) => ({
                   ...base,
-                  maxHeight: "calc(100vh - 160px)",
+                  // FullscreenWidgetModal already owns the keyboard-aware
+                  // vertical scroller. A second menu scroller sized from 100vh
+                  // can extend below a WKWebView keyboard and trap touch
+                  // gestures before the outer modal reaches its last rows.
+                  maxHeight: "none",
                   height: "auto",
                   paddingBottom: "2rem",
-                  overflowY: "auto",
-                  overflowX: "auto",
-                  overscrollBehaviorY: "contain",
-                  overscrollBehaviorX: "contain",
+                  overflow: "visible",
                   touchAction: "pan-y",
                 }),
                 // Pin option colors so the highlighted row uses the dark theme

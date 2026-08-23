@@ -147,8 +147,9 @@ describe('QueueCard resolution badge', () => {
   });
 
   it('asks for nothing while the card is collapsed', async () => {
-    // A long history is mostly collapsed cards; none of them can show a badge.
-    mocks.queueState.queueItemExpanded = {};
+    // An explicitly folded history card has no visible place for a badge.
+    mocks.queueState.queueItemExpanded = { 'done-prompt': false };
+    mocks.queueState.queueItemUserToggled = { 'done-prompt': true };
     vi.mocked(getFileDimensions).mockClear();
 
     await render();
@@ -156,6 +157,7 @@ describe('QueueCard resolution badge', () => {
 
     expect(vi.mocked(getFileDimensions)).not.toHaveBeenCalled();
     mocks.queueState.queueItemExpanded = { 'done-prompt': true };
+    mocks.queueState.queueItemUserToggled = {};
   });
 
   it('shows no badge rather than the capped preview size', async () => {
@@ -213,7 +215,7 @@ describe('QueueCard default expansion', () => {
     expect(setExpanded).toHaveBeenCalledTimes(1);
 
     // That write lands in the store...
-    mocks.queueState.queueItemExpanded = { 'done-prompt': false };
+    mocks.queueState.queueItemExpanded = { 'done-prompt': true };
     await render();
     // ...and is then evicted by another card's write, while this card is still
     // mounted. Rewriting it here is what makes the cycle self-sustaining.

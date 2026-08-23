@@ -67,7 +67,6 @@ export function PinnedWidgetOverlayModal() {
   const workflow = useWorkflowStore((s) => s.workflow);
   const pinnedWidget = usePinnedWidgetStore((s) => s.pinnedWidget);
   const pinOverlayOpen = usePinnedWidgetStore((s) => s.pinOverlayOpen);
-  const togglePinOverlay = usePinnedWidgetStore((s) => s.togglePinOverlay);
   const setPinOverlayOpen = usePinnedWidgetStore((s) => s.setPinOverlayOpen);
   const updateNodeWidget = useWorkflowStore((s) => s.updateNodeWidget);
   const updateSubgraphInnerNodeWidget = useWorkflowStore((s) => s.updateSubgraphInnerNodeWidget);
@@ -199,7 +198,7 @@ export function PinnedWidgetOverlayModal() {
         hideLabel
         compact
         forceModalOpen={true}
-        onModalClose={togglePinOverlay}
+        onModalClose={() => setPinOverlayOpen(false)}
       />
     </div>
   );

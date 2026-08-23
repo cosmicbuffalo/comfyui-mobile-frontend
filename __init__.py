@@ -736,9 +736,9 @@ def setup_mobile_route():
             if not os.path.exists(file_path):
                 return web.Response(status=404, headers=no_store)
 
-            # Output/input filenames are write-once, so a rendered thumbnail is
-            # safe to cache hard — scroll-backs and panel reopens then hit the
-            # browser cache instead of re-downloading + re-decoding server-side.
+            # Listing clients include the file's cacheToken in this URL, so a
+            # reused path gets a new browser entry while scroll-backs for the
+            # same file still avoid re-downloading and re-decoding it.
             cache_headers = {'Cache-Control': 'public, max-age=86400'}
 
             # For videos, look for an image with the same name
@@ -784,7 +784,8 @@ def setup_mobile_route():
 
         Mirrors ComfyUI's /view query params (filename/subfolder/type) plus a
         `maxedge` cap, so the viewer can load a device-sized image instead of a
-        14-megapixel original. Cached on disk per (file, maxedge)."""
+        14-megapixel original. Cached on disk per source-file identity + maxedge;
+        the client URL separately carries its per-execution identity."""
         # Error responses must not be cached: a 404 for a not-yet-flushed file
         # is heuristically cacheable and would stick (same class of bug as the
         # thumbnail no-store fix).
@@ -815,8 +816,9 @@ def setup_mobile_route():
             return web.Response(
                 body=body,
                 content_type='image/webp',
-                # Output filenames are write-once, so the rendered preview is safe
-                # to cache hard — repeat views / swipe-backs hit the browser cache.
+                # The client includes a per-execution `cb` identity, so repeat
+                # views can cache hard without a reused output path inheriting
+                # an older run's preview.
                 headers={'Cache-Control': 'public, max-age=86400'},
             )
         except Exception:
@@ -1145,6 +1147,9 @@ def setup_mobile_route():
             sources = data.get('sources')
             destination = data.get('destination', '')
             source = data.get('source', 'output')
+            resolutions = data.get('resolutions')
+            if not isinstance(resolutions, dict):
+                resolutions = {}
             if not sources or not isinstance(sources, list):
                 return web.json_response({"error": "No sources provided"}, status=400)
 
@@ -1168,11 +1173,24 @@ def setup_mobile_route():
                     return web.json_response({"error": "Access denied"}, status=403)
                 move_specs.append((rel, src_path))
 
+            # One planning pass decides every final name; the move pass just
+            # executes it. Keeping the "what would collide" and "what actually
+            # lands where" answers in one function is what stops the two from
+            # ever drifting apart.
+            loop = asyncio.get_event_loop()
+            plan, conflicts = await loop.run_in_executor(
+                None, _file_utils.plan_moves, move_specs, dest_path, resolutions
+            )
+            if conflicts:
+                # Nothing has been moved yet. The client collects a resolution
+                # per conflicting path and resubmits the whole request.
+                return web.json_response({"error": "conflict", "conflicts": conflicts}, status=409)
+
             def _move_all():
-                for rel, src_path in move_specs:
+                for rel, src_path, basename in plan:
                     if not os.path.exists(src_path):
                         continue
-                    target = os.path.join(dest_path, os.path.basename(src_path))
+                    target = os.path.join(dest_path, basename)
                     shutil.move(src_path, target)
                     # Keep hidden state attached to the item across the move.
                     new_rel = os.path.relpath(target, os.path.abspath(base_dir))
@@ -1184,7 +1202,6 @@ def setup_mobile_route():
                         base_dir,
                     )
 
-            loop = asyncio.get_event_loop()
             await loop.run_in_executor(None, _move_all)
 
             return web.json_response({"success": True})
@@ -1675,6 +1692,10 @@ def setup_mobile_route():
                 body.get("label"),
                 body.get("added"),
                 body.get("server_id"),
+                body.get("live_activity"),
+                body.get("server_label"),
+                body.get("frequent_updates"),
+                body.get("relevance_score"),
             )
             if not ok:
                 return web.json_response({"error": "invalid_target"}, status=400)
@@ -1690,6 +1711,7 @@ def setup_mobile_route():
             removed = _mobile_app_push.remove_target(
                 body.get("pairing_code") if isinstance(body, dict) else None,
                 body.get("relay_url") if isinstance(body, dict) else None,
+                body.get("notifications_only") if isinstance(body, dict) else False,
             )
             return web.json_response({"ok": True, "removed": removed})
         except Exception as e:

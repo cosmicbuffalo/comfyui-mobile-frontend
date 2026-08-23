@@ -462,6 +462,17 @@ describe('collectExecutedMediaOutputs', () => {
       cacheToken: 'run-2',
     })]);
   });
+
+  it('gives ordinary outputs a per-execution cache identity', () => {
+    expect(collectExecutedMediaOutputs({
+      images: [{ filename: 'reused.png', subfolder: '', type: 'output' }],
+    }, 'prompt-new')).toEqual([{
+      filename: 'reused.png',
+      subfolder: '',
+      type: 'output',
+      cacheToken: 'prompt-new',
+    }]);
+  });
 });
 
 describe('collectDenoVideoCompareOutput', () => {

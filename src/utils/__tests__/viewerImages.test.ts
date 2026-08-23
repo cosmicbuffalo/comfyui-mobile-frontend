@@ -66,6 +66,24 @@ describe('buildViewerImages', () => {
     ]);
   });
 
+  it('preserves execution cache identity in viewer URLs', () => {
+    const [image] = buildViewerImages([{
+      outputs: {
+        images: [{
+          filename: 'reused.png',
+          subfolder: '',
+          type: 'output',
+          cacheToken: 'prompt-new',
+        }],
+      },
+      prompt: {},
+    }]);
+
+    expect(image.src).toContain('&cb=prompt-new');
+    expect(image.displaySrc).toContain('&cb=prompt-new');
+    expect(image.file?.fullUrl).toContain('&cb=prompt-new');
+  });
+
   it('applies the output preference per item in a mixed history', () => {
     const mixedItems: HistoryImageItem[] = [
       {

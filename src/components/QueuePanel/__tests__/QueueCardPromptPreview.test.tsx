@@ -88,6 +88,19 @@ function makeItem(status: 'pending' | 'running'): UnifiedItem {
   };
 }
 
+function makeDoneItem(): UnifiedItem {
+  return {
+    id: 'active-prompt',
+    status: 'done',
+    data: {
+      prompt_id: 'active-prompt',
+      timestamp: Date.now(),
+      outputs: { images: [] },
+      prompt,
+    },
+  };
+}
+
 describe('QueueCard active prompt preview', () => {
   let container: HTMLDivElement;
   let root: Root;
@@ -135,7 +148,7 @@ describe('QueueCard active prompt preview', () => {
     },
   );
 
-  it('keeps the compact default when prompt previews are disabled', async () => {
+  it('keeps the compact default for a pending item when prompt previews are disabled', async () => {
     mocks.queueState.showPromptPreview = false;
     await act(async () => {
       root.render(
@@ -156,6 +169,84 @@ describe('QueueCard active prompt preview', () => {
       false,
     );
   });
+
+  it('defaults an actively generating item open even when prompt previews are disabled', async () => {
+    mocks.queueState.showPromptPreview = false;
+    await act(async () => {
+      root.render(
+        <QueueCard
+          item={makeItem('running')}
+          isActuallyRunning
+          progress={25}
+          viewerImages={[]}
+          runningImages={[]}
+          onOpenMenu={() => {}}
+          isTopDoneItem={false}
+        />,
+      );
+    });
+
+    expect(mocks.queueState.setQueueItemExpanded).toHaveBeenCalledWith(
+      'active-prompt',
+      true,
+    );
+  });
+
+  it.each([
+    ['running', makeItem('running'), true],
+    ['completed', makeDoneItem(), false],
+  ] as const)(
+    'reopens a stale automatic fold when the item is already %s',
+    async (_label, item, isActuallyRunning) => {
+      mocks.queueState.showPromptPreview = false;
+      mocks.queueState.queueItemExpanded = { 'active-prompt': false };
+      await act(async () => {
+        root.render(
+          <QueueCard
+            item={item}
+            isActuallyRunning={isActuallyRunning}
+            progress={0}
+            viewerImages={[]}
+            runningImages={[]}
+            onOpenMenu={() => {}}
+            isTopDoneItem={false}
+          />,
+        );
+      });
+
+      expect(mocks.queueState.setQueueItemExpanded).toHaveBeenCalledWith(
+        'active-prompt',
+        true,
+      );
+    },
+  );
+
+  it.each([
+    ['running', makeItem('running'), true],
+    ['completed', makeDoneItem(), false],
+  ] as const)(
+    'preserves an explicit fold when the item is %s',
+    async (_label, item, isActuallyRunning) => {
+      mocks.queueState.showPromptPreview = false;
+      mocks.queueState.queueItemExpanded = { 'active-prompt': false };
+      mocks.queueState.queueItemUserToggled = { 'active-prompt': true };
+      await act(async () => {
+        root.render(
+          <QueueCard
+            item={item}
+            isActuallyRunning={isActuallyRunning}
+            progress={0}
+            viewerImages={[]}
+            runningImages={[]}
+            onOpenMenu={() => {}}
+            isTopDoneItem={false}
+          />,
+        );
+      });
+
+      expect(mocks.queueState.setQueueItemExpanded).not.toHaveBeenCalled();
+    },
+  );
 
   it('preserves an explicit collapsed state when prompt previews are enabled', async () => {
     mocks.queueState.queueItemExpanded = { 'active-prompt': false };

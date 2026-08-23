@@ -9,7 +9,7 @@ import { useHistoryStore } from '@/hooks/useHistory';
 import { useOutputsStore } from '@/hooks/useOutputs';
 import { useOverallProgress } from '@/hooks/useOverallProgress';
 import { useHistoryWorkflowByFileId } from '@/hooks/useHistoryWorkflowByFileId';
-import { buildOutputPreferredViewerImages, getHistoryImageFileId, type ViewerImage } from '@/utils/viewerImages';
+import { buildOutputPreferredViewerImages, buildViewerImages, getHistoryImageFileId, type ViewerImage } from '@/utils/viewerImages';
 import { deleteFile, type FileItem } from '@/api/client';
 import { shareOrDownloadFile } from '@/utils/downloads';
 import { Dialog } from '@/components/modals/Dialog';
@@ -38,6 +38,9 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
+const VIEWER_HISTORY_PREFETCH_REMAINING = 3;
+const VIEWER_HISTORY_PAGE_SIZE = 5;
+
 export function ImageViewer({ onClose }: ImageViewerProps) {
   const { t } = useI18n();
   const open = useImageViewerStore((s) => s.viewerOpen);
@@ -61,7 +64,11 @@ export function ImageViewer({ onClose }: ImageViewerProps) {
   const pending = useQueueStore((s) => s.pending);
   const livePromptOutputs = useQueueStore((s) => s.livePromptOutputs);
   const localPromptOrder = useQueueStore((s) => s.localPromptOrder);
+  const previewVisibility = useQueueStore((s) => s.previewVisibility);
+  const previewVisibilityDefault = useQueueStore((s) => s.previewVisibilityDefault);
   const history = useHistoryStore((s) => s.history);
+  const isLoadingHistory = useHistoryStore((s) => s.isLoading);
+  const historyLimit = useHistoryStore((s) => s.historyLimit);
   const hasMoreHistory = useHistoryStore((s) => s.hasMoreHistory);
   const loadMoreHistory = useHistoryStore((s) => s.loadMoreHistory);
   const removeOutputImages = useHistoryStore((s) => s.removeOutputImages);
@@ -77,6 +84,10 @@ export function ImageViewer({ onClose }: ImageViewerProps) {
   const [loadWorkflowProgress, setLoadWorkflowProgress] = useState<number | null>(null);
   const lastFollowKeyRef = useRef<string | null>(null);
   const followQueueWasActiveRef = useRef(false);
+  const followSeenHistoryIdsRef = useRef<Set<string> | null>(null);
+  const followRoutingBaselineIdsRef = useRef<Set<string> | null>(null);
+  const followObservedPromptIdsRef = useRef<Set<string>>(new Set());
+  const lastHistoryPrefetchKeyRef = useRef<string | null>(null);
   const nextFollowFinishOrderRef = useRef(1);
   const [followFinishOrder, setFollowFinishOrder] = useState<Record<string, number>>({});
 
@@ -87,23 +98,30 @@ export function ImageViewer({ onClose }: ImageViewerProps) {
   const canOpenWorkflowInNewTab =
     Boolean(activeSessionId && workflow) && sessions.length < MAX_WORKFLOW_SESSIONS;
 
-  // Record a stable order for every prompt we track while follow mode is open,
-  // the single source of "newest" for both the jump target and the browse
-  // ordering. It must survive the live→history handoff (markPromptCompleted
-  // deletes a prompt's livePromptOutputs the moment its history entry lands), so
-  // it lives in component state keyed by prompt_id. Two capture sources, each
-  // covering the other's blind spot:
-  //   1. livePromptOutputs entries with a final `output` image — the websocket
-  //      `executed` frame. Race-free: a fast prompt that leaves running/pending
-  //      before an effect can observe it is still caught here.
-  //   2. prompts seen in running/pending — covers a run whose output reaches us
-  //      only via history (e.g. a fully-cached execution emits no `executed`
-  //      output frame) yet was observed in the queue on this device.
+  // Keep eligibility and completion order separate. A prompt becomes eligible
+  // when it is observed in this session's queue (or its routing entry is created
+  // after Follow Queue starts), but receives an order only when final media or
+  // authoritative history actually arrives. Assigning order while merely
+  // pending made a later front-queued prompt permanently outrank an older
+  // pending prompt even after the older prompt eventually finished last.
   useEffect(() => {
     if (!open || !followQueueActive) {
       nextFollowFinishOrderRef.current = 1;
+      followSeenHistoryIdsRef.current = null;
+      followRoutingBaselineIdsRef.current = null;
+      followObservedPromptIdsRef.current = new Set();
       setFollowFinishOrder({});
       return;
+    }
+
+    // Existing history and routing are activation baselines. In particular,
+    // loading an older history page later must not look like a fresh completion
+    // merely because a retained prompt→session mapping still exists for it.
+    if (followSeenHistoryIdsRef.current === null) {
+      followSeenHistoryIdsRef.current = new Set(
+        history.map((item) => item.prompt_id).filter(Boolean),
+      );
+      followRoutingBaselineIdsRef.current = new Set(Object.keys(promptToSession));
     }
 
     const inActiveSession = (promptId: string) => {
@@ -113,24 +131,67 @@ export function ImageViewer({ onClose }: ImageViewerProps) {
       return sid == null || sid === activeSessionId;
     };
 
-    // Insertion order of livePromptOutputs keys == order of `executed` frames ==
-    // completion order. Queue observations extend it for prompts with no live
-    // output frame. A prompt already stamped keeps its first-seen order.
-    const trackedPromptIds = [
+    const observedPromptIds = followObservedPromptIdsRef.current;
+    for (const item of [...running, ...pending]) {
+      if (item.prompt_id && inActiveSession(item.prompt_id)) {
+        observedPromptIds.add(item.prompt_id);
+      }
+    }
+    for (const [promptId, sid] of Object.entries(promptToSession)) {
+      if (
+        sid === activeSessionId
+        && !followRoutingBaselineIdsRef.current?.has(promptId)
+      ) {
+        observedPromptIds.add(promptId);
+      }
+    }
+
+    // History is newest-first, so reverse only the genuinely new, eligible
+    // entries to stamp a batched group in its real oldest→newest completion
+    // order. Do not mark a new entry seen until it becomes eligible: the
+    // history refresh can beat the prompt→session write by one React render,
+    // and consuming the id in that gap made Follow Queue stay on the old image
+    // until it was toggled off and on again. Entries below an already-seen
+    // history item are pagination-only, so those are safe to baseline now.
+    const seenHistoryIds = followSeenHistoryIdsRef.current;
+    const newlyCompletedHistoryIds: string[] = [];
+    let reachedSeenHistory = false;
+    for (const item of history) {
+      const promptId = item.prompt_id;
+      if (!promptId) continue;
+      if (seenHistoryIds.has(promptId)) {
+        reachedSeenHistory = true;
+        continue;
+      }
+      if (observedPromptIds.has(promptId)) {
+        newlyCompletedHistoryIds.push(promptId);
+        continue;
+      }
+      if (reachedSeenHistory) {
+        seenHistoryIds.add(promptId);
+      }
+    }
+    newlyCompletedHistoryIds.reverse();
+    for (const promptId of newlyCompletedHistoryIds) {
+      seenHistoryIds.add(promptId);
+    }
+
+    // Insertion order of livePromptOutputs keys reflects websocket `executed`
+    // arrival order. A prompt already stamped during its live phase keeps that
+    // order when markPromptCompleted hands it over to history.
+    const completedPromptIds = [
+      ...newlyCompletedHistoryIds,
       ...Object.entries(livePromptOutputs)
         .filter(([promptId, outputs]) =>
           inActiveSession(promptId) && outputs.some((img) => img.type === 'output'))
         .map(([promptId]) => promptId),
-      ...[...running, ...pending]
-        .map((item) => item.prompt_id)
-        .filter((promptId): promptId is string => Boolean(promptId) && inActiveSession(promptId)),
     ];
-    if (trackedPromptIds.length === 0) return;
+    if (completedPromptIds.length === 0) return;
 
     setFollowFinishOrder((prev) => {
       let changed = false;
       const next = { ...prev };
-      for (const promptId of trackedPromptIds) {
+      for (const promptId of completedPromptIds) {
         if (next[promptId] != null) continue;
         next[promptId] = nextFollowFinishOrderRef.current;
         nextFollowFinishOrderRef.current += 1;
@@ -138,7 +199,7 @@ export function ImageViewer({ onClose }: ImageViewerProps) {
       }
       return changed ? next : prev;
     });
-  }, [followQueueActive, open, livePromptOutputs, running, pending, promptToSession, activeSessionId]);
+  }, [followQueueActive, open, history, livePromptOutputs, running, pending, promptToSession, activeSessionId]);
 
   // The active session's just-finished outputs (newest first), built from the
   // queue store's live outputs. Scoped to the active session so a run finishing
@@ -219,6 +280,40 @@ export function ImageViewer({ onClose }: ImageViewerProps) {
     () => buildOutputPreferredViewerImages(followQueueItems, { alt: t('Generation') }),
     [followQueueItems, t],
   );
+
+  // The queue panel may expose temp previews for selected cards, so rebuild its
+  // expanding history list with the same per-prompt visibility preference. This
+  // is separate from Follow Queue: opening an older card intentionally disables
+  // live following, but it must still support paging backward through history.
+  // Gated on `open`: this component is always mounted (its own state decides
+  // what renders), so without the guard every new generation and every history
+  // page rebuilt URL objects for the whole loaded history while nothing was on
+  // screen to use them.
+  const queueHistoryViewerImages = useMemo(() => open ? history.flatMap((item) => {
+    const previewsVisible = item.prompt_id
+      ? previewVisibility[item.prompt_id] ?? previewVisibilityDefault
+      : previewVisibilityDefault;
+    return previewsVisible
+      ? buildViewerImages([item], { alt: t('Generation') })
+      : buildOutputPreferredViewerImages([item], { alt: t('Generation') });
+  }) : [], [open, history, previewVisibility, previewVisibilityDefault, t]);
+
+  const isQueueHistoryViewer = useMemo(
+    () => images.some((item) => Boolean(item.promptId)),
+    [images],
+  );
+  const queueHistoryExtension = useMemo(() => {
+    if (images.length === 0) return [];
+    const lastLoaded = images[images.length - 1];
+    const lastLoadedIndex = queueHistoryViewerImages.findIndex((item) => (
+      item.src === lastLoaded.src && item.promptId === lastLoaded.promptId
+    ));
+    if (lastLoadedIndex < 0) return [];
+    return queueHistoryViewerImages.slice(lastLoadedIndex + 1);
+  }, [images, queueHistoryViewerImages]);
+  const paginatedViewerImages = followQueueActive
+    ? followQueueViewerImages
+    : queueHistoryViewerImages;
 
   // Jump trigger: the newest followed output (index 0 of the merged list above).
   // Only a followed prompt — one with a live output or a recorded finish order —
@@ -330,15 +425,56 @@ export function ImageViewer({ onClose }: ImageViewerProps) {
     setViewerState({ viewerImages: followQueueViewerImages });
   }, [open, followQueueActive, followQueueViewerImages, images, setViewerState]);
 
+  // A queue viewer with Follow Queue switched off still owns the same flattened
+  // history gallery it was opened with. Append only entries older than its
+  // current tail, without changing the current index. This intentionally skips
+  // newly completed runs inserted at the front while the user browses backward.
+  useEffect(() => {
+    if (!open || followQueueActive || !isQueueHistoryViewer) return;
+    if (queueHistoryExtension.length === 0) return;
+    setViewerState({ viewerImages: [...images, ...queueHistoryExtension] });
+  }, [open, followQueueActive, isQueueHistoryViewer, queueHistoryExtension, images, setViewerState]);
+
+  // Prefetch five more history items on reaching the third-to-last image. The
+  // key prevents a failed request from spinning in place; moving closer to the
+  // end retries, while a successful page (historyLimit changes) can immediately
+  // skip over an output-less page and request the next one.
+  useEffect(() => {
+    if (!open || !isQueueHistoryViewer || !hasMoreHistory || isLoadingHistory) return;
+    if (images.length === 0) return;
+    if (index < Math.max(0, images.length - VIEWER_HISTORY_PREFETCH_REMAINING)) return;
+    // A fetched page is already waiting to be appended by one of the effects
+    // above; let that state update move the end away before requesting again.
+    if (
+      followQueueActive
+        ? paginatedViewerImages.length > images.length
+        : queueHistoryExtension.length > 0
+    ) return;
+    const prefetchKey = `${historyLimit}:${index}`;
+    if (lastHistoryPrefetchKeyRef.current === prefetchKey) return;
+    lastHistoryPrefetchKeyRef.current = prefetchKey;
+    void loadMoreHistory(VIEWER_HISTORY_PAGE_SIZE);
+  }, [
+    open,
+    isQueueHistoryViewer,
+    followQueueActive,
+    hasMoreHistory,
+    isLoadingHistory,
+    images,
+    index,
+    paginatedViewerImages,
+    queueHistoryExtension,
+    historyLimit,
+    loadMoreHistory,
+  ]);
+
+  useEffect(() => {
+    if (open && isQueueHistoryViewer) return;
+    lastHistoryPrefetchKeyRef.current = null;
+  }, [open, isQueueHistoryViewer]);
+
   const handleIndexChange = (nextIndex: number) => {
     setViewerState({ viewerIndex: nextIndex });
-    // Mirror the queue panel's scroll-to-load: while following the live queue,
-    // navigating within 5 of the end of the loaded runs pulls the next history
-    // page so the user can keep arrowing back. loadMoreHistory self-guards
-    // against overlapping/last-page loads.
-    if (followQueueActive && hasMoreHistory && nextIndex >= images.length - 5) {
-      void loadMoreHistory();
-    }
   };
 
   const handleTransformChange = (nextScale: number, nextTranslate: { x: number; y: number }) => {

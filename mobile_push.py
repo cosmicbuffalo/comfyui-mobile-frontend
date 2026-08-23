@@ -162,7 +162,7 @@ async def _handle_completion(prompt_id, entry):
     # than trailing behind it.
     if _mobile_progress_ws is not None:
         try:
-            await _mobile_progress_ws.broadcast_finished(prompt_id)
+            await _mobile_progress_ws.broadcast_finished(prompt_id, status=status)
         except Exception as exc:
             print(f"{_LOG_PREFIX} progress-ws finished broadcast error: {exc}", flush=True)
 

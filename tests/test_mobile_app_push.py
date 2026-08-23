@@ -27,8 +27,10 @@ def _isolate(tmp_path: Path, monkeypatch):
     # itself override this with their own monkeypatch.
     monkeypatch.setattr(m.requests, "post", lambda *a, **k: _Resp(200))
     m._targets = None
+    m._last_live_routine_sent.clear()
     yield
     m._targets = None
+    m._last_live_routine_sent.clear()
 
 
 class _Resp:
@@ -364,6 +366,115 @@ def test_post_event_treats_other_non_200_as_error(monkeypatch):
     assert m._post_event(target, {}) == "error"
 
 
+def test_send_live_activity_hits_dedicated_relay_path(monkeypatch):
+    captured = {}
+
+    def fake_post(url, json, timeout):
+        captured["url"] = url
+        captured["body"] = json
+        return _Resp(200)
+
+    monkeypatch.setattr(m.requests, "post", fake_post)
+    m.add_target(
+        "https://relay.example/", "ABCD-EFGH", server_id="server-uuid-1",
+        live_activity=True,
+    )
+    captured.clear()  # discard the side-effect-free verification request
+    result = m.send_live_activity({
+        "phase": "generating",
+        "prompt_id": "prompt-1",
+        "queue_position": 2,
+        "progress": 0.5,
+    })
+
+    assert result == {"sent": 1, "pruned": 0, "total": 1, "retryable": 0, "failed": 0}
+    assert captured["url"] == "https://relay.example/live-activity/event"
+    assert captured["body"]["pairing_code"] == "ABCD-EFGH"
+    assert captured["body"]["server_id"] == "server-uuid-1"
+
+
+def test_live_activity_send_marks_transient_relay_failure_retryable(monkeypatch):
+    monkeypatch.setattr(m.requests, "post", lambda *a, **k: _Resp(200))
+    m.add_target(
+        "https://relay.example/", "ABCD-EFGH", server_id="server-uuid-1",
+        live_activity=True,
+    )
+    monkeypatch.setattr(m.requests, "post", lambda *a, **k: _Resp(502))
+
+    assert m.send_live_activity({"phase": "done"}) == {
+        "sent": 0,
+        "pruned": 0,
+        "total": 1,
+        "retryable": 1,
+        "failed": 0,
+    }
+
+
+def test_live_activity_send_counts_non_retryable_rejections_as_failed(monkeypatch):
+    """A 403 is neither a delivery nor something a retry can fix.
+
+    It used to increment nothing at all, so a mixed result read as a clean
+    success upstream and the keyframe was dropped with no trace.
+    """
+    monkeypatch.setattr(m.requests, "post", lambda *a, **k: _Resp(200))
+    m.add_target(
+        "https://relay.example/", "GOOD-CODE", server_id="server-1",
+        live_activity=True,
+    )
+    m.add_target(
+        "https://relay.example/", "BAD-CODE", server_id="server-2",
+        live_activity=True,
+    )
+
+    def post(url, json, timeout):
+        return _Resp(200 if json.get("pairing_code") == "GOOD-CODE" else 403)
+
+    monkeypatch.setattr(m.requests, "post", post)
+
+    assert m.send_live_activity({"phase": "done"}) == {
+        "sent": 1,
+        "pruned": 0,
+        "total": 2,
+        "retryable": 0,
+        "failed": 1,
+    }
+
+
+def test_live_only_target_is_hidden_from_notification_status_and_completion(monkeypatch):
+    requests = []
+    monkeypatch.setattr(
+        m.requests,
+        "post",
+        lambda url, json, timeout: (requests.append(url), _Resp(200))[1],
+    )
+    assert m.add_target(
+        "https://relay.example/", "ABCD-EFGH", server_id="server-uuid-1",
+        live_activity=True,
+    )
+
+    assert m.live_activity_target_count() == 1
+    assert m.list_targets() == []
+    assert m.send_completion("p1", "success", 1) == {
+        "sent": 0, "pruned": 0, "total": 0,
+    }
+    assert requests == ["https://relay.example/live-activity/verify"]
+
+
+def test_notification_disable_preserves_but_hides_live_target(monkeypatch):
+    monkeypatch.setattr(m.requests, "post", lambda *a, **k: _Resp(200))
+    assert m.add_target(
+        "https://relay.example/", "ABCD-EFGH", live_activity=True
+    )
+    assert m.add_target("https://relay.example/", "ABCD-EFGH")
+    assert len(m.list_targets()) == 1
+
+    assert m.remove_target(
+        "ABCD-EFGH", "https://relay.example/", notifications_only=True
+    ) == 1
+    assert m.list_targets() == []
+    assert m.live_activity_target_count() == 1
+
+
 def test_send_prunes_targets_that_returned_gone(monkeypatch):
     m.add_target("https://relay.example/", "ALIVE-CODE")
     m.add_target("https://relay.example/", "DEAD-CODE")
@@ -480,6 +591,56 @@ def test_post_event_omits_server_id_when_target_has_none(monkeypatch):
     target = {"relay_url": "https://relay.example/", "pairing_code": "ABCD-EFGH"}
     m._post_event(target, {"prompt_id": "p", "status": "success", "outputs": 1})
     assert "server_id" not in captured[0]
+
+
+def test_live_target_forwards_server_presentation_and_capabilities(monkeypatch, tmp_path: Path):
+    captured = []
+    monkeypatch.setattr(
+        m.requests,
+        "post",
+        lambda url, json, timeout: (captured.append(json), _Resp(200))[1],
+    )
+    assert m.add_target(
+        "https://relay.example/",
+        "ABCD-EFGH",
+        server_id="server-1",
+        server_label="Homelab",
+        live_activity=True,
+        frequent_updates=False,
+        relevance_score=3,
+    )
+    saved = json.loads(
+        (tmp_path / "default" / "mobile" / "push" / "app_targets.json").read_text()
+    )[0]
+    assert saved["server_label"] == "Homelab"
+    assert saved["frequent_updates"] is False
+    assert saved["relevance_score"] == 3
+
+    captured.clear()
+    m.send_live_activity({"phase": "generating", "delivery": "keyframe"})
+    assert captured[0]["server_label"] == "Homelab"
+    assert captured[0]["relevance_score"] == 3
+
+
+def test_nonfrequent_targets_throttle_only_replaceable_routine_updates(monkeypatch):
+    captured = []
+    monkeypatch.setattr(
+        m.requests,
+        "post",
+        lambda url, json, timeout: (captured.append(json), _Resp(200))[1],
+    )
+    assert m.add_target(
+        "https://relay.example/", "ABCD-EFGH",
+        live_activity=True, frequent_updates=False,
+    )
+    captured.clear()
+    moments = iter([100.0, 101.0])
+    monkeypatch.setattr(m.time, "monotonic", lambda: next(moments))
+
+    assert m.send_live_activity({"phase": "generating", "delivery": "routine"})["sent"] == 1
+    assert m.send_live_activity({"phase": "generating", "delivery": "routine"})["total"] == 0
+    assert m.send_live_activity({"phase": "done", "delivery": "keyframe"})["sent"] == 1
+    assert len(captured) == 2
 
 
 def test_send_test_payload_shape(monkeypatch):

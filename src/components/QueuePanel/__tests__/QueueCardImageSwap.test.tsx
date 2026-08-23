@@ -181,6 +181,43 @@ describe('QueueCard image-slot tab swap', () => {
     expect(container.querySelector('.animate-spin')).toBeNull();
   });
 
+  it('renders a reused filename with the generating prompt cache identity', async () => {
+    const reusedItem: UnifiedItem = {
+      ...doneItem,
+      data: {
+        ...doneItem.data,
+        outputs: {
+          images: [{
+            filename: 'reused.png',
+            subfolder: '',
+            type: 'output',
+            cacheToken: 'new-prompt',
+          }],
+        },
+      },
+    };
+
+    await act(async () => {
+      root.render(
+        <QueueCard
+          item={reusedItem}
+          isActuallyRunning={false}
+          progress={0}
+          viewerImages={[]}
+          runningImages={[]}
+          onOpenMenu={() => {}}
+          isTopDoneItem
+        />,
+      );
+    });
+
+    const previewUrl = Array.from(container.querySelectorAll('img'))
+      .map((image) => image.getAttribute('src') ?? '')
+      .find((src) => src.includes('reused.png'));
+    expect(previewUrl).toContain('/mobile/api/preview?');
+    expect(previewUrl).toContain('&cb=new-prompt&');
+  });
+
   it('keeps both hover actions available after an output is favorited', async () => {
     mocks.outputsState.favorites = ['output/images/b.png'];
     await act(async () => {

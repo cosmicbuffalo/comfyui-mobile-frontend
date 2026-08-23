@@ -25,7 +25,10 @@ import {
 } from '@/utils/outputsBrowser';
 import type { ViewerImage } from '@/utils/viewerImages';
 import { getMediaType } from '@/utils/media';
-import { deleteFile, moveFiles, createFolder, getUserImages, getRecursiveFolders, renameFile, getScreenPreviewUrl } from '@/api/client';
+import {
+  deleteFile, moveFiles, MoveConflictError, type MoveFileConflict, createFolder, getUserImages,
+  getRecursiveFolders, renameFile, getScreenPreviewUrl,
+} from '@/api/client';
 import {
   FolderIcon, BookmarkIconSvg, BookmarkOutlineIcon, DownloadDeviceIcon, EyeIcon, EyeOffIcon, TrashIcon,
   PlusIcon, MinusIcon, CornerDownRightIcon, FunnelArrowsIcon, QueueStackIcon
@@ -176,6 +179,14 @@ export const OutputsPanel = memo(function OutputsPanel({ visible }: { visible: b
     setMoveFilter((filter) => mergeOutputsFilter(filter, partial));
   const cycleMoveStatusFilter = (key: StatusFilterKey) =>
     setMoveFilter((filter) => cycleStatusFilterState(filter, key));
+  // A move blocked on filename conflicts with the destination. Set only
+  // between the move picker closing and the conflicts being resolved (or the
+  // user backing out); nothing has been moved yet while this is non-null.
+  const [pendingMove, setPendingMove] = useState<{ paths: string[]; destination: string | null } | null>(null);
+  const [moveConflicts, setMoveConflicts] = useState<MoveFileConflict[]>([]);
+  const [moveConflictIndex, setMoveConflictIndex] = useState(0);
+  const [moveConflictApplyToAll, setMoveConflictApplyToAll] = useState(false);
+  const [moveResolutions, setMoveResolutions] = useState<Record<string, 'overwrite' | 'rename'>>({});
   const [viewerOpen, setViewerOpen] = useState(false);
   const [viewerImages, setViewerImages] = useState<ViewerImage[]>([]);
   const [viewerIndex, setViewerIndex] = useState(0);
@@ -925,22 +936,69 @@ export const OutputsPanel = memo(function OutputsPanel({ visible }: { visible: b
     setMoveSearchQuery('');
   };
 
-  const submitMove = async () => {
-    if (moveItemIds.length === 0) return;
+  const closeMoveConflictPrompt = () => {
+    setPendingMove(null);
+    setMoveConflicts([]);
+    setMoveConflictIndex(0);
+    setMoveConflictApplyToAll(false);
+    setMoveResolutions({});
+  };
+
+  // Shared by the initial submit and every conflict-resolution resubmit.
+  // `resolutions` is empty on the first attempt; the backend reports every
+  // conflict (if any) without moving anything, and this reopens the prompt.
+  const runMove = async (
+    paths: string[],
+    destination: string | null,
+    resolutions: Record<string, 'overwrite' | 'rename'>,
+  ) => {
     try {
-      const prefix = `${source}/`;
-      const paths = moveItemIds.map((id) => (id.startsWith(prefix) ? id.slice(prefix.length) : id));
-      await moveFiles(paths, movePath, source);
+      await moveFiles(paths, destination, source, resolutions);
       refresh();
       if (selectionMode) {
         completeSelectionOperation();
       }
+      closeMoveConflictPrompt();
     } catch (err) {
+      if (err instanceof MoveConflictError) {
+        setPendingMove({ paths, destination });
+        setMoveConflicts(err.conflicts);
+        setMoveConflictIndex(0);
+        setMoveConflictApplyToAll(false);
+        return;
+      }
       console.error('Failed to move selected files:', err);
       window.alert(t('Failed to move selected files.'));
-    } finally {
-      closeMoveModal();
+      closeMoveConflictPrompt();
     }
+  };
+
+  const submitMove = async () => {
+    if (moveItemIds.length === 0) return;
+    const prefix = `${source}/`;
+    const paths = moveItemIds.map((id) => (id.startsWith(prefix) ? id.slice(prefix.length) : id));
+    const destination = movePath;
+    closeMoveModal();
+    await runMove(paths, destination, {});
+  };
+
+  // Applies one conflict's resolution (and, with "apply to all" checked,
+  // every remaining unresolved conflict) then either advances to the next
+  // conflict or resubmits the move once all conflicts have a resolution.
+  const resolveMoveConflict = async (resolution: 'overwrite' | 'rename') => {
+    if (!pendingMove || moveConflicts.length === 0) return;
+    const current = moveConflicts[moveConflictIndex];
+    const nextResolutions = { ...moveResolutions, [current.source]: resolution };
+    const remaining = moveConflictApplyToAll ? moveConflicts.slice(moveConflictIndex) : [current];
+    for (const conflict of remaining) {
+      nextResolutions[conflict.source] = resolution;
+    }
+    setMoveResolutions(nextResolutions);
+    if (!moveConflictApplyToAll && moveConflictIndex + 1 < moveConflicts.length) {
+      setMoveConflictIndex(moveConflictIndex + 1);
+      return;
+    }
+    await runMove(pendingMove.paths, pendingMove.destination, nextResolutions);
   };
 
   // A new-folder name is valid when it's non-empty and free of path separators
@@ -1641,6 +1699,58 @@ export const OutputsPanel = memo(function OutputsPanel({ visible }: { visible: b
            </div>
          );
        })()}
+       {pendingMove && moveConflicts.length > 0 && (
+         <Dialog
+           onClose={closeMoveConflictPrompt}
+           title={t('File already exists')}
+           description={
+             <div className="space-y-3 text-left">
+               <p>
+                 {t('"{name}" already exists in the destination folder.', {
+                   name: moveConflicts[moveConflictIndex].name,
+                 })}
+               </p>
+               {moveConflicts.length > 1 && (
+                 <p className="text-xs text-slate-400">
+                   {t('Conflict {current} of {total}', {
+                     current: moveConflictIndex + 1,
+                     total: moveConflicts.length,
+                   })}
+                 </p>
+               )}
+               {moveConflicts.length > 1 && (
+                 <label className="flex items-center gap-2 text-sm text-slate-300">
+                   <input
+                     type="checkbox"
+                     checked={moveConflictApplyToAll}
+                     onChange={(e) => setMoveConflictApplyToAll(e.target.checked)}
+                   />
+                   {t('Apply to all remaining conflicts')}
+                 </label>
+               )}
+             </div>
+           }
+           actionsLayout="stack"
+           actions={[
+             {
+               label: t('Keep Both'),
+               autoFocus: true,
+               onClick: () => resolveMoveConflict('rename'),
+               variant: 'primary',
+             },
+             {
+               label: t('Overwrite'),
+               onClick: () => resolveMoveConflict('overwrite'),
+               variant: 'danger',
+             },
+             {
+               label: t('Cancel'),
+               onClick: closeMoveConflictPrompt,
+               variant: 'secondary',
+             },
+           ]}
+         />
+       )}
        {deleteTarget && (
          <Dialog
            fullscreen={viewerOpen}

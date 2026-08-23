@@ -285,9 +285,37 @@ class TestNonRecursiveListing:
         assert "date" in file_entry
         assert "createdDate" in file_entry
         assert "modifiedDate" in file_entry
+        assert "cacheToken" in file_entry
         assert file_entry["type"] == "image"
         assert file_entry["size"] > 0
         assert file_entry["createdDate"] <= file_entry["modifiedDate"]
+
+    def test_reused_path_gets_a_new_cache_token(self, tmp_path):
+        original = tmp_path / "reused.png"
+        original.write_bytes(b"old-image")
+        original_stat = original.stat()
+        before = next(
+            r for r in list_files(str(tmp_path), str(tmp_path))
+            if r["name"] == "reused.png"
+        )
+
+        # This mirrors the reported case: move yesterday's file elsewhere and
+        # let a new generation reuse its old path. Preserve mtime and byte size
+        # to prove the token is stronger than the visible listing timestamp.
+        original.rename(tmp_path / "moved-old.png")
+        original.write_bytes(b"new-image")
+        os.utime(
+            original,
+            ns=(original_stat.st_atime_ns, original_stat.st_mtime_ns),
+        )
+        after = next(
+            r for r in list_files(str(tmp_path), str(tmp_path))
+            if r["name"] == "reused.png"
+        )
+
+        assert after["size"] == before["size"]
+        assert after["date"] == before["date"]
+        assert after["cacheToken"] != before["cacheToken"]
 
     def test_rename_leaves_both_stat_dates_alone(self, tmp_path):
         # An on-disk rename touches ctime but not mtime. Neither date should
@@ -478,3 +506,149 @@ def test_a_failed_reflink_leaves_nothing_behind(tmp_path, monkeypatch):
     assert result == "link"  # fell through to a hard link, not a copy
     assert dest.read_bytes() == b"payload"
     assert not any(p.name.endswith(".tmp") for p in tmp_path.iterdir())
+
+
+class TestPlanMoves:
+    """Batch moves resolve every final name up front.
+
+    The two collision kinds are deliberately different: a name already taken in
+    the destination is the user's call, while two files *inside the same batch*
+    sharing a name can only ever be auto-suffixed — overwriting there would
+    destroy a file the same operation was asked to move.
+    """
+
+    def _sources(self, tmp_path, *rels):
+        specs = []
+        for rel in rels:
+            path = tmp_path / "src" / rel
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(rel.encode())
+            specs.append((rel, str(path)))
+        return specs
+
+    def test_same_batch_duplicate_names_auto_suffix_without_prompting(self, tmp_path):
+        dest = tmp_path / "dest"
+        dest.mkdir()
+        specs = self._sources(tmp_path, "a/photo.png", "b/photo.png")
+
+        plan, conflicts = file_utils.plan_moves(specs, str(dest))
+
+        # Nothing to ask the user: the destination holds neither name.
+        assert conflicts == []
+        assert [basename for _rel, _src, basename in plan] == ["photo.png", "photo_1.png"]
+
+    def test_same_batch_duplicates_never_destroy_the_first_moved_file(self, tmp_path):
+        # The regression this guards: both files planned onto one basename, so
+        # executing the plan moved the first in and then clobbered it.
+        dest = tmp_path / "dest"
+        dest.mkdir()
+        specs = self._sources(tmp_path, "a/photo.png", "b/photo.png", "c/photo.png")
+
+        plan, _conflicts = file_utils.plan_moves(specs, str(dest))
+
+        targets = [basename for _rel, _src, basename in plan]
+        assert len(set(targets)) == len(targets)
+
+    def test_existing_destination_file_is_reported_as_a_conflict(self, tmp_path):
+        dest = tmp_path / "dest"
+        dest.mkdir()
+        (dest / "photo.png").write_bytes(b"already here")
+        specs = self._sources(tmp_path, "a/photo.png")
+
+        plan, conflicts = file_utils.plan_moves(specs, str(dest))
+
+        assert conflicts == [{"source": "a/photo.png", "name": "photo.png"}]
+        assert plan  # planned, but the caller must not execute it
+
+    def test_overwrite_resolution_keeps_the_original_name(self, tmp_path):
+        dest = tmp_path / "dest"
+        dest.mkdir()
+        (dest / "photo.png").write_bytes(b"already here")
+        specs = self._sources(tmp_path, "a/photo.png")
+
+        plan, conflicts = file_utils.plan_moves(
+            specs, str(dest), {"a/photo.png": "overwrite"}
+        )
+
+        assert conflicts == []
+        assert [basename for _rel, _src, basename in plan] == ["photo.png"]
+
+    def test_rename_resolution_suffixes_past_the_existing_file(self, tmp_path):
+        dest = tmp_path / "dest"
+        dest.mkdir()
+        (dest / "photo.png").write_bytes(b"already here")
+        specs = self._sources(tmp_path, "a/photo.png")
+
+        plan, conflicts = file_utils.plan_moves(
+            specs, str(dest), {"a/photo.png": "rename"}
+        )
+
+        assert conflicts == []
+        assert [basename for _rel, _src, basename in plan] == ["photo_1.png"]
+
+    def test_only_the_first_of_a_duplicate_pair_prompts_about_the_destination(self, tmp_path):
+        # One question, not two: the second file was always going to be
+        # suffixed regardless of how the destination clash is resolved.
+        dest = tmp_path / "dest"
+        dest.mkdir()
+        (dest / "photo.png").write_bytes(b"already here")
+        specs = self._sources(tmp_path, "a/photo.png", "b/photo.png")
+
+        _plan, conflicts = file_utils.plan_moves(specs, str(dest))
+
+        assert conflicts == [{"source": "a/photo.png", "name": "photo.png"}]
+
+    def test_overwriting_a_destination_file_still_suffixes_the_batch_duplicate(self, tmp_path):
+        dest = tmp_path / "dest"
+        dest.mkdir()
+        (dest / "photo.png").write_bytes(b"already here")
+        specs = self._sources(tmp_path, "a/photo.png", "b/photo.png")
+
+        plan, conflicts = file_utils.plan_moves(
+            specs, str(dest), {"a/photo.png": "overwrite"}
+        )
+
+        assert conflicts == []
+        # The destination file is replaced as asked; the batch duplicate lands
+        # beside it instead of on top of it.
+        assert [basename for _rel, _src, basename in plan] == ["photo.png", "photo_1.png"]
+
+    def test_renaming_a_destination_clash_still_only_asks_once(self, tmp_path):
+        # Batch collisions key on the ORIGINAL basenames. If they keyed on the
+        # resolved ones, renaming the first file out of the way would make the
+        # second look like a fresh destination clash and prompt a second time.
+        dest = tmp_path / "dest"
+        dest.mkdir()
+        (dest / "photo.png").write_bytes(b"already here")
+        specs = self._sources(tmp_path, "a/photo.png", "b/photo.png")
+
+        plan, conflicts = file_utils.plan_moves(
+            specs, str(dest), {"a/photo.png": "rename"}
+        )
+
+        assert conflicts == []
+        assert [basename for _rel, _src, basename in plan] == ["photo_1.png", "photo_2.png"]
+
+    def test_moving_a_file_onto_its_own_path_is_not_a_conflict(self, tmp_path):
+        dest = tmp_path / "dest"
+        dest.mkdir()
+        existing = dest / "photo.png"
+        existing.write_bytes(b"in place")
+
+        plan, conflicts = file_utils.plan_moves(
+            [("photo.png", str(existing))], str(dest)
+        )
+
+        assert conflicts == []
+        assert [basename for _rel, _src, basename in plan] == ["photo.png"]
+
+    def test_vanished_sources_are_dropped_from_the_plan(self, tmp_path):
+        dest = tmp_path / "dest"
+        dest.mkdir()
+        specs = self._sources(tmp_path, "a/photo.png")
+        specs.append(("a/gone.png", str(tmp_path / "src" / "a" / "gone.png")))
+
+        plan, conflicts = file_utils.plan_moves(specs, str(dest))
+
+        assert conflicts == []
+        assert [rel for rel, _src, _basename in plan] == ["a/photo.png"]

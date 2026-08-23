@@ -6,7 +6,9 @@ each backend is tried in turn, so the node still loads (and image thumbnails
 still work) even when no video backend is available.
 
 Extracted frames are cached as JPEGs under ComfyUI's temp directory, keyed by
-the source path + mtime + size, so repeated grid loads don't re-decode.
+the source path plus its file identity (see ``file_utils.file_cache_token``),
+so repeated grid loads don't re-decode and a replaced file at the same path
+cannot inherit the previous file's thumbnail.
 """
 
 import hashlib
@@ -14,6 +16,7 @@ import io
 import os
 
 import binary_cache_io as _binary_cache_io
+import file_utils as _file_utils
 
 # Kept in sync with the video extensions recognized by api_get_thumbnail.
 VIDEO_EXTENSIONS = ('.mp4', '.m4v', '.mov', '.webm', '.mkv', '.avi')
@@ -34,7 +37,9 @@ def _cache_dir():
 def _cache_path(file_path):
     try:
         stat = os.stat(file_path)
-        key = '{}|{}|{}'.format(os.path.abspath(file_path), stat.st_mtime_ns, stat.st_size)
+        key = '{}|{}'.format(
+            os.path.abspath(file_path), _file_utils.file_cache_token(stat)
+        )
     except OSError:
         key = os.path.abspath(file_path)
     # Non-security cache key; usedforsecurity=False keeps security scanners quiet.
