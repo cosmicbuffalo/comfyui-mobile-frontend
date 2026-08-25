@@ -4,7 +4,7 @@ import {
   isWorkflowImageFile,
 } from '@/utils/imageWorkflowMetadata';
 
-export type WorkflowFileResult =
+type WorkflowFileResult =
   | { kind: 'workflow'; workflow: Workflow; filename: string }
   // A recognized image that simply carries no embedded workflow (user-facing
   // "this image has no workflow" modal).

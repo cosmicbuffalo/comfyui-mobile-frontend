@@ -72,7 +72,7 @@ export function getActiveToken(value: string, caret: number): ActiveToken {
   return { text: value.slice(start, safeCaret), start, end: safeCaret };
 }
 
-export interface ParsedToken {
+interface ParsedToken {
   kind: SuggestionKind;
   query: string;
 }

@@ -15,6 +15,7 @@
 
 ### Notes
 
+- Internal maintenance: the largest source files (the workflow store, `__init__.py`, WorkflowPanel, useWebSocket and the workflow-input helpers) were split into smaller per-domain modules and duplicated logic was consolidated. Cleanup only — no behaviour changes
 - The backend test suite now also runs on pushes to `release-*` branches, not only on `main` and pull requests into it. Release work happens on those branches, so this reports a break while it is being made rather than when the release PR is finally opened
 
 ## 3.2.4 - 2026-08-23

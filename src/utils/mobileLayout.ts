@@ -23,7 +23,7 @@ export type GroupParentRef =
   | { scope: 'group'; groupKey: string }
   | { scope: 'subgraph'; subgraphId: string };
 
-export type LocationPointer =
+type LocationPointer =
   | { type: 'node'; nodeId: number; subgraphId: string | null }
   | { type: 'group'; groupId: number; subgraphId: string | null }
   | { type: 'subgraph'; subgraphId: string };
@@ -152,11 +152,14 @@ export function getGroupKey(groupId: number, subgraphId: string | null): string 
   return makeLocationPointer({ type: 'group', groupId, subgraphId });
 }
 
-export function extractLayoutNodeMembership(layout: MobileLayout): Map<number, string> {
+function extractLayoutGroupMembership(
+  layout: MobileLayout,
+  subgraphsOnly: boolean,
+): Map<number, string> {
   const membership = collectScopedMembership(layout);
   const result = new Map<number, string>();
   for (const [key, member] of membership.entries()) {
-    if (member.subgraphId !== null) continue;
+    if ((member.subgraphId !== null) !== subgraphsOnly) continue;
     if (!member.groupKey) continue;
     const nodeId = Number(key.split(':').pop() ?? NaN);
     if (!Number.isFinite(nodeId)) continue;
@@ -165,17 +168,12 @@ export function extractLayoutNodeMembership(layout: MobileLayout): Map<number, s
   return result;
 }
 
+export function extractLayoutNodeMembership(layout: MobileLayout): Map<number, string> {
+  return extractLayoutGroupMembership(layout, false);
+}
+
 export function extractLayoutSubgraphNodeMembership(layout: MobileLayout): Map<number, string> {
-  const membership = collectScopedMembership(layout);
-  const result = new Map<number, string>();
-  for (const [key, member] of membership.entries()) {
-    if (member.subgraphId === null) continue;
-    if (!member.groupKey) continue;
-    const nodeId = Number(key.split(':').pop() ?? NaN);
-    if (!Number.isFinite(nodeId)) continue;
-    result.set(nodeId, member.groupKey);
-  }
-  return result;
+  return extractLayoutGroupMembership(layout, true);
 }
 
 // --- Helpers ---

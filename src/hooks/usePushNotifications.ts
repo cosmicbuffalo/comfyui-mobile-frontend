@@ -34,7 +34,7 @@ function isStandalone(): boolean {
   );
 }
 
-export interface PushState {
+interface PushState {
   supported: boolean;
   // iOS Safari tab that hasn't been installed to the Home Screen yet.
   needsInstall: boolean;

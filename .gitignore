@@ -34,3 +34,9 @@ __pycache__
 # Legacy root-level runtime cache copies (now migrated to .cache/ or user data) —
 # ignored so a runtime write at the extension root can't be re-committed.
 /*_cache.json
+# Local credential files - never commit (see .smoke-auth.json leak risk)
+.smoke-auth.json
+*.smoke-auth.json
+
+# Local agent tooling state
+.claude/

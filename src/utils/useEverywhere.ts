@@ -48,7 +48,7 @@ interface UeRegex {
 }
 
 /** Where an unconnected input actually gets its data from. */
-export interface UeResolution {
+interface UeResolution {
   /** The real upstream node — what the prompt should reference and the UI should jump to. */
   originId: number;
   originSlot: number;

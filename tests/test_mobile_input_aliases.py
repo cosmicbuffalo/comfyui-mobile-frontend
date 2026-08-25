@@ -191,9 +191,8 @@ def test_alias_inventory_retains_an_unresolvable_cached_alias(tmp_path: Path):
 
 
 def test_object_info_combo_lists_show_real_paths_and_drop_stale_aliases():
-    import importlib
 
-    mobile_init = importlib.import_module("__init__")
+    import mobile_object_info as mobile_init
     live = f"{ALIAS_PREFIX}live0123456789.png"
     stale = f"{ALIAS_PREFIX}stale012345678.png"
     unknown = f"{ALIAS_PREFIX}unknown12345678.png"
@@ -222,9 +221,8 @@ def test_object_info_combo_lists_show_real_paths_and_drop_stale_aliases():
 
 
 def test_build_remapped_object_info_uses_the_alias_cache(tmp_path: Path, monkeypatch):
-    import importlib
 
-    mobile_init = importlib.import_module("__init__")
+    import mobile_object_info as mobile_init
     input_dir = tmp_path / "input"
     source = input_dir / "sub" / "photo.png"
     source.parent.mkdir(parents=True)
@@ -255,9 +253,8 @@ def test_build_remapped_object_info_keeps_orphaned_hard_link_aliases(
     """An alias outlives its original path (it is a hard link). It must stay in
     /object_info as long as the alias file exists; only a missing alias file
     is dropped."""
-    import importlib
 
-    mobile_init = importlib.import_module("__init__")
+    import mobile_object_info as mobile_init
     input_dir = tmp_path / "input"
     (input_dir / "sub").mkdir(parents=True)
     (input_dir / "sub" / "kept.png").write_bytes(b"pixels")
@@ -295,9 +292,8 @@ def test_build_remapped_object_info_keeps_orphaned_hard_link_aliases(
 def test_build_remapped_object_info_deduplicates_alias_source_collision(
     tmp_path: Path, monkeypatch
 ):
-    import importlib
 
-    mobile_init = importlib.import_module("__init__")
+    import mobile_object_info as mobile_init
     input_dir = tmp_path / "input"
     source = input_dir / "photo.png"
     source.parent.mkdir(parents=True)
@@ -318,9 +314,8 @@ def test_build_remapped_object_info_deduplicates_alias_source_collision(
 
 
 def test_object_info_remap_cache_expires_and_is_lru_bounded(monkeypatch):
-    import importlib
 
-    mobile_init = importlib.import_module("__init__")
+    import mobile_object_info as mobile_init
     mobile_init._object_info_remap_cache.clear()
     for index in range(mobile_init._OBJECT_INFO_REMAP_MAX + 1):
         mobile_init._object_info_remap_put((index,), bytes([index]))

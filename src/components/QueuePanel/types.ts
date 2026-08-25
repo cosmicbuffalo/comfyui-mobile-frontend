@@ -14,7 +14,7 @@ export interface QueueItemData {
   outputs_to_execute: string[];
 }
 
-export interface HistoryEntryData {
+interface HistoryEntryData {
   prompt_id: string;
   timestamp: number;
   durationSeconds?: number;

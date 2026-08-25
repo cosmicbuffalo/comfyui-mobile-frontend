@@ -16,7 +16,7 @@ import { RunCountSelector } from "./BottomBar/RunCountSelector";
 import { SkipButton } from "./BottomBar/SkipButton";
 import { WorkflowSelectionButton } from "./BottomBar/WorkflowSelectionButton";
 
-export type BottomBarProps = {
+type BottomBarProps = {
   currentPanel: 'workflow' | 'queue' | 'outputs';
   viewerOpen?: boolean;
   followQueue?: boolean;

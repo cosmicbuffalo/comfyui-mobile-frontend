@@ -791,6 +791,9 @@ export const zhCN: Record<string, string> = {
   'Failed to send test notification.': '发送测试通知失败。',
   'Prompt search failed': '提示搜索失败',
   'just now': '刚刚',
+  // The 12 relative-age keys below are built at runtime by formatRelativeAge
+  // (outputsBrowser.ts) as `{count} ${unit}(s) ago` — a grep for the full key
+  // finds nothing, so don't remove them as dead.
   '{count} minute ago': '{count} 分钟前',
   '{count} minutes ago': '{count} 分钟前',
   '{count} hour ago': '{count} 小时前',
@@ -846,7 +849,6 @@ export const zhCN: Record<string, string> = {
   'Loading metadata...': '正在加载元数据…',
   'No metadata found': '未找到元数据',
   'Prompt preview': '提示预览',
-  'Choose the language used throughout the app.': '选择应用界面使用的语言。',
 
   // --- Added in review follow-up: keys the initial migration missed. ---
   'Add Lora': '添加 Lora',
@@ -858,8 +860,6 @@ export const zhCN: Record<string, string> = {
   'Update': '更新',
   'Disable': '禁用',
   'Import Failed': '导入失败',
-  '{count} second ago': '{count} 秒前',
-  '{count} seconds ago': '{count} 秒前',
   'Delete {count} rejected output?': '删除 {count} 个已拒绝的输出？',
   'Delete {count} rejected outputs?': '删除 {count} 个已拒绝的输出？',
   "This permanently deletes the files marked as rejected from your server's output folder and removes them from the queue. This can't be undone.": '这将从服务器输出文件夹中永久删除标记为已拒绝的文件，并将其从队列中移除。此操作无法撤销。',

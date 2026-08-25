@@ -16,6 +16,7 @@ import { zhCN } from '@/i18n/zh-CN';
 import { zhTW } from '@/i18n/zh-TW';
 import { ja } from '@/i18n/ja';
 import { ko } from '@/i18n/ko';
+import { formatRelativeAge } from '@/utils/outputsBrowser';
 
 const NON_EN_LOCALES: Locale[] = ['zh-CN', 'zh-TW', 'ja', 'ko'];
 
@@ -143,6 +144,41 @@ describe('i18n', () => {
       const extra = [...keys].filter((key) => !referenceSet.has(key));
       expect(missing, `${name} is missing keys`).toEqual([]);
       expect(extra, `${name} has keys zh-CN lacks`).toEqual([]);
+    }
+  });
+
+  it('translates the relative-age keys formatRelativeAge builds at runtime', () => {
+    // formatRelativeAge assembles its keys as `{count} ${unit}(s) ago`, so no
+    // full key ever appears literally in the source and the t()-literal scan
+    // above can't see them. This drives the real producer across every unit
+    // and locale: a missing dictionary entry falls back to English, whose
+    // Latin letters no CJK/KR translation of these strings contains.
+    const initial = useLocaleStore.getState().locale;
+    const now = 1_000_000_000_000;
+    const minute = 60 * 1000;
+    const hour = 60 * minute;
+    const day = 24 * hour;
+    const elapsed: Array<[string, number]> = [
+      ['minute', minute], ['minutes', 4 * minute],
+      ['hour', hour], ['hours', 4 * hour],
+      ['day', 25 * hour], ['days', 4 * day],
+      ['week', 8 * day], ['weeks', 21 * day],
+      ['month', 42 * day], ['months', 100 * day],
+      ['year', 400 * day], ['years', 800 * day],
+    ];
+    try {
+      for (const locale of NON_EN_LOCALES) {
+        useLocaleStore.getState().setLocale(locale);
+        for (const [unit, ms] of elapsed) {
+          const rendered = formatRelativeAge(now - ms, now);
+          expect(
+            rendered && !/[a-z]/i.test(rendered),
+            `${locale} fell back to English for the "${unit}" key: "${rendered}"`,
+          ).toBe(true);
+        }
+      }
+    } finally {
+      useLocaleStore.getState().setLocale(initial);
     }
   });
 

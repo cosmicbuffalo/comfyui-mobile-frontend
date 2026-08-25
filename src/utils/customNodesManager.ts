@@ -43,7 +43,7 @@ export interface CustomNodeRow extends CustomNodePackageMetadata {
   alternatives?: string;
 }
 
-export interface CustomNodeActionOption {
+interface CustomNodeActionOption {
   label: string;
   mode: 'install' | 'update' | 'switch' | 'disable' | 'uninstall';
   destructive?: boolean;

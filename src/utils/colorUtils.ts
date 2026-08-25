@@ -1,4 +1,4 @@
-export interface HslColor {
+interface HslColor {
   h: number;
   s: number;
   l: number;

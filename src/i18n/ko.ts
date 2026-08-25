@@ -790,6 +790,9 @@ export const ko: Record<string, string> = {
   'Failed to send test notification.': '테스트 알림을 보내지 못했습니다.',
   'Prompt search failed': '프롬프트 검색 실패',
   'just now': '방금',
+  // The 12 relative-age keys below are built at runtime by formatRelativeAge
+  // (outputsBrowser.ts) as `{count} ${unit}(s) ago` — a grep for the full key
+  // finds nothing, so don't remove them as dead.
   '{count} minute ago': '{count}분 전',
   '{count} minutes ago': '{count}분 전',
   '{count} hour ago': '{count}시간 전',
@@ -845,7 +848,6 @@ export const ko: Record<string, string> = {
   'Loading metadata...': '메타데이터를 불러오는 중…',
   'No metadata found': '메타데이터를 찾을 수 없습니다',
   'Prompt preview': '프롬프트 미리보기',
-  'Choose the language used throughout the app.': '앱 전체에서 사용할 언어를 선택하세요.',
 
   // --- Added in review follow-up: keys the initial migration missed. ---
   'Add Lora': 'Lora 추가',
@@ -857,8 +859,6 @@ export const ko: Record<string, string> = {
   'Update': '업데이트',
   'Disable': '비활성화',
   'Import Failed': '가져오기 실패',
-  '{count} second ago': '{count}초 전',
-  '{count} seconds ago': '{count}초 전',
   'Delete {count} rejected output?': '거부된 출력 {count}개를 삭제할까요?',
   'Delete {count} rejected outputs?': '거부된 출력 {count}개를 삭제할까요?',
   "This permanently deletes the files marked as rejected from your server's output folder and removes them from the queue. This can't be undone.": '거부됨으로 표시된 파일을 서버 출력 폴더에서 영구적으로 삭제하고 큐에서도 제거합니다. 이 작업은 되돌릴 수 없습니다.',

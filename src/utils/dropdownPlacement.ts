@@ -10,7 +10,7 @@ export const MAX_DROPDOWN_HEIGHT = 280;
 export const MIN_BELOW_SPACE = ROW_HEIGHT * 2 + 8;
 const GAP = 4;
 
-export interface PlacementInput {
+interface PlacementInput {
   /** Viewport y of the caret line's top and bottom. */
   caretLineTop: number;
   caretLineBottom: number;
@@ -24,7 +24,7 @@ export interface PlacementInput {
   windowHeight: number;
 }
 
-export interface Placement {
+interface Placement {
   left: number;
   width: number;
   /** Set when anchored below the caret (fixed `top`). */
