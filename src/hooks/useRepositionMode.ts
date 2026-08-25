@@ -13,7 +13,7 @@ export interface RepositionViewportAnchor {
   viewportTop: number;
 }
 
-export interface UseRepositionModeReturn {
+interface UseRepositionModeReturn {
   overlayOpen: boolean;
   initialTarget: RepositionTarget | null;
   initialViewportAnchor: RepositionViewportAnchor | null;

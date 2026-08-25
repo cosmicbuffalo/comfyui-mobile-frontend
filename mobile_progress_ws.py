@@ -33,7 +33,7 @@ except Exception:  # pragma: no cover - labels are optional
 
 logger = logging.getLogger(__name__)
 
-_clients = set()
+_clients = {}
 _watch_task = None
 _relay_task = None
 _relay_pending = None
@@ -48,6 +48,41 @@ _relay_last_payload = None
 _relay_finished_phases = {}
 _workflow_cache = {}
 _TICK_SECONDS = 0.1
+
+# --- Foreground socket pacing --------------------------------------------
+#
+# 3.2.4 pushed every connected app a snapshot the instant the sampler moved,
+# which is ~10 messages/second. On a LAN that is free. Over a hole-punched or
+# relayed tunnel it is not: every message needs a TCP ack back, so the stream
+# is ~20 packets/second in each direction while carrying almost no data, and
+# a path that cannot sustain that rate spends its time renegotiating instead
+# of delivering. So the cadence is negotiable, and coalescing is
+# last-writer-wins: a slowed-down client sees fewer snapshots, never staler
+# ones.
+#
+# A client that never negotiates keeps the 3.2.4 rate, so upgrading the node
+# alone changes nothing for an app already in the field. It is still covered
+# by the server-side backoff below, which is the half that does not need the
+# client to cooperate.
+_PROTOCOL_VERSION = 1
+# The watcher's own tick is the floor: nothing can be delivered faster than
+# the registry is sampled.
+_MIN_CLIENT_INTERVAL_S = _TICK_SECONDS
+_MAX_CLIENT_INTERVAL_S = 60.0
+# How far the server will slow a client down on its own, and how many
+# consecutive stalled sends it takes to do it. Deliberately well short of
+# _MAX_CLIENT_INTERVAL_S: this is a link that is struggling, not a client
+# that asked to idle, and the Live Activity relay is already covering the
+# low-frequency case.
+_BACKOFF_INTERVAL_CEILING_S = 4.0
+_SLOW_SENDS_BEFORE_BACKOFF = 2
+
+_stats = {
+    "connections": 0,
+    "dropped": 0,
+    "slow_sends": 0,
+    "backoffs": 0,
+}
 
 # Routine APNs updates remain lower-frequency than the foreground socket, but
 # two seconds is granular enough to show meaningful motion in a 10–20 second
@@ -66,6 +101,57 @@ _QUEUE_METADATA_PATH = os.path.join(
     os.path.dirname(os.path.abspath(__file__)), ".cache", "queue_metadata_cache.json"
 )
 _RELAY_STATE_VERSION = 1
+
+
+class _ClientState:
+    """Pacing state for one connected foreground socket."""
+
+    __slots__ = ("interval", "negotiated", "forced", "last_sent",
+                 "last_prompt_id", "pending", "slow_sends", "lock")
+
+    def __init__(self):
+        # Zero, not one tick: an un-negotiated client must be bit-for-bit
+        # 3.2.4 — every change, the moment it happens. Gating it on an
+        # interval equal to the tick sounds equivalent but is not, because
+        # the two clocks jitter against each other and occasional changes
+        # get coalesced away. Upgrading the node alone changes nothing.
+        self.interval = 0.0
+        # Distinguishes "asked for this rate" from "left at the default", so
+        # server-side backoff can be reported back as advice rather than
+        # silently overriding what the client requested.
+        self.negotiated = False
+        # Set once the server has had to slow this client down on its own.
+        # Sticky for the life of the connection: it is live evidence about
+        # this link, and a later re-probe must not be able to talk past it.
+        self.forced = False
+        self.last_sent = 0.0
+        # Sentinel, not None: an idle registry reports prompt_id None, and the
+        # first snapshot must count as an edge either way.
+        self.last_prompt_id = _UNSET
+        self.pending = None
+        self.slow_sends = 0
+        # aiohttp does not serialise writers. Pongs are answered on the read
+        # task while the watch loop may be mid-send on the same socket, and
+        # interleaved frames would corrupt the stream.
+        self.lock = asyncio.Lock()
+
+
+_UNSET = object()
+
+
+def _now():
+    return asyncio.get_running_loop().time()
+
+
+def _clamp_interval(value):
+    """A client's requested milliseconds as seconds, or None if unusable."""
+    try:
+        ms = float(value)
+    except (TypeError, ValueError):
+        return None
+    if ms != ms or ms in (float("inf"), float("-inf")):
+        return None
+    return min(max(ms / 1000.0, _MIN_CLIENT_INTERVAL_S), _MAX_CLIENT_INTERVAL_S)
 
 
 def _relay_state_path():
@@ -587,13 +673,39 @@ async def _relay_send_loop():
 _SEND_TIMEOUT_S = 2.0
 
 
-async def _send_one(ws, message):
-    """Send to one client; return False if it failed or timed out."""
+async def _send_one(ws, message, state=None):
+    """Send to one client.
+
+    Returns "ok", "slow" (the send did not complete inside the timeout) or
+    "failed" (the socket is gone). The two failure modes deserve different
+    treatment. A stalled send means the link is behind; dropping the socket
+    for that forces a reconnect, which is more packets over exactly the path
+    that is already struggling, so the caller slows that client down instead.
+    A genuinely dead socket is still dropped.
+    """
     try:
-        await asyncio.wait_for(ws.send_str(message), timeout=_SEND_TIMEOUT_S)
-        return True
+        if state is None:
+            await asyncio.wait_for(ws.send_str(message), timeout=_SEND_TIMEOUT_S)
+        else:
+            await asyncio.wait_for(
+                _send_locked(ws, state, message), timeout=_SEND_TIMEOUT_S
+            )
+        return "ok"
+    except asyncio.TimeoutError:
+        _stats["slow_sends"] += 1
+        return "slow"
     except Exception:
-        return False
+        return "failed"
+
+
+async def _send_locked(ws, state, message):
+    """Serialise writes to one socket.
+
+    aiohttp does not lock its writer, and pongs are answered on the read task
+    while the watch loop may be mid-send on the same connection.
+    """
+    async with state.lock:
+        await ws.send_str(message)
 
 
 async def _close_quietly(ws):
@@ -603,24 +715,96 @@ async def _close_quietly(ws):
         pass
 
 
-async def _broadcast(snapshot):
+async def _broadcast(snapshot, immediate=False):
+    """Queue a snapshot for every client, then deliver whoever is due for one."""
     if not _clients:
         return
-    message = json.dumps(snapshot)
-    targets = list(_clients)
-    # Concurrent + time-bounded: one slow client costs at most _SEND_TIMEOUT_S
-    # for the whole broadcast instead of stacking up serially.
-    results = await asyncio.gather(
-        *(_send_one(ws, message) for ws in targets), return_exceptions=True
-    )
-    for ws, ok in zip(targets, results):
-        if ok is True:
+    for state in _clients.values():
+        state.pending = snapshot
+    await _flush(immediate=immediate)
+
+
+async def _flush(immediate=False):
+    """Send each client its pending snapshot, if its cadence allows it now.
+
+    Coalescing is last-writer-wins rather than queued: a client on a slow
+    cadence drops the snapshots in between instead of accumulating a backlog,
+    so what it renders is always the newest state the server has.
+    """
+    if not _clients:
+        return
+    now = _now()
+    due = []
+    for ws, state in list(_clients.items()):
+        snapshot = state.pending
+        if snapshot is None:
             continue
-        _clients.discard(ws)
-        # A cancelled/failed write leaves the socket in an unknown state; close
-        # it in the background so the client reconnects cleanly rather than
-        # sitting on a half-dead connection.
-        asyncio.ensure_future(_close_quietly(ws))
+        # A prompt starting, changing or ending is a semantic edge, not a
+        # sampler tick. Those go out at once whatever cadence is in force, so
+        # a slowed-down client still resolves its UI in step with the run
+        # rather than up to a full interval behind it.
+        edge = snapshot.get("prompt_id") != state.last_prompt_id
+        if not (immediate or edge or now - state.last_sent >= state.interval):
+            continue
+        state.pending = None
+        state.last_sent = now
+        state.last_prompt_id = snapshot.get("prompt_id")
+        due.append((ws, state, json.dumps(snapshot)))
+    if not due:
+        return
+    # Concurrent + time-bounded: one slow client costs at most _SEND_TIMEOUT_S
+    # for the whole flush instead of stacking up serially.
+    results = await asyncio.gather(
+        *(_send_one(ws, message, state) for ws, state, message in due),
+        return_exceptions=True,
+    )
+    for (ws, state, _message), outcome in zip(due, results):
+        if outcome == "ok":
+            state.slow_sends = 0
+        elif outcome == "slow":
+            state.slow_sends += 1
+            if state.slow_sends >= _SLOW_SENDS_BEFORE_BACKOFF:
+                _back_off(ws, state)
+        else:
+            _drop(ws)
+
+
+def _back_off(ws, state):
+    """Halve a struggling client's rate and tell it why.
+
+    This is the half of the cadence control that does not need the client to
+    cooperate: an app too old to understand the advice still gets the slower
+    stream, which is the part that protects the link.
+    """
+    state.slow_sends = 0
+    if state.interval >= _BACKOFF_INTERVAL_CEILING_S:
+        return
+    state.forced = True
+    # An un-negotiated client sits at zero, so back off from the tick floor
+    # rather than doubling nothing.
+    base = state.interval if state.interval > 0 else _MIN_CLIENT_INTERVAL_S
+    state.interval = min(base * 2, _BACKOFF_INTERVAL_CEILING_S)
+    _stats["backoffs"] += 1
+    logger.info(
+        "[Mobile Progress WS] client not keeping up; slowing it to %dms",
+        round(state.interval * 1000),
+    )
+    # Fire-and-forget: this client has just proved it can stall for the full
+    # send timeout, and awaiting the advice would hold up the whole flush.
+    asyncio.ensure_future(_send_one(ws, json.dumps({
+        "type": "rate_advice",
+        "interval_ms": round(state.interval * 1000),
+        "reason": "slow_send",
+    }), state))
+
+
+def _drop(ws):
+    _clients.pop(ws, None)
+    _stats["dropped"] += 1
+    # A cancelled/failed write leaves the socket in an unknown state; close it
+    # in the background so the client reconnects cleanly rather than sitting on
+    # a half-dead connection.
+    asyncio.ensure_future(_close_quietly(ws))
 
 
 async def _watch_loop():
@@ -629,6 +813,11 @@ async def _watch_loop():
     last_relay_enqueued_at = 0.0
     while True:
         await asyncio.sleep(_TICK_SECONDS)
+        # Deliver whatever a slowed-down client is still holding, including on
+        # ticks where the snapshot itself did not change — otherwise its last
+        # update would sit in `pending` until something else moved.
+        if _clients:
+            await _flush()
         relay_available = _relay_available()
         if not _clients and not relay_available:
             continue
@@ -657,24 +846,109 @@ async def _watch_loop():
                     _queue_relay(payload)
 
 
+async def _handle_control(ws, state, data):
+    """The client→server half of the socket.
+
+    3.2.4 read this direction only to notice the socket closing. It now
+    carries cadence negotiation and the app's link probe. Anything
+    unrecognised is ignored rather than closed on, so an app newer than the
+    node degrades to whatever this build understands.
+    """
+    try:
+        payload = json.loads(data)
+    except Exception:
+        return
+    if not isinstance(payload, dict):
+        return
+    kind = payload.get("type")
+
+    if kind == "ping":
+        # Echoed straight back from the read task, so a probe measures the
+        # socket's real round trip — including any time it spends queued
+        # behind a broadcast, which is exactly what a struggling link does.
+        await _send_one(ws, json.dumps({
+            "type": "pong",
+            "seq": payload.get("seq"),
+            "t": payload.get("t"),
+            "server_ms": round(time.time() * 1000),
+        }), state)
+        return
+
+    if kind in ("hello", "rate"):
+        requested = _clamp_interval(payload.get("min_interval_ms"))
+        if requested is not None:
+            state.negotiated = True
+            # Never let a client talk its way back up past a rate the server
+            # already had to force on it — the app re-probes and asks again
+            # after a good run, and that ask must not undo live evidence that
+            # this link cannot take it.
+            state.interval = (
+                max(requested, state.interval) if state.forced else requested
+            )
+            state.slow_sends = 0
+        await _send_one(ws, json.dumps({
+            "type": "hello_ack",
+            "protocol": _PROTOCOL_VERSION,
+            "interval_ms": round(state.interval * 1000),
+            "tick_ms": round(_TICK_SECONDS * 1000),
+            "min_interval_ms": round(_MIN_CLIENT_INTERVAL_S * 1000),
+            "max_interval_ms": round(_MAX_CLIENT_INTERVAL_S * 1000),
+        }), state)
+
+
 async def api_progress_ws(request):
     ws = web.WebSocketResponse(heartbeat=20)
     await ws.prepare(request)
+    state = _ClientState()
     # Send the current state right away — the watch loop only broadcasts on
     # change, which would otherwise leave a client that connects mid-run
     # blank until the next tick.
     try:
-        await ws.send_str(json.dumps(_snapshot()))
+        snapshot = _snapshot()
     except Exception:
-        pass
-    _clients.add(ws)
+        snapshot = None
+    if snapshot is not None:
+        state.last_prompt_id = snapshot.get("prompt_id")
+        state.last_sent = _now()
+        await _send_one(ws, json.dumps(snapshot), state)
+    _clients[ws] = state
+    _stats["connections"] += 1
     try:
         async for msg in ws:
             if msg.type in (WSMsgType.ERROR, WSMsgType.CLOSE, WSMsgType.CLOSING):
                 break
+            if msg.type == WSMsgType.TEXT:
+                await _handle_control(ws, state, msg.data)
     finally:
-        _clients.discard(ws)
+        _clients.pop(ws, None)
     return ws
+
+
+def stats():
+    """What the socket has actually had to do, for the app's diagnostic.
+
+    `slow_sends` is the number that matters: 3.2.4 already detected a client
+    it could not keep up with and then threw that signal away. Counting it
+    is what turns "my connection felt bad last night" into evidence.
+    """
+    return {
+        "protocol": _PROTOCOL_VERSION,
+        "tickMs": round(_TICK_SECONDS * 1000),
+        "minIntervalMs": round(_MIN_CLIENT_INTERVAL_S * 1000),
+        "maxIntervalMs": round(_MAX_CLIENT_INTERVAL_S * 1000),
+        "clients": len(_clients),
+        "clientIntervalsMs": sorted(
+            round(state.interval * 1000) for state in _clients.values()
+        ),
+        "connections": _stats["connections"],
+        "droppedClients": _stats["dropped"],
+        "slowSends": _stats["slow_sends"],
+        "backoffs": _stats["backoffs"],
+    }
+
+
+async def api_progress_ws_stats(request):
+    return web.json_response(stats())
 
 
 async def broadcast_finished(prompt_id, status=None):
@@ -699,7 +973,9 @@ async def broadcast_finished(prompt_id, status=None):
             oldest = next(iter(_relay_finished_phases))
             _relay_finished_phases.pop(oldest, None)
         _save_relay_state()
-    await _broadcast({"type": "finished", "prompt_id": prompt_id})
+    # Never coalesced: this is the sharp edge the app resolves its UI on, and
+    # it is deliberately timed with the push notification's dispatch.
+    await _broadcast({"type": "finished", "prompt_id": prompt_id}, immediate=True)
 
 
 async def on_startup(app):

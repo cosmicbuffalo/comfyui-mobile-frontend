@@ -8,6 +8,7 @@
 // those read-only as a second autocomplete source alongside Autocomplete-Plus.
 
 import type { TagEntry } from '@/utils/autocompleteSearch';
+import { parseCsvLine } from '@/api/csv';
 
 /** Sentinel category for user custom words: not a danbooru category, so it gets
  * the default row color and never claims a danbooru wiki link. */
@@ -25,32 +26,6 @@ export async function isCustomScriptsAvailable(): Promise<boolean> {
   } catch {
     return false;
   }
-}
-
-// Same quoted-field handling as the Autocomplete-Plus CSV: the a1111-style
-// alias column is a quoted comma-separated list.
-function parseCsvLine(line: string): string[] {
-  const result: string[] = [];
-  let current = '';
-  let inQuotes = false;
-  for (let i = 0; i < line.length; i++) {
-    const char = line[i];
-    if (char === '"') {
-      if (inQuotes && line[i + 1] === '"') {
-        current += '"';
-        i++;
-      } else {
-        inQuotes = !inQuotes;
-      }
-    } else if (char === ',' && !inQuotes) {
-      result.push(current);
-      current = '';
-    } else {
-      current += char;
-    }
-  }
-  result.push(current);
-  return result;
 }
 
 /**

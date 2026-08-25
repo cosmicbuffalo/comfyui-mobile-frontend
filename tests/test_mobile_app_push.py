@@ -475,6 +475,53 @@ def test_notification_disable_preserves_but_hides_live_target(monkeypatch):
     assert m.live_activity_target_count() == 1
 
 
+def test_live_activity_disable_preserves_notification_target(monkeypatch):
+    monkeypatch.setattr(m.requests, "post", lambda *a, **k: _Resp(200))
+    assert m.add_target(
+        "https://relay.example/", "ABCD-EFGH", label="Nick's iPhone",
+        server_id="server-uuid-1",
+    )
+    assert m.add_target(
+        "https://relay.example/", "ABCD-EFGH", live_activity=True,
+        server_id="server-uuid-1", server_label="Homelab",
+        frequent_updates=True, relevance_score=2,
+    )
+
+    assert m.remove_live_activity_target(
+        "ABCD-EFGH", "https://relay.example/"
+    ) == 1
+    assert m.live_activity_target_count() == 0
+    assert len(m.list_targets()) == 1
+    stored = m._load_targets()[0]
+    assert stored.get("live_activity") is None
+    assert stored.get("server_label") is None
+    assert stored.get("frequent_updates") is None
+    assert stored.get("relevance_score") is None
+    assert stored["server_id"] == "server-uuid-1"
+
+
+def test_live_activity_disable_removes_live_only_target(monkeypatch):
+    monkeypatch.setattr(m.requests, "post", lambda *a, **k: _Resp(200))
+    assert m.add_target(
+        "https://relay.example/", "ABCD-EFGH", live_activity=True
+    )
+
+    assert m.remove_live_activity_target(
+        "ABCD-EFGH", "https://relay.example/"
+    ) == 1
+    assert m.live_activity_target_count() == 0
+    assert m._load_targets() == []
+
+
+def test_live_activity_disable_rejects_malformed_relay_without_removing():
+    assert m.add_target(
+        "https://relay.example/", "ABCD-EFGH", live_activity=True
+    )
+
+    assert m.remove_live_activity_target("ABCD-EFGH", " ") == 0
+    assert m.live_activity_target_count() == 1
+
+
 def test_send_prunes_targets_that_returned_gone(monkeypatch):
     m.add_target("https://relay.example/", "ALIVE-CODE")
     m.add_target("https://relay.example/", "DEAD-CODE")

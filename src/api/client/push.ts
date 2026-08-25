@@ -2,14 +2,14 @@
 // the VAPID public key from the backend; we hand the resulting subscription back
 // to the node, which sends notifications on generation completion.
 
-export interface PushConfig {
+interface PushConfig {
   enabled: boolean;
   vapidPublicKey?: string;
   subscriptions?: number;
   reason?: string;
 }
 
-export interface PushSendResult {
+interface PushSendResult {
   sent: number;
   pruned: number;
   total: number;

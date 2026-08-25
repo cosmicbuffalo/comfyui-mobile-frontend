@@ -12,7 +12,7 @@ function toAllowedAbsoluteUrl(value: string): string | null {
   }
 }
 
-export function getLoraManagerUiUrl(): string {
+function getLoraManagerUiUrl(): string {
   const envUrl =
     typeof import.meta !== "undefined" &&
     import.meta.env &&

@@ -116,64 +116,62 @@ export async function loadTemplateWorkflow(moduleName: string, templateName: str
 }
 
 
-export async function loadWorkflowHiddenFromServer(): Promise<string[] | null | undefined> {
+// The hidden and bookmarked (favorites) lists share one server contract:
+// a JSON array of workflow paths at a fixed userdata location, 404 meaning
+// "not saved yet". The shared core below carries that contract; the exported
+// pairs are thin wrappers over it.
+async function loadWorkflowPathList(
+  path: string,
+  label: string,
+): Promise<string[] | null | undefined> {
   try {
     const response = await fetch(
-      `/api/userdata/${encodeUserDataPath(WORKFLOW_HIDDEN_PATH)}`,
+      `/api/userdata/${encodeUserDataPath(path)}`,
       { cache: 'no-store' },
     );
     if (response.status === 404) return null;
-    if (!response.ok) throw new Error('Failed to load hidden workflows');
+    if (!response.ok) throw new Error('Failed to load ' + label + ' workflows');
     const data = await response.json();
     return Array.isArray(data)
-      ? data.filter((path): path is string => typeof path === 'string' && path.length > 0)
+      ? data.filter((p): p is string => typeof p === 'string' && p.length > 0)
       : [];
   } catch {
     return undefined;
   }
 }
 
-export async function saveWorkflowHiddenToServer(hidden: string[]): Promise<void> {
+async function saveWorkflowPathList(
+  path: string,
+  label: string,
+  paths: string[],
+): Promise<void> {
   const response = await fetch(
-    `/api/userdata/${encodeUserDataPath(WORKFLOW_HIDDEN_PATH)}?overwrite=true`,
+    `/api/userdata/${encodeUserDataPath(path)}?overwrite=true`,
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(hidden),
+      body: JSON.stringify(paths),
     },
   );
-  if (!response.ok) throw new Error('Failed to save hidden workflows');
+  if (!response.ok) throw new Error('Failed to save ' + label + ' workflows');
+}
+
+export async function loadWorkflowHiddenFromServer(): Promise<string[] | null | undefined> {
+  return loadWorkflowPathList(WORKFLOW_HIDDEN_PATH, 'hidden');
+}
+
+export async function saveWorkflowHiddenToServer(hidden: string[]): Promise<void> {
+  return saveWorkflowPathList(WORKFLOW_HIDDEN_PATH, 'hidden', hidden);
 }
 
 // Same shape as the hidden API above — server-synced bookmarked workflows
 // stored at mobile/workflow_favorites.json so they roam across devices.
 export async function loadWorkflowFavoritesFromServer(): Promise<string[] | null | undefined> {
-  try {
-    const response = await fetch(
-      `/api/userdata/${encodeUserDataPath(WORKFLOW_FAVORITES_PATH)}`,
-      { cache: 'no-store' },
-    );
-    if (response.status === 404) return null;
-    if (!response.ok) throw new Error('Failed to load favorite workflows');
-    const data = await response.json();
-    return Array.isArray(data)
-      ? data.filter((path): path is string => typeof path === 'string' && path.length > 0)
-      : [];
-  } catch {
-    return undefined;
-  }
+  return loadWorkflowPathList(WORKFLOW_FAVORITES_PATH, 'favorite');
 }
 
 export async function saveWorkflowFavoritesToServer(favorites: string[]): Promise<void> {
-  const response = await fetch(
-    `/api/userdata/${encodeUserDataPath(WORKFLOW_FAVORITES_PATH)}?overwrite=true`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(favorites),
-    },
-  );
-  if (!response.ok) throw new Error('Failed to save favorite workflows');
+  return saveWorkflowPathList(WORKFLOW_FAVORITES_PATH, 'favorite', favorites);
 }
 
 export async function loadRecentWorkflowsFromServer(): Promise<unknown[]> {

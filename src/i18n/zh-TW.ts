@@ -790,6 +790,9 @@ export const zhTW: Record<string, string> = {
   'Failed to send test notification.': '傳送測試通知失敗。',
   'Prompt search failed': '提示搜尋失敗',
   'just now': '剛剛',
+  // The 12 relative-age keys below are built at runtime by formatRelativeAge
+  // (outputsBrowser.ts) as `{count} ${unit}(s) ago` — a grep for the full key
+  // finds nothing, so don't remove them as dead.
   '{count} minute ago': '{count} 分鐘前',
   '{count} minutes ago': '{count} 分鐘前',
   '{count} hour ago': '{count} 小時前',
@@ -845,7 +848,6 @@ export const zhTW: Record<string, string> = {
   'Loading metadata...': '正在載入中繼資料…',
   'No metadata found': '找不到中繼資料',
   'Prompt preview': '提示預覽',
-  'Choose the language used throughout the app.': '選擇應用程式介面使用的語言。',
 
   // --- Added in review follow-up: keys the initial migration missed. ---
   'Add Lora': '新增 Lora',
@@ -857,8 +859,6 @@ export const zhTW: Record<string, string> = {
   'Update': '更新',
   'Disable': '停用',
   'Import Failed': '匯入失敗',
-  '{count} second ago': '{count} 秒前',
-  '{count} seconds ago': '{count} 秒前',
   'Delete {count} rejected output?': '刪除 {count} 個已拒絕的輸出？',
   'Delete {count} rejected outputs?': '刪除 {count} 個已拒絕的輸出？',
   "This permanently deletes the files marked as rejected from your server's output folder and removes them from the queue. This can't be undone.": '這將從伺服器輸出資料夾中永久刪除標記為已拒絕的檔案，並將其從佇列中移除。此操作無法復原。',

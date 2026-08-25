@@ -8,7 +8,7 @@ export interface TopBarPanelNavigationItem {
   jumps: 1 | 2;
 }
 
-export interface TopBarPanelNavigationConfig {
+interface TopBarPanelNavigationConfig {
   left: TopBarPanelNavigationItem[];
   right: TopBarPanelNavigationItem[];
 }

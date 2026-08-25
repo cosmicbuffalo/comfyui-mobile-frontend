@@ -829,3 +829,102 @@ describe('subgraph boundary widgets with a disambiguated name (e.g. vae_name_1)'
     expect(second!.name).toBe('audio_vae');
   });
 });
+
+describe('V3 COMBO options promoted from a subgraph', () => {
+  const modelName = 'ltx-2.3-spatial-upscaler-x2-1.1.safetensors';
+  const modelOptions = [modelName, 'another-latent-upscaler.safetensors'];
+  const nodeTypes: NodeTypes = {
+    LatentUpscaleModelLoader: {
+      input: {
+        required: {
+          model_name: ['COMBO', {
+            options: modelOptions,
+            tooltip: 'The latent upscale model to load.',
+          }],
+        },
+      },
+      input_order: { required: ['model_name'] },
+      output: ['LATENT_UPSCALE_MODEL'],
+      output_name: ['LATENT_UPSCALE_MODEL'],
+      name: 'LatentUpscaleModelLoader',
+      display_name: 'Load Latent Upscale Model',
+      description: '',
+      python_module: 'comfy_extras.nodes_hunyuan',
+      category: 'model/loaders',
+    },
+  };
+
+  const loader = {
+    ...makeNode(233, 'LatentUpscaleModelLoader', [modelName]),
+    inputs: [
+      { name: 'model_name', type: 'COMBO', widget: { name: 'model_name' }, link: 607 },
+    ],
+  } as WorkflowNode;
+
+  const workflow = {
+    definitions: {
+      subgraphs: [
+        {
+          id: 'sg-ltx',
+          nodes: [loader],
+          links: [
+            { id: 607, origin_id: -10, origin_slot: 0, target_id: 233, target_slot: 0, type: 'COMBO' },
+          ],
+          inputs: [
+            {
+              name: 'model_name',
+              type: 'COMBO',
+              linkIds: [607],
+              label: 'latent_upscale_model',
+            },
+          ],
+        },
+      ],
+    },
+  } as unknown as Workflow;
+
+  it('keeps V3 options on a placeholder input.widget promotion', () => {
+    const placeholder = {
+      ...makeNode(267, 'sg-ltx', [modelName]),
+      inputs: [
+        {
+          name: 'model_name',
+          type: 'COMBO',
+          widget: { name: 'model_name' },
+          link: null,
+          label: 'latent_upscale_model',
+        },
+      ],
+    } as WorkflowNode;
+
+    const [definition] = resolveSubgraphPlaceholderInputWidgetDefs(
+      placeholder,
+      workflow,
+      nodeTypes,
+    );
+
+    expect(definition.name).toBe('latent_upscale_model');
+    expect(definition.value).toBe(modelName);
+    expect(definition.options).toMatchObject({
+      options: modelOptions,
+      tooltip: 'The latent upscale model to load.',
+    });
+  });
+
+  it('keeps V3 options on a boundary-only promotion', () => {
+    const placeholder = makeNode(267, 'sg-ltx', [modelName]);
+
+    const [definition] = resolveSubgraphBoundaryInputWidgetDefs(
+      placeholder,
+      workflow,
+      nodeTypes,
+    );
+
+    expect(definition.name).toBe('latent_upscale_model');
+    expect(definition.value).toBe(modelName);
+    expect(definition.options).toMatchObject({
+      options: modelOptions,
+      tooltip: 'The latent upscale model to load.',
+    });
+  });
+});

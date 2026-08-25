@@ -790,6 +790,9 @@ export const ja: Record<string, string> = {
   'Failed to send test notification.': 'テスト通知の送信に失敗しました。',
   'Prompt search failed': 'プロンプトの検索に失敗しました',
   'just now': 'たった今',
+  // The 12 relative-age keys below are built at runtime by formatRelativeAge
+  // (outputsBrowser.ts) as `{count} ${unit}(s) ago` — a grep for the full key
+  // finds nothing, so don't remove them as dead.
   '{count} minute ago': '{count} 分前',
   '{count} minutes ago': '{count} 分前',
   '{count} hour ago': '{count} 時間前',
@@ -845,7 +848,6 @@ export const ja: Record<string, string> = {
   'Loading metadata...': 'メタデータを読み込み中…',
   'No metadata found': 'メタデータが見つかりません',
   'Prompt preview': 'プロンプトプレビュー',
-  'Choose the language used throughout the app.': 'アプリ全体で使用する言語を選択してください。',
 
   // --- Added in review follow-up: keys the initial migration missed. ---
   'Add Lora': 'Lora を追加',
@@ -857,8 +859,6 @@ export const ja: Record<string, string> = {
   'Update': '更新',
   'Disable': '無効化',
   'Import Failed': 'インポート失敗',
-  '{count} second ago': '{count} 秒前',
-  '{count} seconds ago': '{count} 秒前',
   'Delete {count} rejected output?': '拒否済みの出力 {count} 件を削除しますか？',
   'Delete {count} rejected outputs?': '拒否済みの出力 {count} 件を削除しますか？',
   "This permanently deletes the files marked as rejected from your server's output folder and removes them from the queue. This can't be undone.": '拒否済みとしてマークされたファイルをサーバーの出力フォルダーから完全に削除し、キューからも取り除きます。この操作は取り消せません。',

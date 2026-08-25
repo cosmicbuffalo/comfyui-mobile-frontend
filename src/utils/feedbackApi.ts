@@ -8,13 +8,13 @@ export interface FeedbackSubmission {
   website?: string;
 }
 
-export interface FeedbackSuccess {
+interface FeedbackSuccess {
   ok: true;
   url: string;
   number: number;
 }
 
-export interface FeedbackFailure {
+interface FeedbackFailure {
   ok: false;
   error: string;
   status?: number;

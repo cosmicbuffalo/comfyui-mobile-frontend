@@ -11,11 +11,6 @@ function loadWildcards(): Promise<string[]> {
   return wildcardsPromise;
 }
 
-/** Test seam: drop the cached list so the next consumer refetches. */
-export function resetWildcardCache(): void {
-  wildcardsPromise = null;
-}
-
 /**
  * Wildcard names for the "Select to add Wildcard" dropdown, or an empty list
  * when Impact Pack isn't installed. Pass `enabled: false` on cards that have no

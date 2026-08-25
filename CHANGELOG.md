@@ -1,5 +1,27 @@
 # Changelog
 
+## 3.2.5 - Unreleased
+
+### Fixed
+
+- **A model picker promoted out of a subgraph no longer shows its saved model as missing** when the node declares the input in ComfyUI's V3 COMBO form (e.g. Load Latent Upscale Model). The promoted widget only understood the legacy declaration, so its option list came up empty and the selected file looked absent from the server even though the same workflow ran fine on desktop (#91)
+
+### Changed
+
+- **`/mobile/ws/progress` can be paced by the client.** 3.2.4 pushed a snapshot to every connected app the instant the sampler moved — around ten a second. That is free on a LAN, but each message costs a TCP ack in both directions, and over a hole-punched or relayed tunnel the resulting packet rate can keep the path in permanent renegotiation while carrying almost no data. When that happens the whole tunnel goes with it, not just this socket. A client may now send `{"type": "hello", "min_interval_ms": N}` on the same socket and the server coalesces to that cadence, last-writer-wins, so a slowed client sees fewer snapshots rather than staler ones. Prompt starts, prompt changes and `finished` are exempt and always delivered at once, so completion stays in lockstep with the push notification however slow the stream is. A client that sends nothing keeps the 3.2.4 behaviour exactly, so upgrading the node alone changes nothing
+- **A client that cannot keep up is slowed rather than disconnected.** 3.2.4 already noticed when a send timed out and then discarded that signal, dropping the socket. Dropping it forces a reconnect, which costs more packets over precisely the link that was already struggling. Consecutive stalled sends now halve that one client's rate instead, up to a 4s floor, and it is told why with `{"type": "rate_advice"}`. This half needs no cooperation from the client, so it also protects apps too old to negotiate
+
+### Added
+
+- **`{"type": "ping", "seq": N}` on `/mobile/ws/progress` is echoed back as `pong`**, so a client can measure the round trip and jitter of the socket it is actually using — at the packet cadence it is considering — instead of guessing a rate and finding out mid-generation
+- **`GET /mobile/api/progress-ws/stats`** reports connected clients and their negotiated intervals, plus how many sends have stalled and how many clients the server has had to slow down. The counters are what turn "the connection felt bad last night" into evidence
+- **Per-server Live Activity opt-out support.** `POST /mobile/api/push/app-targets/live-activity/remove` removes only the Live Activity role from the requesting iOS installation. If the same target also receives completion notifications, that pairing is preserved; a live-only target is removed entirely
+
+### Notes
+
+- Internal maintenance: the largest source files (the workflow store, `__init__.py`, WorkflowPanel, useWebSocket and the workflow-input helpers) were split into smaller per-domain modules and duplicated logic was consolidated. Cleanup only — no behaviour changes
+- The backend test suite now also runs on pushes to `release-*` branches, not only on `main` and pull requests into it. Release work happens on those branches, so this reports a break while it is being made rather than when the release PR is finally opened
+
 ## 3.2.4 - 2026-08-23
 
 ### Added
