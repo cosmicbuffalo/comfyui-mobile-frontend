@@ -594,6 +594,17 @@ function findInnerWidgetTypeEntry(
   return undefined;
 }
 
+function getComboEntryOptions(
+  entry: NodeInputEntry | undefined,
+): Record<string, unknown> | undefined {
+  if (!entry || !isComboType(entry[0])) return undefined;
+  const [typeOrOptions, inputOptions] = entry;
+  return {
+    ...(inputOptions ?? {}),
+    options: getComboOptions(typeOrOptions, inputOptions),
+  };
+}
+
 /**
  * Resolve all promoted widget definitions (both COMBO and non-COMBO) for a
  * subgraph placeholder node in a single pass.
@@ -638,9 +649,7 @@ function resolveAllSubgraphPlaceholderWidgetDefs(
     if (isCombo) {
       let options: Record<string, unknown> | unknown[] = [];
       const entry = findInnerWidgetTypeEntry(sg, inp.name, nodeTypes);
-      if (entry && Array.isArray(entry[0])) {
-        options = { ...(entry[1] ?? {}), options: entry[0] as unknown[] };
-      }
+      options = getComboEntryOptions(entry) ?? options;
       // The promoted widget is shown under its display label (e.g. "Checkpoint"),
       // but the rich model picker is detected from the ComfyUI input name. Carry
       // the kind detected from the inner widget name (e.g. ckpt_name) so the
@@ -663,7 +672,7 @@ function resolveAllSubgraphPlaceholderWidgetDefs(
     } else {
       let options: Record<string, unknown> | undefined = undefined;
       const entry = findInnerWidgetTypeEntry(sg, inp.name, nodeTypes);
-      if (entry && !Array.isArray(entry[0])) {
+      if (entry && !isComboType(entry[0])) {
         options = entry[1] as Record<string, unknown> | undefined;
       }
       widgets.push({
@@ -933,9 +942,7 @@ export function resolveAllSubgraphBoundaryWidgetDefs(
     if (isCombo) {
       let options: Record<string, unknown> | unknown[] = [];
       const entry = findInnerWidgetTypeEntry(sg, boundaryName, nodeTypes);
-      if (entry && Array.isArray(entry[0])) {
-        options = { ...(entry[1] ?? {}), options: entry[0] as unknown[] };
-      }
+      options = getComboEntryOptions(entry) ?? options;
       const modelKind = modelWidgetKind(boundaryName);
       inputWidgets.push({
         name,
@@ -951,7 +958,7 @@ export function resolveAllSubgraphBoundaryWidgetDefs(
     } else {
       let options: Record<string, unknown> | undefined;
       const entry = findInnerWidgetTypeEntry(sg, boundaryName, nodeTypes);
-      if (entry && !Array.isArray(entry[0])) {
+      if (entry && !isComboType(entry[0])) {
         options = entry[1] as Record<string, unknown> | undefined;
       }
       widgets.push({

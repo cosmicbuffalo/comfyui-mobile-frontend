@@ -2,6 +2,10 @@
 
 ## 3.2.5 - Unreleased
 
+### Fixed
+
+- **A model picker promoted out of a subgraph no longer shows its saved model as missing** when the node declares the input in ComfyUI's V3 COMBO form (e.g. Load Latent Upscale Model). The promoted widget only understood the legacy declaration, so its option list came up empty and the selected file looked absent from the server even though the same workflow ran fine on desktop (#91)
+
 ### Changed
 
 - **`/mobile/ws/progress` can be paced by the client.** 3.2.4 pushed a snapshot to every connected app the instant the sampler moved — around ten a second. That is free on a LAN, but each message costs a TCP ack in both directions, and over a hole-punched or relayed tunnel the resulting packet rate can keep the path in permanent renegotiation while carrying almost no data. When that happens the whole tunnel goes with it, not just this socket. A client may now send `{"type": "hello", "min_interval_ms": N}` on the same socket and the server coalesces to that cadence, last-writer-wins, so a slowed client sees fewer snapshots rather than staler ones. Prompt starts, prompt changes and `finished` are exempt and always delivered at once, so completion stays in lockstep with the push notification however slow the stream is. A client that sends nothing keeps the 3.2.4 behaviour exactly, so upgrading the node alone changes nothing
