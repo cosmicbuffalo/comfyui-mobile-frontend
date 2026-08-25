@@ -431,6 +431,57 @@ def remove_target(pairing_code, relay_url=None, notifications_only=False) -> int
     return affected
 
 
+def remove_live_activity_target(pairing_code, relay_url=None) -> int:
+    """Remove only the Live Activity role from a native-app target.
+
+    A pairing may carry ordinary completion notifications, Live Activity
+    events, or both. The app's per-server Live Activity switch must therefore
+    preserve a notification-enabled target while removing a live-only target
+    entirely.
+    """
+    if not isinstance(pairing_code, str) or not pairing_code:
+        return 0
+    if relay_url is None:
+        request_keys = None
+    else:
+        request_keys = _relay_match_keys(relay_url)
+        if not request_keys:
+            return 0
+
+    def matches_relay(stored) -> bool:
+        if request_keys is None:
+            return True
+        return bool(request_keys & _relay_match_keys(stored.get("relay_url")))
+
+    with _lock:
+        targets = _load_targets()
+        affected = 0
+        remaining = []
+        for target in targets:
+            matches = (
+                target.get("pairing_code") == pairing_code
+                and matches_relay(target)
+                and target.get("live_activity") is True
+            )
+            if not matches:
+                remaining.append(target)
+                continue
+
+            affected += 1
+            if target.get("notifications", True) is not False:
+                notification_target = dict(target)
+                notification_target.pop("live_activity", None)
+                notification_target.pop("server_label", None)
+                notification_target.pop("frequent_updates", None)
+                notification_target.pop("relevance_score", None)
+                remaining.append(notification_target)
+
+        if remaining != targets:
+            _targets[:] = remaining
+            _save_targets()
+    return affected
+
+
 def _post_event(target, payload, path="/event") -> str:
     """POST one event to a target's relay. Returns 'ok', 'gone', or 'error'."""
     relay_url = _normalize_relay_url(target.get("relay_url"))

@@ -71,6 +71,7 @@ def _isolate(monkeypatch, tmp_path):
     _registry = _Registry()
     sys.modules["comfy_execution.progress"].get_progress_state = lambda: _registry
     m._clients.clear()
+    m._stats.update(connections=0, dropped=0, slow_sends=0, backoffs=0)
     monkeypatch.setattr(m, "_mobile_app_push", None)
     monkeypatch.setattr(
         m, "_relay_state_path", lambda: str(tmp_path / "live_activity_relay_state.json")
@@ -89,6 +90,19 @@ def _isolate(monkeypatch, tmp_path):
     m._workflow_cache.clear()
     yield
     m._clients.clear()
+
+
+def _register(*sockets, interval=None):
+    """Connect sockets the way api_progress_ws does, with optional cadence."""
+    states = []
+    for ws in sockets:
+        state = m._ClientState()
+        if interval is not None:
+            state.interval = interval
+            state.negotiated = True
+        m._clients[ws] = state
+        states.append(state)
+    return states[0] if len(states) == 1 else states
 
 
 class FakeWS:
@@ -362,7 +376,7 @@ def test_empty_queue_without_prior_work_does_not_end_an_activity(monkeypatch):
 
 def test_broadcast_sends_json_to_every_client():
     a, b = FakeWS(), FakeWS()
-    m._clients.update({a, b})
+    _register(a, b)
     asyncio.run(m._broadcast({"prompt_id": "p1", "value": 1, "max": 4}))
     assert a.payloads == [{"prompt_id": "p1", "value": 1, "max": 4}]
     assert b.payloads == a.payloads
@@ -370,7 +384,7 @@ def test_broadcast_sends_json_to_every_client():
 
 def test_broadcast_drops_a_client_that_fails_and_still_serves_the_others():
     good, bad = FakeWS(), FakeWS(fail_on_send=True)
-    m._clients.update({good, bad})
+    _register(good, bad)
     asyncio.run(m._broadcast({"prompt_id": "p1", "value": 1, "max": 4}))
     assert bad not in m._clients
     assert good in m._clients
@@ -381,7 +395,7 @@ def test_finished_carries_the_prompt_id_and_is_distinguishable():
     """The app keys its Live Activity completion off this, so the message has
     to be tellable apart from a progress tick without guessing."""
     client = FakeWS()
-    m._clients.add(client)
+    _register(client)
     asyncio.run(m.broadcast_finished("p1"))
     assert client.payloads == [{"type": "finished", "prompt_id": "p1"}]
 
@@ -389,8 +403,10 @@ def test_finished_carries_the_prompt_id_and_is_distinguishable():
 def test_broadcast_does_not_wait_on_a_stalled_client(monkeypatch):
     """A suspended/backgrounded client whose send never completes must not
     delay the broadcast (and therefore the completion notification) for
-    everyone else. Sends run concurrently and each is time-bounded; the
-    stalled client is dropped."""
+    everyone else. Sends run concurrently and each is time-bounded.
+
+    The stalled client is kept and slowed rather than dropped — see
+    test_a_stalled_client_is_slowed_rather_than_disconnected."""
     monkeypatch.setattr(m, "_SEND_TIMEOUT_S", 0.05)
 
     class StalledWS(FakeWS):
@@ -398,7 +414,7 @@ def test_broadcast_does_not_wait_on_a_stalled_client(monkeypatch):
             await asyncio.sleep(10)
 
     good, stalled = FakeWS(), StalledWS()
-    m._clients.update({good, stalled})
+    _register(good, stalled)
 
     async def run():
         loop = asyncio.get_running_loop()
@@ -411,8 +427,8 @@ def test_broadcast_does_not_wait_on_a_stalled_client(monkeypatch):
     elapsed = asyncio.run(run())
     assert elapsed < 1.0
     assert len(good.payloads) == 1
-    assert stalled not in m._clients
     assert good in m._clients
+    assert stalled in m._clients
 
 
 def test_broadcast_with_no_clients_is_a_noop():
@@ -438,7 +454,7 @@ def test_watch_loop_broadcasts_once_per_change_not_per_tick(monkeypatch):
     monkeypatch.setattr(m, "_TICK_SECONDS", 0.01)
     _registry = _running(value=1, maximum=10)
     client = FakeWS()
-    m._clients.add(client)
+    _register(client)
     _run_watch_loop_briefly()
     assert client.payloads == [{"prompt_id": "p1", "value": 1, "max": 10, "nodes_total": 1, "nodes_done": 0, "node_name": None}]
 
@@ -447,7 +463,7 @@ def test_watch_loop_pushes_each_new_value(monkeypatch):
     global _registry
     monkeypatch.setattr(m, "_TICK_SECONDS", 0.01)
     client = FakeWS()
-    m._clients.add(client)
+    _register(client)
 
     async def main():
         task = asyncio.ensure_future(m._watch_loop())
@@ -674,7 +690,7 @@ def test_watch_loop_survives_a_snapshot_failure(monkeypatch):
     kill the channel for the rest of the server's life."""
     monkeypatch.setattr(m, "_TICK_SECONDS", 0.01)
     client = FakeWS()
-    m._clients.add(client)
+    _register(client)
     state = {"calls": 0}
 
     def flaky():
@@ -711,12 +727,12 @@ def test_connecting_mid_run_gets_the_current_state_immediately(monkeypatch):
 def test_a_closed_socket_is_not_left_in_the_client_set(monkeypatch):
     monkeypatch.setattr(m.web, "WebSocketResponse", lambda **kwargs: FakeWS(**kwargs))
     asyncio.run(m.api_progress_ws(object()))
-    assert m._clients == set()
+    assert m._clients == {}
 
 
 def test_cleanup_closes_every_socket_and_cancels_the_watch(monkeypatch):
     client = FakeWS()
-    m._clients.add(client)
+    _register(client)
 
     async def main():
         await m.on_startup(None)
@@ -724,7 +740,7 @@ def test_cleanup_closes_every_socket_and_cancels_the_watch(monkeypatch):
 
     asyncio.run(main())
     assert client.closed
-    assert m._clients == set()
+    assert m._clients == {}
     # The watch task is awaited to completion, not just cancelled and dropped.
     assert m._watch_task is None
 
@@ -884,3 +900,219 @@ def test_no_running_node_reports_no_name():
         graph={"1": {"class_type": "KSampler"}},
     )
     assert m._snapshot()["node_name"] is None
+
+
+# --- cadence negotiation ---------------------------------------------------
+#
+# The 10 Hz push is right on a LAN and wrong on a long-haul tunnel, where each
+# message costs an ack in both directions and a link that cannot sustain the
+# packet rate spends its time renegotiating its path instead of carrying data.
+# These cover the two halves of the answer: what a client can ask for, and
+# what the server does anyway when a client is visibly not keeping up.
+
+class _TextMsg:
+    type = m.WSMsgType.TEXT
+
+    def __init__(self, data):
+        self.data = data
+
+
+def test_a_client_that_never_negotiates_keeps_the_full_rate():
+    """Upgrading the node alone must not change what a shipped app receives."""
+    client = FakeWS()
+    state = _register(client)
+    assert state.interval == 0.0
+
+    async def main():
+        for value in (1, 2, 3):
+            await m._broadcast({"prompt_id": "p1", "value": value, "max": 10})
+
+    asyncio.run(main())
+    assert [p["value"] for p in client.payloads] == [1, 2, 3]
+
+
+def test_a_slow_client_gets_the_newest_snapshot_not_a_backlog():
+    """Coalescing is last-writer-wins. A client on a slow cadence sees fewer
+    snapshots, never staler ones — the alternative is a queue that grows for
+    exactly as long as the link is struggling."""
+    client = FakeWS()
+    state = _register(client, interval=5.0)
+
+    async def main():
+        for value in (1, 2, 3, 4):
+            await m._broadcast({"prompt_id": "p1", "value": value, "max": 10})
+        held = [p["value"] for p in client.payloads]
+        # Pretend the interval elapsed rather than sleeping five seconds.
+        state.last_sent = 0.0
+        await m._flush()
+        return held, [p["value"] for p in client.payloads]
+
+    held, delivered = asyncio.run(main())
+    assert held == [1]
+    assert delivered == [1, 4]
+
+
+def test_a_prompt_edge_is_never_coalesced():
+    """A slowed-down client still resolves its UI in step with the run: the
+    edges that mean something are exempt, only sampler ticks are dropped."""
+    client = FakeWS()
+    _register(client, interval=5.0)
+
+    async def main():
+        await m._broadcast({"prompt_id": "p1", "value": 1, "max": 10})
+        await m._broadcast({"prompt_id": "p1", "value": 2, "max": 10})
+        await m._broadcast({"prompt_id": "p2", "value": 0, "max": 10})
+        await m.broadcast_finished("p2")
+
+    asyncio.run(main())
+    assert client.payloads == [
+        {"prompt_id": "p1", "value": 1, "max": 10},
+        {"prompt_id": "p2", "value": 0, "max": 10},
+        {"type": "finished", "prompt_id": "p2"},
+    ]
+
+
+def test_hello_negotiates_a_cadence_and_is_acknowledged():
+    client = FakeWS()
+    state = _register(client)
+
+    asyncio.run(m._handle_control(client, state, json.dumps({
+        "type": "hello", "min_interval_ms": 500,
+    })))
+
+    assert state.interval == 0.5
+    assert state.negotiated
+    ack = client.payloads[-1]
+    assert ack["type"] == "hello_ack"
+    assert ack["protocol"] == m._PROTOCOL_VERSION
+    assert ack["interval_ms"] == 500
+
+
+def test_a_client_cannot_ask_to_be_served_faster_than_the_watcher_samples():
+    client = FakeWS()
+    state = _register(client)
+
+    asyncio.run(m._handle_control(client, state, json.dumps({
+        "type": "hello", "min_interval_ms": 1,
+    })))
+
+    assert state.interval == m._MIN_CLIENT_INTERVAL_S
+
+
+def test_a_re_probe_cannot_talk_past_a_rate_the_server_forced():
+    """The app re-measures after a good run and asks again. That ask must not
+    undo live evidence that this particular link cannot take the faster rate."""
+    client = FakeWS()
+    state = _register(client)
+
+    async def main():
+        m._back_off(client, state)
+        forced = state.interval
+        await m._handle_control(client, state, json.dumps({
+            "type": "hello", "min_interval_ms": 100,
+        }))
+        return forced
+
+    forced = asyncio.run(main())
+    assert forced == pytest.approx(m._MIN_CLIENT_INTERVAL_S * 2)
+    assert state.interval == forced
+
+
+def test_ping_is_answered_with_the_sequence_and_stamp_it_carried():
+    """The app's probe measures loss and jitter, so a pong has to be
+    attributable to the ping that caused it."""
+    client = FakeWS()
+    state = _register(client)
+
+    asyncio.run(m._handle_control(client, state, json.dumps({
+        "type": "ping", "seq": 7, "t": 1234,
+    })))
+
+    pong = client.payloads[-1]
+    assert pong["type"] == "pong"
+    assert pong["seq"] == 7
+    assert pong["t"] == 1234
+
+
+def test_a_stalled_client_is_slowed_rather_than_disconnected(monkeypatch):
+    """Dropping a socket that cannot keep up forces a reconnect, which costs
+    more packets over exactly the link that was already struggling. 3.2.4
+    detected this condition and then discarded the signal."""
+    monkeypatch.setattr(m, "_SEND_TIMEOUT_S", 0.01)
+
+    class StalledWS(FakeWS):
+        async def send_str(self, message):
+            await asyncio.sleep(10)
+
+    stalled = StalledWS()
+    state = _register(stalled)
+
+    async def main():
+        for _ in range(m._SLOW_SENDS_BEFORE_BACKOFF):
+            await m._broadcast({"prompt_id": "p1", "value": 1, "max": 10})
+
+    asyncio.run(main())
+    assert stalled in m._clients
+    assert state.forced
+    assert state.interval == pytest.approx(m._MIN_CLIENT_INTERVAL_S * 2)
+    assert m._stats["slow_sends"] >= m._SLOW_SENDS_BEFORE_BACKOFF
+    assert m._stats["backoffs"] == 1
+
+
+def test_backoff_stops_at_the_ceiling():
+    client = FakeWS()
+    state = _register(client)
+
+    async def main():
+        for _ in range(20):
+            m._back_off(client, state)
+
+    asyncio.run(main())
+    assert state.interval == m._BACKOFF_INTERVAL_CEILING_S
+
+
+def test_an_unrecognised_control_message_is_ignored_rather_than_fatal():
+    """An app newer than the node degrades to what this build understands."""
+    client = FakeWS()
+    state = _register(client)
+
+    async def main():
+        await m._handle_control(client, state, "not json at all")
+        await m._handle_control(client, state, json.dumps([1, 2]))
+        await m._handle_control(client, state, json.dumps({"type": "from_a_newer_app"}))
+
+    asyncio.run(main())
+    assert client.sent == []
+    assert state.interval == 0.0
+
+
+def test_the_cadence_is_negotiated_over_the_progress_socket_itself(monkeypatch):
+    """3.2.4 read this direction only to notice a close. Reusing it means no
+    second endpoint to authenticate, reach, or keep in step."""
+    created = []
+
+    def factory(**kwargs):
+        ws = FakeWS(
+            incoming=[_TextMsg(json.dumps({"type": "hello", "min_interval_ms": 750}))],
+            **kwargs
+        )
+        created.append(ws)
+        return ws
+
+    monkeypatch.setattr(m.web, "WebSocketResponse", factory)
+    asyncio.run(m.api_progress_ws(object()))
+
+    ack = created[0].payloads[-1]
+    assert ack["type"] == "hello_ack"
+    assert ack["interval_ms"] == 750
+
+
+def test_stats_expose_the_backpressure_the_server_saw():
+    """The counter that turns "it felt bad last night" into evidence."""
+    client = FakeWS()
+    _register(client, interval=0.5)
+    reported = m.stats()
+    assert reported["protocol"] == m._PROTOCOL_VERSION
+    assert reported["clients"] == 1
+    assert reported["clientIntervalsMs"] == [500]
+    assert reported["slowSends"] == 0

@@ -1717,6 +1717,19 @@ def setup_mobile_route():
         except Exception as e:
             return web.json_response({"error": str(e)}, status=500)
 
+    async def api_push_app_live_activity_remove(request):
+        if not _app_push_pairing_enabled:
+            return web.json_response({"error": "app_push_pairing_disabled"}, status=403)
+        try:
+            body = await request.json()
+            removed = _mobile_app_push.remove_live_activity_target(
+                body.get("pairing_code") if isinstance(body, dict) else None,
+                body.get("relay_url") if isinstance(body, dict) else None,
+            )
+            return web.json_response({"ok": True, "removed": removed})
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=500)
+
     async def api_push_app_test(request):
         # Gated too: this fires a POST at every configured relay, which is the
         # outbound request the pairing gate is meant to prevent.
@@ -1764,6 +1777,10 @@ def setup_mobile_route():
     mobile_app.router.add_get('/api/push/app-targets', api_push_app_targets_get)
     mobile_app.router.add_post('/api/push/app-targets', api_push_app_targets_add)
     mobile_app.router.add_post('/api/push/app-targets/remove', api_push_app_targets_remove)
+    mobile_app.router.add_post(
+        '/api/push/app-targets/live-activity/remove',
+        api_push_app_live_activity_remove,
+    )
     mobile_app.router.add_post('/api/push/app-test', api_push_app_test)
     mobile_app.router.add_get('/api/push/preferences', api_push_prefs_get)
     mobile_app.router.add_post('/api/push/preferences', api_push_prefs_set)
@@ -1790,6 +1807,7 @@ def setup_mobile_route():
     mobile_app.router.add_post('/api/file-prefix-aliases', api_create_file_prefix_aliases)
     mobile_app.router.add_post('/api/file-prefix-aliases/resolve', api_resolve_file_prefix_aliases)
     mobile_app.router.add_get('/ws/progress', _mobile_progress_ws.api_progress_ws)
+    mobile_app.router.add_get('/api/progress-ws/stats', _mobile_progress_ws.api_progress_ws_stats)
     mobile_app.router.add_get('/api/thumbnail', api_get_thumbnail)
     mobile_app.router.add_get('/api/preview', api_get_preview)
     mobile_app.router.add_get('/api/video/playable', api_get_playable_video)
