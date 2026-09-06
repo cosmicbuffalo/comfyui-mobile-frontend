@@ -142,15 +142,8 @@ def extract_workflow_from_metadata(metadata: dict[str, Any]) -> Any | None:
         except Exception:
             pass
 
-    prompt_value = metadata.get('prompt') or metadata.get('Prompt')
-    if isinstance(prompt_value, bytes):
-        prompt_value = prompt_value.decode('utf-8', errors='ignore')
-    if not prompt_value:
-        return None
-
-    try:
-        prompt_data = json.loads(prompt_value)
-    except Exception:
+    prompt_data = extract_prompt_from_metadata(metadata)
+    if not prompt_data:
         return None
 
     extra_pnginfo = prompt_data.get('extra_pnginfo', {})
@@ -164,3 +157,18 @@ def extract_workflow_from_metadata(metadata: dict[str, Any]) -> Any | None:
         or prompt_data.get('workflow')
         or prompt_data.get('workflow_v2')
     )
+
+
+def extract_prompt_from_metadata(metadata: dict[str, Any]) -> dict[str, Any] | None:
+    """Return parsed ComfyUI prompt metadata when it is a JSON object."""
+    prompt_value = metadata.get('prompt') or metadata.get('Prompt')
+    if isinstance(prompt_value, bytes):
+        prompt_value = prompt_value.decode('utf-8', errors='ignore')
+    if not prompt_value:
+        return None
+
+    try:
+        prompt_data = json.loads(prompt_value) if isinstance(prompt_value, str) else prompt_value
+    except Exception:
+        return None
+    return prompt_data if isinstance(prompt_data, dict) else None

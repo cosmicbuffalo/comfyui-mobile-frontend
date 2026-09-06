@@ -148,16 +148,3 @@ def get_prompt_metadata(cache_path: str, prompt_ids: list[str] | None = None) ->
         return prompts
     wanted = set(filter(None, (_normalize_prompt_id(value) for value in prompt_ids)))
     return {prompt_id: prompts[prompt_id] for prompt_id in wanted if prompt_id in prompts}
-
-
-def normalize_prompt_ids(value: Any) -> list[str] | None:
-    if value is None:
-        return None
-    if not isinstance(value, list):
-        return []
-    prompt_ids = []
-    for item in value:
-        prompt_id = _normalize_prompt_id(item)
-        if prompt_id:
-            prompt_ids.append(prompt_id)
-    return prompt_ids

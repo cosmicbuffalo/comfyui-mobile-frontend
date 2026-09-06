@@ -807,6 +807,74 @@ def test_pending_nodes_are_not_counted_as_done():
     assert m._snapshot()["nodes_done"] == 0
 
 
+def test_cache_skipped_nodes_count_as_done_via_execution_cached():
+    """Nodes satisfied entirely from cache never enter the execution list, so
+    the registry never hears about them — the desktop frontend learns of them
+    from `execution_cached` and marks them done instantly. These counts must
+    agree with that bar: a 15-of-18-cached re-run reads 17/18 while its third
+    real node runs, not 2/18."""
+    global _registry
+    cached = {str(i) for i in range(4, 19)}
+    _registry = _Registry(
+        prompt_id="p-cached",
+        nodes={
+            "1": {"state": _NodeState.Finished, "value": 1, "max": 1},
+            "2": {"state": _NodeState.Finished, "value": 1, "max": 1},
+            "3": {"state": _NodeState.Running, "value": 14, "max": 20},
+        },
+        node_ids={str(i) for i in range(1, 19)},
+    )
+    m._remember_cached_nodes("p-cached", cached)
+    try:
+        snap = m._snapshot()
+        assert (snap["nodes_done"], snap["nodes_total"]) == (17, 18)
+    finally:
+        m._cached_node_ids_by_prompt.clear()
+
+
+def test_execution_cached_overlap_with_registry_is_not_double_counted():
+    """A cached node that also entered the execution list gets finish_progress
+    AND appears in execution_cached; union, never sum."""
+    global _registry
+    _registry = _Registry(
+        prompt_id="p-overlap",
+        nodes={
+            "1": {"state": _NodeState.Finished, "value": 1, "max": 1},
+        },
+        node_ids={"1", "2"},
+    )
+    m._remember_cached_nodes("p-overlap", {"1"})
+    try:
+        assert m._snapshot()["nodes_done"] == 1
+    finally:
+        m._cached_node_ids_by_prompt.clear()
+
+
+def test_cached_sets_are_scoped_to_their_prompt():
+    global _registry
+    _registry = _Registry(
+        prompt_id="p-current",
+        nodes={"1": {"state": _NodeState.Running, "value": 0, "max": 4}},
+        node_ids={"1", "2"},
+    )
+    m._remember_cached_nodes("p-previous", {"1", "2"})
+    try:
+        assert m._snapshot()["nodes_done"] == 0
+    finally:
+        m._cached_node_ids_by_prompt.clear()
+
+
+def test_remembered_cached_prompts_are_bounded():
+    for i in range(10):
+        m._remember_cached_nodes(f"p{i}", {"1"})
+    try:
+        assert len(m._cached_node_ids_by_prompt) == m._CACHED_PROMPTS_KEPT
+        assert "p9" in m._cached_node_ids_by_prompt
+        assert "p0" not in m._cached_node_ids_by_prompt
+    finally:
+        m._cached_node_ids_by_prompt.clear()
+
+
 def test_done_never_exceeds_total():
     """Subgraph expansion can put nodes in the registry that all_node_ids has
     not caught up with. A client dividing the two should never see a ratio

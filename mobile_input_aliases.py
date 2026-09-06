@@ -57,24 +57,66 @@ def _save(cache_path: str, cache: dict[str, Any]) -> None:
     atomic_write_json(cache_path, cache, prefix=".input_aliases.")
 
 
+def _names_the_same_file(input_dir: str, alias: str, source_path: str) -> bool:
+    """True while `alias` is still a live hard link to `source_path`."""
+    try:
+        alias_path = _resolve_input_path(input_dir, alias)
+        return os.path.isfile(alias_path) and os.path.samefile(source_path, alias_path)
+    except (OSError, ValueError):
+        return False
+
+
+def _path_exists(input_dir: str, relative_path: str | None) -> bool:
+    if not relative_path:
+        return False
+    try:
+        return os.path.isfile(_resolve_input_path(input_dir, relative_path))
+    except (OSError, ValueError):
+        return False
+
+
 def _existing_alias_for_source(
     aliases: dict[str, Any],
     input_dir: str,
+    relative_path: str,
     source_path: str,
     source_stat: os.stat_result,
-) -> str | None:
+) -> tuple[str | None, bool]:
+    """The alias to reuse for `relative_path`, and whether it must be re-pointed.
+
+    An alias is a stable handle for one *path*, not merely for the bytes behind
+    it, because every workflow that has been queued with it carries it in its
+    embedded metadata and is restored through the path recorded here.
+
+    Two names can share an inode -- hard links are how an output is materialized
+    into input/, and a duplicate under a different extension (`photo.jpeg` and
+    `photo.png`) is ordinary enough. Handing both names the same alias made the
+    recorded `sourcePath` flip to whichever was queued last, so reloading a
+    workflow restored its LoadImage to the *other* file's name: same picture,
+    a name that may not exist any more, flagged "Missing on ComfyUI server"
+    while the run itself still worked off the hard link. So a second live name
+    never inherits the first one's alias; it mints its own (a hard link costs
+    nothing).
+
+    Reuse therefore happens in two cases only:
+
+      * the alias already recorded for exactly this path, and
+      * an alias for this file whose recorded path is *gone* -- a rename, where
+        nothing else is bound to the old name, so following the file is right.
+    """
+    renamed: str | None = None
     for alias, entry in aliases.items():
         if not isinstance(alias, str) or not isinstance(entry, dict):
             continue
         if entry.get("device") != source_stat.st_dev or entry.get("inode") != source_stat.st_ino:
             continue
-        alias_path = _resolve_input_path(input_dir, alias)
-        try:
-            if os.path.isfile(alias_path) and os.path.samefile(source_path, alias_path):
-                return alias
-        except OSError:
+        if not _names_the_same_file(input_dir, alias, source_path):
             continue
-    return None
+        if entry.get("sourcePath") == relative_path:
+            return alias, False
+        if renamed is None and not _path_exists(input_dir, _normalize_path(entry.get("sourcePath"))):
+            renamed = alias
+    return renamed, renamed is not None
 
 
 def _existing_alias_for_previous_path(
@@ -139,11 +181,12 @@ def ensure_aliases(cache_path: str, input_dir: str, paths: list[str]) -> dict[st
                     continue
                 raise FileNotFoundError(f"Input file not found: {relative_path}")
             source_stat = os.stat(source_path)
-            existing = _existing_alias_for_source(aliases, input_dir, source_path, source_stat)
+            existing, repoint = _existing_alias_for_source(
+                aliases, input_dir, relative_path, source_path, source_stat
+            )
             if existing:
-                entry = aliases[existing]
-                if entry.get("sourcePath") != relative_path:
-                    entry["sourcePath"] = relative_path
+                if repoint:
+                    aliases[existing]["sourcePath"] = relative_path
                     changed = True
                 result[relative_path] = existing
                 continue

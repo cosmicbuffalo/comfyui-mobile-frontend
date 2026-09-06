@@ -229,6 +229,58 @@ def _restore_relay_state():
             _relay_keyframes.append((restored_payload, 0.0))
 
 
+# Cached node ids per prompt, captured from the server's own
+# `execution_cached` broadcast. The progress registry only ever hears about
+# nodes that enter the execution list; upstream nodes satisfied entirely from
+# cache never do, so counting registry Finished states alone reads a mostly-
+# cached re-run as "2/18" while it races to completion. ComfyUI's own web
+# frontend marks every id in `execution_cached` as done the moment the message
+# arrives (handleExecutionCached), and these counts must agree with that bar.
+_cached_node_ids_by_prompt = {}
+_CACHED_PROMPTS_KEPT = 4
+_execution_cached_hook_installed = False
+
+
+def _remember_cached_nodes(prompt_id, node_ids):
+    _cached_node_ids_by_prompt[prompt_id] = node_ids
+    while len(_cached_node_ids_by_prompt) > _CACHED_PROMPTS_KEPT:
+        _cached_node_ids_by_prompt.pop(next(iter(_cached_node_ids_by_prompt)))
+
+
+def _install_execution_cached_hook():
+    """Observe `execution_cached` by wrapping PromptServer.send_sync.
+
+    Pass-through and defensive on purpose: this must never be able to break
+    ComfyUI's own event delivery, so the observation is wrapped in its own
+    try/except and the original is always called with the original arguments.
+    """
+    global _execution_cached_hook_installed
+    if _execution_cached_hook_installed:
+        return
+    try:
+        import server
+        instance = getattr(server.PromptServer, "instance", None)
+        original = getattr(instance, "send_sync", None)
+        if not callable(original):
+            return
+
+        def send_sync_observing_cached(event, data, *args, **kwargs):
+            try:
+                if event == "execution_cached" and isinstance(data, dict):
+                    prompt_id = data.get("prompt_id")
+                    nodes = data.get("nodes")
+                    if isinstance(prompt_id, str) and isinstance(nodes, (list, tuple, set)):
+                        _remember_cached_nodes(prompt_id, {str(n) for n in nodes})
+            except Exception:
+                pass
+            return original(event, data, *args, **kwargs)
+
+        instance.send_sync = send_sync_observing_cached
+        _execution_cached_hook_installed = True
+    except Exception:
+        pass
+
+
 def _node_totals(registry, NodeState):
     """Overall progress for the prompt, as a count of nodes rather than steps.
 
@@ -236,20 +288,27 @@ def _node_totals(registry, NodeState):
     restart at zero every time execution moves to the next node — a client
     drawing them as one bar sees the percentage fall back to 0 mid-generation.
     That is what these two fields fix, and they are counted the same way
-    ComfyUI's own web frontend counts them: finished nodes over total nodes,
-    never per-step.
+    ComfyUI's own web frontend counts them: finished-or-cached nodes over
+    total nodes, never per-step.
 
-    Cached nodes are included on both sides of the ratio, because
-    `execution.py` calls `finish_progress` for a cache hit just as it does for
-    real work. So a re-run with most of the graph cached races forward and then
-    finishes, rather than stalling at a low number and jumping at the end.
+    Cached nodes need the `execution_cached` capture above: `execution.py`
+    calls `finish_progress` only for cached nodes that enter the execution
+    list, and upstream nodes satisfied from cache never do. Unioning the
+    broadcast's ids with the registry's Finished states makes a mostly-cached
+    re-run jump to nearly-done at start — exactly like the desktop bar —
+    instead of crawling from 2/18 and never arriving.
 
     `all_node_ids()` covers ephemeral nodes too, so the total can still grow
     mid-run when a node expands into a subgraph. That is rare, and a total that
     grows is far less jarring than a value that resets.
     """
     done_states = (NodeState.Finished, NodeState.Error)
-    done = sum(1 for n in registry.nodes.values() if n.get('state') in done_states)
+    done_ids = {
+        str(nid) for nid, n in registry.nodes.items()
+        if n.get('state') in done_states
+    }
+    cached_ids = _cached_node_ids_by_prompt.get(registry.prompt_id, set())
+    done = len(done_ids | cached_ids)
     total = 0
     dynprompt = getattr(registry, 'dynprompt', None)
     if dynprompt is not None:
@@ -808,6 +867,7 @@ def _drop(ws):
 
 
 async def _watch_loop():
+    _install_execution_cached_hook()
     last_socket_snapshot = None
     last_relay_snapshot = None
     last_relay_enqueued_at = 0.0

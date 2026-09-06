@@ -5,6 +5,12 @@ endpoints, so they are shown an ``/object_info`` where ``input`` paths are
 remapped back to the original file names. The middleware is installed on the
 main ComfyUI app. Keep the helper names stable — ``tests/`` imports this
 module by name.
+
+Remapping a name is an authorization-relevant act when comfyui-multiuser is
+installed: the gate filters ``/object_info`` by the names it knows about, so an
+alias rewritten into a different string afterwards would put a file the user
+may not load back on the menu. Aliases the gate refuses are therefore dropped
+here rather than remapped. Without that node present nothing changes.
 """
 
 import asyncio
@@ -20,6 +26,18 @@ from aiohttp import web
 
 import mobile_input_aliases as _mobile_input_aliases
 from mobile_common import INPUT_ALIASES_CACHE_PATH
+
+
+def _multiuser_api():
+    """The auth node's public API, or None when it is absent or switched off."""
+    try:
+        from comfyui_multiuser import api as multiuser_api
+    except Exception:
+        return None
+    try:
+        return multiuser_api if multiuser_api.is_enabled() else None
+    except Exception:
+        return None
 
 def _remap_alias_strings(value, mapping, drop=frozenset()):
     """Replace input aliases inside the lists used by /object_info combos.
@@ -117,8 +135,13 @@ def _object_info_remap_put(key, body):
             _object_info_remap_cache.popitem(last=False)
 
 
-def _build_remapped_object_info(body):
-    """Build a desktop-friendly /object_info body, or None if unchanged."""
+def _build_remapped_object_info(body, user=None):
+    """Build a desktop-friendly /object_info body, or None if unchanged.
+
+    ``user`` is resolved in the request and handed down, because this runs on an
+    executor thread where the auth node's request-scoped ContextVar is not
+    propagated — reading it here would silently yield "nobody".
+    """
     known = _mobile_input_aliases.known_aliases(INPUT_ALIASES_CACHE_PATH)
     if not known:
         return None
@@ -128,6 +151,14 @@ def _build_remapped_object_info(body):
     # resolves to its original path is still a valid hard-linked input, and
     # dropping it from /object_info would break otherwise-runnable workflows.
     gone = _mobile_input_aliases.missing_aliases(INPUT_ALIASES_CACHE_PATH, input_dir)
+    multiuser = _multiuser_api()
+    if multiuser is not None and user is not None:
+        # Drop rather than remap: an alias this user cannot load must not come
+        # back onto the menu under its real name.
+        refused = {alias for alias in live if not multiuser.can_use_input(alias, user)}
+        if refused:
+            gone = gone | refused
+            live = {a: target for a, target in live.items() if a not in refused}
     payload = json.loads(body)
     remapped = _remap_alias_strings(payload, live, gone - set(live))
     if remapped is payload:
@@ -156,8 +187,13 @@ async def _object_info_alias_middleware(request, handler):
         stamp = _alias_cache_stamp()
         if stamp is None:
             return response
+        multiuser = _multiuser_api()
+        # Resolve the viewer HERE, in the request, for the executor call below.
+        user = multiuser.current_user() if multiuser is not None else None
         body = bytes(body)
-        key = (stamp, len(body), zlib.crc32(body))
+        # The remapped body differs per user once the gate is on, so the cache
+        # has to key on who asked.
+        key = (stamp, len(body), zlib.crc32(body), (user or {}).get('id'))
         hit, remapped = _object_info_remap_get(key)
         if not hit:
             loop = asyncio.get_running_loop()
@@ -165,6 +201,7 @@ async def _object_info_alias_middleware(request, handler):
                 None,
                 _build_remapped_object_info,
                 body,
+                user,
             )
             _object_info_remap_put(key, remapped)
         if remapped is not None:
