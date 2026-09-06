@@ -8,6 +8,7 @@ import { UserWorkflowsPanel } from '@/components/AppMenu/UserWorkflowsPanel';
 import { FeedbackDialog } from '@/components/AppMenu/FeedbackDialog';
 import { Z_LAYERS } from '@/components/zLayers';
 import type { UserDataFile } from '@/api/client';
+import { useShowHiddenStore } from '@/hooks/useShowHidden';
 
 vi.mock('@/api/client', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/api/client')>();
@@ -113,6 +114,7 @@ describe('app menu confirmation layering', () => {
     stackingAncestor.appendChild(container);
     document.body.appendChild(stackingAncestor);
     root = createRoot(container);
+    useShowHiddenStore.setState({ showHidden: false });
   });
 
   afterEach(async () => {
@@ -210,6 +212,19 @@ describe('app menu confirmation layering', () => {
       const dialog = openDialog();
       expect(dialog.textContent).toContain('New folder');
       expectDialogAboveMenu(dialog, menuPanel());
+    });
+
+    it('uses the global show-hidden preference', async () => {
+      useShowHiddenStore.setState({ showHidden: true });
+      await renderPanel();
+
+      await act(async () => {
+        document
+          .querySelector<HTMLButtonElement>('button[aria-label="Folder options"]')
+          ?.click();
+      });
+
+      expect(findButton('Hide hidden')).toBeDefined();
     });
   });
 

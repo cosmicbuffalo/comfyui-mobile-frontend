@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react';
+import { createPortal } from 'react-dom';
 import type { KeyboardEvent, MouseEvent, PointerEvent } from 'react';
 import { CheckIcon, ClipboardIcon, XMarkIcon } from '@/components/icons';
 import { copyTextToClipboard } from '@/utils/clipboard';
@@ -9,6 +10,8 @@ import { useImageViewerStore } from '@/hooks/useImageViewer';
 import { useWidgetModalOpenStore } from '@/hooks/useWidgetModalOpen';
 import { useQueueStore } from '@/hooks/useQueue';
 import { useOverallProgress } from '@/hooks/useOverallProgress';
+import { useConnectionStatusStore } from '@/hooks/useConnectionStatus';
+import { useLiveProgressStore } from '@/hooks/useLiveProgress';
 import { resolveExecutingNodeLabel } from '@/utils/executionLabels';
 import { useI18n } from '@/i18n';
 
@@ -30,7 +33,6 @@ export function BottomStatusOverlay() {
   const widgetModalOpen = useWidgetModalOpenStore((s) => s.openCount > 0);
   const workflow = useWorkflowStore((s) => s.workflow);
   const isExecuting = useWorkflowStore((s) => s.isExecuting);
-  const progress = useWorkflowStore((s) => s.progress);
   const executingNodeId = useWorkflowStore((s) => s.executingNodeId);
   const executingNodePath = useWorkflowStore((s) => s.executingNodePath);
   const executingPromptId = useWorkflowStore((s) => s.executingPromptId);
@@ -38,15 +40,20 @@ export function BottomStatusOverlay() {
   const error = useWorkflowErrorsStore((s) => s.error);
   const errorKind = useWorkflowErrorsStore((s) => s.errorKind);
   const nodeErrors = useWorkflowErrorsStore((s) => s.nodeErrors);
+  const nodeErrorsByItemKey = useWorkflowErrorsStore((s) => s.nodeErrorsByItemKey);
   const nodeErrorsFromRun = useWorkflowErrorsStore((s) => s.nodeErrorsFromRun);
   const errorsDismissed = useWorkflowErrorsStore((s) => s.errorsDismissed);
   const setErrorsDismissed = useWorkflowErrorsStore((s) => s.setErrorsDismissed);
   const scrollToNode = useWorkflowStore((s) => s.scrollToNode);
   const errorCycleIndex = useWorkflowErrorsStore((s) => s.errorCycleIndex);
   const setErrorCycleIndex = useWorkflowErrorsStore((s) => s.setErrorCycleIndex);
-  const revealNodeWithParents = useWorkflowStore((s) => s.revealNodeWithParents);
   const nodeTypes = useWorkflowStore((s) => s.nodeTypes);
   const running = useQueueStore((s) => s.running);
+  const isConnected = useConnectionStatusStore((s) => s.isConnected);
+  const hasEverConnected = useConnectionStatusStore((s) => s.hasEverConnected);
+  const liveProgressSnapshot = useLiveProgressStore((s) => s.snapshot);
+  const liveProgressConnected = useLiveProgressStore((s) => s.isConnected);
+  const liveProgressEverConnected = useLiveProgressStore((s) => s.hasEverConnected);
   const [dismissedRunKey, setDismissedRunKey] = useState<string | null>(null);
   const [errorCopied, setErrorCopied] = useState(false);
 
@@ -124,7 +131,19 @@ export function BottomStatusOverlay() {
     isRunning: isExecuting || running.length > 0,
     workflowDurationStats,
   });
-  const displayNodeProgress = overallProgress === 100 ? 100 : progress;
+  const hasActiveRun = Boolean(runKey) || isExecuting || running.length > 0;
+  const isReconnecting = !isConnected && hasEverConnected && hasActiveRun;
+  const liveProgress = runKey && liveProgressSnapshot?.promptId === runKey
+    ? liveProgressSnapshot
+    : null;
+  const progressStreamUnavailable =
+    isConnected && liveProgressEverConnected && !liveProgressConnected && hasActiveRun;
+  const displayedNodeName = liveProgress
+    ? (liveProgress.nodeName ?? t("Running"))
+    : (executingNodeLabel ?? t("Running"));
+  const nodeProgressPercent = liveProgress?.nodeName
+    ? liveProgress.nodeProgressPercent
+    : null;
   // Workflow load errors (and node errors) are only relevant on the workflow
   // panel — don't surface them while browsing the queue or outputs.
   const hasErrorToast = (Boolean(error) || hasNodeErrors) && !errorsDismissed
@@ -134,7 +153,7 @@ export function BottomStatusOverlay() {
   // would otherwise poke through the translucent backdrop and update behind
   // the editor. It re-appears (per the rules above) as soon as the modal closes.
   const showProgress =
-    overallProgress !== null &&
+    (overallProgress !== null || isReconnecting) &&
     !isQueuePanel &&
     !isOutputsPanel &&
     !widgetModalOpen &&
@@ -142,25 +161,51 @@ export function BottomStatusOverlay() {
   const visible = !viewerOpen && (hasErrorToast || showProgress);
   const shouldShowError = hasErrorToast;
 
+  // Every node carrying an error, in a stable order, as {itemKey, id} pairs.
+  // Item keys are what the cycle walks: an error can belong to a node inside a
+  // subgraph, which is not in `workflow.nodes` at all (a stock template is
+  // often ONE placeholder over a subgraph holding every real node), and keying
+  // the walk on root nodes found nothing and made the toast a dead tap.
+  // `scrollToNode` travels to the item's own scope, so a jump into a subgraph
+  // needs nothing extra here.
+  const errorItems = useMemo(() => {
+    if (!workflow) return [];
+    const items: Array<{ itemKey: string; nodeId: number | null }> = [];
+    const seen = new Set<string>();
+    // Root nodes first, in workflow order, so the common case cycles in the
+    // order the user sees; then anything reachable only by item key.
+    for (const node of workflow.nodes) {
+      const itemKey = node.itemKey;
+      const hasError = itemKey
+        ? nodeErrorsByItemKey[itemKey]?.length
+        : nodeErrors[String(node.id)]?.length;
+      if (!hasError || !itemKey) continue;
+      seen.add(itemKey);
+      items.push({ itemKey, nodeId: node.id });
+    }
+    for (const [itemKey, errors] of Object.entries(nodeErrorsByItemKey)) {
+      if (!errors.length || seen.has(itemKey)) continue;
+      seen.add(itemKey);
+      items.push({ itemKey, nodeId: null });
+    }
+    return items;
+  }, [workflow, nodeErrors, nodeErrorsByItemKey]);
+
   const handleErrorClick = () => {
-    if (!workflow) return;
     if (!hasNodeErrors) return;
-    const errorNodes = workflow.nodes.filter((node) => nodeErrors[String(node.id)]?.length);
-    if (errorNodes.length === 0) return;
+    if (errorItems.length === 0) return;
 
-    const nextIndex = errorCycleIndex % errorNodes.length;
-    const closestNode = errorNodes[nextIndex];
-    if (!closestNode) return;
-    const closestId = closestNode.id;
-    const itemKey = closestNode.itemKey;
-    if (!itemKey) return;
+    const nextIndex = errorCycleIndex % errorItems.length;
+    const target = errorItems[nextIndex];
+    if (!target) return;
     const label = `Error #${nextIndex + 1}`;
-    revealNodeWithParents(itemKey);
-    setErrorCycleIndex((nextIndex + 1) % errorNodes.length);
+    setErrorCycleIndex((nextIndex + 1) % errorItems.length);
 
-    window.dispatchEvent(new CustomEvent('workflow-label-error-node', { detail: { nodeId: closestId, label } }));
-    window.dispatchEvent(new CustomEvent('workflow-scroll-to-node', { detail: { nodeId: closestId, label } }));
-    scrollToNode(itemKey, label);
+    if (target.nodeId !== null) {
+      window.dispatchEvent(new CustomEvent('workflow-label-error-node', { detail: { nodeId: target.nodeId, label } }));
+      window.dispatchEvent(new CustomEvent('workflow-scroll-to-node', { detail: { nodeId: target.nodeId, label } }));
+    }
+    scrollToNode(target.itemKey, label);
   };
 
   const handleErrorKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
@@ -243,10 +288,17 @@ export function BottomStatusOverlay() {
 
   if (!visible) return null;
 
-  return (
+  // Portaled to the body: inside #bottom-bar-root (z-[2200]) any z-index here
+  // is only ranked against the bar's own children, so the banner painted over
+  // every body-level popover regardless of its value (see zLayers.ts). On the
+  // body, z-[950] puts this passive status layer below every interactive
+  // popover (context menus start at z-[1000], modal backdrops at z-[1450]) —
+  // with a load error up, the banner used to cover the bottom entries of any
+  // card menu opened near the fold.
+  return createPortal(
     <div
       id="bottom-status-overlay"
-      className="fixed inset-x-0 bottom-20 z-[2000] flex flex-col items-center gap-3 pointer-events-none"
+      className="fixed inset-x-0 bottom-20 z-[950] flex flex-col items-center gap-3 pointer-events-none"
     >
       {shouldShowError && (
         <div
@@ -313,38 +365,76 @@ export function BottomStatusOverlay() {
           >
             <XMarkIcon className="w-4 h-4" />
           </button>
-          <div className="node-progress-info flex min-w-0 items-center justify-between gap-2 text-xs leading-snug">
-            <span className="executing-node-name min-w-0 truncate font-semibold text-slate-100">
-              {executingNodeLabel || t("Running")}
-            </span>
-            <span className="shrink-0 font-semibold text-emerald-200">{displayNodeProgress}%</span>
-          </div>
-          <div className="node-progress-track mt-1 h-1 rounded-full bg-slate-800/75 overflow-hidden">
+          {isReconnecting ? (
             <div
-              className="node-progress-bar h-full bg-emerald-400 transition-none"
-              style={{
-                width: `${Math.min(100, Math.max(0, displayNodeProgress))}%`,
-              }}
-            />
-          </div>
-          {overallProgress !== null && (
-            <div className="overall-progress-container">
-              <div className="overall-progress-info mt-1.5 flex items-center justify-between gap-2 text-[10px] leading-none text-slate-400">
-                <span>{t("Overall")}</span>
-                <span className="font-semibold text-cyan-200">{overallProgress}%</span>
+              className="progress-reconnecting flex items-center justify-center gap-2 py-1 text-xs font-semibold text-cyan-200"
+              role="status"
+              aria-live="polite"
+            >
+              <span
+                className="h-3.5 w-3.5 shrink-0 rounded-full border-2 border-cyan-300/30 border-t-cyan-300 animate-spin"
+                aria-hidden="true"
+              />
+              <span>{t("Reconnecting…")}</span>
+            </div>
+          ) : progressStreamUnavailable ? (
+            <div className="progress-stream-unavailable py-1" role="status" aria-live="polite">
+              <div className="flex items-center justify-between gap-2 text-xs font-semibold">
+                <span className="text-slate-200">{t("Running")}</span>
+                <span className="text-cyan-200">…</span>
               </div>
-              <div className="overall-progress-track mt-1 h-1 rounded-full bg-slate-800/75 overflow-hidden">
+              <div className="mt-2 h-1 overflow-hidden rounded-full bg-slate-800/75">
+                <div className="h-full w-1/3 rounded-full bg-cyan-400/80 animate-pulse" />
+              </div>
+            </div>
+          ) : (
+            <>
+              <div className="node-progress-info flex min-w-0 items-center justify-between gap-2 text-xs leading-snug">
+                <span className="executing-node-name min-w-0 truncate font-semibold text-slate-100">
+                  {liveProgress?.nodeIndex !== null && liveProgress?.nodesTotal ? (
+                    <span className="node-progress-position mr-1.5 text-cyan-200">
+                      {liveProgress.nodeIndex}/{liveProgress.nodesTotal}
+                    </span>
+                  ) : null}
+                  {displayedNodeName}
+                </span>
+                {nodeProgressPercent !== null && (
+                  <span className="node-progress-percent shrink-0 font-semibold text-emerald-200">
+                    {nodeProgressPercent}%
+                  </span>
+                )}
+              </div>
+              <div className="node-progress-track mt-1 h-1 rounded-full bg-slate-800/75 overflow-hidden">
                 <div
-                  className="overall-progress-bar h-full bg-cyan-400 transition-none"
+                  key={`${runKey ?? 'idle'}:${liveProgress?.nodeName ?? 'between-nodes'}`}
+                  className="node-progress-bar h-full bg-emerald-400 transition-[width] duration-200 ease-linear"
                   style={{
-                    width: `${Math.min(100, Math.max(0, overallProgress))}%`,
+                    width: `${Math.min(100, Math.max(0, nodeProgressPercent ?? 0))}%`,
                   }}
                 />
               </div>
-            </div>
+              {overallProgress !== null && (
+                <div className="overall-progress-container">
+                  <div className="overall-progress-info mt-1.5 flex items-center justify-between gap-2 text-[10px] leading-none text-slate-400">
+                    <span>{t("Overall")}</span>
+                    <span className="font-semibold text-cyan-200">{overallProgress}%</span>
+                  </div>
+                  <div className="overall-progress-track mt-1 h-1 rounded-full bg-slate-800/75 overflow-hidden">
+                    <div
+                      key={runKey ?? 'idle'}
+                      className="overall-progress-bar h-full bg-cyan-400 transition-[width] duration-200 ease-linear"
+                      style={{
+                        width: `${Math.min(100, Math.max(0, overallProgress))}%`,
+                      }}
+                    />
+                  </div>
+                </div>
+              )}
+            </>
           )}
         </div>
       )}
-    </div>
+    </div>,
+    document.body,
   );
 }

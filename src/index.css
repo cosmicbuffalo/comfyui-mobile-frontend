@@ -94,13 +94,49 @@ textarea {
 }
 .rs__menu {
   z-index: 200;
-  margin-top: 0.25rem;
   border-radius: 0.5rem;
   background-color: #0b1320;
   box-shadow: 0 10px 15px -3px rgba(0,0,0,0.5), 0 4px 6px -4px rgba(0,0,0,0.4);
 }
-.rs-scroll-target {
-  scroll-margin-top: calc(var(--top-bar-offset, 0px) + 12px);
+
+/* An open combo reads as one panel: the control's bottom edge dissolves into
+   the option list, and a single accent outline wraps the pair. The control's
+   translucent fill goes solid so the undimmed spotlight does not show the page
+   through it. --rs-accent is set per control on the portal, since the list is
+   portalled to the body and cannot inherit it — an error or promoted widget
+   keeps its own colour.
+
+   Both selectors carry a second class on purpose. react-select injects its own
+   defaults through emotion at run time, as single-class rules in a stylesheet
+   appended after this one, so a plain .rs__menu rule loses the tie. */
+.rs-inline .rs__control--menu-is-open {
+  box-shadow: none;
+  background-color: #0b1320;
+  border-bottom-color: transparent;
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 0;
+}
+.rs__menu-portal .rs__menu {
+  margin-top: 0;
+  border: 1px solid var(--rs-accent, #22d3ee);
+  border-top: 0;
+  border-radius: 0 0 0.5rem 0.5rem;
+}
+
+/* While the option list is open, everything else is behind a scrim. The scrim
+   is one full-screen element that absorbs the next click — so dismissing the
+   list never also presses whatever happened to be underneath it — plus a
+   spotlight whose enormous box-shadow paints the dim *around* the control and
+   its list, leaving that one rectangle at full brightness. */
+.combo-open-backdrop {
+  position: fixed;
+  inset: 0;
+}
+.combo-open-spotlight {
+  position: fixed;
+  border-radius: 0.5rem;
+  box-shadow: 0 0 0 9999px rgb(2 6 23 / 0.66);
+  pointer-events: none;
 }
 .rs__menu-list {
   padding: 0.25rem 0;
@@ -144,6 +180,88 @@ textarea {
   border-color: #1b2432;
   color: #e5e7eb;
 }
+
+/* Rendered MarkdownNote bodies (raw markdown still shows while editing). */
+.note-markdown {
+  line-height: 1.5;
+}
+.note-markdown .md-content > *:first-child {
+  margin-top: 0;
+}
+.note-markdown .md-content > *:last-child {
+  margin-bottom: 0;
+}
+.note-markdown .md-heading {
+  color: #f1f5f9;
+  line-height: 1.3;
+}
+.note-markdown .md-list {
+  margin: 0.5rem 0;
+  padding-left: 1.35rem;
+}
+.note-markdown .md-list-bullet {
+  list-style: disc;
+}
+.note-markdown .md-list-ordered {
+  list-style: decimal;
+}
+.note-markdown .md-list-item {
+  margin: 0.15rem 0;
+}
+.note-markdown .md-list .md-list {
+  margin: 0.15rem 0;
+}
+.note-markdown .md-quote {
+  margin: 0.5rem 0;
+  padding: 0.15rem 0 0.15rem 0.75rem;
+  border-left: 3px solid #334155;
+  color: #cbd5e1;
+}
+.note-markdown .md-code-inline {
+  background-color: #111c2e;
+  border: 1px solid #1f2a3c;
+  border-radius: 0.25rem;
+  padding: 0.05rem 0.3rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.875em;
+  word-break: break-word;
+}
+.note-markdown .md-code-block {
+  margin: 0.5rem 0;
+  padding: 0.6rem 0.75rem;
+  background-color: #111c2e;
+  border: 1px solid #1f2a3c;
+  border-radius: 0.5rem;
+  overflow-x: auto;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.875rem;
+  line-height: 1.45;
+  white-space: pre;
+}
+.note-markdown .md-image {
+  max-width: 100%;
+  height: auto;
+  border-radius: 0.375rem;
+  margin: 0.25rem 0;
+}
+.note-markdown .md-table-wrap {
+  margin: 0.5rem 0;
+  overflow-x: auto;
+}
+.note-markdown .md-table {
+  border-collapse: collapse;
+  font-size: 0.9375rem;
+}
+.note-markdown .md-table th,
+.note-markdown .md-table td {
+  border: 1px solid #1f2a3c;
+  padding: 0.3rem 0.55rem;
+  text-align: left;
+}
+.note-markdown .md-table th {
+  background-color: #111c2e;
+  font-weight: 600;
+}
 select.bg-white {
   background-color: #0b1320;
 }
@@ -154,8 +272,6 @@ option {
 .shadow-lg { box-shadow: 0 10px 15px -3px rgba(0,0,0,0.5), 0 4px 6px -4px rgba(0,0,0,0.4); }
 .shadow-md { box-shadow: 0 4px 6px -1px rgba(0,0,0,0.5), 0 2px 4px -2px rgba(0,0,0,0.4); }
 .shadow-sm { box-shadow: 0 1px 2px 0 rgba(0,0,0,0.4); }
-.bg-purple-100\/50 { background-color: rgba(88, 28, 135, 0.35); }
-.bg-purple-200 { background-color: rgba(74, 26, 106, 0.6); }
 .border-purple-300 { border-color: rgba(91, 42, 134, 0.6); }
 
 /* Error states */
@@ -172,7 +288,7 @@ option {
 }
 
 /* Touch optimization */
-button, .touchable {
+button {
   touch-action: manipulation;
   -webkit-tap-highlight-color: transparent;
 }
@@ -191,18 +307,67 @@ input, textarea, select {
   }
 }
 
-/* Node highlight animation */
+/* Node highlight animation. The ring is drawn as an overlay INSIDE the target's
+   own box rather than as an outward box-shadow: cards nested in a group sit
+   inside two `overflow-hidden` clip boundaries (the `.group-wrapper` and the
+   children container that drives the collapse animation), and the first card in
+   a group butts straight up against the group header, so an outward ring lost
+   its top edge entirely and was trimmed at the sides. An inset ring reads the
+   same in every context and can't be clipped. */
 @keyframes highlight-pulse {
   0%, 100% {
-    box-shadow: 0 0 0 0 rgba(59, 130, 246, 0);
+    box-shadow:
+      inset 0 0 0 0 rgba(59, 130, 246, 0),
+      inset 0 0 0 0 rgba(59, 130, 246, 0);
   }
   50% {
-    box-shadow: 0 0 0 8px rgba(59, 130, 246, 0.55);
+    box-shadow:
+      inset 0 0 0 3px rgba(59, 130, 246, 0.95),
+      inset 0 0 14px 2px rgba(59, 130, 246, 0.45);
   }
 }
 
 .highlight-pulse {
+  position: relative;
+}
+
+.highlight-pulse::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  z-index: 120;
   animation: highlight-pulse 0.6s ease-in-out 2;
+}
+
+/* The same arrival flash on the bookmark button that was activated, so it is
+   obvious which bookmark answered — above all when cycling, where the button
+   pressed isn't the one that responds. Ring only, no inner bloom: these targets
+   are small enough that the node card's soft glow would just wash them out.
+   A separate class so `scrollToNode`'s global `.highlight-pulse` reset (which
+   fires when the node itself arrives, later) leaves this one alone. */
+@keyframes bookmark-highlight-pulse {
+  0%, 100% {
+    box-shadow: inset 0 0 0 0 rgba(59, 130, 246, 0);
+  }
+  50% {
+    box-shadow: inset 0 0 0 3px rgba(59, 130, 246, 0.95);
+  }
+}
+
+.bookmark-highlight-pulse {
+  position: relative;
+}
+
+.bookmark-highlight-pulse::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  z-index: 120;
+  animation: bookmark-highlight-pulse 0.6s ease-in-out 2;
 }
 
 /* Connection-button highlight: flashes a ring around the specific reciprocal
@@ -227,6 +392,14 @@ input, textarea, select {
 .scroll-container {
   touch-action: pan-y;
   -webkit-overflow-scrolling: touch;
+}
+
+/* The templates browser can list hundreds of cards at once ("All" spans the
+   whole core catalog plus every installed pack). Skipping layout and paint for
+   the off-screen ones keeps that list scrollable on a phone. */
+.template-card {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 84px;
 }
 
 .node-scroll-anchor {
@@ -258,6 +431,117 @@ input, textarea, select {
   /* CLIP and friends set a black glyph for their solid fill; at 40% over the
      dark card that would be unreadable, so the arrow goes light for every type. */
   color: #e2e8f0;
+}
+
+/* A promoted connection — a subgraph boundary slot, or an inner slot wired to
+   one — is marked in the same pink the promoted widgets use.
+
+   Left and right only: the border box stays uniform on all four sides so the
+   button keeps the exact geometry of every other connection button, and the top
+   and bottom edges are simply transparent. Rounding turns the two visible edges
+   into arcs hugging the sides. Sizing the border per-side instead would leave
+   the padding box taller than it is wide, and the round fill inside it an
+   ellipse.
+
+   The fill is inset — so the mark stays visible on a LATENT slot, whose own
+   fill (#ec4899) is this very pink — via padding plus `background-clip`, NOT an
+   absolutely positioned overlay. The box model centres it exactly; an overlay
+   placed with `inset` rounds its edges independently at fractional layout
+   offsets, which showed up as a wider gap on one side than the other.
+
+   The glyph does not shrink with the fill: its size is set by its own font size
+   and icon width, and it stays centred in the content box. */
+.connection-promoted {
+  border-width: 3px;
+  padding: 3px;
+  background-clip: content-box;
+  border-color: transparent #ec4899;
+  background-color: var(--conn-slot-fill);
+}
+
+/* The "add a slot" button that trails a boundary column: a plain grey disc with
+   a +, carrying no mark of its own. It is not a connection, so nothing about it
+   should imply a slot type or a promotion — the shape puts it with the slots,
+   and the colour keeps it out of their vocabulary. */
+.connection-add-slot {
+  background-color: #4b5563;
+  border-color: transparent;
+  color: #e2e8f0;
+}
+
+/* On a promoted connection the arcs ARE the button's edge, so the arrival flash
+   animates them pink → cyan → pink. Throwing the usual ring outside would put a
+   second, differently-shaped mark around one button. The two-class selector
+   replaces the base animation rather than adding to it. */
+@keyframes connection-promoted-pulse {
+  0%, 100% {
+    border-color: transparent #ec4899;
+  }
+  50% {
+    border-color: transparent #22d3ee;
+  }
+}
+.connection-promoted.connection-highlight-pulse {
+  animation: connection-promoted-pulse 0.6s ease-in-out 2;
+}
+
+/* The bookmark gutter in reposition mode: an amber wash standing a little proud
+   of the bar on every side, and nothing else. Amber to match the bookmark
+   glyph, so the mode is unmistakable against the app's cyan. The buttons keep
+   their own borders; the mode does not draw one of its own around them.
+
+   The wash is a spread shadow rather than padding, because spread paints
+   outside the border box without taking part in layout. Nothing inside the bar
+   moves when the mode is entered or left, and — the subtler half — the bar's
+   own box does not change size, so the drag maths that reads its rect gets the
+   same numbers before and after. Padding plus a negative margin looks identical
+   but grows the box, which offset every drag and made the bar jump on the way
+   out of the mode. The drop shadow is folded in here because box-shadow is one
+   property and would otherwise be replaced rather than added to. */
+.bookmark-bar-repositioning {
+  background-color: rgb(245 158 11 / 0.15);
+  box-shadow:
+    0 0 0 6px rgb(245 158 11 / 0.15),
+    0 10px 15px -3px rgb(0 0 0 / 0.35);
+}
+
+/* Collapsing the bookmark gutter swaps a list for a single button, which is too
+   big a change to cross-fade convincingly. Each state announces itself instead:
+   the button springs in from small, the list settles in from slightly scaled.
+   Short enough to read as one motion rather than a transition to sit through. */
+@keyframes bookmark-bar-collapse-in {
+  from {
+    opacity: 0;
+    transform: scale(0.6);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes bookmark-bar-expand-in {
+  from {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.bookmark-bar-collapsing {
+  animation: bookmark-bar-collapse-in 180ms ease-out;
+}
+.bookmark-bar-expanding {
+  animation: bookmark-bar-expand-in 180ms ease-out;
+}
+/* Reduced motion still needs the state change to be visible, so the fade stays
+   and only the movement goes. */
+@media (prefers-reduced-motion: reduce) {
+  .bookmark-bar-collapsing,
+  .bookmark-bar-expanding {
+    animation-name: none;
+  }
 }
 
 /* Fullscreen widget modal backdrop: span the full LAYOUT viewport so nothing
@@ -294,4 +578,87 @@ input, textarea, select {
   border-width: 1px;
   border-style: solid;
   border-radius: 0.5rem;
+}
+
+/* iOS long-press callout, suppressed app-wide.
+   Holding an image or link in WKWebView pops the system "Save Image / Copy"
+   sheet, which both hijacks any press-and-hold the app defines on top of it
+   (the outputs grid's hold-to-open-the-viewer) and offers a download path that
+   bypasses this app's own share/save controls. This is a web-side fix; nothing
+   changes in the native wrapper.
+
+   Deliberately only the callout: `-webkit-touch-callout` is inherited, so one
+   declaration covers everything, while text selection is governed separately
+   by `user-select` and is left alone — a global `user-select: none` would take
+   away copying metadata, filenames and error text. Elements that should not be
+   selectable say so themselves with Tailwind's `select-none`. */
+html {
+  -webkit-touch-callout: none;
+}
+
+/* Custom fullscreen-video timeline. Native range tracks add a dark border or
+   inset shadow on some WebKit builds, which reads as a black hairline around
+   the bar. Paint both halves explicitly and remove all browser track borders. */
+.video-timeline-input {
+  appearance: none;
+  -webkit-appearance: none;
+  background: transparent;
+  border: 0;
+  outline: none;
+}
+
+.video-timeline-input::-webkit-slider-runnable-track {
+  height: 4px;
+  border: 0;
+  border-radius: 9999px;
+  box-shadow: none;
+  background: linear-gradient(
+    to right,
+    rgb(34 211 238) 0%,
+    rgb(34 211 238) var(--video-progress),
+    rgb(255 255 255 / 0.35) var(--video-progress),
+    rgb(255 255 255 / 0.35) 100%
+  );
+}
+
+.video-timeline-input::-webkit-slider-thumb {
+  width: 14px;
+  height: 14px;
+  margin-top: -5px;
+  appearance: none;
+  -webkit-appearance: none;
+  border: 0;
+  border-radius: 9999px;
+  box-shadow: none;
+  background: rgb(34 211 238);
+}
+
+.video-timeline-input::-moz-range-track {
+  height: 4px;
+  border: 0;
+  border-radius: 9999px;
+  box-shadow: none;
+  background: rgb(255 255 255 / 0.35);
+}
+
+.video-timeline-input::-moz-range-progress {
+  height: 4px;
+  border: 0;
+  border-radius: 9999px;
+  background: rgb(34 211 238);
+}
+
+.video-timeline-input::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border: 0;
+  border-radius: 9999px;
+  box-shadow: none;
+  background: rgb(34 211 238);
+}
+
+.video-timeline-input:focus-visible {
+  outline: 2px solid rgb(34 211 238 / 0.9);
+  outline-offset: 3px;
+  border-radius: 9999px;
 }

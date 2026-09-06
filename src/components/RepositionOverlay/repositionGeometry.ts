@@ -68,6 +68,34 @@ export function findGroupSubgraphIdInLayout(
   return findGroupSubgraphIdInLayout(layout, parent.groupKey);
 }
 
+/**
+ * The reposition key for a subgraph placeholder.
+ *
+ * Keyed by the INSTANCE, not the definition. Every instance of a shared type
+ * used to render the same `subgraph-<definition>` key, so the twenty-three
+ * placeholders in a workflow with two shared types produced two distinct keys
+ * between them: `querySelector` found the first one whatever you had grabbed,
+ * and a drag resolved to whichever instance the layout listed first.
+ *
+ * The definition alone is still the key for a subgraph used as a CONTAINER,
+ * where the contents genuinely are shared, so the two forms are distinguished
+ * by the separator rather than by guessing.
+ */
+export function subgraphDataKey(subgraphId: string, nodeId?: number): string {
+  return nodeId == null ? `subgraph-${subgraphId}` : `subgraph-${subgraphId}::${nodeId}`;
+}
+
+/** The definition id and instance a subgraph key names. */
+export function parseSubgraphDataKey(key: string): { id: string; nodeId?: number } {
+  const body = key.slice("subgraph-".length);
+  const separator = body.lastIndexOf("::");
+  if (separator === -1) return { id: body };
+  const nodeId = Number(body.slice(separator + 2));
+  return Number.isFinite(nodeId)
+    ? { id: body.slice(0, separator), nodeId }
+    : { id: body };
+}
+
 export function targetToDataKey(target: RepositionTarget, layout?: MobileLayout): string {
   if (target.type === "node") return `node-${target.id}`;
   if (target.type === "group") {
@@ -81,13 +109,13 @@ export function targetToDataKey(target: RepositionTarget, layout?: MobileLayout)
       subgraphId: target.subgraphId ?? null,
     })}`;
   }
-  return `subgraph-${target.id}`;
+  return subgraphDataKey(target.id, target.nodeId);
 }
 
 export function itemRefToDataKey(ref: ItemRef): string {
   if (ref.type === "node") return `node-${ref.id}`;
   if (ref.type === "group") return `group-${getGroupKey(ref.id, ref.subgraphId)}`;
-  if (ref.type === "subgraph") return `subgraph-${ref.id}`;
+  if (ref.type === "subgraph") return subgraphDataKey(ref.id, ref.nodeId);
   return `hidden-${ref.blockId}`;
 }
 
@@ -106,15 +134,17 @@ export function containerIdToKey(c: ContainerId): string {
   return `subgraph-${c.subgraphId}`;
 }
 
-/** Collect all group and subgraph container IDs from the layout. */
-export function collectAllContainerIds(layout: MobileLayout): {
-  groupKeys: string[];
-  subgraphIds: string[];
-} {
-  return {
-    groupKeys: Object.keys(layout.groups),
-    subgraphIds: Object.keys(layout.subgraphs),
-  };
+/**
+ * Every group in the layout, as drop targets for a drag.
+ *
+ * Groups only. A subgraph is a scope rather than a container you can drop into
+ * from outside — putting a node inside one moves it to another graph, with its
+ * connections rewritten to cross the boundary, which is what **Move into
+ * subgraph** does. A drag cannot express any of that, and the placeholder cards
+ * this list used to include are drawn as leaves anyway.
+ */
+export function collectAllGroupKeys(layout: MobileLayout): string[] {
+  return Object.keys(layout.groups);
 }
 
 export interface IndexedBounds {

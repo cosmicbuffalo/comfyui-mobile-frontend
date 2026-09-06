@@ -42,7 +42,11 @@ export function SearchActionModal({
       onClick={onClose}
     >
       <div className="w-full h-full flex flex-col" onClick={(event) => event.stopPropagation()}>
-        <div className="bg-slate-950/88 border-b border-white/10 px-4 py-3 flex items-center justify-between safe-area-top">
+        {/* The inset is folded into the padding rather than applied through
+            `safe-area-top`, which sets `padding-top` outright and so replaced
+            this header's own — leaving it flush against the top edge on every
+            device without a notch, while keeping its bottom padding. */}
+        <div className="bg-slate-950/88 border-b border-white/10 px-4 pb-3 pt-[calc(0.75rem+env(safe-area-inset-top,0px))] flex items-center justify-between">
           <div className="flex items-center gap-2">
             {onBack && (
               <button
@@ -82,7 +86,7 @@ export function SearchActionModal({
               className="text-sm text-slate-400 hover:text-slate-100 font-medium"
               onClick={onClose}
             >
-              Cancel
+              {t('Cancel')}
             </button>
           </div>
         )}

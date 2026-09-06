@@ -97,6 +97,83 @@ describe('Dialog keyboard actions', () => {
     expect(onCancel).not.toHaveBeenCalled();
   });
 
+  it('submits the primary action from a focused single-line text field', async () => {
+    const onSave = vi.fn();
+
+    await act(async () => {
+      root.render(
+        <Dialog
+          onClose={() => {}}
+          title="Rename"
+          description={<input aria-label="Workflow name" defaultValue="Draft" />}
+          actions={[
+            { label: 'Cancel', onClick: () => {} },
+            { label: 'Save', variant: 'primary', onClick: onSave },
+          ]}
+        />,
+      );
+    });
+
+    const input = document.querySelector<HTMLInputElement>('input[aria-label="Workflow name"]');
+    input?.focus();
+    input?.dispatchEvent(new KeyboardEvent('keydown', {
+      key: 'Enter',
+      bubbles: true,
+      cancelable: true,
+    }));
+
+    expect(onSave).toHaveBeenCalledTimes(1);
+  });
+
+  it('preserves Enter inside multiline text and content editors', async () => {
+    const onSave = vi.fn();
+
+    await act(async () => {
+      root.render(
+        <Dialog
+          onClose={() => {}}
+          title="Edit details"
+          description={<textarea aria-label="Details" defaultValue="Line one" />}
+          actions={[{ label: 'Save', variant: 'primary', onClick: onSave }]}
+        />,
+      );
+    });
+
+    const textarea = document.querySelector<HTMLTextAreaElement>('textarea[aria-label="Details"]');
+    textarea?.focus();
+    textarea?.dispatchEvent(new KeyboardEvent('keydown', {
+      key: 'Enter',
+      bubbles: true,
+      cancelable: true,
+    }));
+
+    expect(onSave).not.toHaveBeenCalled();
+  });
+
+  it('does not submit a disabled primary action from a text field', async () => {
+    const onSave = vi.fn();
+
+    await act(async () => {
+      root.render(
+        <Dialog
+          onClose={() => {}}
+          title="Rename"
+          description={<input aria-label="Workflow name" />}
+          actions={[{ label: 'Save', variant: 'primary', disabled: true, onClick: onSave }]}
+        />,
+      );
+    });
+
+    const input = document.querySelector<HTMLInputElement>('input[aria-label="Workflow name"]');
+    input?.dispatchEvent(new KeyboardEvent('keydown', {
+      key: 'Enter',
+      bubbles: true,
+      cancelable: true,
+    }));
+
+    expect(onSave).not.toHaveBeenCalled();
+  });
+
   it('remains interactive when rendered inside a pointer-events-none overlay', async () => {
     await act(async () => {
       root.render(

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { WorkflowIcon, TemplateIcon, ClockIcon, DocumentIcon } from '@/components/icons';
 import { MenuSubPageHeader } from './MenuSubPageHeader';
 import { useRecentWorkflowsStore, type RecentWorkflowEntry } from '@/hooks/useRecentWorkflows';
@@ -12,6 +12,9 @@ import {
   menuSurfaceButtonDisabledClassName,
   menuTextClassName,
 } from './menuStyles';
+import { useShowHiddenStore } from '@/hooks/useShowHidden';
+import { useWorkflowHiddenStore } from '@/hooks/useWorkflowHidden';
+import { isWorkflowSourceHidden } from '@/utils/workflowHidden';
 
 interface RecentWorkflowsPanelProps {
   onBack: () => void;
@@ -69,6 +72,16 @@ export function RecentWorkflowsPanel({
   const { t } = useI18n();
   const entries = useRecentWorkflowsStore((s) => s.entries);
   const clearEntries = useRecentWorkflowsStore((s) => s.clearEntries);
+  const showHidden = useShowHiddenStore((s) => s.showHidden);
+  const hiddenWorkflowPaths = useWorkflowHiddenStore((s) => s.hidden);
+  const visibleEntries = useMemo(
+    () => entries
+      .map((entry, index) => ({ entry, index }))
+      .filter(({ entry }) => (
+        showHidden || !isWorkflowSourceHidden(entry.source, hiddenWorkflowPaths)
+      )),
+    [entries, hiddenWorkflowPaths, showHidden],
+  );
 
   // Track which file-source entries are unavailable (file deleted/missing)
   const [unavailable, setUnavailable] = useState<Set<number>>(new Set());
@@ -142,14 +155,14 @@ export function RecentWorkflowsPanel({
         ) : undefined}
       />
 
-      {entries.length === 0 ? (
+      {visibleEntries.length === 0 ? (
         <div className={`flex flex-col items-center justify-center py-12 ${menuMutedTextClassName}`}>
           <ClockIcon className="w-10 h-10 mb-3 text-slate-600" />
           <p className="text-sm">{t('No recent workflows')}</p>
         </div>
       ) : (
         <div className="space-y-2 overflow-y-auto flex-1">
-          {entries.map((entry, i) => {
+          {visibleEntries.map(({ entry, index: i }) => {
             const reloadable = isReloadable(entry) && !unavailable.has(i);
             const sourceLabel = getSourceLabel(entry);
             const Icon = getEntryIcon(entry);

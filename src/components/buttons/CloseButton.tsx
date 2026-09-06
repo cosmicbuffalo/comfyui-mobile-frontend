@@ -45,6 +45,7 @@ export function CloseButton({
       }`.trim()}
       style={isViewerVariant && typeof zIndex === "number" ? { zIndex } : undefined}
       aria-label={resolvedAriaLabel}
+      title={resolvedAriaLabel}
     >
       <XMarkIcon className={`w-${iconSize} h-${iconSize}`} />
     </button>

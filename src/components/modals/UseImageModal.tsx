@@ -6,6 +6,7 @@ import { useWorkflowErrorsStore } from '@/hooks/useWorkflowErrors';
 import { useNavigationStore } from '@/hooks/useNavigation';
 import { getNodeLabel, resolveInputWidget } from '@/utils/workflowOperations';
 import { resolveInputPathForFile } from '@/utils/filesystem';
+import { splitPathAnnotation } from '@/utils/annotatedPath';
 import { getDisplayName } from '@/components/AppMenu/userWorkflowHelpers';
 import { useWorkflowHiddenStore } from '@/hooks/useWorkflowHidden';
 import { isWorkflowHidden } from '@/utils/workflowHidden';
@@ -99,16 +100,19 @@ export function UseImageModal({
         throw new Error(t('Selected node does not accept image inputs.'));
       }
       const inputPath = await resolveInputPathForFile(file, source);
+      // The widget value may name its directory ("… [input]"); file state is
+      // keyed by the path on disk, so strip it for those calls.
+      const inputFilePath = splitPathAnnotation(inputPath).path;
       // Set the widget value and surface the result immediately. The server
       // re-scans the input dir on queue, so we don't need fresh node types
       // before the value takes effect — making it a canonical combo choice is
       // an in-memory option splice (addInputComboOption below), not a fetch.
       updateNodeWidget(nodeHierarchicalKey, widget.index, inputPath, widget.name);
-      clearNodeError(widget.node.id);
+      clearNodeError(widget.node.id, widget.node.itemKey);
       // Auto-hiding the input for a hidden workflow is best-effort declutter and
       // must not abort the assignment above, so fire-and-forget after it commits.
       if (isWorkflowHidden(workflowSource, currentFilename, hiddenWorkflowPaths)) {
-        void setFileState('input', inputPath, 'hidden', true).catch((err) => {
+        void setFileState('input', inputFilePath, 'hidden', true).catch((err) => {
           console.warn('Failed to hide input from hidden workflow:', err);
         });
       }
@@ -216,7 +220,7 @@ export function UseImageModal({
             onClick={onClose}
             disabled={loadingNodeHierarchicalKey !== null}
           >
-            Close
+            {t('Close')}
           </button>
         </div>
       </div>

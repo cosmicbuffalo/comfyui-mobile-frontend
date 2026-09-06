@@ -2,16 +2,18 @@ import { useEffect, useRef, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 
 interface DialogAction {
-  label: string;
+  label: ReactNode;
   onClick: () => void;
   className?: string;
   variant?: 'secondary' | 'danger' | 'primary';
   disabled?: boolean;
   /**
-   * When true, this action's button is focused once the dialog mounts. The
-   * browser's :focus-visible heuristic decides whether to render the focus
-   * ring — programmatic focus that follows a click event stays invisible,
-   * while focus that follows a keyboard event shows the ring.
+   * When true, this action's button is focused once the dialog mounts, and
+   * Enter activates it from anywhere in the dialog. The focus ring is drawn on
+   * plain :focus rather than :focus-visible, so the default action is visibly
+   * marked even when the dialog was opened by a tap — otherwise the browser's
+   * heuristic suppresses the ring for focus that follows a click, and the
+   * keyboard default would be invisible.
    */
   autoFocus?: boolean;
 }
@@ -132,11 +134,20 @@ export function Dialog({
   };
 
   // Enter activates the explicit default action (the one marked `autoFocus`),
-  // whether focus is still on that button or has not landed inside the dialog at
-  // all. preventDefault suppresses any duplicate native click. Other focused
-  // controls keep their browser behavior to avoid double-submits and preserve
-  // text editing.
+  // or otherwise the enabled primary action. Single-line text fields submit to
+  // that action; multiline/editor controls and other interactive controls keep
+  // their native behavior.
   useEffect(() => {
+    const defaultActionIndex = (() => {
+      const explicit = actions.findIndex((action) => action.autoFocus && !action.disabled);
+      if (explicit >= 0) return explicit;
+      for (let index = actions.length - 1; index >= 0; index -= 1) {
+        if (actions[index].variant === 'primary' && !actions[index].disabled) return index;
+      }
+      return -1;
+    })();
+    const defaultAction = defaultActionIndex >= 0 ? actions[defaultActionIndex] : null;
+
     const shouldLetTargetHandleEnter = (target: EventTarget | null) => {
       if (!(target instanceof HTMLElement)) return false;
       const nativeEnterTarget = target.closest(
@@ -145,17 +156,22 @@ export function Dialog({
       if (!nativeEnterTarget || !dialogContentRef.current?.contains(nativeEnterTarget)) {
         return false;
       }
-      // The auto-focus action is our explicit default. Since the dialog focuses
-      // that button on mount, focus is already on it when Enter is pressed — so we
-      // must activate it through the keybind below rather than deferring to the
-      // browser's native button activation, which does not reliably fire when the
-      // dialog is portaled over a fullscreen overlay (e.g. the image viewer).
-      // Other focused controls keep their native behavior: text fields preserve
-      // editing, and a different button the user tabbed to activates itself.
-      const autoFocusIndex = actions.findIndex((a) => a.autoFocus && !a.disabled);
-      const autoFocusButton = autoFocusIndex >= 0 ? buttonRefs.current[autoFocusIndex] : null;
-      if (autoFocusButton && nativeEnterTarget === autoFocusButton) {
+      // The default button is activated through the keybind below because
+      // native button activation is not reliable across portalled overlays.
+      if (buttonRefs.current[defaultActionIndex] === nativeEnterTarget) {
         return false;
+      }
+
+      // Enter in a single-line text field means submit. Keep every other
+      // interactive element native: textarea/contenteditable need newlines;
+      // selects and checkboxes use Enter themselves; a button the user tabbed
+      // to should activate that button rather than the dialog default.
+      if (nativeEnterTarget instanceof HTMLInputElement) {
+        const nonSubmittingTypes = new Set([
+          'button', 'checkbox', 'color', 'file', 'hidden', 'image', 'radio',
+          'range', 'reset', 'submit',
+        ]);
+        return nonSubmittingTypes.has(nativeEnterTarget.type);
       }
       return true;
     };
@@ -167,12 +183,11 @@ export function Dialog({
       if (!isTopmostDialog()) return;
       if (shouldLetTargetHandleEnter(event.target)) return;
 
-      const action = actions.find((item) => item.autoFocus && !item.disabled);
-      if (!action) return;
+      if (!defaultAction) return;
 
       event.preventDefault();
       event.stopImmediatePropagation();
-      action.onClick();
+      defaultAction.onClick();
     };
     document.addEventListener('keydown', handler, true);
     return () => document.removeEventListener('keydown', handler, true);
@@ -225,17 +240,22 @@ export function Dialog({
         onKeyDown={handleContentKeyDown}
       >
         <div className="text-slate-100 text-base font-semibold shrink-0">{title}</div>
+        {/* `overflow-y-auto` below makes this a scroll container, and a scroll
+            container clips BOTH axes — so an input's focus ring, drawn outside
+            its box, was cut off at the sides and along the bottom edge where
+            the actions begin. Padding gives the ring room and the matching
+            negative margin takes it back out of the layout, so nothing moves. */}
         {description && (
-          <div className="text-slate-300 text-sm mt-1 overflow-y-auto overscroll-contain flex-1 min-h-0">
+          <div className="text-slate-300 text-sm mt-1 overflow-y-auto overscroll-contain flex-1 min-h-0 -mx-1 px-1 -mb-1 pb-1">
             {description}
           </div>
         )}
         <div className={`shrink-0 ${actionsLayout === 'stack' ? 'mt-4 flex flex-col gap-2' : 'mt-4 flex justify-end gap-2'}`}>
           {actions.map((action, idx) => (
             <button
-              key={action.label}
+              key={idx}
               ref={(el) => { buttonRefs.current[idx] = el; }}
-              className={`${defaultActionClass(action.variant)} ${action.className ?? ''} focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-900`.trim()}
+              className={`${defaultActionClass(action.variant)} ${action.className ?? ''} focus:outline-none focus:ring-2 focus:ring-cyan-400 focus:ring-offset-2 focus:ring-offset-slate-900`.trim()}
               onClick={action.onClick}
               disabled={action.disabled}
             >

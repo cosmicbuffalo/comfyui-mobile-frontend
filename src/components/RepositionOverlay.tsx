@@ -27,6 +27,8 @@ import {
   containerIdToKey,
   findGroupHierarchicalKeyInLayout,
   targetToDataKey,
+  subgraphDataKey,
+  parseSubgraphDataKey,
 } from "@/components/RepositionOverlay/repositionGeometry";
 import { useDragEngine } from "@/components/RepositionOverlay/useDragEngine";
 import {
@@ -46,6 +48,7 @@ import { WorkflowIcon } from "@/components/icons";
 import { themeColors } from "@/theme/colors";
 import { resolveWorkflowColor } from "@/theme/colors";
 import { hexToRgba } from "@/utils/grouping";
+import { useI18n } from '@/i18n';
 
 interface RepositionOverlayProps {
   mobileLayout: MobileLayout;
@@ -76,12 +79,14 @@ export function RepositionOverlay({
   onDone,
   onCancel,
 }: RepositionOverlayProps) {
+  const { t } = useI18n();
   const workflow = useWorkflowStore((s) => s.workflow);
   const nodeTypes = useWorkflowStore((s) => s.nodeTypes);
   const executingNodeId = useWorkflowStore((s) => s.executingNodeId);
   const workflowCollapsedItems = useWorkflowStore((s) => s.collapsedItems);
   const itemKeyByPointer = useWorkflowStore((s) => s.itemKeyByPointer);
   const nodeErrors = useWorkflowErrorsStore((s) => s.nodeErrors);
+  const nodeErrorsByItemKey = useWorkflowErrorsStore((s) => s.nodeErrorsByItemKey);
   const toStableStateKey = useCallback(
     (pointer: string) => itemKeyByPointer[pointer] ?? pointer,
     [itemKeyByPointer],
@@ -422,10 +427,12 @@ export function RepositionOverlay({
         };
       }
       if (key.startsWith("subgraph-")) {
-        const id = key.slice(9);
+        const { id, nodeId } = parseSubgraphDataKey(key);
         // Recover the placeholder instance from the layout ref so the main
         // panel (which renders placeholders as node items) can be scrolled
-        // to after commit.
+        // to after commit. Matched on the instance where the key names one:
+        // matching the definition alone picked whichever instance the layout
+        // happened to list first, and a shared type has many.
         const allRefs = [
           ...workingLayout.root,
           ...Object.values(workingLayout.groups).flat(),
@@ -433,11 +440,13 @@ export function RepositionOverlay({
         ];
         const layoutRef = allRefs.find(
           (ref): ref is Extract<ItemRef, { type: "subgraph" }> =>
-            ref.type === "subgraph" && ref.id === id,
+            ref.type === "subgraph"
+            && ref.id === id
+            && (nodeId == null || ref.nodeId === nodeId),
         );
         return {
-          target: { type: "subgraph", id, nodeId: layoutRef?.nodeId },
-          itemRef: layoutRef ?? { type: "subgraph", id },
+          target: { type: "subgraph", id, nodeId: layoutRef?.nodeId ?? nodeId },
+          itemRef: layoutRef ?? { type: "subgraph", id, nodeId },
         };
       }
       return null;
@@ -500,11 +509,19 @@ export function RepositionOverlay({
     return title || nodeTypes?.[node.type]?.display_name || node.type;
   };
 
+  // Errors against a node inside a subgraph are keyed by item key, not node id.
+  const nodeHasErrors = (nodeId: number): boolean => {
+    const itemKey = nodeMap.get(nodeId)?.itemKey;
+    const errors = (itemKey ? nodeErrorsByItemKey[itemKey] : undefined)
+      ?? nodeErrors[String(nodeId)];
+    return (errors?.length ?? 0) > 0;
+  };
+
   const getNodeBorderClass = (nodeId: number): string => {
     if (targetDataKey === `node-${nodeId}`) return "";
     const node = nodeMap.get(nodeId);
     if (!node) return "border-transparent";
-    const hasErrors = nodeErrors[String(nodeId)]?.length > 0;
+    const hasErrors = nodeHasErrors(nodeId);
     if (hasErrors) return "border-red-600 shadow-red-900/20";
     const isExecuting = executingNodeId === String(nodeId);
     if (isExecuting) return "border-emerald-500 shadow-emerald-900/20";
@@ -522,7 +539,7 @@ export function RepositionOverlay({
     const node = nodeMap.get(nodeId);
     if (!node) return undefined;
     if (node.mode === 4) return undefined; // bypassed
-    const hasErrors = nodeErrors[String(nodeId)]?.length > 0;
+    const hasErrors = nodeHasErrors(nodeId);
     if (hasErrors) return undefined;
     const isExecuting = executingNodeId === String(nodeId);
     if (isExecuting) return undefined;
@@ -735,7 +752,7 @@ export function RepositionOverlay({
         // Render subgraph placeholders as single items (not expanded)
         const subgraph = subgraphMap.get(ref.id);
         if (!subgraph) return null;
-        const dataKey = `subgraph-${ref.id}`;
+        const dataKey = subgraphDataKey(ref.id, ref.nodeId);
         const isTarget = dataKey === targetDataKey;
         const displayTitle = subgraph.name || subgraph.id;
         const placeholderNodeId = ref.nodeId;
@@ -855,13 +872,13 @@ export function RepositionOverlay({
         actions={[
           {
             key: "cancel",
-            label: "Cancel",
+            label: t("Cancel"),
             onClick: onCancel,
             variant: "secondary"
           },
           {
             key: "done",
-            label: "Done",
+            label: t("Done"),
             onClick: handleDone,
             variant: "primary"
           }

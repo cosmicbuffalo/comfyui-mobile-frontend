@@ -1,5 +1,6 @@
-import { useRef, useState, useEffect, useCallback } from 'react';
+import { lazy, Suspense, useRef, useState, useEffect, useCallback } from 'react';
 import { BackendStatusOverlay } from './BackendStatusOverlay';
+import { LoadingSpinner } from './LoadingSpinner';
 import { useConnectionStatusStore } from '@/hooks/useConnectionStatus';
 import { SlidePanel } from './AppMenu/SlidePanel';
 import { Dialog } from './modals/Dialog';
@@ -8,11 +9,6 @@ import { MenuLegend } from './AppMenu/MenuLegend';
 import { MainMenuPanel } from './AppMenu/MainMenuPanel';
 import { PasteJsonPanel } from './AppMenu/PasteJsonPanel';
 import { SaveWorkflowPanel } from './AppMenu/SaveWorkflowPanel';
-import { TemplatesPanel } from './AppMenu/TemplatesPanel';
-import { UserWorkflowsPanel } from './AppMenu/UserWorkflowsPanel';
-import { RecentWorkflowsPanel } from './AppMenu/RecentWorkflowsPanel';
-import { GenerationSettingsPanel } from './AppMenu/GenerationSettingsPanel';
-import { CustomNodesManagerModal } from './CustomNodesManagerModal';
 import { getDisplayName } from './AppMenu/userWorkflowHelpers';
 import { isWorkflowModified, useWorkflowStore } from '@/hooks/useWorkflow';
 import { getWorkflowForPersistence } from '@/utils/workflowPersistence';
@@ -31,14 +27,60 @@ import {
   fetchSystemStats,
   fetchCpuPercent,
   saveUserWorkflow,
+  CORE_TEMPLATE_MODULE,
+  getCoreWorkflowTemplates,
   getWorkflowTemplates,
   loadTemplateWorkflow,
   type UserDataFile,
+  type CoreTemplateCategory,
   type WorkflowTemplates,
   type SystemStats,
-  getFileWorkflow,
+  getFileWorkflowMetadata,
   type AssetSource
 } from '@/api/client';
+
+const TemplatesPanel = lazy(() =>
+  import('./AppMenu/TemplatesPanel').then((module) => ({ default: module.TemplatesPanel })),
+);
+const UserWorkflowsPanel = lazy(() =>
+  import('./AppMenu/UserWorkflowsPanel').then((module) => ({
+    default: module.UserWorkflowsPanel,
+  })),
+);
+const RecentWorkflowsPanel = lazy(() =>
+  import('./AppMenu/RecentWorkflowsPanel').then((module) => ({
+    default: module.RecentWorkflowsPanel,
+  })),
+);
+const GenerationSettingsPanel = lazy(() =>
+  import('./AppMenu/GenerationSettingsPanel').then((module) => ({
+    default: module.GenerationSettingsPanel,
+  })),
+);
+const CustomNodesManagerModal = lazy(() =>
+  import('./CustomNodesManagerModal').then((module) => ({
+    default: module.CustomNodesManagerModal,
+  })),
+);
+
+function DeferredMenuContent() {
+  return (
+    <div className="flex min-h-40 items-center justify-center" aria-label="Loading menu">
+      <LoadingSpinner />
+    </div>
+  );
+}
+
+function DeferredOverlayFallback() {
+  return (
+    <div
+      className="fixed inset-0 flex items-center justify-center bg-slate-950/80"
+      style={{ zIndex: Z_LAYERS.panelDialog }}
+    >
+      <LoadingSpinner />
+    </div>
+  );
+}
 
 interface AppMenuProps {
   open: boolean;
@@ -94,7 +136,7 @@ export function AppMenu({
   open,
   onClose
 }: AppMenuProps) {
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
   const loadWorkflow = useWorkflowStore((s) => s.loadWorkflow);
   const workflow = useWorkflowStore((s) => s.workflow);
   const currentFilename = useWorkflowStore((s) => s.currentFilename);
@@ -109,6 +151,7 @@ export function AppMenu({
   const [activeTab, setActiveTab] = useState<TabType>('menu');
   const [userWorkflows, setUserWorkflows] = useState<UserDataFile[]>([]);
   const [templates, setTemplates] = useState<WorkflowTemplates>({});
+  const [coreTemplates, setCoreTemplates] = useState<CoreTemplateCategory[]>([]);
   const [loading, setLoading] = useState(false);
   const [restartingServer, setRestartingServer] = useState(false);
   const [restartConfirmOpen, setRestartConfirmOpen] = useState(false);
@@ -189,16 +232,30 @@ export function AppMenu({
     }
   }, [activeTab, refreshUserWorkflows]);
 
-  // Fetch templates when tab opens
+  // Fetch templates when tab opens. The two catalogs are independent: the core
+  // one resolves to [] on a server without the templates package, and a failed
+  // custom-node fetch must not hide the core catalog.
   useEffect(() => {
-    if (activeTab === 'templates') {
-      setLoading(true);
-      getWorkflowTemplates()
-        .then(setTemplates)
-        .catch((err) => setError(err.message))
-        .finally(() => setLoading(false));
-    }
-  }, [activeTab]);
+    if (activeTab !== 'templates') return;
+    setLoading(true);
+    let cancelled = false;
+    Promise.all([
+      getWorkflowTemplates().catch((err: unknown) => {
+        if (!cancelled) setError(err instanceof Error ? err.message : String(err));
+        return {} as WorkflowTemplates;
+      }),
+      getCoreWorkflowTemplates(locale),
+    ])
+      .then(([extensionTemplates, core]) => {
+        if (cancelled) return;
+        setTemplates(extensionTemplates);
+        setCoreTemplates(core);
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [activeTab, locale]);
 
   // Fetch system stats when the menu's main panel is showing, refreshing
   // periodically. Pause while the custom-nodes modal covers the menu — the stats
@@ -250,7 +307,10 @@ export function AppMenu({
 
     const result = await readWorkflowFromFile(file);
     if (result.kind === 'workflow') {
-      loadWorkflow(result.workflow, result.filename); // filename when loading from device
+      loadWorkflow(result.workflow, result.filename, {
+        executedPrompt: result.executedPrompt,
+        filenameIsPlaceholder: result.filenameIsPlaceholder,
+      }); // filename when loading from device
       setError(null);
       onClose();
       vibrate(10);
@@ -276,11 +336,16 @@ export function AppMenu({
     }
   };
 
-  const handleLoadTemplate = async (moduleName: string, templateName: string) => {
+  const handleLoadTemplate = async (moduleName: string, templateName: string, title?: string) => {
     try {
       setLoading(true);
       const data = await loadTemplateWorkflow(moduleName, templateName);
-      loadWorkflow(data, `${moduleName}/${templateName}`, { fresh: true, source: { type: 'template', moduleName, templateName } });
+      // Core templates are addressed by a flat name, so the catalog title is
+      // the readable one; a custom node's example workflow is named by its pack.
+      const filename = moduleName === CORE_TEMPLATE_MODULE
+        ? (title?.trim() || templateName)
+        : `${moduleName}/${templateName}`;
+      loadWorkflow(data, filename, { fresh: true, source: { type: 'template', moduleName, templateName } });
       setError(null);
       onClose();
       vibrate(10);
@@ -298,14 +363,15 @@ export function AppMenu({
   ) => {
     try {
       setLoading(true);
-      const data = await getFileWorkflow(filePath, assetSource);
-      loadWorkflow(data, filePath, {
+      const metadata = await getFileWorkflowMetadata(filePath, assetSource);
+      loadWorkflow(metadata.workflow, filePath, {
         source: {
           type: 'file',
           filePath,
           assetSource,
           ...(hidden ? { hidden: true } : {}),
         },
+        executedPrompt: metadata.prompt,
       });
       setError(null);
       onClose();
@@ -422,7 +488,10 @@ export function AppMenu({
       }
 
       const timestamp = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-      loadWorkflow(data, t('Pasted workflow ({timestamp})', { timestamp }));
+      loadWorkflow(data, t('Pasted workflow ({timestamp})', { timestamp }), {
+        // A pasted workflow has no name of its own — Save opens Save-As.
+        filenameIsPlaceholder: true,
+      });
       setError(null);
       onClose();
       vibrate(10);
@@ -509,33 +578,40 @@ export function AppMenu({
         />
       )}
       {activeTab === 'userWorkflows' && (
-        <UserWorkflowsPanel
-          error={error}
-          loading={loading}
-          userWorkflows={userWorkflows}
-          onBack={() => setActiveTab('menu')}
-          onDismissError={() => setError(null)}
-          onLoadWorkflow={handleLoadUserWorkflow}
-          onRefresh={() => refreshUserWorkflows(true)}
-        />
+        <Suspense fallback={<DeferredMenuContent />}>
+          <UserWorkflowsPanel
+            error={error}
+            loading={loading}
+            userWorkflows={userWorkflows}
+            onBack={() => setActiveTab('menu')}
+            onDismissError={() => setError(null)}
+            onLoadWorkflow={handleLoadUserWorkflow}
+            onRefresh={() => refreshUserWorkflows(true)}
+          />
+        </Suspense>
       )}
       {activeTab === 'recent' && (
-        <RecentWorkflowsPanel
-          onBack={() => setActiveTab('menu')}
-          onLoadUserWorkflow={handleLoadUserWorkflow}
-          onLoadTemplate={handleLoadTemplate}
-          onLoadFileWorkflow={handleLoadFileWorkflow}
-        />
+        <Suspense fallback={<DeferredMenuContent />}>
+          <RecentWorkflowsPanel
+            onBack={() => setActiveTab('menu')}
+            onLoadUserWorkflow={handleLoadUserWorkflow}
+            onLoadTemplate={handleLoadTemplate}
+            onLoadFileWorkflow={handleLoadFileWorkflow}
+          />
+        </Suspense>
       )}
       {activeTab === 'templates' && (
-        <TemplatesPanel
-          error={error}
-          loading={loading}
-          templates={templates}
-          onBack={() => setActiveTab('menu')}
-          onDismissError={() => setError(null)}
-          onLoadTemplate={handleLoadTemplate}
-        />
+        <Suspense fallback={<DeferredMenuContent />}>
+          <TemplatesPanel
+            error={error}
+            loading={loading}
+            templates={templates}
+            coreTemplates={coreTemplates}
+            onBack={() => setActiveTab('menu')}
+            onDismissError={() => setError(null)}
+            onLoadTemplate={handleLoadTemplate}
+          />
+        </Suspense>
       )}
       {activeTab === 'save' && (
         <SaveWorkflowPanel
@@ -565,19 +641,25 @@ export function AppMenu({
         <MenuLegend onBack={() => setActiveTab('menu')} />
       )}
       {activeTab === 'generationSettings' && (
-        <GenerationSettingsPanel onBack={() => setActiveTab('menu')} />
+        <Suspense fallback={<DeferredMenuContent />}>
+          <GenerationSettingsPanel onBack={() => setActiveTab('menu')} />
+        </Suspense>
       )}
     </SlidePanel>
     {/* Rendered OUTSIDE SlidePanel (which unmounts its children when the menu is
         closed) so it can be opened directly — e.g. from a missing-node popover on
         the canvas — without the app menu being open. It portals to document.body. */}
-    <CustomNodesManagerModal
-      isOpen={customNodesOpen}
-      initialFilter={customNodesInitialFilter}
-      initialSearch={customNodesInitialSearch}
-      onClose={() => setCustomNodesOpen(false)}
-      onRestartServer={handleRestartServer}
-    />
+    {customNodesOpen && (
+      <Suspense fallback={<DeferredOverlayFallback />}>
+        <CustomNodesManagerModal
+          isOpen
+          initialFilter={customNodesInitialFilter}
+          initialSearch={customNodesInitialSearch}
+          onClose={() => setCustomNodesOpen(false)}
+          onRestartServer={handleRestartServer}
+        />
+      </Suspense>
+    )}
     {restartConfirmOpen && (
       <Dialog
         onClose={() => setRestartConfirmOpen(false)}

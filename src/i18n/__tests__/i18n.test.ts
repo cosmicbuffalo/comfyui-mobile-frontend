@@ -133,6 +133,32 @@ describe('i18n', () => {
     ).toEqual([]);
   });
 
+  it('has no entry the app can no longer reach', () => {
+    // The other direction of the drift guard above. A key whose last caller was
+    // deleted stays in all four dictionaries for ever, since nothing checks it:
+    // eleven had accumulated that way. Only a string that appears NOWHERE in
+    // src counts as dead — several keys are handed to t() as a variable
+    // (`t(row.label)`), so a literal-call scan alone would delete live ones.
+    const root = resolve(process.cwd(), 'src');
+    const sources = readdirSync(root, { recursive: true, encoding: 'utf8' })
+      .filter((file) => /\.tsx?$/.test(file))
+      .filter((file) => !file.startsWith('i18n/'))
+      .map((file) => readFileSync(resolve(root, file), 'utf8'));
+
+    // Built at runtime by formatRelativeAge, so they appear in no source file.
+    const runtimeBuilt = /^\{count\} (minute|hour|day|week|month|year)s? ago$/;
+
+    const dead = readDictionaryKeys('zh-CN').filter(
+      (key) => !runtimeBuilt.test(key) && !sources.some((source) => source.includes(key)),
+    );
+
+    expect(
+      dead,
+      `${dead.length} dictionary entr(y/ies) no longer appear anywhere in src. ` +
+        'Remove them from all four dictionaries:\n' + dead.map((k) => `  ${k}`).join('\n'),
+    ).toEqual([]);
+  });
+
   it('defines the same key set in every dictionary', () => {
     // zh-CN is the reference; drift in either direction means some locale
     // silently falls back to English for a string the others translate.

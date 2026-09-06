@@ -47,6 +47,7 @@ import { RowActionsMenu } from './UserWorkflowsPanel/RowActionsMenu';
 import { NameDialog } from './UserWorkflowsPanel/NameDialog';
 import { WorkflowMoveDialog } from './UserWorkflowsPanel/WorkflowMoveDialog';
 import { useI18n } from '@/i18n';
+import { useShowHiddenStore } from '@/hooks/useShowHidden';
 
 interface UserWorkflowsPanelProps {
   error: string | null;
@@ -72,14 +73,14 @@ export function UserWorkflowsPanel({
   const [search, setSearch] = useState('');
   const [sortBy, setSortBy] = useState<'name' | 'date'>('name');
   const [currentFolder, setCurrentFolder] = useState('workflows');
-  const [showHidden, setShowHidden] = useState(false);
+  const showHidden = useShowHiddenStore((s) => s.showHidden);
+  const toggleShowHidden = useShowHiddenStore((s) => s.toggleShowHidden);
   const [favoritesOnly, setFavoritesOnly] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [addFolderOpen, setAddFolderOpen] = useState(false);
   const [renameTarget, setRenameTarget] = useState<UserDataFile | null>(null);
   const [moveTarget, setMoveTarget] = useState<UserDataFile | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<UserDataFile | null>(null);
-
   const favorites = useWorkflowFavoritesStore((s) => s.favorites);
   const toggleFavorite = useWorkflowFavoritesStore((s) => s.toggleFavorite);
   const renameFavorite = useWorkflowFavoritesStore((s) => s.renameFavorite);
@@ -324,7 +325,7 @@ export function UserWorkflowsPanel({
                   key: 'toggle-hidden',
                   label: showHidden ? t('Hide hidden') : t('Show hidden'),
                   icon: showHidden ? <EyeOffIcon className="w-4 h-4" /> : <EyeIcon className="w-4 h-4" />,
-                  onClick: () => setShowHidden((v) => !v),
+                  onClick: toggleShowHidden,
                 },
               ]}
             />

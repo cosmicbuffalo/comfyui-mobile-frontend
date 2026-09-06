@@ -18,6 +18,7 @@ export interface ContextMenuActionItem {
 export interface ContextMenuDividerItem {
   type: 'divider';
   key: string;
+  hidden?: boolean;
   className?: string;
 }
 
@@ -58,6 +59,36 @@ const colorClasses: Record<ContextMenuColor, { row: string; icon: string }> = {
   }
 };
 
+/**
+ * Dividers only earn their line when they actually separate two visible
+ * sections. Menus hide entries per node type (bypass is hidden on subgraph
+ * placeholders, bookmark on desktop, ...), which otherwise leaves stacked or
+ * dangling rules behind.
+ */
+function withoutRedundantDividers(
+  items: ContextMenuItemDefinition[]
+): ContextMenuItemDefinition[] {
+  const isVisible = (item: ContextMenuItemDefinition) =>
+    item.type === 'divider'
+      ? !item.hidden && !(item.className ?? '').split(/\s+/).includes('hidden')
+      : !item.hidden;
+
+  const result: ContextMenuItemDefinition[] = [];
+  for (const item of items) {
+    if (!isVisible(item)) continue;
+    if (item.type === 'divider') {
+      const previous = result[result.length - 1];
+      // Drops a leading divider and collapses runs of consecutive ones.
+      if (!previous || previous.type === 'divider') continue;
+    }
+    result.push(item);
+  }
+  while (result.length > 0 && result[result.length - 1].type === 'divider') {
+    result.pop();
+  }
+  return result;
+}
+
 export function ContextMenuBuilder({
   items,
   className,
@@ -67,7 +98,7 @@ export function ContextMenuBuilder({
     <div
       className={`bg-slate-900 border border-white/10 text-slate-100 rounded-lg shadow-lg overflow-hidden ${className ?? ''}`.trim()}
     >
-      {items.map((item) => {
+      {withoutRedundantDividers(items).map((item) => {
         if (item.type === 'divider') {
           return (
             <div

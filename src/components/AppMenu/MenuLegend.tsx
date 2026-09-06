@@ -1,3 +1,4 @@
+import { MaskIcon } from '@/components/MaskEditor/icons';
 import { MenuSubPageHeader } from './MenuSubPageHeader';
 import { LegendItem, type LegendItemProps } from './LegendItem';
 import { t as globalT, useI18n } from '@/i18n';
@@ -7,10 +8,15 @@ import {
   CloseIcon,
   EyeIcon,
   EyeOffIcon,
+  ForkIcon,
   NodeConnectionsLegendIcon,
   PinIconSvg,
   PinOutlineIcon,
-  QueueStackIcon
+  PlayIcon,
+  PromotedWidgetIcon,
+  QueueStackIcon,
+  SpeedIcon,
+  WorkflowIcon
 } from '@/components/icons';
 
 interface MenuLegendProps {
@@ -131,6 +137,52 @@ function getLegendItems(): LegendItemProps[] {
       ),
       title: globalT('Pop out widget'),
       description: globalT('Move a widget value into its own connected input node')
+    },
+    {
+      icon: (
+        <div className="w-10 h-10 flex items-center justify-center rounded-lg border border-white/20 bg-slate-950/80 text-slate-100 shadow-sm">
+          <MaskIcon className="w-5 h-5" />
+        </div>
+      ),
+      title: globalT('Edit mask'),
+      description: globalT('Paint a mask on this image for inpainting')
+    },
+    {
+      icon: (
+        <div className="w-8 h-8 flex items-center justify-center text-pink-500">
+          <PromotedWidgetIcon className="w-5 h-5" />
+        </div>
+      ),
+      title: globalT('Promoted'),
+      description: globalT('This value crosses the subgraph boundary')
+    },
+    {
+      icon: (
+        <div className="w-8 h-8 flex items-center justify-center text-cyan-300">
+          <WorkflowIcon className="w-5 h-5 -scale-x-100" />
+        </div>
+      ),
+      title: globalT('Subgraph'),
+      description: globalT('This card holds a subgraph you can enter')
+    },
+    {
+      icon: (
+        <div className="w-8 h-8 flex items-center justify-center text-slate-200">
+          <ForkIcon className="w-5 h-5" />
+        </div>
+      ),
+      title: globalT('Fork subgraph'),
+      description: globalT('Break this instance onto a type of its own')
+    },
+    {
+      icon: (
+        <div className="w-8 h-8 flex items-center justify-center gap-1 text-slate-200">
+          <PlayIcon className="w-4 h-4" />
+          <SpeedIcon className="w-4 h-4" />
+        </div>
+      ),
+      title: globalT('Video controls'),
+      description: globalT('Play, scrub, mute and set playback speed in the viewer')
     }
   ];
 }
