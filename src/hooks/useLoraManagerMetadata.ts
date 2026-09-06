@@ -2,8 +2,8 @@ import { useEffect, useMemo } from "react";
 import { create } from "zustand";
 import {
   fetchAllModels,
-  fetchStandaloneModels,
   getPopulateStatus,
+  refreshLoraManagerModels,
   resolveModelProvider,
   triggerPopulate,
   type LoraManagerModel,
@@ -26,8 +26,10 @@ interface LoraManagerMetadataState {
   // populates Civitai metadata in the background); false for Lora Manager.
   standalone: boolean;
   prefixes: Record<LoraManagerPrefix, PrefixState>;
-  // True while a manual "refresh model metadata" pass is running (standalone).
+  // True while a manual "refresh model metadata" pass is running.
   refreshing: boolean;
+  // Brief success state shown by the Server-menu button after a completed pass.
+  refreshDone: boolean;
   // Set when a metadata refresh aborts partway (network failure etc.) so the
   // menu can say so instead of silently flipping back to idle.
   refreshError: string | null;
@@ -37,8 +39,8 @@ interface LoraManagerMetadataState {
   ensureAvailable: () => void;
   ensurePrefixLoaded: (prefix: LoraManagerPrefix) => void;
   lookup: (prefix: LoraManagerPrefix, value: unknown) => LoraManagerModel | null;
-  // Force a Civitai re-fetch across all model kinds (standalone only); reloads
-  // catalogs live as metadata lands. No-op under Lora Manager.
+  // Rescan and fetch missing Civitai metadata across all model kinds. Uses Lora
+  // Manager when installed and the built-in standalone provider otherwise.
   refreshAllMetadata: () => void;
 }
 
@@ -101,20 +103,15 @@ let availabilityProbe: Promise<void> | null = null;
 const prefixProbes: Partial<Record<LoraManagerPrefix, Promise<void>>> = {};
 // Ensures the background population loop runs at most once per prefix.
 const populateStarted: Partial<Record<LoraManagerPrefix, boolean>> = {};
+const REFRESH_DONE_DURATION_MS = 5_000;
+let refreshDoneTimer: ReturnType<typeof setTimeout> | null = null;
 
 export const useLoraManagerMetadataStore = create<LoraManagerMetadataState>(
   (set, get) => {
     // Re-fetch a prefix and swap in fresh lookup maps (used after population
-    // makes progress). Keeps status "ready" so the picker stays usable. When
-    // fromStandalone is set, reads our standalone backend directly so an
-    // on-demand refresh shows up even when Lora Manager is the display provider.
-    const reloadPrefix = async (
-      prefix: LoraManagerPrefix,
-      fromStandalone = false,
-    ) => {
-      const models = fromStandalone
-        ? await fetchStandaloneModels(prefix)
-        : await fetchAllModels(prefix);
+    // makes progress). Keeps status "ready" so the picker stays usable.
+    const reloadPrefix = async (prefix: LoraManagerPrefix) => {
+      const models = await fetchAllModels(prefix);
       const { byPath, byFileName } = buildMaps(models);
       set((state) => ({
         prefixes: {
@@ -130,7 +127,6 @@ export const useLoraManagerMetadataStore = create<LoraManagerMetadataState>(
     const drainPopulate = async (
       prefix: LoraManagerPrefix,
       onProgress?: (processed: number, total: number) => void,
-      fromStandalone = false,
     ) => {
       // Bound the poll loop so a backend that never stops reporting
       // `running: true` (a wedged pass) can't spin every 2s for the rest of the
@@ -158,14 +154,14 @@ export const useLoraManagerMetadataStore = create<LoraManagerMetadataState>(
           stalledPolls = 0;
           if (++progressSincePaint >= RELOAD_EVERY_N_PROGRESS) {
             progressSincePaint = 0;
-            await reloadPrefix(prefix, fromStandalone);
+            await reloadPrefix(prefix);
           }
         } else if (++stalledPolls >= MAX_STALLED_POLLS) {
           break;
         }
         if (!status.running) break;
       }
-      await reloadPrefix(prefix, fromStandalone);
+      await reloadPrefix(prefix);
     };
 
     // Standalone only: trigger a background Civitai population pass for models
@@ -192,6 +188,7 @@ export const useLoraManagerMetadataStore = create<LoraManagerMetadataState>(
       available: null,
       standalone: false,
       refreshing: false,
+      refreshDone: false,
       refreshError: null,
       setRefreshError: (message) => set({ refreshError: message }),
       refreshLabel: null,
@@ -281,39 +278,97 @@ export const useLoraManagerMetadataStore = create<LoraManagerMetadataState>(
       },
 
       refreshAllMetadata: () => {
-        // The standalone fetcher ships with the app, so it's always available —
-        // including when Lora Manager is the display provider, since this runs
-        // our own fetcher writing shared sidecars.
         if (get().refreshing) return;
-        set({ refreshing: true, refreshLabel: "", refreshError: null });
+        if (refreshDoneTimer !== null) {
+          clearTimeout(refreshDoneTimer);
+          refreshDoneTimer = null;
+        }
+        set({
+          refreshing: true,
+          refreshDone: false,
+          refreshLabel: "",
+          refreshError: null,
+        });
         void (async () => {
           try {
+            const provider = await resolveModelProvider();
+            if (!provider) {
+              throw new Error("Model metadata provider is unavailable");
+            }
+
+            // One bad prefix (an unconfigured checkpoints dir, a transient
+            // 500) must not cost the others their refresh: record the
+            // failure, move on, and report it once the rest have run.
+            const failedPrefixes: string[] = [];
             for (const prefix of ALL_PREFIXES) {
+              set({ refreshLabel: `${prefix}…` });
+
               // force=false: only hash/fetch models missing metadata. Cheap and
               // idempotent — won't re-hash an already-identified library or
               // re-download previews. (Models confirmed absent from Civitai are
               // recorded and skipped on subsequent runs.)
-              const started = await triggerPopulate(prefix, false);
-              if (!started) continue;
-              // Reload from the standalone backend so freshly-written sidecars
-              // show in the picker even under Lora Manager.
-              await drainPopulate(
-                prefix,
-                (processed, total) => {
-                  set({ refreshLabel: `${prefix}… ${processed}/${total}` });
-                },
-                true,
-              );
+              const runStandalonePopulate = async () => {
+                const started = await triggerPopulate(prefix, false);
+                if (!started) {
+                  throw new Error(`Metadata refresh failed to start for ${prefix}`);
+                }
+                await drainPopulate(
+                  prefix,
+                  (processed, total) => {
+                    set({ refreshLabel: `${prefix}… ${processed}/${total}` });
+                  },
+                );
+              };
+
+              try {
+                if (!provider.standalone) {
+                  // LM's metadata pass reads its own cached catalog, so scan first
+                  // to include files copied or downloaded since its last refresh.
+                  // The bundled fetcher ships with this app and writes the same
+                  // shared sidecars, so an LM build without these endpoints — or
+                  // a scan another run already holds — falls back to it rather
+                  // than costing the prefix its refresh.
+                  const refreshed = await refreshLoraManagerModels(prefix).catch(() => false);
+                  if (!refreshed) await runStandalonePopulate();
+                  await reloadPrefix(prefix);
+                  continue;
+                }
+
+                await runStandalonePopulate();
+              } catch {
+                failedPrefixes.push(prefix);
+              }
             }
-          } finally {
-            set({ refreshing: false, refreshLabel: null });
+            if (failedPrefixes.length === ALL_PREFIXES.length) {
+              throw new Error("Metadata refresh failed for every prefix");
+            }
+            if (failedPrefixes.length > 0) {
+              set({
+                refreshing: false,
+                refreshDone: false,
+                refreshLabel: null,
+                refreshError: `Metadata refresh skipped ${failedPrefixes.join(", ")} — check the connection and run it again.`,
+              });
+              return;
+            }
+            set({
+              refreshing: false,
+              refreshDone: true,
+              refreshLabel: null,
+            });
+            refreshDoneTimer = setTimeout(() => {
+              refreshDoneTimer = null;
+              set({ refreshDone: false });
+            }, REFRESH_DONE_DURATION_MS);
+          } catch {
+            set({
+              refreshing: false,
+              refreshDone: false,
+              refreshLabel: null,
+              refreshError: "Metadata refresh stopped partway — check the connection and run it again.",
+            });
           }
-        })().catch(() => {
-          // State is already reset in the finally above; record the abort so
-          // the menu can say the refresh ended partway instead of silently
-          // flipping back to idle.
-          set({ refreshError: "Metadata refresh stopped partway — check the connection and run it again." });
-        });
+        })();
       },
     };
   },

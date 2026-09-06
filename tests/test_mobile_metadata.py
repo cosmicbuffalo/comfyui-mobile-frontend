@@ -5,6 +5,7 @@ import pytest
 
 from mobile_metadata import (
     MetadataPathError,
+    extract_prompt_from_metadata,
     extract_workflow_from_metadata,
     resolve_metadata_path,
 )
@@ -79,6 +80,21 @@ def test_extract_workflow_from_metadata_reads_prompt_fallback():
 
     workflow = extract_workflow_from_metadata(metadata)
     assert workflow == {"id": "workflow-from-prompt"}
+
+
+def test_extract_prompt_from_metadata_parses_executed_graph():
+    prompt = {
+        "7": {
+            "class_type": "Seed (rgthree)",
+            "inputs": {"seed": 123456},
+        }
+    }
+    assert extract_prompt_from_metadata({"prompt": json.dumps(prompt)}) == prompt
+
+
+def test_extract_prompt_from_metadata_accepts_an_existing_dict():
+    prompt = {"7": {"inputs": {"seed": 123456}}}
+    assert extract_prompt_from_metadata({"prompt": prompt}) is prompt
 
 
 def test_prompt_text_cache_eviction_is_thread_safe(tmp_path: Path, monkeypatch):

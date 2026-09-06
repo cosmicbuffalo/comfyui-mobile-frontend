@@ -1,15 +1,25 @@
 [project]
 name = "comfyui-mobile-frontend"
 description = "A mobile-friendly user interface for ComfyUI mounted in parallel with the main frontend at /mobile"
-version = "3.2.5"
+version = "3.3.0"
 license = {file = "LICENSE"}
+requires-python = ">=3.10"
+dependencies = [
+    # Optional at runtime (guarded import in mobile_web_push.py) - declared so
+    # the registry install pulls it in and self-hosted web push works.
+    "pywebpush>=2.0",
+]
+classifiers = [
+    "Operating System :: OS Independent",
+]
 
 [project.urls]
+Homepage = "https://cueforge.dev"
 Repository = "https://github.com/cosmicbuffalo/comfyui-mobile-frontend"
 Documentation = "https://github.com/cosmicbuffalo/comfyui-mobile-frontend/blob/main/USER_GUIDE.md"
-"Bug Tracker" = "https://github.com/cosmicbuffalo/comfyui-mobile-frontend/issues"
+Issues = "https://github.com/cosmicbuffalo/comfyui-mobile-frontend/issues"
 
 [tool.comfy]
 PublisherId = "cosmicbuffalo"
 DisplayName = "ComfyUI-Mobile-Frontend"
-Icon = "https://avatars.githubusercontent.com/u/25158675"
+Icon = "https://raw.githubusercontent.com/cosmicbuffalo/comfyui-mobile-frontend/main/icon.png"

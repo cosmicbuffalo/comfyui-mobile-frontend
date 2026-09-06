@@ -142,6 +142,9 @@ describe('QueueCard image-slot tab swap', () => {
     });
 
     // Auto-selects the newest output (b.png); two tabs are present.
+    expect(
+      container.querySelector('.queue-media-tabs')?.getAttribute('data-swipe-nav-ignore'),
+    ).toBe('true');
     const tabs = Array.from(container.querySelectorAll('.queue-media-tabs button'));
     expect(tabs).toHaveLength(2);
     expect(container.querySelector('img')?.getAttribute('src')).toContain('b.png');

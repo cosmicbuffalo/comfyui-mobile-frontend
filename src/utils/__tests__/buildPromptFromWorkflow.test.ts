@@ -110,3 +110,41 @@ describe('buildPromptFromWorkflow', () => {
     expect(after['2']).toEqual(before['2']);
   });
 });
+
+describe('inert nodes (mute / bypass)', () => {
+  // ComfyUI's graphToPrompt skips both LGraphEventMode.NEVER (2) and BYPASS (4)
+  // before serializing, and a muted node produces no output for consumers.
+  function makeGraph(loaderMode: number): Workflow {
+    const wf = makeWorkflow('my.png');
+    wf.nodes[0].mode = loaderMode;
+    return wf;
+  }
+
+  it('drops a muted node and the input that consumed it', () => {
+    const prompt = buildPromptFromWorkflow(makeGraph(2), nodeTypes) as Record<
+      string,
+      { inputs: Record<string, unknown> }
+    >;
+
+    expect(prompt['1']).toBeUndefined();
+    expect(prompt['2']).toBeDefined();
+    expect(prompt['2'].inputs.images).toBeUndefined();
+  });
+
+  it('drops a bypassed node the same way', () => {
+    const prompt = buildPromptFromWorkflow(makeGraph(4), nodeTypes) as Record<string, unknown>;
+
+    expect(prompt['1']).toBeUndefined();
+    expect(prompt['2']).toBeDefined();
+  });
+
+  it('keeps an active node', () => {
+    const prompt = buildPromptFromWorkflow(makeGraph(0), nodeTypes) as Record<
+      string,
+      { inputs: Record<string, unknown> }
+    >;
+
+    expect(prompt['1']).toBeDefined();
+    expect(prompt['2'].inputs.images).toEqual(['1', 0]);
+  });
+});

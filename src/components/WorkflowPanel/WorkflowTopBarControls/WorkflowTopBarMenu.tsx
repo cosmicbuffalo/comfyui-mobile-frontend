@@ -3,7 +3,7 @@ import { useCallback, useMemo, useState } from 'react';
 import { useWorkflowStore, getInputWidgetDefinitions, getWidgetDefinitions } from '@/hooks/useWorkflow';
 import { useBookmarksStore } from '@/hooks/useBookmarks';
 import { useHistoryStore } from '@/hooks/useHistory';
-import { CaretDownIcon, CaretRightIcon, CheckIcon, ClipboardDownloadIcon, EyeIcon, EyeOffIcon, ArrowRightIcon, FunnelArrowsIcon, ReloadIcon, RedoIcon, SearchIcon, TrashIcon, PlusIcon, UndoIcon, WorkflowIcon } from '@/components/icons';
+import { CaretDownIcon, CaretRightIcon, CheckIcon, ClipboardDownloadIcon, EyeIcon, EyeOffIcon, ArrowRightIcon, FunnelArrowsIcon, ReloadIcon, RedoIcon, SearchIcon, TemplateIcon, TrashIcon, PlusIcon, UndoIcon, WorkflowIcon } from '@/components/icons';
 import { workflowHasSetGetNodes } from '@/utils/collapseSetGetNodes';
 import { useWorkflowClipboardStore } from '@/hooks/useWorkflowClipboard';
 import { useWorkflowSelectionStore } from '@/hooks/useWorkflowSelection';
@@ -15,6 +15,7 @@ import { appChromeIconButtonBareClassName } from '@/components/chromeStyles';
 import { useWorkflowHiddenStore } from '@/hooks/useWorkflowHidden';
 import { isHiddenWorkflowPath, isManuallyHiddenWorkflowPath } from '@/components/AppMenu/userWorkflowHelpers';
 import { useI18n } from '@/i18n';
+import { SubgraphTypesModal } from '@/components/modals/SubgraphTypesModal';
 
 interface WorkflowTopBarMenuProps {
   open: boolean;
@@ -161,6 +162,9 @@ export function WorkflowTopBarMenu({
     ) ?? [];
   }, [scopeStack, workflow]);
 
+  // The types manager is only meaningful once the workflow defines a subgraph.
+  const hasSubgraphs = (workflow?.definitions?.subgraphs?.length ?? 0) > 0;
+
   const bypassedNodes = useMemo(() => (
     workflow?.nodes.filter((node) => node.mode === 4) ?? []
   ), [workflow]);
@@ -253,6 +257,7 @@ export function WorkflowTopBarMenu({
   }, [manuallyHiddenCount, hiddenItems, allGroupTargets, allSubgraphHierarchicalKeys, hasStableFlag]);
 
   const [visibilityModalOpen, setVisibilityModalOpen] = useState(false);
+  const [typesModalOpen, setTypesModalOpen] = useState(false);
 
   const closeMenu = () => {
     onClose();
@@ -390,6 +395,13 @@ export function WorkflowTopBarMenu({
                 icon: <CheckIcon className="w-4 h-4" />,
                 onClick: () => { enterSelectionMode(); closeMenu(); },
                 hidden: !hasWorkflow
+              },
+              {
+                key: 'subgraph-types',
+                label: t('Subgraph types'),
+                icon: <TemplateIcon className="w-4 h-4" />,
+                onClick: () => { closeMenu(); setTypesModalOpen(true); },
+                hidden: !hasWorkflow || !hasSubgraphs
               },
               {
                 key: 'paste-here',
@@ -565,11 +577,15 @@ export function WorkflowTopBarMenu({
                 className="px-3 py-2 text-sm font-medium text-slate-300 hover:bg-white/10 rounded-lg"
                 onClick={() => setVisibilityModalOpen(false)}
               >
-                Cancel
+                {t('Cancel')}
               </button>
             </div>
           </div>
         </div>
+      )}
+
+      {typesModalOpen && (
+        <SubgraphTypesModal onClose={() => setTypesModalOpen(false)} />
       )}
     </div>
   );

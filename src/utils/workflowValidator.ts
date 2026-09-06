@@ -12,6 +12,21 @@
  *  2. SubgraphIO.linkIds recomputation: rebuilds inputs[i].linkIds and
  *     outputs[j].linkIds from the actual boundary links in each subgraph
  *     (origin_id === -10 → input, target_id === -20 → output).
+ *  3. Subgraph placeholder slot normalization: rebuilds each placeholder's
+ *     inputs/outputs from its definition's boundary lists (see
+ *     normalizeSubgraphPlaceholders); a no-op for anything already loaded.
+ *  4. Instance title materialization: renders a `{n}` type name onto each
+ *     placeholder's own title, where other frontends can read it.
+ *  5. widgets_values_named removal: drops the name-keyed widget-value mirror
+ *     ComfyUI >= 1.49 writes, which our positional edits would leave stale.
+ *  6. Subgraph definition envelope: fills in the inputNode/outputNode/version/
+ *     revision/state that only the desktop frontend reads. A definition mobile
+ *     minted itself has none, and stock dereferences inputNode.bounding
+ *     unguarded while loading — see subgraphDefinitionShape.ts. Applied here so
+ *     it also repairs workflows already saved without them.
+ *  7. Link allocator reconciliation: raises last_link_id past every link id in
+ *     use, subgraph interiors included, since stock allocates new links from
+ *     one counter shared across the whole file.
  *
  * Structural issues (missing referenced nodes, slot index out of range) are
  * silently skipped — they indicate upstream bugs that should be fixed at their
@@ -25,18 +40,81 @@ import type {
   WorkflowOutput,
   WorkflowSubgraphDefinition,
 } from '@/api/types';
-
-/** Subgraph input boundary sentinel node ID (all boundary-input links originate here). */
-const SUBGRAPH_INPUT_SENTINEL = -10;
-
-/** Subgraph output boundary sentinel node ID (all boundary-output links target here). */
-const SUBGRAPH_OUTPUT_SENTINEL = -20;
+import { normalizeSubgraphPlaceholders } from '@/utils/normalizeSubgraphPlaceholders';
+import {
+  ensureSubgraphDefinitionEnvelopes,
+  reconcileIdAllocators,
+} from '@/utils/subgraphDefinitionShape';
+import { materializeSubgraphTitles } from '@/utils/materializeSubgraphTitles';
+import {
+  SUBGRAPH_INPUT_NODE_ID as SUBGRAPH_INPUT_SENTINEL,
+  SUBGRAPH_OUTPUT_NODE_ID as SUBGRAPH_OUTPUT_SENTINEL,
+} from '@/utils/canonicalWorkflowOps';
 
 export function validateAndNormalizeWorkflow(workflow: Workflow): Workflow {
   let next = collectRootLinkGarbage(workflow);
   next = repairRootLinkSlots(next);
   next = repairSubgraphLinkIds(next);
+  // After the link table is consistent, re-seat subgraph placeholder slots onto
+  // their definitions' boundaries. `loadWorkflow` already does this, so for the
+  // active workflow it is a no-op; it is here for callers that build a prompt
+  // straight from a file (bulk process) and never went through a load.
+  next = normalizeSubgraphPlaceholders(next);
+  // Render instance names onto the nodes themselves. `{n}` is ours; a title is
+  // what every other frontend reads, and what rgthree's Fast Bypasser labels
+  // its toggles from.
+  next = materializeSubgraphTitles(next);
+  next = dropStaleNamedWidgetValues(next);
+  // Last, so they see the finished graph: the envelope's fallback state counts
+  // the links the steps above settled on, and the allocators clear every id
+  // any of them introduced.
+  next = ensureSubgraphDefinitionEnvelopes(next);
+  next = reconcileIdAllocators(next);
   return next;
+}
+
+// ---------------------------------------------------------------------------
+// Named widget values
+// ---------------------------------------------------------------------------
+
+/**
+ * Drop `widgets_values_named`, the name-keyed mirror of `widgets_values` that
+ * ComfyUI frontend >= 1.49 writes on every node.
+ *
+ * We only ever edit the positional `widgets_values`, so carrying the mirror
+ * through a mobile save would leave a stale copy of every value we changed.
+ * That copy is inert today — `LiteGraph.namedValuesRestore` defaults to false,
+ * so restore is positional — but if the user ever turns it on, the mirror wins
+ * and every mobile edit silently reverts.
+ *
+ * Dropping it is safe: `LGraphNode.configure` falls back to positional restore
+ * when the key is absent, and desktop regenerates it on its next save.
+ */
+function dropStaleNamedWidgetValues(workflow: Workflow): Workflow {
+  const NAMED = 'widgets_values_named';
+  let touched = false;
+
+  const stripNodes = (nodes: WorkflowNode[]): WorkflowNode[] =>
+    nodes.map((node) => {
+      if (!(NAMED in node)) return node;
+      touched = true;
+      const rest = { ...(node as WorkflowNode & Record<string, unknown>) };
+      delete rest[NAMED];
+      return rest as WorkflowNode;
+    });
+
+  const nodes = stripNodes(workflow.nodes);
+  const subgraphs = workflow.definitions?.subgraphs?.map((subgraph) => {
+    const subgraphNodes = stripNodes(subgraph.nodes ?? []);
+    return subgraphNodes === subgraph.nodes ? subgraph : { ...subgraph, nodes: subgraphNodes };
+  });
+
+  if (!touched) return workflow;
+  return {
+    ...workflow,
+    nodes,
+    ...(subgraphs ? { definitions: { ...workflow.definitions, subgraphs } } : {}),
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -255,6 +333,18 @@ function repairSubgraphLinkIds(workflow: Workflow): Workflow {
       subgraphs: nextSubgraphs,
     },
   };
+}
+
+/**
+ * Rebuild one definition's boundary linkIds caches from its actual link table.
+ * Returns the same object when nothing changed. Store actions that edit
+ * boundary links call this so the in-memory caches never diverge from what
+ * save-time repair would produce (divergence shows up as phantom dirty state).
+ */
+export function rebuildDefinitionLinkIds(
+  sg: WorkflowSubgraphDefinition,
+): WorkflowSubgraphDefinition {
+  return repairOneSubgraphLinkIds(sg, () => {});
 }
 
 function repairOneSubgraphLinkIds(

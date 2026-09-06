@@ -1,5 +1,6 @@
 import type { NodeTypes, Workflow, WorkflowNode } from '@/api/types';
 import { getWidgetIndexForInput } from '@/hooks/useWorkflow';
+import { splitPathAnnotation } from '@/utils/annotatedPath';
 
 export interface LoadImagePreview {
   filename: string;
@@ -23,8 +24,14 @@ export function resolveLoadImagePreview(
 
 function parseInputImageValue(value: unknown): LoadImagePreview | null {
   if (typeof value === 'string' && value.trim()) {
-    const { filename, subfolder } = splitSubfolder(value.trim());
-    return { filename, subfolder, type: 'input' };
+    // Strip ComfyUI's directory annotation before splitting. Leaving " [input]"
+    // glued to the filename still *displays* fine -- /view calls
+    // annotated_filepath itself -- but it makes this ref a different string
+    // from the one a mask save records, so cross-session undo cannot match the
+    // two. It also names the directory, so prefer it over assuming input.
+    const annotated = splitPathAnnotation(value.trim());
+    const { filename, subfolder } = splitSubfolder(annotated.path);
+    return { filename, subfolder, type: annotated.type ?? 'input' };
   }
   if (!value || typeof value !== 'object') return null;
   const record = value as Record<string, unknown>;
@@ -35,8 +42,9 @@ function parseInputImageValue(value: unknown): LoadImagePreview | null {
       : null;
   if (!filename || !filename.trim()) return null;
   const subfolder = typeof record.subfolder === 'string' ? record.subfolder : '';
-  const type = typeof record.type === 'string' ? record.type : 'input';
-  const { filename: parsedName, subfolder: parsedSubfolder } = splitSubfolder(filename.trim());
+  const annotated = splitPathAnnotation(filename.trim());
+  const type = typeof record.type === 'string' ? record.type : (annotated.type ?? 'input');
+  const { filename: parsedName, subfolder: parsedSubfolder } = splitSubfolder(annotated.path);
   return {
     filename: parsedName,
     subfolder: subfolder || parsedSubfolder,

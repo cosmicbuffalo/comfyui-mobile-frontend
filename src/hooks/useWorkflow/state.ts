@@ -1,9 +1,13 @@
 import type { HistoryOutputImage, NodeTypes, Workflow } from "@/api/types";
 import type { StoreApi } from "zustand/vanilla";
 import type { ScopeFrame } from "@/utils/canonicalWorkflowOps";
+import type { JumpAlignment } from "@/utils/workflowJumpDom";
+import type { WorkflowJumpTarget } from "@/utils/workflowJumpTargets";
 import type { MobileLayout } from "@/utils/mobileLayout";
 import type { SeedMode } from "@/utils/seedUtils";
 import type { HierarchicalKey } from "@/utils/workflowHierarchy";
+import type { PromotedWidgetForm } from "@/utils/promotedWidgetForm";
+import type { WidgetVariationSpec } from "@/utils/widgetVariations";
 import type { RepositionScrollTarget } from "./layoutOps";
 
 /**
@@ -82,6 +86,15 @@ export interface LoadWorkflowOptions {
   replaceActive?: boolean;
   navigate?: boolean;
   pathAliasesResolved?: boolean;
+  /**
+   * The filename is app-generated (a pasted-workflow stamp, a history id, an
+   * image path) rather than a name the user chose, so Save must ask for a
+   * real one instead of writing the placeholder to disk. Defaults to true for
+   * history/file sources, which always name themselves.
+   */
+  filenameIsPlaceholder?: boolean;
+  /** Executed API prompt embedded alongside an output workflow, when available. */
+  executedPrompt?: unknown;
 }
 
 // ─── Saved per-file state ─────────────────────────────────────────────────────────────
@@ -115,8 +128,11 @@ export const SESSION_STATE_FIELDS = [
   "diffBaseWorkflow",
   "lastEnqueuedWorkflow",
   "scopeStack",
+  "workflowPanelScrollTops",
   "currentFilename",
+  "filenameIsPlaceholder",
   "currentWorkflowKey",
+  "currentLineageId",
   "isExecuting",
   "executingNodeId",
   "executingNodeHierarchicalKey",
@@ -172,8 +188,17 @@ export interface WorkflowState {
 
   // Scope navigation stack; [{ type: 'root' }] when at the top level
   scopeStack: ScopeFrame[];
+  // Per-session workflow panel scroll positions. Root and each subgraph
+  // definition keep independent positions so instances of one type share it.
+  workflowPanelScrollTops: Record<string, number>;
   currentFilename: string | null;
+  // True when currentFilename is an app-generated stand-in rather than a name
+  // the user picked; Save then behaves as Save-As (see WorkflowTopBarControls).
+  filenameIsPlaceholder: boolean;
   currentWorkflowKey: string | null;
+  // Lineage (workflow family) this tab's workflow belongs to. Resolved on
+  // load; null until the registry has seen this structure.
+  currentLineageId: string | null;
   nodeTypes: NodeTypes | null;
   isLoading: boolean;
 
@@ -278,6 +303,8 @@ export interface WorkflowState {
   pasteClipboard: (belowNodeKey?: HierarchicalKey | null) => number[] | null;
   // Copy a whole container (group or subgraph placeholder) to the clipboard.
   copyContainer: (itemKey: HierarchicalKey) => void;
+  // Duplicate a group and its direct contents without changing the clipboard.
+  duplicateContainer: (itemKey: HierarchicalKey) => number[] | null;
   // Paste the clipboard into a container: a subgraph's inner scope, or inside a
   // group (the pasted nodes become members). Returns the new node ids.
   pasteIntoContainer: (itemKey: HierarchicalKey) => number[] | null;
@@ -289,6 +316,139 @@ export interface WorkflowState {
     type: string,
   ) => void;
   disconnectInput: (itemKey: HierarchicalKey, inputIndex: number) => void;
+  // Boundary (subgraph input/output slot) link editing. Only meaningful inside
+  // a subgraph scope; all three no-op at root. connectBoundaryInput replaces
+  // subgraph input slot `slotIndex`'s whole fan-out with the given inner input
+  // targets; connectBoundaryOutput sets (or, with null, clears) the single
+  // inner output feeding subgraph output slot `slotIndex`.
+  connectBoundaryInput: (
+    slotIndex: number,
+    targets: Array<{ nodeKey: HierarchicalKey; inputSlot: number }>,
+  ) => void;
+  connectBoundaryOutput: (
+    slotIndex: number,
+    source: { nodeKey: HierarchicalKey; outputSlot: number } | null,
+  ) => void;
+  disconnectBoundaryLink: (
+    direction: "input" | "output",
+    slotIndex: number,
+    innerNodeId: number,
+    innerSlot: number,
+  ) => void;
+  // Promote an inner slot into a new boundary slot of the current subgraph,
+  // appended to the definition's boundary list, and wire it to that slot.
+  // Every placeholder instance gains the matching slot.
+  addBoundaryInput: (target: { nodeKey: HierarchicalKey; inputSlot: number }) => void;
+  addBoundaryOutput: (source: { nodeKey: HierarchicalKey; outputSlot: number }) => void;
+  // Promote one widget on a node in the current subgraph scope. This also
+  // materializes widget-only inputs that are absent from the serialized node.
+  promoteWidget: (
+    target: {
+      nodeKey: HierarchicalKey;
+      inputName: string;
+      inputType: string;
+      value: unknown;
+    },
+    // "widget" (the default) draws an editable control on the placeholder and
+    // gives every instance its own value; "input" exposes a plain socket and
+    // leaves the value on the inner node, shared by the type.
+    options?: { form?: PromotedWidgetForm },
+  ) => boolean;
+  // Switch an already-promoted widget between those two forms, keeping the
+  // boundary slot and anything wired to it.
+  setPromotedWidgetForm: (
+    target: { nodeKey: HierarchicalKey; inputName: string },
+    form: PromotedWidgetForm,
+  ) => boolean;
+  // Undo a promotion: drop the boundary slot and its link, and return the
+  // widget to the inner node holding the value it was showing.
+  demoteWidget: (target: { nodeKey: HierarchicalKey; inputName: string }) => boolean;
+  // Rename a widget's label on one node, stored as the input slot's `label`
+  // the way the desktop frontend stores it. A blank label clears the override.
+  setWidgetLabel: (
+    nodeKey: HierarchicalKey,
+    inputName: string,
+    label: string,
+  ) => boolean;
+  // Move a boundary slot within the definition's list. Every instance follows,
+  // values included — widgets_values is positional, so the order and the values
+  // have to move together.
+  // `subgraphId` names the definition when the edit comes from a placeholder
+  // outside it; without one the subgraph on screen is the target.
+  moveBoundarySlot: (
+    direction: "input" | "output",
+    fromIndex: number,
+    toIndex: number,
+    options?: { subgraphId?: string },
+  ) => boolean;
+  // Demote a boundary slot: drop it, its links, and — for a widget-backed
+  // input — the widgets_values entry it owns on every instance.
+  removeBoundarySlot: (
+    direction: "input" | "output",
+    slotIndex: number,
+    options?: { subgraphId?: string },
+  ) => void;
+  // Rename a boundary slot, either on the DEFINITION (every instance of the
+  // type) or on the ONE instance the current scope was entered through. Blank
+  // clears the label at that level, falling back to the level beneath it.
+  setBoundarySlotLabel: (
+    direction: "input" | "output",
+    slotIndex: number,
+    label: string,
+    scope: "definition" | "instance",
+    // Named when the rename comes from a placeholder card rather than from
+    // inside the subgraph, where the scope stack supplies both.
+    options?: { subgraphId?: string; instanceNodeId?: number },
+  ) => void;
+  // Set (or clear, with an empty string) a promoted widget's label on the
+  // DEFINITION, shared by every instance of the subgraph type; the {n} token
+  // interpolates each instance's number at render time. 'slot' covers both
+  // slot-promoted and boundary-only widgets (the definition's boundary input
+  // entry, matched by name); 'proxy' targets a proxyWidgets entry.
+  setPromotedWidgetLabel: (
+    subgraphId: string,
+    target:
+      | { kind: "slot"; slotName: string }
+      | { kind: "proxy"; innerNodeId: number; widgetName: string },
+    label: string,
+  ) => void;
+  // The same edit, applied to ONE placeholder instead of the type: the label
+  // lands in that placeholder's own properties, where the definition rebuild
+  // cannot overwrite it (see utils/boundarySlotLabels).
+  setInstanceWidgetLabel: (
+    itemKey: HierarchicalKey,
+    target:
+      | { kind: "slot"; direction: "input" | "output"; slotName: string }
+      | { kind: "proxy"; innerNodeId: number; widgetName: string },
+    label: string,
+  ) => void;
+  // "Fork Subgraph": copy the type into a new one and move the chosen instances
+  // onto it, so they can be changed without touching the instances left behind.
+  // Returns the new type's id, or null if nothing was forked.
+  forkSubgraphType: (
+    subgraphId: string,
+    instanceNodeIds: number[],
+    name: string,
+  ) => string | null;
+  // Rename a subgraph type (the definition name — every instance follows).
+  renameSubgraphType: (subgraphId: string, name: string) => void;
+  // Delete a subgraph type. With instances present, `mode` decides their fate:
+  // 'dissolve' promotes each instance's inner nodes into its parent scope,
+  // 'delete' removes the instances outright. The definition (and any nested
+  // definition only it referenced) is collected either way.
+  deleteSubgraphType: (subgraphId: string, mode: "dissolve" | "delete") => void;
+  // "Replace Subgraph": swap the placeholder for an instance of definition
+  // `newDefId`, rewiring matching slots (name-then-type). Returns
+  // the dropped-connection summary, or null when nothing was replaced.
+  replaceSubgraphInstance: (
+    itemKey: HierarchicalKey,
+    newDefId: string,
+  ) => Array<{
+    direction: "input" | "output";
+    slotName: string;
+    slotType: string;
+    peerNodeTitle: string;
+  }> | null;
   addNode: (
     nodeType: string,
     options?: {
@@ -350,6 +510,14 @@ export interface WorkflowState {
     itemKey: HierarchicalKey,
     updates: Record<number, unknown>,
   ) => void;
+  // Power Puter (rgthree): its outputs widget doubles as the node's output slot
+  // list, so setting it also rebuilds `node.outputs` and drops the links that
+  // any removed slot was carrying. See `setPowerPuterOutputs` in nodeControl.ts.
+  setPowerPuterOutputs: (
+    itemKey: HierarchicalKey,
+    widgetIndex: number,
+    outputs: string[],
+  ) => void;
   // Rename a Set/Get relay (its name widget). When the target is a SetNode, every
   // GetNode in the same scope that was reading the OLD name is updated to the new
   // name too, so the wireless Set<->Get link survives the rename.
@@ -380,6 +548,20 @@ export interface WorkflowState {
     // DOM id of a connection button to flash in sync with the node pulse.
     flashConnectionDomId?: string | null,
   ) => void;
+  /**
+   * Go to anything in the workflow: travel to its scope, reveal it, scroll it
+   * into view, flash it. One entry point so every jump behaves the same, and so
+   * a new kind of destination is a new case here rather than a new code path.
+   */
+  jumpToWorkflowItem: (
+    target: WorkflowJumpTarget,
+    options?: {
+      label?: string;
+      alsoFlashDomId?: string | null;
+      /** Where the target lands in the panel; defaults to the top. */
+      align?: JumpAlignment;
+    },
+  ) => void;
   setNodeTypes: (types: NodeTypes) => void;
   // Splice a freshly-added input file into every image-upload combo's option
   // list, so it resolves as a real combo choice without refetching object_info.
@@ -397,6 +579,13 @@ export interface WorkflowState {
     sessionId?: string | null,
     isInfiniteReEnqueue?: boolean,
     queueFront?: boolean,
+    /**
+     * Vary one combo widget across the enqueued runs — `count` must equal
+     * `variations.values.length`. Seed modes are ignored for the whole batch so
+     * the varied widget is the only thing that differs between runs, and the
+     * variation is never written back into the session's workflow.
+     */
+    variations?: WidgetVariationSpec,
   ) => Promise<boolean>;
   saveCurrentWorkflowState: () => void;
   setNodeOutput: (
@@ -481,6 +670,48 @@ export interface WorkflowState {
   // selected group (its nodes are kept unless individually selected).
   copySelectedItems: (itemKeys: HierarchicalKey[]) => void;
   createGroupFromItems: (itemKeys: HierarchicalKey[]) => void;
+  // Wrap the selection in a new subgraph, its boundary taken from whatever the
+  // selected nodes were already connected to. Returns what was made, so the
+  // caller can say so and jump to it; null when nothing was selectable.
+  // Move the selection into a subgraph already in this scope. Slots the moved
+  // nodes made redundant are removed and slots their remaining outside links
+  // need are added; with a shared type that changes it for every instance,
+  // which the caller is expected to have offered to fork away from first.
+  moveItemsIntoSubgraph: (
+    itemKeys: HierarchicalKey[],
+    placeholderItemKey: HierarchicalKey,
+  ) => {
+    removedInputs: number;
+    removedOutputs: number;
+    addedInputs: number;
+    addedOutputs: number;
+    /**
+     * Nodes that fed OTHER instances through a slot this move retired. Their
+     * values have already been copied onto those instances; these are now
+     * feeding nothing, so the caller may offer to remove them. A node still
+     * feeding something else is deliberately absent.
+     */
+    harvestedFrom: number[];
+  } | null;
+  // Delete root nodes whose value a move already carried onto a placeholder.
+  // Returns how many were actually removed; anything still feeding something is
+  // refused rather than silently cutting a live connection.
+  removeHarvestedNodes: (nodeIds: number[]) => number;
+  // Move a one-sided terminal node from a subgraph definition to root. Source
+  // terminals become one shared root node; sink terminals become one root
+  // clone per concrete instance path.
+  popNodeOutToRoot: (
+    itemKey: HierarchicalKey,
+  ) => { kind: "source" | "sink"; rootNodeIds: number[] } | null;
+  createSubgraphFromItems: (
+    itemKeys: HierarchicalKey[],
+    name: string,
+  ) => {
+    subgraphId: string;
+    placeholderItemKey: HierarchicalKey | null;
+    inputCount: number;
+    outputCount: number;
+  } | null;
   deleteSelectedItems: (itemKeys: HierarchicalKey[]) => void;
 
   updateContainerTitle: (itemKey: HierarchicalKey, title: string) => void;
@@ -503,10 +734,17 @@ export interface WorkflowState {
   // Scope navigation
   enterSubgraph: (placeholderNodeId: number) => void;
   exitSubgraph: () => void;
+  // Switch which instance of the current subgraph type the boundary is read
+  // through, without leaving the subgraph. Rebuilds the whole trail when the
+  // chosen instance lives in a different parent scope.
+  setScopeInstance: (placeholderNodeId: number) => void;
   exitToRoot: () => void;
   /** Pop the scope stack to exactly `depth` frames (1 = root). No-op if already at or above target. */
   exitToDepth: (depth: number) => void;
   navigateToSubgraphTrail: (subgraphIds: string[]) => boolean;
+  // Move to an already-resolved scope trail (see findScopeTrailForPlaceholder),
+  // used when travelling to a node in another instance's parent scope.
+  setScopeTrail: (trail: ScopeFrame[]) => void;
 }
 
 // Store action factories extracted into sibling modules type their

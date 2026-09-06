@@ -3,6 +3,7 @@ import { persist } from 'zustand/middleware';
 import { t } from '@/i18n';
 import * as api from '@/api/client';
 import type { FileItem, AssetSource, SortMode } from '@/api/client';
+import { useShowHiddenStore } from '@/hooks/useShowHidden';
 
 function getVisibleParentPath(path: string | null): string | null {
   if (!path) return null;
@@ -255,7 +256,6 @@ interface OutputsState {
   isLoading: boolean;
   error: string | null;
   viewMode: 'grid' | 'list';
-  showHidden: boolean;
   filter: FilterState;
   sort: SortState;
   favorites: string[];
@@ -288,6 +288,14 @@ interface OutputsState {
   filterModalOpen: boolean;
   newFolderModalOpen: boolean;
   outputsViewerOpen: boolean;
+  /**
+   * File id of the image currently open in the outputs viewer, or null.
+   *
+   * The viewer's own index is local to OutputsPanel, but the bottom bar's
+   * selection button needs to know what is on screen so entering select mode
+   * from inside the viewer can select it.
+   */
+  outputsViewerFileId: string | null;
 
   // Actions
   setSource: (source: AssetSource) => void;
@@ -303,7 +311,7 @@ interface OutputsState {
   setSearchDraft: (query: string) => void;
   setSort: (sort: SortState) => void;
   setViewMode: (mode: 'grid' | 'list') => void;
-  toggleShowHidden: () => void;
+  syncShowHidden: (showHidden: boolean) => void;
   toggleFavorite: (id: string) => void;
   // Mark an id favorited (idempotent — never unfavorites) and clear any
   // rejected state. Backs the `f` key and the heart button: favoriting is
@@ -325,6 +333,9 @@ interface OutputsState {
   closeTab: (tabId: string) => void;
   switchToTab: (tabId: string, folder?: string | null) => void;
   toggleSelectionMode: () => void;
+  setOutputsViewerFileId: (id: string | null) => void;
+  /** Enter selection mode with exactly these ids selected. */
+  enterSelectionModeWith: (ids: string[]) => void;
   toggleSelection: (id: string) => void;
   selectAll: () => void;
   selectIds: (ids: string[], mode?: 'add' | 'replace') => void;
@@ -357,7 +368,6 @@ export const useOutputsStore = create<OutputsState>()(
       isLoading: false,
       error: null,
       viewMode: 'grid',
-      showHidden: false,
       filter: {
         search: '',
         favoritesMode: 'off',
@@ -379,6 +389,7 @@ export const useOutputsStore = create<OutputsState>()(
       promptSearchError: null,
       selectionMode: false,
       selectedIds: [],
+      outputsViewerFileId: null,
       selectionActionOpen: false,
       filterModalOpen: false,
       newFolderModalOpen: false,
@@ -386,7 +397,7 @@ export const useOutputsStore = create<OutputsState>()(
 
       setSource: (source) => {
         const { source: prevSource, currentFolder, folderBySource, tabs, activeTabId } = get();
-        if (source === prevSource) return;
+        if (source === prevSource || get().isLoading) return;
         // Stash where we were in the source we're leaving, and restore where we
         // last were in the source we're entering.
         const nextFolderBySource = { ...folderBySource, [prevSource]: currentFolder };
@@ -439,7 +450,7 @@ export const useOutputsStore = create<OutputsState>()(
 
       switchToTab: (tabId, folder) => {
         const state = get();
-        if (tabId === state.activeTabId && folder === undefined) return;
+        if (state.isLoading || (tabId === state.activeTabId && folder === undefined)) return;
         // Sync the outgoing active tab from live state first.
         const synced = state.tabs.map((t) =>
           t.id === state.activeTabId ? { ...t, source: state.source, folder: state.currentFolder } : t
@@ -478,7 +489,8 @@ export const useOutputsStore = create<OutputsState>()(
       },
 
       setCurrentFolder: (folder) => {
-        const { currentFolder, filter, promptSearchActive } = get();
+        const { currentFolder, filter, promptSearchActive, isLoading } = get();
+        if (isLoading) return;
         const newPath = currentFolder ? `${currentFolder}/${folder}` : folder;
         set({
           currentFolder: newPath,
@@ -495,7 +507,8 @@ export const useOutputsStore = create<OutputsState>()(
       },
 
       navigateToPath: (path) => {
-        const { filter, promptSearchActive } = get();
+        const { filter, promptSearchActive, isLoading } = get();
+        if (isLoading) return;
         set({
           currentFolder: path,
           files: [],
@@ -507,8 +520,8 @@ export const useOutputsStore = create<OutputsState>()(
       },
 
       navigateUp: () => {
-        const { currentFolder, filter, promptSearchActive } = get();
-        if (!currentFolder) return;
+        const { currentFolder, filter, promptSearchActive, isLoading } = get();
+        if (!currentFolder || isLoading) return;
         const parts = currentFolder.split('/');
         parts.pop();
         const newPath = parts.length > 0 ? parts.join('/') : null;
@@ -524,7 +537,7 @@ export const useOutputsStore = create<OutputsState>()(
 
       fetchFolders: async () => {
         try {
-          const { showHidden } = get();
+          const showHidden = useShowHiddenStore.getState().showHidden;
           const result = await api.getUserImageFolders(showHidden);
           const { source } = get();
           set({ folders: source === 'output' ? result.output : result.input });
@@ -631,7 +644,8 @@ export const useOutputsStore = create<OutputsState>()(
       },
 
       fetchFiles: async () => {
-        const { source, currentFolder, showHidden } = get();
+        const { source, currentFolder } = get();
+        const showHidden = useShowHiddenStore.getState().showHidden;
         set({ isLoading: true, error: null });
 
         try {
@@ -723,7 +737,8 @@ export const useOutputsStore = create<OutputsState>()(
           get().clearPromptSearch();
           return;
         }
-        const { source, currentFolder, showHidden } = get();
+        const { source, currentFolder } = get();
+        const showHidden = useShowHiddenStore.getState().showHidden;
         set({ promptSearchLoading: true, promptSearchError: null });
         try {
           await flushFileStateMutations(source);
@@ -782,12 +797,10 @@ export const useOutputsStore = create<OutputsState>()(
         set({ viewMode: mode });
       },
 
-      toggleShowHidden: () => {
-        const { showHidden, currentFolder, promptSearchActive, promptSearchQuery } = get();
-        const nextShowHidden = !showHidden;
-        const nextFolder = nextShowHidden ? currentFolder : getVisibleParentPath(currentFolder);
+      syncShowHidden: (showHidden) => {
+        const { currentFolder, promptSearchActive, promptSearchQuery } = get();
+        const nextFolder = showHidden ? currentFolder : getVisibleParentPath(currentFolder);
         set((s) => ({
-          showHidden: nextShowHidden,
           currentFolder: nextFolder,
           files: [],
           selectionMode: false,
@@ -909,11 +922,12 @@ export const useOutputsStore = create<OutputsState>()(
         const mark = (file: FileItem) => file.id === id
           ? { ...file, hidden: true, hiddenSelf: true }
           : file;
+        const showHidden = useShowHiddenStore.getState().showHidden;
         set((state) => ({
-          files: state.showHidden
+          files: showHidden
             ? state.files.map(mark)
             : state.files.filter((file) => file.id !== id),
-          promptSearchResults: state.showHidden
+          promptSearchResults: showHidden
             ? state.promptSearchResults.map(mark)
             : state.promptSearchResults.filter((file) => file.id !== id),
         }));
@@ -947,6 +961,14 @@ export const useOutputsStore = create<OutputsState>()(
           selectedIds: [],
           selectionActionOpen: false
         }));
+      },
+
+      setOutputsViewerFileId: (id) => {
+        set({ outputsViewerFileId: id });
+      },
+
+      enterSelectionModeWith: (ids) => {
+        set({ selectionMode: true, selectedIds: [...ids], selectionActionOpen: false });
       },
 
       toggleSelection: (id) => {
@@ -1069,13 +1091,13 @@ export const useOutputsStore = create<OutputsState>()(
           filter,
           favorites,
           rejected,
-          showHidden,
           sort,
           source: assetSource,
           currentFolder,
           promptSearchActive,
           promptSearchResults,
         } = get();
+        const showHidden = useShowHiddenStore.getState().showHidden;
 
         const memoKey = [
           files, filter, favorites, rejected, showHidden, sort, assetSource,
@@ -1260,9 +1282,12 @@ export const useOutputsStore = create<OutputsState>()(
     }),
     {
       name: 'outputs-storage',
-      version: 6,
+      version: 7,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       migrate: (persistedState: any, version: number) => {
+        // Visibility moved to the app-wide show-hidden store. Never let the
+        // legacy Outputs-only value reintroduce a second source of truth.
+        delete persistedState.showHidden;
         if (version === 0) {
           // Migration from old sort { field, order } to { mode }
           if (persistedState.sort && !persistedState.sort.mode) {
@@ -1326,7 +1351,6 @@ export const useOutputsStore = create<OutputsState>()(
         tabs: state.tabs,
         activeTabId: state.activeTabId,
         viewMode: state.viewMode,
-        showHidden: state.showHidden,
         sort: state.sort,
         // Never persist the search text.
         filter: { ...state.filter, search: '' },

@@ -173,16 +173,27 @@ export function useSwipeNavigation({
         return;
       }
 
+      // Both axes are tracked from here on, whichever way intent locked. The
+      // end-of-gesture check needs the axis the lock didn't pick, and these are
+      // ref writes — nothing renders them, so they cost no re-render.
+      swipe.currentX = touch.clientX;
+      swipe.currentY = touch.clientY;
+
       if (swipe.isHorizontal) {
+        // Intent locked on the first sample past the dead zone, and one sample
+        // is a poor witness: a thumb pivoting into a scroll moves sideways
+        // before it moves down. Once the gesture has clearly become a scroll,
+        // abandon the swipe candidate — stop preventing default so the rest of
+        // it scrolls normally, and stop tracking so touchend can't navigate.
+        if (absDy > INTENT_DEAD_ZONE_PX && absDy > absDx * HORIZONTAL_INTENT_RATIO) {
+          swipe.isTracking = false;
+          setIsSwiping(false);
+          detachMoveListener();
+          return;
+        }
         if (preventScroll && e.cancelable) {
           e.preventDefault();
         }
-        // Offset is tracked in the ref only — nothing renders it, and state
-        // here would re-render the app per touchmove.
-        swipe.currentX = touch.clientX;
-      } else {
-        // We don't currently track vertical offset but we could
-        swipe.currentY = touch.clientY;
       }
     };
 
@@ -198,8 +209,15 @@ export function useSwipeNavigation({
       const dy = swipe.currentY - swipe.startY;
       const moveThreshold = threshold || window.innerWidth * 0.25;
 
+      const absDx = Math.abs(dx);
+      const absDy = Math.abs(dy);
+
       let didSwipe = false;
-      if (swipe.isHorizontal === true) {
+      // The lock was a guess from one early sample; the completed gesture is
+      // the evidence. Navigate only if the gesture stayed dominated by the axis
+      // it locked to, so a long scroll that opened with a sideways flick is
+      // still a scroll by the time the finger lifts.
+      if (swipe.isHorizontal === true && absDx >= absDy * HORIZONTAL_INTENT_RATIO) {
         if (dx < -moveThreshold && onSwipeLeft) {
           onSwipeLeft();
           didSwipe = true;
@@ -207,7 +225,7 @@ export function useSwipeNavigation({
           onSwipeRight();
           didSwipe = true;
         }
-      } else if (swipe.isHorizontal === false) {
+      } else if (swipe.isHorizontal === false && absDy >= absDx * HORIZONTAL_INTENT_RATIO) {
         if (dy < -moveThreshold && onSwipeUp) {
           onSwipeUp();
           didSwipe = true;

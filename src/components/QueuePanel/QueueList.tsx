@@ -1,8 +1,10 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { flushSync } from 'react-dom';
 import type { HistoryOutputImage, Workflow } from '@/api/types';
 import type { ItemStatus, UnifiedItem, ViewerImage } from './types';
 import { QueueCard } from './QueueCard';
 import { InboxIcon } from '@/components/icons';
+import { FoldIcon } from '@/components/FoldIcon';
 import { LoadingSpinner } from '@/components/LoadingSpinner';
 import { useQueueStore } from '@/hooks/useQueue';
 import { useI18n } from '@/i18n';
@@ -28,10 +30,24 @@ const EMPTY_RUNNING_IMAGES: HistoryOutputImage[] = [];
 // almost immediately. Purely time-based, so it can never get "stuck on".
 const MOMENTUM_QUIET_MS = 100;
 
+// Added to MOMENTUM_QUIET_MS to decide a coast is over rather than between two
+// of its own frames. One frame's worth, so re-anchoring lands in the quiet
+// immediately after the list stops.
+const MOMENTUM_SETTLE_MARGIN_MS = 20;
+
+// The Pending header is an anchorable element in its own right, so folding the
+// section pins the header itself rather than letting the list jump.
+const PENDING_HEADER_ANCHOR_ID = 'queue-pending-section';
+
 interface QueueListProps {
   listRef: React.RefObject<HTMLDivElement | null>;
   unifiedList: UnifiedItem[];
   visibleCount: number;
+  /** Total pending items, folded or not — the header count must not follow the
+   *  rendered slice. */
+  pendingCount: number;
+  pendingCollapsed: boolean;
+  onTogglePendingCollapsed: () => void;
   hasLoadedOnce: boolean;
   effectiveExecutingId: string | null;
   progress: number;
@@ -67,6 +83,9 @@ export function QueueList({
   listRef,
   unifiedList,
   visibleCount,
+  pendingCount,
+  pendingCollapsed,
+  onTogglePendingCollapsed,
   hasLoadedOnce,
   effectiveExecutingId,
   progress,
@@ -108,9 +127,55 @@ export function QueueList({
   // The scrollTop value right after a compensation write, so the scroll event it
   // triggers is recognized as ours and not mistaken for user/momentum scrolling.
   const compensatedScrollTopRef = useRef<number | null>(null);
+  // Set whenever compensation is skipped because a flick is coasting, and read
+  // by the first pass after it stops. See `compensate`.
+  const skippedForMomentumRef = useRef(false);
+  const momentumSettleTimerRef = useRef<number | null>(null);
+  /**
+   * What the list draws: normally the current props, but the set captured when
+   * a flick started while one is still coasting.
+   *
+   * The alternative is to let a change land mid-coast and correct for it, which
+   * is what happens at every other moment — but correcting means writing
+   * `scrollTop`, and that cancels the fling. Measured in Chromium: compensating
+   * through a coast removes the jumps completely (`maxJerk` 132px -> 2px) at the
+   * cost of about half the flick's remaining travel, and iOS is likelier to stop
+   * it dead than merely shorten it. Neither is worth it when the change can
+   * simply wait a few hundred milliseconds instead.
+   *
+   * Nothing is lost by waiting. A card completing above the reader is not
+   * something they are looking at — it is the reason the list moved under them.
+   * On release the held-back changes apply together, by which time compensation
+   * is allowed again and absorbs them in the same frame.
+   *
+   * `progress` and the other per-tick props are deliberately not held back: they
+   * animate inside a card without changing its height, so the panel stays alive
+   * while the flick runs. Neither is `visibleCount` — the progressive reveal
+   * only ever grows it, and growth mounts cards at the *bottom* of the list,
+   * which cannot move a reader who is above them. Holding it back instead made
+   * the release worse: the window would jump forward by everything the reveal
+   * had wanted during the coast, dropping a card off the end at the same moment
+   * one arrived at the front.
+   */
+  const liveDraw = useMemo(
+    () => ({ unifiedList, promptOutputs, effectiveExecutingId, firstDoneItemId }),
+    [unifiedList, promptOutputs, effectiveExecutingId, firstDoneItemId],
+  );
+  // Synced after commit rather than during render, so what a hold captures is
+  // exactly what is on the glass at the moment the flick begins.
+  const liveDrawRef = useRef(liveDraw);
+  useLayoutEffect(() => { liveDrawRef.current = liveDraw; }, [liveDraw]);
+  const [heldDraw, setHeldDraw] = useState<typeof liveDraw | null>(null);
+  const drawn = heldDraw ?? liveDraw;
+
+  const holdDraw = useCallback(() => {
+    setHeldDraw((held) => held ?? liveDrawRef.current);
+  }, []);
+  const releaseDraw = useCallback(() => setHeldDraw(null), []);
+
   const visibleItemIds = useMemo(
-    () => unifiedList.slice(0, visibleCount).map((item) => item.id).join('\0'),
-    [unifiedList, visibleCount],
+    () => drawn.unifiedList.slice(0, visibleCount).map((item) => item.id).join('\0'),
+    [drawn, visibleCount],
   );
 
   // Post-lift momentum = finger is up AND real scroll events are still arriving.
@@ -129,9 +194,81 @@ export function QueueList({
     [],
   );
 
-  const compensate = useCallback((container: HTMLDivElement) => {
+  // Re-point the anchor at whatever the reader is now looking at, discarding
+  // whatever it used to describe.
+  const reanchor = useCallback((container: HTMLDivElement) => {
+    skippedForMomentumRef.current = false;
+    if (container.scrollTop <= 1) return;
+    scrollAnchorRef.current = captureQueueScrollAnchor(container);
+    compensatedScrollTopRef.current = null;
+  }, []);
+
+  const compensate = useCallback((container: HTMLDivElement): boolean => {
+    if (skippedForMomentumRef.current) {
+      // A backstop for the narrow window between the coast stopping and the
+      // settle timer firing: same reasoning as `scheduleMomentumSettle`, which
+      // handles this in every other case and explains it.
+      reanchor(container);
+      return false;
+    }
     if (restoreQueueScrollAnchor(container, scrollAnchorRef.current)) {
       compensatedScrollTopRef.current = container.scrollTop;
+      return true;
+    }
+    return false;
+  }, [reanchor]);
+
+  /**
+   * Re-anchor once a coasting flick has actually stopped, and let through what
+   * was held back while it ran.
+   *
+   * Shifts that land while momentum runs are let through deliberately — a
+   * `scrollTop` write would cancel the native fling — which leaves the anchor
+   * describing the list as it was before any of them. Correcting that backlog
+   * later would yank the list by the sum of it, in one frame, after the reader
+   * has already watched it settle. Where they landed is the new truth.
+   *
+   * On a timer rather than on the next compensation pass, because the next pass
+   * is itself usually triggered by a fresh shift: doing both in one frame means
+   * the re-anchor swallows that shift instead of correcting it. The timer gets
+   * there first, in the quiet after the coast, so the anchor is already honest
+   * by the time anything else moves.
+   */
+  const scheduleMomentumSettle = useCallback(() => {
+    if (momentumSettleTimerRef.current !== null) {
+      window.clearTimeout(momentumSettleTimerRef.current);
+    }
+    momentumSettleTimerRef.current = window.setTimeout(() => {
+      momentumSettleTimerRef.current = null;
+      const container = listRef.current;
+      // Still coasting: the next momentum scroll event re-arms this.
+      if (!container || isMomentumScroll()) return;
+      // Three steps, in this order and in one task.
+      //
+      // Re-anchor first, on what the reader is actually looking at now: the
+      // flick has carried them a long way from wherever the anchor was last
+      // captured, and anything that did shift during the coast (an image
+      // decoding inside a card that was already mounted — not everything is
+      // held back) has been seen and accepted by now.
+      reanchor(container);
+      // Then let the held-back changes through, synchronously, so the DOM they
+      // produce exists before this task ends...
+      flushSync(() => releaseDraw());
+      // ...and correct for them immediately, repeatedly until the list stops
+      // moving. Layout settles in more than one step here — a card arriving
+      // above the reader and one dropping off the bottom of the rendered window
+      // do not land together — and each `compensate` call re-measures, so one
+      // pass corrects only what it can see. Left to the layout effect and the
+      // ResizeObserver, the remainder lands a frame late: measured at 285px,
+      // painted for exactly one frame, which is the flash the hold exists to
+      // prevent. The cap is a guard against a pathological loop, not a budget.
+      for (let pass = 0; pass < 4 && compensate(container); pass += 1) { /* settle */ }
+    }, MOMENTUM_QUIET_MS + MOMENTUM_SETTLE_MARGIN_MS);
+  }, [compensate, isMomentumScroll, listRef, reanchor, releaseDraw]);
+
+  useEffect(() => () => {
+    if (momentumSettleTimerRef.current !== null) {
+      window.clearTimeout(momentumSettleTimerRef.current);
     }
   }, []);
 
@@ -140,7 +277,7 @@ export function QueueList({
     if (!container) return;
     // A scrollTop write here would cancel a native fling, so defer only while
     // momentum is actually coasting; at rest and during a finger drag, pin.
-    if (isMomentumScroll()) return;
+    if (isMomentumScroll()) { skippedForMomentumRef.current = true; return; }
     compensate(container);
   });
 
@@ -165,7 +302,7 @@ export function QueueList({
       observerRef.current = new ResizeObserver(() => {
         // Runs after layout, before paint: compensate so image loads / card
         // animations don't paint a shifted frame. Skip while a flick coasts.
-        if (isMomentumScroll()) return;
+        if (isMomentumScroll()) { skippedForMomentumRef.current = true; return; }
         const el = listRef.current;
         if (el) compensate(el);
       });
@@ -225,6 +362,10 @@ export function QueueList({
   const handleTouchStart = () => {
     touchGestureActiveRef.current = true;
     fingerDownRef.current = true;
+    // A finger on the glass ends any hold: compensation works during a drag, so
+    // there is nothing to protect the reader from, and catching a coast to read
+    // something should show them the current queue rather than a stale one.
+    releaseDraw();
   };
 
   const handleTouchEnd = () => {
@@ -251,6 +392,9 @@ export function QueueList({
       } else if (isMomentumScroll()) {
         // Flick coasting: never touch the anchor or scrollTop here — a write
         // cancels the native momentum and strands the list mid-toss.
+        skippedForMomentumRef.current = true;
+        holdDraw();
+        scheduleMomentumSettle();
       } else if (isOwnCompensation) {
         // Our compensation scrolled the list; the anchor is already correct.
       } else {
@@ -337,7 +481,7 @@ export function QueueList({
       onKeyDown={handleScrollKeyDown}
       style={{ overflowAnchor: 'none' }}
     >
-      {unifiedList.length === 0 && !hasLoadedOnce && (
+      {unifiedList.length === 0 && pendingCount === 0 && !hasLoadedOnce && (
         <div className="flex items-center justify-center min-h-[calc(100vh-180px)] text-slate-400">
           <div className="text-center">
             <LoadingSpinner size="lg" color="gray" className="mx-auto mb-4" />
@@ -345,7 +489,7 @@ export function QueueList({
           </div>
         </div>
       )}
-      {unifiedList.length === 0 && hasLoadedOnce && (
+      {unifiedList.length === 0 && pendingCount === 0 && hasLoadedOnce && (
         <div className="flex items-center justify-center min-h-[calc(100vh-180px)] text-slate-400">
           <div className="text-center p-8">
             <div className="flex items-center justify-center mb-4">
@@ -363,19 +507,38 @@ export function QueueList({
           the full screen width (scrollbar at the edge) without the cards
           stretching. In the wide "fit to content" layout each card self-centers,
           so this wrapper stays full width and lets them do so. */}
-      {unifiedList.length > 0 && (
+      {(unifiedList.length > 0 || pendingCount > 0) && (
         <div className={`w-full space-y-4 ${fitCardsToContent ? '' : 'mx-auto max-w-3xl'}`}>
-          {unifiedList.slice(0, visibleCount).map((item) => {
+          {pendingCount > 0 && (
+            <button
+              type="button"
+              // Folding pins this header (see onPointerDownCapture above), so the
+              // row stays under the finger while the section below it collapses.
+              data-queue-fold-anchor
+              data-scroll-anchor-id={PENDING_HEADER_ANCHOR_ID}
+              onClick={onTogglePendingCollapsed}
+              aria-expanded={!pendingCollapsed}
+              className="queue-pending-section-header flex w-full items-center gap-2 text-left text-sm font-medium text-slate-400 hover:text-slate-100"
+            >
+              <FoldIcon open={!pendingCollapsed} variant="chevron" className="w-4 h-4" />
+              <span>{t('{count} Pending', { count: pendingCount })}</span>
+            </button>
+          )}
+          {drawn.unifiedList.slice(0, visibleCount).map((item) => {
             // Only the running card consumes the per-tick progress props; passing
             // stable constants to every other card lets React.memo skip them so the
             // whole list doesn't reconcile on each progress message.
-            const isRunningCard = item.id === effectiveExecutingId;
+            const isRunningCard = item.id === drawn.effectiveExecutingId;
             return (
               <div
                 key={item.id}
                 data-queue-item-id={item.id}
                 data-scroll-anchor-id={item.id}
-                className={fitCardsToContent ? 'mx-auto w-fit max-w-full' : undefined}
+                // `rounded-xl` matches the QueueCard inside it: this wrapper is
+                // what `flashQueueCard` pulses, and the pulse ring is drawn with
+                // `border-radius: inherit`, so without it the ring squares off
+                // the card's corners.
+                className={`rounded-xl${fitCardsToContent ? ' mx-auto w-fit max-w-full' : ''}`}
               >
                 <QueueCard
                   item={item}
@@ -385,9 +548,9 @@ export function QueueList({
                   executingNodeLabel={isRunningCard ? executingNodeLabel : null}
                   onImageClick={onImageClick}
                   viewerImages={viewerImages}
-                  runningImages={promptOutputs[item.id] ?? EMPTY_RUNNING_IMAGES}
+                  runningImages={drawn.promptOutputs[item.id] ?? EMPTY_RUNNING_IMAGES}
                   onOpenMenu={onOpenMenu}
-                  isTopDoneItem={item.id === firstDoneItemId}
+                  isTopDoneItem={item.id === drawn.firstDoneItemId}
                   queueVideoPlaybackEnabled={queueVideoPlaybackEnabled}
                   queueVideoOwnerId={activeQueueVideoOwnerId}
                   onRequestQueueVideoPlayback={onRequestQueueVideoPlayback}

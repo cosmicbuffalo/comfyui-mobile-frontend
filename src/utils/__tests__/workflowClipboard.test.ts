@@ -9,6 +9,8 @@ import {
   applyClipboardPaste,
   buildGroupClipboardPayload,
   buildNodeClipboardPayload,
+  collectGroupMoveSelection,
+  placeGroupsIntoGroup,
   placePastedNodesIntoGroup,
 } from '@/utils/workflowClipboard';
 
@@ -240,6 +242,93 @@ describe('placePastedNodesIntoGroup', () => {
   });
 });
 
+describe('placeGroupsIntoGroup with nested groups', () => {
+  const target = {
+    id: 20,
+    title: 'Target',
+    bounding: [0, 1000, 320, 160],
+    itemKey: 'root/group:20',
+  } as WorkflowGroup;
+  const parent = {
+    id: 10,
+    title: 'Parent',
+    bounding: [100, 100, 500, 500],
+    itemKey: 'root/group:10',
+  } as WorkflowGroup;
+  const child = {
+    id: 11,
+    title: 'Child',
+    bounding: [150, 180, 300, 250],
+    itemKey: 'root/group:11',
+  } as WorkflowGroup;
+  const grandchild = {
+    id: 12,
+    title: 'Grandchild',
+    bounding: [180, 220, 200, 120],
+    itemKey: 'root/group:12',
+  } as WorkflowGroup;
+  const nestedDefinition: WorkflowSubgraphDefinition = {
+    id: 'SG',
+    nodes: [node({ id: 99, type: 'Inner', pos: [900, 900], size: [40, 40] })],
+    links: [],
+    groups: [],
+  } as WorkflowSubgraphDefinition;
+  const workflow = baseWorkflow({
+    last_node_id: 99,
+    groups: [parent, child, grandchild, target],
+    nodes: [
+      node({ id: 1, type: 'Direct', pos: [110, 130], size: [40, 40] }),
+      node({ id: 2, type: 'Nested', pos: [370, 350], size: [40, 40] }),
+      node({ id: 3, type: 'Deep', pos: [200, 250], size: [40, 40] }),
+      node({ id: 4, type: 'SG', pos: [240, 270], size: [40, 40] }),
+    ],
+    definitions: { subgraphs: [nestedDefinition] },
+  });
+
+  it('expands a selected group into its complete same-scope subtree', () => {
+    const selection = collectGroupMoveSelection(workflow, null, [10]);
+    expect(selection.rootGroupIds).toEqual([10]);
+    expect([...selection.groupIds].sort()).toEqual([10, 11, 12]);
+    expect([...selection.nodeIds].sort()).toEqual([1, 2, 3, 4]);
+    expect(selection.nodeIds.has(99)).toBe(false);
+  });
+
+  it('moves every nested rect and node by one delta but leaves subgraph internals alone', () => {
+    const next = placeGroupsIntoGroup(workflow, 20, null, [10]);
+    const movedParent = next.groups!.find((group) => group.id === 10)!;
+    const dx = movedParent.bounding[0] - parent.bounding[0];
+    const dy = movedParent.bounding[1] - parent.bounding[1];
+
+    for (const original of [parent, child, grandchild]) {
+      const moved = next.groups!.find((group) => group.id === original.id)!;
+      expect(moved.bounding).toEqual([
+        original.bounding[0] + dx,
+        original.bounding[1] + dy,
+        original.bounding[2],
+        original.bounding[3],
+      ]);
+    }
+    for (const original of workflow.nodes) {
+      const moved = next.nodes.find((entry) => entry.id === original.id)!;
+      expect(moved.pos).toEqual([original.pos[0] + dx, original.pos[1] + dy]);
+    }
+    expect(next.definitions!.subgraphs![0].nodes![0].pos).toEqual([900, 900]);
+  });
+
+  it('does not move a selected nested group twice when its ancestor is selected', () => {
+    const once = placeGroupsIntoGroup(workflow, 20, null, [10]);
+    const parentAndChild = placeGroupsIntoGroup(workflow, 20, null, [11, 10]);
+    for (const groupId of [10, 11, 12]) {
+      expect(parentAndChild.groups!.find((group) => group.id === groupId)!.bounding)
+        .toEqual(once.groups!.find((group) => group.id === groupId)!.bounding);
+    }
+    for (const nodeId of [1, 2, 3, 4]) {
+      expect(parentAndChild.nodes.find((entry) => entry.id === nodeId)!.pos)
+        .toEqual(once.nodes.find((entry) => entry.id === nodeId)!.pos);
+    }
+  });
+});
+
 describe('applyClipboardPaste with nested subgraphs', () => {
   // Definition B nested inside definition A; root has a placeholder for A.
   const defB: WorkflowSubgraphDefinition = {
@@ -298,16 +387,92 @@ describe('applyClipboardPaste with nested subgraphs', () => {
     expect(clonedB.nodes![0].type).toBe('InnerB');
   });
 
-  it('same-workflow paste also rewires to the cloned definitions (no aliasing the originals)', () => {
+  it('same-workflow paste shares the definitions rather than cloning them', () => {
+    // Both ids already exist here, so the pasted placeholder is another
+    // instance of the same type — nested definitions included, which is why
+    // nothing here can end up aliasing the originals.
     const payload = buildNodeClipboardPayload(source, 'root/node:7')!;
     const result = applyClipboardPaste(source, payload, null)!;
     const defs = result.workflow.definitions?.subgraphs ?? [];
-    expect(defs).toHaveLength(4); // originals + 2 clones
+    expect(defs.map((d) => d.id).sort()).toEqual([defA.id, defB.id].sort());
     const pasted = result.workflow.nodes.find((n) => n.id === result.newNodeIds[0])!;
-    expect(pasted.type).not.toBe(defA.id);
-    const clonedA = defs.find((d) => d.id === pasted.type)!;
-    const innerPlaceholder = clonedA.nodes!.find((n) => n.type !== 'InnerA')!;
-    expect(innerPlaceholder.type).not.toBe(defB.id);
-    expect(defs.some((d) => d.id === innerPlaceholder.type)).toBe(true);
+    expect(pasted.type).toBe(defA.id);
+    expect(pasted.properties?.mobileInstanceNumber).toBe(2);
+  });
+});
+
+describe('applyClipboardPaste with shared definitions', () => {
+  const sharedDef: WorkflowSubgraphDefinition = {
+    id: 'CCCCCCCC-0000-4000-8000-000000000000',
+    name: 'Shared',
+    nodes: [node({ id: 300, type: 'InnerC' })],
+    links: [],
+    groups: [],
+    extra: { 'comfyui-mobile': { nextInstanceNumber: 2 } },
+  } as WorkflowSubgraphDefinition;
+  const source = baseWorkflow({
+    last_node_id: 9,
+    nodes: [
+      node({
+        id: 9,
+        type: sharedDef.id,
+        itemKey: 'root/node:9',
+        properties: { mobileInstanceNumber: 1 },
+        widgets_values: ['per-instance'],
+      }),
+    ],
+    definitions: { subgraphs: [sharedDef] },
+  });
+
+  it('numbers an existing unnumbered instance before minting one for the paste', () => {
+    // Otherwise the copy lands as "Layer 2" next to a bare "Layer".
+    const unnumbered = {
+      ...source,
+      nodes: [{ ...source.nodes[0], properties: {} }],
+      definitions: { subgraphs: [{ ...sharedDef, extra: undefined }] },
+    } as unknown as typeof source;
+    const payload = buildNodeClipboardPayload(unnumbered, 'root/node:9')!;
+    const result = applyClipboardPaste(unnumbered, payload, null)!;
+
+    const original = result.workflow.nodes.find((n) => n.id === 9)!;
+    const pasted = result.workflow.nodes.find((n) => n.id === result.newNodeIds[0])!;
+    expect(original.properties?.mobileInstanceNumber).toBe(1);
+    expect(pasted.properties?.mobileInstanceNumber).toBe(2);
+  });
+
+  it('same-workflow paste shares the definition and mints an instance number', () => {
+    const payload = buildNodeClipboardPayload(source, 'root/node:9')!;
+    const result = applyClipboardPaste(source, payload, null)!;
+    const next = result.workflow;
+
+    // No clone — still exactly one definition.
+    const defs = next.definitions?.subgraphs ?? [];
+    expect(defs).toHaveLength(1);
+    expect(defs[0].id).toBe(sharedDef.id);
+
+    const pasted = next.nodes.find((n) => n.id === result.newNodeIds[0])!;
+    expect(pasted.type).toBe(sharedDef.id);
+    expect(pasted.properties?.mobileInstanceNumber).toBe(2);
+    expect(pasted.widgets_values).toEqual(['per-instance']);
+    // Counter advanced past the assigned number.
+    const meta = defs[0].extra?.['comfyui-mobile'] as { nextInstanceNumber?: number };
+    expect(meta.nextInstanceNumber).toBe(3);
+  });
+
+  it('cross-workflow paste where the type is absent starts a new type there', () => {
+    const payload = buildNodeClipboardPayload(source, 'root/node:9')!;
+    const target = baseWorkflow({ last_node_id: 1, nodes: [node({ id: 1, type: 'KSampler' })] });
+    const result = applyClipboardPaste(target, payload, null)!;
+    const next = result.workflow;
+
+    const defs = next.definitions?.subgraphs ?? [];
+    expect(defs).toHaveLength(1);
+    expect(defs[0].id).not.toBe(sharedDef.id);
+    expect(defs[0].extra?.['comfyui-mobile']).toBeUndefined();
+    expect(defs[0].name).toBe('Shared');
+
+    const pasted = next.nodes.find((n) => n.id === result.newNodeIds[0])!;
+    expect(pasted.type).toBe(defs[0].id);
+    expect(pasted.properties?.mobileInstanceNumber).toBeUndefined();
   });
 });

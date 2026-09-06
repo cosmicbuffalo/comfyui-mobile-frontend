@@ -48,3 +48,52 @@ export function computeNodeGroupsFor(
   }
   return nodeToGroup;
 }
+
+/**
+ * Resolve each group's immediate geometric parent in one graph scope.
+ *
+ * Prefer the smallest larger group that fully contains the child. The center
+ * fallback matches ComfyUI's permissive group membership behavior for legacy
+ * workflows whose child rectangle protrudes slightly outside its parent.
+ */
+export function computeGroupParentsFor(
+  groups: GroupLike[] | null | undefined,
+): Map<number, number | null> {
+  const parentMap = new Map<number, number | null>();
+  if (!groups) return parentMap;
+
+  for (const child of groups) {
+    const [cx, cy, cw, ch] = child.bounding;
+    const centerX = cx + cw / 2;
+    const centerY = cy + ch / 2;
+    const childArea = cw * ch;
+    let parentId: number | null = null;
+    let parentArea = Number.POSITIVE_INFINITY;
+
+    for (const candidate of groups) {
+      if (candidate.id === child.id) continue;
+      const [px, py, pw, ph] = candidate.bounding;
+      const candidateArea = pw * ph;
+      if (candidateArea <= childArea) continue;
+      const fullyContainsChild =
+        cx >= px
+        && cy >= py
+        && cx + cw <= px + pw
+        && cy + ch <= py + ph;
+      const containsChildCenter =
+        centerX >= px
+        && centerX <= px + pw
+        && centerY >= py
+        && centerY <= py + ph;
+      if ((!fullyContainsChild && !containsChildCenter) || candidateArea >= parentArea) {
+        continue;
+      }
+      parentArea = candidateArea;
+      parentId = candidate.id;
+    }
+
+    parentMap.set(child.id, parentId);
+  }
+
+  return parentMap;
+}

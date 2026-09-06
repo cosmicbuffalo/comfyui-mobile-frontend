@@ -4,6 +4,9 @@ import {
   containerIdEquals,
   containerIdToKey,
   itemRefToDataKey,
+  parseSubgraphDataKey,
+  subgraphDataKey,
+  targetToDataKey,
 } from '@/components/RepositionOverlay/repositionGeometry';
 import type { ContainerId, ItemRef } from '@/utils/mobileLayout';
 
@@ -62,5 +65,34 @@ describe('itemRefToDataKey', () => {
   it('keys nodes / groups / subgraphs distinctly', () => {
     expect(itemRefToDataKey({ type: 'node', id: 5 } as ItemRef)).toBe('node-5');
     expect(itemRefToDataKey({ type: 'subgraph', id: 'abc' } as ItemRef)).toBe('subgraph-abc');
+  });
+});
+
+describe('subgraph reposition keys', () => {
+  it('tells two instances of one type apart', () => {
+    // They shared a key, so `querySelector` found whichever came first — a drag
+    // on the eleventh Section resolved to the first one's layout ref.
+    const first = itemRefToDataKey({ type: 'subgraph', id: 'sg', nodeId: 815 } as ItemRef);
+    const second = itemRefToDataKey({ type: 'subgraph', id: 'sg', nodeId: 1046 } as ItemRef);
+
+    expect(first).not.toBe(second);
+    expect(parseSubgraphDataKey(first)).toEqual({ id: 'sg', nodeId: 815 });
+  });
+
+  it('agrees with the key built from a reposition target', () => {
+    expect(targetToDataKey({ type: 'subgraph', id: 'sg', nodeId: 815 })).toBe(
+      itemRefToDataKey({ type: 'subgraph', id: 'sg', nodeId: 815 } as ItemRef),
+    );
+  });
+
+  it('keeps the bare form for a subgraph used as a container', () => {
+    // Contents are shared by every instance, so a container is the definition.
+    expect(subgraphDataKey('sg')).toBe('subgraph-sg');
+    expect(parseSubgraphDataKey('subgraph-sg')).toEqual({ id: 'sg' });
+  });
+
+  it('survives a definition id that contains the separator', () => {
+    const key = subgraphDataKey('a::b', 7);
+    expect(parseSubgraphDataKey(key)).toEqual({ id: 'a::b', nodeId: 7 });
   });
 });

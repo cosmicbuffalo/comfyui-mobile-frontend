@@ -29,6 +29,77 @@ export async function uploadImageFile(
   return response.json();
 }
 
+/**
+ * Upload one layer of a mask edit.
+ *
+ * `/upload/mask` is not a plain upload: the server opens the file named by
+ * `original_ref`, copies the uploaded image's alpha channel onto it, and saves
+ * the merge (preserving the original's PNG text chunks, so an embedded workflow
+ * survives). That is why `original_ref` has to name the image the mask was
+ * drawn over rather than the file being written -- get it wrong and the mask is
+ * applied to the wrong picture.
+ */
+export async function uploadMaskFile(
+  blob: Blob,
+  filename: string,
+  originalRef: { filename: string; subfolder: string; type: string },
+  options?: { subfolder?: string; type?: string }
+): Promise<{ name: string; subfolder: string; type: string }> {
+  return uploadClipspaceLayer('/upload/mask', blob, filename, originalRef, options);
+}
+
+/**
+ * Upload a mask-editor layer that needs no server-side merge (the paint layer
+ * and the flattened painted image). Same multipart shape as `/upload/mask` so
+ * both calls stay symmetrical; `original_ref` is ignored by this endpoint but
+ * the desktop frontend sends it too.
+ */
+export async function uploadClipspaceImage(
+  blob: Blob,
+  filename: string,
+  originalRef: { filename: string; subfolder: string; type: string },
+  options?: { subfolder?: string; type?: string }
+): Promise<{ name: string; subfolder: string; type: string }> {
+  return uploadClipspaceLayer('/upload/image', blob, filename, originalRef, options);
+}
+
+async function uploadClipspaceLayer(
+  endpoint: string,
+  blob: Blob,
+  filename: string,
+  originalRef: { filename: string; subfolder: string; type: string },
+  options?: { subfolder?: string; type?: string }
+): Promise<{ name: string; subfolder: string; type: string }> {
+  const form = new FormData();
+  form.append('image', blob, filename);
+  form.append('original_ref', JSON.stringify(originalRef));
+  form.append('type', options?.type ?? 'input');
+  form.append('subfolder', options?.subfolder ?? 'clipspace');
+
+  const response = await fetch(endpoint, { method: 'POST', body: form });
+  if (!response.ok) {
+    let detail = response.statusText || `HTTP ${response.status}`;
+    try {
+      const text = await response.text();
+      if (text.trim()) detail = text.trim();
+    } catch {
+      // Keep the status text fallback.
+    }
+    throw new Error(`Failed to upload ${filename} (${response.status}): ${detail}`);
+  }
+
+  const data = await response.json().catch(() => null) as
+    { name?: string; subfolder?: string; type?: string } | null;
+
+  // The server may rename on collision, so the response is authoritative for
+  // what the node should end up pointing at.
+  return {
+    name: data?.name ?? filename,
+    subfolder: data?.subfolder ?? options?.subfolder ?? 'clipspace',
+    type: data?.type ?? options?.type ?? 'input',
+  };
+}
+
 export async function copyFileToInput(
   path: string,
   source: Extract<AssetSource, 'output' | 'temp'>,
@@ -442,6 +513,27 @@ export async function getFileDimensions(
   }
 }
 
+/** Duration in seconds for a batch of videos, keyed by relative asset path. */
+export async function getVideoDurations(
+  source: AssetSource,
+  paths: string[],
+): Promise<Record<string, number>> {
+  if (paths.length === 0) return {};
+  try {
+    const response = await fetch('/mobile/api/video-durations', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ source, paths }),
+    });
+    if (!response.ok) return {};
+    const data = await response.json() as { durations?: Record<string, number> };
+    return data.durations ?? {};
+  } catch {
+    // Duration is decorative metadata; a failed probe should not break browse.
+    return {};
+  }
+}
+
 export async function setFileState(
   source: AssetSource,
   path: string,
@@ -502,11 +594,16 @@ export async function deleteFile(path: string, source: AssetSource = 'output'): 
   throw new Error(error.error || 'Failed to delete file');
 }
 
-export async function getFileWorkflow(
+export interface FileWorkflowMetadata {
+  workflow: Workflow;
+  prompt?: unknown;
+}
+
+export async function getFileWorkflowMetadata(
   path: string,
   source: AssetSource = 'output',
   options?: { signal?: AbortSignal },
-): Promise<Workflow> {
+): Promise<FileWorkflowMetadata> {
   const params = new URLSearchParams({ path, source });
   const response = await fetch(`/mobile/api/file-metadata?${params.toString()}`, {
     signal: options?.signal,
@@ -519,7 +616,10 @@ export async function getFileWorkflow(
   if (!data.workflow) {
     throw new Error('No workflow metadata found');
   }
-  return data.workflow as Workflow;
+  return {
+    workflow: data.workflow as Workflow,
+    ...(data.prompt !== undefined ? { prompt: data.prompt } : {}),
+  };
 }
 
 export async function getFileWorkflowAvailability(

@@ -10,7 +10,7 @@ import {
 } from "@/utils/mobileLayout";
 import type { RepositionTarget } from "@/hooks/useRepositionMode";
 import {
-  collectAllContainerIds,
+  collectAllGroupKeys,
   collectSiblingBounds,
   computeInsertPositionByThreshold,
   containerIdEquals,
@@ -35,10 +35,8 @@ export interface PendingDrag {
   targetRef: ItemRef;
   target: RepositionTarget;
   allGroupKeys: string[];
-  allSubgraphIds: string[];
   crossContainerEnabled: boolean;
   disallowedGroupKeys: Set<string>;
-  disallowedSubgraphIds: Set<string>;
 }
 
 export interface DragVisualState {
@@ -165,36 +163,31 @@ export function useDragEngine({
         setCurrentTarget(parsed.target);
       }
 
-      // Nodes and groups can cross containers; subgraphs reorder within their parent.
+      // A subgraph placeholder crosses containers like anything else on the
+      // list. It was pinned inside its own parent because every instance of a
+      // type shared one reposition key, so a cross-container move could not say
+      // which of them it was carrying; the key names the instance now.
       const crossContainerEnabled =
-        parsed.itemRef.type === "node" || parsed.itemRef.type === "group";
-      const allContainers = crossContainerEnabled
-        ? collectAllContainerIds(workingLayout)
-        : { groupKeys: [], subgraphIds: [] };
+        parsed.itemRef.type === "node"
+        || parsed.itemRef.type === "group"
+        || parsed.itemRef.type === "subgraph";
+      const allGroupKeys = crossContainerEnabled ? collectAllGroupKeys(workingLayout) : [];
 
+      // A group cannot be dropped into itself or into anything it contains.
       const disallowedGroupKeys = new Set<string>();
-      const disallowedSubgraphIds = new Set<string>();
       if (parsed.itemRef.type === "group") {
-        const walkItems = (items: ItemRef[]) => {
+        const walkGroups = (items: ItemRef[]) => {
           for (const ref of items) {
-            if (ref.type === "group") {
-              if (!disallowedGroupKeys.has(getGroupKey(ref.id, ref.subgraphId))) {
-                disallowedGroupKeys.add(getGroupKey(ref.id, ref.subgraphId));
-                walkItems(workingLayout.groups[getGroupKey(ref.id, ref.subgraphId)] ?? []);
-              }
-              continue;
-            }
-            if (ref.type === "subgraph") {
-              if (!disallowedSubgraphIds.has(ref.id)) {
-                disallowedSubgraphIds.add(ref.id);
-                walkItems(workingLayout.subgraphs[ref.id] ?? []);
-              }
-            }
+            if (ref.type !== "group") continue;
+            const groupKey = getGroupKey(ref.id, ref.subgraphId);
+            if (disallowedGroupKeys.has(groupKey)) continue;
+            disallowedGroupKeys.add(groupKey);
+            walkGroups(workingLayout.groups[groupKey] ?? []);
           }
         };
 
         disallowedGroupKeys.add(parsed.itemRef.itemKey);
-        walkItems(workingLayout.groups[parsed.itemRef.itemKey] ?? []);
+        walkGroups(workingLayout.groups[parsed.itemRef.itemKey] ?? []);
       }
 
       pendingDragRef.current = {
@@ -206,11 +199,9 @@ export function useDragEngine({
         targetKey: dragKey,
         targetRef: parsed.itemRef,
         target: parsed.target,
-        allGroupKeys: allContainers.groupKeys,
-        allSubgraphIds: allContainers.subgraphIds,
+        allGroupKeys,
         crossContainerEnabled,
         disallowedGroupKeys,
-        disallowedSubgraphIds,
       };
       dragDeltaRef.current = 0;
       insertIndexRef.current = location.index;
@@ -288,56 +279,9 @@ export function useDragEngine({
         }
       }
 
-      for (const subgraphId of pending.allSubgraphIds) {
-        if (
-          pending.targetRef.type === "subgraph" &&
-          pending.targetRef.id === subgraphId
-        )
-          continue;
-        if (pending.disallowedSubgraphIds.has(subgraphId)) continue;
-        if (
-          collapsedItems[
-            toStableStateKey(makeLocationPointer({ type: "subgraph", subgraphId }))
-          ] ??
-          false
-        ) {
-          continue;
-        }
-        const sgEl = container.querySelector(
-          `[data-reposition-item="subgraph-${subgraphId}"]`,
-        ) as HTMLElement | null;
-        if (!sgEl) continue;
-        const rect = sgEl.getBoundingClientRect();
-        const headerEl = sgEl.querySelector(
-          `[data-reposition-header="subgraph-${subgraphId}"]`,
-        ) as HTMLElement | null;
-        const footerEl = sgEl.querySelector(
-          `[data-reposition-footer="subgraph-${subgraphId}"]`,
-        ) as HTMLElement | null;
-        const headerRect = headerEl?.getBoundingClientRect() ?? null;
-        const footerRect = footerEl?.getBoundingClientRect() ?? null;
-        if (
-          !isWithinContainerByBoundaryRows(
-            draggedRect,
-            rect,
-            headerRect,
-            footerRect,
-            movingDown,
-            OVERLAP_THRESHOLD_RATIO,
-          )
-        ) {
-          continue;
-        }
-        const area = rect.width * rect.height;
-        if (area < bestArea) {
-          bestArea = area;
-          hoverContainer = { scope: "subgraph", subgraphId };
-        }
-      }
-
       return hoverContainer;
     },
-    [collapsedItems, toStableStateKey, scopeSubgraphId],
+    [collapsedItems, scopeSubgraphId],
   );
 
   const computeInsertIndex = useCallback(

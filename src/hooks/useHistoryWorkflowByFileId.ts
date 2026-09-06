@@ -8,6 +8,7 @@ type HistoryWorkflowEntry = {
   // always present, so callers can still associate a file with its run (e.g. to
   // delete the run's queue card) even when no workflow is available to load.
   workflow?: NonNullable<ViewerImage['workflow']>;
+  prompt?: unknown;
   promptId: string;
   hidden?: boolean;
 };
@@ -26,6 +27,7 @@ export function buildHistoryWorkflowByFileIdMap(
       if (map.has(key)) continue;
       map.set(key, {
         workflow: entry.workflow,
+        prompt: entry.prompt,
         promptId: entry.prompt_id,
         hidden: entry.hidden,
       });

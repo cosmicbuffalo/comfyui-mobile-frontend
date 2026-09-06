@@ -50,4 +50,35 @@ describe('NodeCardHeader typography', () => {
       'Fold Example Node',
     );
   });
+
+  it('puts the instance badge after the node id, not before it', async () => {
+    await act(async () => {
+      root.render(
+        <NodeCardHeader
+          nodeId={7}
+          displayName="Styler"
+          instanceBadge={<button type="button" className="badge">2/3</button>}
+          isEditingLabel={false}
+          labelValue="Styler"
+          labelInputRef={createRef<HTMLInputElement>()}
+          onLabelChange={() => {}}
+          onLabelBlur={() => {}}
+          isCollapsed={false}
+          isBypassed={false}
+          overallProgress={null}
+          hasErrors={false}
+          errorIconRef={createRef<HTMLButtonElement>()}
+          errorPopoverOpen={false}
+          setErrorPopoverOpen={() => {}}
+          toggleNodeFold={() => {}}
+        />,
+      );
+    });
+
+    // The id keeps the position it holds on every other card; the badge follows.
+    const idBadge = container.querySelector('#node-id-badge-7')!;
+    const badge = container.querySelector('.badge')!;
+    expect(idBadge.compareDocumentPosition(badge) & Node.DOCUMENT_POSITION_FOLLOWING)
+      .toBeTruthy();
+  });
 });

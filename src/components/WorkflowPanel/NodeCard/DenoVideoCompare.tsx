@@ -337,7 +337,7 @@ export function DenoVideoCompare({
           {t('Swap A/B')}
         </button>
         <button type="button" className="rounded border border-white/15 px-2 py-1 text-xs" onClick={() => void rootRef.current?.requestFullscreen?.()}>
-          Fullscreen
+          {t('Fullscreen')}
         </button>
       </div>
       <div className="relative">

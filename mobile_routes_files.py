@@ -11,6 +11,7 @@ import shutil
 
 import folder_paths
 import file_utils as _file_utils
+import mobile_auth as _mobile_auth
 import mobile_file_state as _mobile_file_state
 import mobile_input_aliases as _mobile_input_aliases
 from aiohttp import web
@@ -22,6 +23,158 @@ from mobile_common import (
     _safe_int,
     _source_base_dir,
 )
+def _may_modify(path: str, viewer=None) -> bool:
+    """Whether this viewer may write to a path.
+
+    A directory is writable when everything under it is: a delete or a move
+    that would take someone else's file with it is refused whole rather than
+    half-applied.
+    """
+    if not _mobile_auth.is_enabled():
+        return True
+    if not os.path.isdir(path):
+        return _mobile_auth.can_modify_file(path, user=viewer)
+    for root, _dirs, files in os.walk(path):
+        for name in files:
+            if not _mobile_auth.can_modify_file(os.path.join(root, name), user=viewer):
+                return False
+    return True
+
+
+# How many files to look at before giving an unassigned folder the benefit of
+# the doubt. A folder is kept the moment one visible file is found, so this only
+# bounds the cost of folders holding nothing the viewer may see.
+_ISOLATED_FOLDER_SCAN_CAP = 400
+
+
+def _is_isolated(viewer) -> bool:
+    return bool(viewer) and 'isolated' in {
+        r.casefold() for r in (viewer.get('roles') or [])
+    }
+
+
+def _holds_anything_visible(dir_path: str, viewer) -> bool:
+    """Whether an unassigned folder holds a single file this viewer may read.
+
+    Folders without an ownership assignment pass through for ordinary accounts,
+    which is what keeps ad-hoc subfolders navigable. An `isolated` account is
+    the exception -- the role means "sees only its own", and a folder whose
+    every file is refused should not sit in the listing advertising its name.
+    """
+    seen = 0
+    for root, _dirs, files in os.walk(dir_path):
+        for name in files:
+            if seen >= _ISOLATED_FOLDER_SCAN_CAP:
+                return True
+            seen += 1
+            if _mobile_auth.can_read_file(os.path.join(root, name), user=viewer):
+                return True
+    # An empty folder holds nothing to hide, and hiding it breaks the one that
+    # matters most: a folder the viewer has just made, which is empty by
+    # definition and would vanish the moment it was created.
+    return seen == 0
+
+
+def _is_admin(viewer) -> bool:
+    return bool(viewer) and 'admin' in {
+        r.casefold() for r in (viewer.get('roles') or [])
+    }
+
+
+def _filter_by_ownership(results, source, base_dir, viewer, include_shared):
+    """Drop what this viewer may not see, and badge what is left.
+
+    Files are filtered by the same rule that guards their bytes, so a listing
+    can never name a file the viewer would be refused. Folders carry
+    assignments of their own — the nearest assigned ancestor decides, and an
+    unassigned folder passes through, which keeps ad-hoc subfolders navigable.
+
+    A no-op when the auth node is absent: `is_enabled()` is False and the
+    listing behaves exactly as it did before.
+    """
+    if not _mobile_auth.is_enabled():
+        return results
+
+    viewer_is_admin = _is_admin(viewer)
+    files = [r for r in results if r.get('type') != 'dir']
+    by_path = {os.path.join(base_dir, r['path']): r for r in files}
+
+    if source == 'output':
+        # Outputs: ownership is the boundary, and unowned is admin-only.
+        allowed = set(_mobile_auth.filter_files(list(by_path), user=viewer))
+    elif viewer_is_admin:
+        allowed = set(by_path)
+    else:
+        # Inputs and temp invert the unowned rule: the pre-existing shared pool
+        # stays visible (hiding it would empty every LoadImage picker), and
+        # only another user's private upload drops out. An `isolated` account
+        # is the exception again -- the shared pool is still other people's
+        # files, and the role says it sees only its own.
+        viewer_is_isolated = _is_isolated(viewer)
+        allowed = set()
+        for full_path in by_path:
+            badge = _mobile_auth.badge_for_file(full_path, user=viewer)
+            if viewer_is_isolated:
+                if badge and badge.get('owned'):
+                    allowed.add(full_path)
+                continue
+            if (badge and not badge.get('owned') and not badge.get('globe')
+                    and badge.get('avatarUserId')):
+                continue
+            allowed.add(full_path)
+
+    # A soft delete is gone from THIS viewer's filesystem: a non-owner's delete
+    # lands there rather than on disk, and honoring it is what makes it real.
+    allowed -= set(_mobile_auth.virtually_deleted_paths(list(allowed), user=viewer))
+
+    for full_path, entry in by_path.items():
+        if full_path not in allowed:
+            continue
+        badge = _mobile_auth.badge_for_file(full_path, user=viewer)
+        if badge:
+            entry['ownership'] = badge
+        # Sharing not opted into: drop everything that is not the viewer's own.
+        # Admins always see all — they are operating, not browsing.
+        if (not include_shared and source == 'output' and not viewer_is_admin
+                and badge and not badge.get('owned')):
+            allowed.discard(full_path)
+
+    dir_entries = [r for r in results if r.get('type') == 'dir']
+    dropped_dirs = set()
+    if dir_entries and source in ('output', 'input'):
+        dir_badges = _mobile_auth.folder_badges(
+            [r['path'] for r in dir_entries], tree=source, user=viewer)
+        viewer_is_isolated = _is_isolated(viewer)
+        for r in dir_entries:
+            badge = dir_badges.get(r['path'])
+            if not badge:
+                # No verdict: normally pass through. For an isolated viewer,
+                # keep it only if there is something inside to come for.
+                if viewer_is_isolated and not _holds_anything_visible(
+                        os.path.join(base_dir, r['path']), viewer):
+                    dropped_dirs.add(r['path'])
+                continue
+            if not badge.get('visible'):
+                dropped_dirs.add(r['path'])
+                continue
+            if (not include_shared and source == 'output'
+                    and not viewer_is_admin and not badge.get('owned')):
+                dropped_dirs.add(r['path'])
+                continue
+            r['ownership'] = {
+                'globe': badge.get('globe', False),
+                'owned': badge.get('owned', False),
+                'avatarUserId': badge.get('avatarUserId'),
+            }
+
+    return [
+        r for r in results
+        if (r.get('type') == 'dir' and r['path'] not in dropped_dirs)
+        or (r.get('type') != 'dir'
+            and os.path.join(base_dir, r['path']) in allowed)
+    ]
+
+
 async def api_list_files(request):
     try:
         query = request.rel_url.query
@@ -45,10 +198,18 @@ async def api_list_files(request):
         limit = _safe_int(query.get('limit'), 0)
         offset = _safe_int(query.get('offset'), 0)
 
+        include_shared = query.get('includeShared', 'true').lower() != 'false'
+
         # Security check for path traversal
         target_path = _safe_join(base_dir, subpath)
         if target_path is None:
             return web.json_response({"error": "Access denied"}, status=403)
+
+        # Resolved HERE rather than inside the listing thread: the auth node
+        # reads the viewer from a ContextVar, and run_in_executor does not
+        # propagate one — resolving it there yields None, which the ownership
+        # filter reads as "hide everything". None here just means auth is off.
+        viewer = _mobile_auth.current_user()
 
         if not os.path.exists(target_path):
             return web.json_response({"error": "Path not found"}, status=404)
@@ -145,6 +306,13 @@ async def api_list_files(request):
             if not show_hidden:
                 results = [r for r in results if not r.get('hidden')]
 
+            # Ownership last: everything above it is presentation, this is the
+            # access boundary. Without it the listing walks the tree off disk
+            # and hands every account the whole thing — names, sizes and folder
+            # structure — even though the bytes behind them are refused.
+            results = _filter_by_ownership(results, source, base_dir, viewer,
+                                           include_shared)
+
             total = len(results)
             if limit > 0:
                 results = results[offset:offset+limit]
@@ -181,6 +349,11 @@ async def api_delete_file(request):
         # Refuse to delete the source root itself ({"path": "."} resolves
         # to the base dir and would rmtree the whole output/input tree).
         if os.path.realpath(target_path) == os.path.realpath(base_dir):
+            return web.json_response({"error": "Access denied"}, status=403)
+
+        # Ownership, not just path traversal: without this any signed-in
+        # account could delete another user's outputs through this endpoint.
+        if not _may_modify(target_path, _mobile_auth.current_user()):
             return web.json_response({"error": "Access denied"}, status=403)
 
         def _delete_target():
@@ -294,6 +467,14 @@ async def api_set_hidden(request):
         target_path = _safe_join(base_dir, path)
         if target_path is None:
             return web.json_response({"error": "Access denied"}, status=403)
+        # Hiding is a declutter toggle rather than access control, so reading
+        # is the right bar: you may fold away anything you can see. (Per-viewer
+        # hidden state, so one account's toggle cannot reach another's listing,
+        # is the multiuser-auth branch's answer and is not ported here.)
+        if (_mobile_auth.is_enabled() and os.path.isfile(target_path)
+                and not _mobile_auth.can_read_file(target_path,
+                                                   user=_mobile_auth.current_user())):
+            return web.json_response({"error": "Access denied"}, status=403)
         loop = asyncio.get_event_loop()
         applied = await loop.run_in_executor(
             None,
@@ -403,9 +584,12 @@ async def api_move_files(request):
         # otherwise block every other request for its duration.
         asset_source = source
         move_specs = []
+        move_viewer = _mobile_auth.current_user()
         for rel in sources:
             src_path = _safe_join(base_dir, rel)
             if src_path is None:
+                return web.json_response({"error": "Access denied"}, status=403)
+            if not _may_modify(src_path, move_viewer):
                 return web.json_response({"error": "Access denied"}, status=403)
             move_specs.append((rel, src_path))
 
@@ -528,6 +712,8 @@ async def api_rename_file(request):
             return web.json_response({"error": "Access denied"}, status=403)
         if not os.path.exists(src_path):
             return web.json_response({"error": "Source not found"}, status=404)
+        if not _may_modify(src_path, _mobile_auth.current_user()):
+            return web.json_response({"error": "Access denied"}, status=403)
 
         dst_path = os.path.abspath(os.path.join(os.path.dirname(src_path), new_name))
         if not _is_within_dir(base_dir, dst_path):

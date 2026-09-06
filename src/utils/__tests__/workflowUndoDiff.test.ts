@@ -38,7 +38,12 @@ const nodeTypes = {
 describe('diffWorkflowChange', () => {
   it('reports no change when workflows are identical references', () => {
     const a = wf([node(1)]);
-    expect(diffWorkflowChange(a, a, null)).toEqual({ meaningful: false, structural: false, changedNodeIds: [] });
+    expect(diffWorkflowChange(a, a, null)).toEqual({
+      meaningful: false,
+      structural: false,
+      changedNodeIds: [],
+      changedTargets: [],
+    });
   });
 
   it('flags an added node as a structural, meaningful change', () => {
@@ -112,6 +117,46 @@ describe('diffWorkflowChange', () => {
 
     expect(diff.meaningful).toBe(true);
     expect(diff.changedNodeIds).toContain(1);
+  });
+
+  it('flags subgraph definition metadata edits (slot label, extra, name) as structural', () => {
+    // Boundary slot labels, the promotion flag in extra, and the definition
+    // name all live outside the def's nodes/groups/links — the old diff only
+    // compared those three, so such edits never snapshotted and Undo skipped
+    // straight past them.
+    const def = (over: Record<string, unknown> = {}) => ({
+      id: 'sg-a',
+      name: 'Base',
+      inputs: [{ name: 'clip', type: 'CLIP', linkIds: [1] }],
+      outputs: [],
+      extra: {},
+      nodes: [node(1)],
+      links: [],
+      ...over,
+    });
+    const base = { ...wf([]), definitions: { subgraphs: [def()] } } as unknown as Workflow;
+
+    const labelEdit = {
+      ...wf([]),
+      definitions: { subgraphs: [def({ inputs: [{ name: 'clip', type: 'CLIP', linkIds: [1], label: 'Style {n}' }] })] },
+    } as unknown as Workflow;
+    expect(diffWorkflowChange(base, labelEdit, null)).toMatchObject({ meaningful: true, structural: true });
+
+    const extraEdit = {
+      ...wf([]),
+      definitions: { subgraphs: [def({ extra: { 'comfyui-mobile': { nextInstanceNumber: 2 } } })] },
+    } as unknown as Workflow;
+    expect(diffWorkflowChange(base, extraEdit, null)).toMatchObject({ meaningful: true, structural: true });
+
+    const nameEdit = {
+      ...wf([]),
+      definitions: { subgraphs: [def({ name: 'Renamed' })] },
+    } as unknown as Workflow;
+    expect(diffWorkflowChange(base, nameEdit, null)).toMatchObject({ meaningful: true, structural: true });
+
+    // Unchanged defs (same content, new object) stay quiet.
+    const same = { ...wf([]), definitions: { subgraphs: [def()] } } as unknown as Workflow;
+    expect(diffWorkflowChange(base, same, null).meaningful).toBe(false);
   });
 
   it('treats a node.properties edit as meaningful', () => {

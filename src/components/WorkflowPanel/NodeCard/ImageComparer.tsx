@@ -3,6 +3,7 @@ import { getImageUrl, getImagePreviewUrl } from '@/api/client';
 import { useGenerationSettingsStore } from '@/hooks/useGenerationSettings';
 import { MenuIcon } from '@/components/icons/MenuIcon';
 import type { ViewerImage } from '@/utils/viewerImages';
+import { useI18n } from '@/i18n';
 
 interface ComparerImage {
   filename: string;
@@ -45,6 +46,7 @@ export function NodeCardImageComparer({
   displayName,
   onOpenViewer,
 }: NodeCardImageComparerProps) {
+  const { t } = useI18n();
   const containerRef = useRef<HTMLDivElement>(null);
   // Subscribe so the preview refreshes immediately when the WebP preference is
   // toggled (the URL helpers read the flag, but this drives the re-render).
@@ -182,7 +184,7 @@ export function NodeCardImageComparer({
     return (
       <div className="image-comparer-fallback mb-3">
         <div className="text-xs text-slate-500 mb-1.5 uppercase tracking-wide">
-          Image Comparer
+          {t('Image Comparer')}
         </div>
         <img
           src={onlySrc}
@@ -199,7 +201,7 @@ export function NodeCardImageComparer({
   return (
     <div className="image-comparer mb-3">
       <div className="text-xs text-slate-500 mb-1.5 uppercase tracking-wide">
-        Image Comparer
+        {t('Image Comparer')}
       </div>
       <div
         ref={containerRef}

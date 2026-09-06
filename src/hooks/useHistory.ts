@@ -488,6 +488,7 @@ export const useHistoryStore = create<HistoryState>((set, get) => ({
             ? t('Execution did not complete ({status}). Some outputs may be missing.', { status: displayStatus })
             : t('Execution did not complete. Some outputs may be missing.');
         }
+        const executedPrompt = item.prompt[2] as Record<string, unknown>;
         const workflow = (item.prompt?.[3] as { extra_pnginfo?: { workflow?: Workflow } } | undefined)?.extra_pnginfo?.workflow;
         const extraData = (item.prompt?.[3] ?? {}) as Record<string, unknown>;
         const hidden = extraData[HIDDEN_WORKFLOW_EXTRA_DATA_KEY] === true;
@@ -500,7 +501,7 @@ export const useHistoryStore = create<HistoryState>((set, get) => ({
           interrupted,
           errorMessage,
           outputs: { images },
-          prompt: item.prompt[2] as Record<string, unknown>,
+          prompt: executedPrompt,
           workflow,
           hidden,
           queueRequest: {

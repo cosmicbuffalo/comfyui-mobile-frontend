@@ -1,9 +1,11 @@
 import type { RefObject } from 'react';
 import { TextareaActions } from '../../InputControls/TextareaActions';
+import { useI18n } from '@/i18n';
 
 interface NodeCardNoteProps {
   noteText: string;
-  noteLinkified: React.ReactNode;
+  noteBody: React.ReactNode;
+  isMarkdown: boolean;
   noteWidgetIndex: number | null;
   isEditingNote: boolean;
   setIsEditingNote: (next: boolean) => void;
@@ -14,7 +16,8 @@ interface NodeCardNoteProps {
 
 export function NodeCardNote({
   noteText,
-  noteLinkified,
+  noteBody,
+  isMarkdown,
   noteWidgetIndex,
   isEditingNote,
   setIsEditingNote,
@@ -22,6 +25,7 @@ export function NodeCardNote({
   noteTextareaRef,
   onNoteTap
 }: NodeCardNoteProps) {
+  const { t } = useI18n();
   const handleNoteUpdate = (value: string) => {
     if (noteWidgetIndex === null) return;
     onUpdateNote(value);
@@ -36,7 +40,7 @@ export function NodeCardNote({
     <div className="mb-3 group" data-textarea-root="true">
       <div className="flex items-center justify-between mb-1.5" data-textarea-header="true">
         <div className="text-xs text-slate-500 uppercase tracking-wide">
-          Note
+          {t('Note')}
         </div>
         {isEditingNote && (
           <TextareaActions
@@ -59,11 +63,13 @@ export function NodeCardNote({
         />
       ) : (
         <div
-          className="w-full p-3 border rounded-lg text-base whitespace-pre-wrap break-words note-display"
+          className={`w-full p-3 border rounded-lg text-base break-words note-display${
+            isMarkdown ? ' note-markdown' : ' whitespace-pre-wrap'
+          }`}
           onDoubleClick={() => setIsEditingNote(true)}
           onTouchEnd={onNoteTap}
         >
-          {noteLinkified}
+          {noteBody}
         </div>
       )}
     </div>

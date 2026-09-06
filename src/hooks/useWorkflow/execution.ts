@@ -9,8 +9,8 @@ import {useSeedStore} from "@/hooks/useSeed";
 import {useGenerationSettingsStore} from "@/hooks/useGenerationSettings";
 import {obfuscateQueuedInputPaths} from "@/utils/inputPathAliases";
 import {buildWorkflowPromptInputs, getNodeWidgetIndexMap} from "@/utils/workflowInputs";
-import {expandWorkflowSubgraphs} from "@/utils/expandWorkflowSubgraphs";
-import {type SeedMode, DEFAULT_SPECIAL_SEED_RANGE, isSpecialSeedValue, findSeedWidgetIndex, generateSeedFromNode, clampSeedToNodeBounds, hasSeedControlWidget, findSeedControlWidgetIndex, resolveSpecialSeedToUse} from "@/utils/seedUtils";
+import {expandWorkflowSubgraphs, isInertMode} from "@/utils/expandWorkflowSubgraphs";
+import {type SeedMode, DEFAULT_SPECIAL_SEED_RANGE, isSpecialSeedValue, findSeedWidgetIndex, generateSeedFromNode, clampSeedToNodeBounds, hasSeedControlWidget, findSeedControlWidgetIndex, nodeTypeStripsSeedControl, resolveSpecialSeedToUse} from "@/utils/seedUtils";
 import {injectMarketingNote} from "@/utils/marketingNote";
 import {collectOasisPreviewIoIds, ensureOasisPreviewIoIds} from "@/utils/nodeFrontendPreviews";
 import {isSetGetNode} from "@/utils/setGetNodes";
@@ -18,6 +18,7 @@ import {isUseEverywhereNode, resolveUseEverywhereForPrompt} from "@/utils/useEve
 import {isSubgraphPlaceholder} from "@/utils/canonicalWorkflowOps";
 import {resolveNodeIdentityFromHierarchicalKey} from "@/utils/workflowHierarchy";
 import {validateAndNormalizeWorkflow} from "@/utils/workflowValidator";
+import {applyWidgetVariation, formatVariationValue} from "@/utils/widgetVariations";
 import {HIDDEN_WORKFLOW_EXTRA_DATA_KEY, isWorkflowHidden} from "@/utils/workflowHidden";
 import {stripWorkflowClientMetadata} from "./metadataNormalization";
 import {applySeedOverridesForExpansion, buildSubgraphSeedWidgetDescriptors, inferSeedMode} from "./seedExpansion";
@@ -556,6 +557,7 @@ const queueWorkflow: WorkflowState["queueWorkflow"] = async (
   sessionId,
   isInfiniteReEnqueue,
   queueFront,
+  variations,
 ) => {
   const state = get();
   const sid = sessionId ?? state.activeSessionId;
@@ -740,6 +742,18 @@ const queueWorkflow: WorkflowState["queueWorkflow"] = async (
       let seedToUse: number | null = null;
       if (isSpecialSeedValue(rawSeed)) {
         seedToUse = resolveSpecialSeedToUse(rawSeed, lastSeed, nodeTypes, node);
+      } else if (nodeTypeStripsSeedControl(node.type)) {
+        // For a node that encodes its mode in the seed value itself (rgthree's
+        // Seed), a non-special value IS the fixed seed and there is no second
+        // mode source -- upstream's getSeedToUse() returns it verbatim.
+        //
+        // The mode store must not get a vote here. It is persisted to
+        // localStorage and is only updated when the mode is changed through our
+        // UI, so typing a number straight into the seed field (or loading a
+        // workflow whose mode was inferred under the old heuristic) would leave
+        // a stale "randomize" behind and silently re-roll a seed the user had
+        // pinned.
+        return node;
       } else if (mode && mode !== "fixed") {
         if (mode === "randomize") {
           seedToUse = generateSeedFromNode(nodeTypes, node);
@@ -773,29 +787,46 @@ const queueWorkflow: WorkflowState["queueWorkflow"] = async (
     let frontBatchBaseNumber: number | null = null;
     for (let i = 0; i < count; i++) {
       const seedOverrides: Record<string, number> = {};
-      // Handle seed modes for root nodes and inner subgraph nodes.
-      const updatedNodes = currentWorkflow.nodes.map((node) =>
-        processSeedNode(node, seedOverrides, null),
-      );
-      const subgraphDefsForSeed = currentWorkflow.definitions?.subgraphs ?? [];
-      const updatedSubgraphDefs = subgraphDefsForSeed.map((sg) => {
-        const updatedSgNodes = (sg.nodes ?? []).map((node) =>
-          processSeedNode(node, seedOverrides, sg.id),
+      // A variation run deliberately skips seed handling entirely. Its whole
+      // point is that ONE input differs between the queued runs, so a seed set
+      // to randomize/increment must not advance underneath it — every run
+      // reuses the seed exactly as it currently stands. Skipping this block
+      // also keeps the run from writing anything back into the session: the
+      // variation lives only in the per-iteration clone below, so the user's
+      // widget still reads what it read before they pressed Run variations.
+      if (!variations) {
+        // Handle seed modes for root nodes and inner subgraph nodes.
+        const updatedNodes = currentWorkflow.nodes.map((node) =>
+          processSeedNode(node, seedOverrides, null),
         );
-        const changed = updatedSgNodes.some((n, idx) => n !== (sg.nodes ?? [])[idx]);
-        return changed ? { ...sg, nodes: updatedSgNodes } : sg;
-      });
+        const subgraphDefsForSeed = currentWorkflow.definitions?.subgraphs ?? [];
+        const updatedSubgraphDefs = subgraphDefsForSeed.map((sg) => {
+          const updatedSgNodes = (sg.nodes ?? []).map((node) =>
+            processSeedNode(node, seedOverrides, sg.id),
+          );
+          const changed = updatedSgNodes.some((n, idx) => n !== (sg.nodes ?? [])[idx]);
+          return changed ? { ...sg, nodes: updatedSgNodes } : sg;
+        });
 
-      // Update current workflow with new seeds for this iteration
-      currentWorkflow = {
-        ...currentWorkflow,
-        nodes: updatedNodes,
-        definitions: currentWorkflow.definitions
-          ? { ...currentWorkflow.definitions, subgraphs: updatedSubgraphDefs }
-          : currentWorkflow.definitions,
-      };
-      writeSeedLastValues(nextSeedLastValues);
-      writeWorkflow(currentWorkflow);
+        // Update current workflow with new seeds for this iteration
+        currentWorkflow = {
+          ...currentWorkflow,
+          nodes: updatedNodes,
+          definitions: currentWorkflow.definitions
+            ? { ...currentWorkflow.definitions, subgraphs: updatedSubgraphDefs }
+            : currentWorkflow.definitions,
+        };
+        writeSeedLastValues(nextSeedLastValues);
+        writeWorkflow(currentWorkflow);
+      }
+
+      // What THIS iteration executes. Identical to currentWorkflow for a normal
+      // run; for a variation run it carries this iteration's value for the one
+      // varied widget. Never written back to the store — see above.
+      const variationValue = variations ? variations.values[i] : undefined;
+      const iterationWorkflow = variations
+        ? applyWidgetVariation(currentWorkflow, variations, variationValue) ?? currentWorkflow
+        : currentWorkflow;
 
       // Repair link/slot consistency BEFORE building the executed prompt,
       // not only before embedding the workflow in the PNG (see below). An
@@ -805,7 +836,7 @@ const queueWorkflow: WorkflowState["queueWorkflow"] = async (
       // saved workflow looks correct — but the prompt is built from
       // inputs[].link, so without this it would silently drop that
       // connection and the downstream branch never executes.
-      const validatedForQueue = validateAndNormalizeWorkflow(currentWorkflow);
+      const validatedForQueue = validateAndNormalizeWorkflow(iterationWorkflow);
 
       // Seed overrides recorded above for a promoted-seed placeholder (no
       // real control_after_generate on the boundary, so processSeedNode
@@ -918,7 +949,10 @@ const queueWorkflow: WorkflowState["queueWorkflow"] = async (
       );
 
       for (const node of expandedForQueue.nodes) {
-        if (node.mode === 4) continue;
+        // Bypassed (4) and muted (2) nodes are both absent from ComfyUI's
+        // prompt; resolveSource treats mode-2 sources as gone, so emitting
+        // a muted node here would strand its consumers with null inputs.
+        if (isInertMode(node.mode)) continue;
         // SetNode/GetNode are virtual relays: consumers already resolve
         // through them to the real source (resolveSource), so drop them
         // from the prompt. Leaving them out of allowedNodeIds means the
@@ -946,7 +980,7 @@ const queueWorkflow: WorkflowState["queueWorkflow"] = async (
       }
 
       for (const node of expandedForQueue.nodes) {
-        if (node.mode === 4) continue;
+        if (isInertMode(node.mode)) continue;
         const classType = classTypeById.get(node.id);
         if (!classType) continue;
         const inputs = buildWorkflowPromptInputs(
@@ -985,7 +1019,7 @@ const queueWorkflow: WorkflowState["queueWorkflow"] = async (
 
       // Embed the canonical workflow (not expanded) so desktop ComfyUI can reload it correctly.
       // Run validateAndNormalizeWorkflow to repair any stale SubgraphIO.linkIds before embedding.
-      let queuedWorkflow = validateAndNormalizeWorkflow(stripWorkflowClientMetadata(currentWorkflow));
+      let queuedWorkflow = validateAndNormalizeWorkflow(stripWorkflowClientMetadata(iterationWorkflow));
       let queuedPrompt = prompt;
       if (useGenerationSettingsStore.getState().obfuscateSharedInputPaths) {
         const obfuscated = await obfuscateQueuedInputPaths(prompt, queuedWorkflow, nodeTypes);
@@ -1002,7 +1036,12 @@ const queueWorkflow: WorkflowState["queueWorkflow"] = async (
       }
       const metadataFilename = isActive ? state.currentFilename : parked?.currentFilename ?? null;
       const metadataSource = isActive ? state.workflowSource : parked?.workflowSource ?? null;
-      const metadataWorkflowLabel = queueWorkflowLabel(metadataFilename, metadataSource);
+      const baseWorkflowLabel = queueWorkflowLabel(metadataFilename, metadataSource);
+      // Without this every run in a variation batch is an identically-named
+      // queue card and the comparison it exists for is unreadable.
+      const metadataWorkflowLabel = variations
+        ? `${baseWorkflowLabel} · ${variations.widgetName}: ${formatVariationValue(variationValue)}`
+        : baseWorkflowLabel;
       const hiddenWorkflow = isWorkflowHidden(metadataSource, metadataFilename);
       const previewMethod = useGenerationSettingsStore.getState().previewMethod;
       // VHS's optional animated latent protocol is enabled through
@@ -1187,7 +1226,11 @@ const queueWorkflow: WorkflowState["queueWorkflow"] = async (
               originalForSession,
               nodeTypes,
             );
-            const diff = computeQueueWorkflowDiff(base, currentWorkflow);
+            // Target the iteration's workflow so a variation run's card shows
+            // the value it is testing. The rolling base below still advances on
+            // currentWorkflow, so the variation never leaks into the diff the
+            // NEXT ordinary run is measured against.
+            const diff = computeQueueWorkflowDiff(base, iterationWorkflow);
             workflowDiffForMetadata = diff;
             useQueueStore.getState().recordWorkflowDiff(promptId, diff);
             const enqueuedSnapshot = structuredClone(currentWorkflow);

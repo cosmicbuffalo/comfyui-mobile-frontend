@@ -90,8 +90,13 @@ describe('resolveViewerItemWorkflowLoad', () => {
 
   it('falls back to history map when viewer item has no embedded workflow', () => {
     const historyWorkflow = { nodes: [{ id: 1 }], links: [] } as unknown as Workflow;
+    const executedPrompt = { '1': { inputs: { seed: 123 } } };
     const historyMap = new Map([
-      ['output/sub/dir/img.png', { workflow: historyWorkflow, promptId: 'p-from-history' }],
+      ['output/sub/dir/img.png', {
+        workflow: historyWorkflow,
+        prompt: executedPrompt,
+        promptId: 'p-from-history',
+      }],
     ]);
     const item: ViewerImage = {
       src: 'x',
@@ -100,6 +105,7 @@ describe('resolveViewerItemWorkflowLoad', () => {
     };
     const resolved = resolveViewerItemWorkflowLoad(item, historyMap);
     expect(resolved?.workflow).toBe(historyWorkflow);
+    expect(resolved?.executedPrompt).toBe(executedPrompt);
     expect(resolved?.filename).toBe('history-p-from-history.json');
     expect(resolved?.source).toEqual({ type: 'history', promptId: 'p-from-history' });
   });

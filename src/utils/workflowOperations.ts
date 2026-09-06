@@ -1,4 +1,4 @@
-import { getFileWorkflow, type AssetSource, type FileItem } from '@/api/client';
+import { getFileWorkflowMetadata, type AssetSource, type FileItem } from '@/api/client';
 import type { NodeTypes, Workflow, WorkflowNode } from '@/api/types';
 import { getWidgetIndexForInput } from '@/hooks/useWorkflow';
 import type { WorkflowSource } from '@/hooks/useWorkflow';
@@ -9,8 +9,15 @@ import type { ViewerImage } from '@/utils/viewerImages';
 export type LoadWorkflowFn = (
   workflow: Workflow,
   filename?: string,
-  options?: { fresh?: boolean; source?: WorkflowSource }
+  options?: { fresh?: boolean; source?: WorkflowSource; executedPrompt?: unknown }
 ) => void;
+
+type HistoryWorkflowMatch = {
+  workflow?: Workflow;
+  prompt?: unknown;
+  promptId: string;
+  hidden?: boolean;
+};
 
 export function resolveFileSource(file: FileItem): AssetSource {
   if (file.id.startsWith('input/')) return 'input';
@@ -26,14 +33,15 @@ export function resolveFilePath(file: FileItem, source?: AssetSource): string {
 
 export function resolveViewerItemWorkflowLoad(
   item: ViewerImage,
-  historyWorkflowByFileId?: ReadonlyMap<string, { workflow?: Workflow; promptId: string; hidden?: boolean }>,
-): { workflow: Workflow; filename: string; source: WorkflowSource } | null {
+  historyWorkflowByFileId?: ReadonlyMap<string, HistoryWorkflowMatch>,
+): { workflow: Workflow; filename: string; source: WorkflowSource; executedPrompt?: unknown } | null {
   const historyMatch =
     item.file && historyWorkflowByFileId
       ? historyWorkflowByFileId.get(item.file.id)
       : null;
   const workflowToLoad = item.workflow ?? historyMatch?.workflow;
   const promptId = item.promptId ?? historyMatch?.promptId;
+  const executedPrompt = item.executedPrompt ?? historyMatch?.prompt;
   if (!workflowToLoad) return null;
   let source: WorkflowSource;
   let filename: string;
@@ -59,7 +67,12 @@ export function resolveViewerItemWorkflowLoad(
     source = { type: 'other' };
     filename = 'workflow.json';
   }
-  return { workflow: workflowToLoad, filename, source };
+  return {
+    workflow: workflowToLoad,
+    filename,
+    source,
+    ...(executedPrompt !== undefined ? { executedPrompt } : {}),
+  };
 }
 
 export async function loadWorkflowFromFile(params: {
@@ -73,14 +86,15 @@ export async function loadWorkflowFromFile(params: {
   try {
     const effectiveSource = source ?? resolveFileSource(file);
     const filePath = resolveFilePath(file, effectiveSource);
-    const workflowData = await getFileWorkflow(filePath, effectiveSource);
-    loadWorkflow(workflowData, filePath, {
+    const metadata = await getFileWorkflowMetadata(filePath, effectiveSource);
+    loadWorkflow(metadata.workflow, filePath, {
       source: {
         type: 'file',
         filePath,
         assetSource: effectiveSource,
         ...(file.hidden ? { hidden: true } : {}),
       },
+      executedPrompt: metadata.prompt,
     });
     onLoaded?.();
   } catch (err) {

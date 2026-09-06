@@ -79,6 +79,7 @@ beforeEach(() => {
     itemKeyByPointer: {},
     pointerByHierarchicalKey: {},
     scopeStack: [{ type: 'root' }],
+    workflowPanelScrollTops: {},
     currentFilename: null,
     currentWorkflowKey: null,
     savedWorkflowStates: {},
@@ -112,6 +113,65 @@ afterEach(() => {
 });
 
 describe('multi-workflow sessions', () => {
+  it('restores loaded-tab scope and scroll state but resets every fresh load', () => {
+    const store = useWorkflowStore.getState();
+    store.loadWorkflow(makeWorkflow([makeNode(1)]), 'a.json');
+    const firstId = useWorkflowStore.getState().activeSessionId!;
+    const subgraphScope = [
+      { type: 'root' as const },
+      {
+        type: 'subgraph' as const,
+        id: 'shared-type',
+        placeholderNodeId: 10,
+      },
+    ];
+    useWorkflowStore.setState({
+      scopeStack: subgraphScope,
+      workflowPanelScrollTops: {
+        root: 120,
+        'subgraph:shared-type': 480,
+      },
+    });
+
+    store.loadWorkflow(makeWorkflow([makeNode(2)]), 'b.json');
+    let state = useWorkflowStore.getState();
+    expect(state.scopeStack).toEqual([{ type: 'root' }]);
+    expect(state.workflowPanelScrollTops).toEqual({});
+    expect(state.parkedSessions[firstId].scopeStack).toEqual(subgraphScope);
+    expect(state.parkedSessions[firstId].workflowPanelScrollTops).toEqual({
+      root: 120,
+      'subgraph:shared-type': 480,
+    });
+
+    state.switchToSession(firstId);
+    state = useWorkflowStore.getState();
+    expect(state.scopeStack).toEqual(subgraphScope);
+    expect(state.workflowPanelScrollTops).toEqual({
+      root: 120,
+      'subgraph:shared-type': 480,
+    });
+
+    const persisted = useWorkflowStore.persist.getOptions().partialize!(
+      state,
+    ) as {
+      scopeStack: typeof subgraphScope;
+      workflowPanelScrollTops: Record<string, number>;
+    };
+    expect(persisted.scopeStack).toEqual(subgraphScope);
+    expect(persisted.workflowPanelScrollTops).toEqual({
+      root: 120,
+      'subgraph:shared-type': 480,
+    });
+
+    state.loadWorkflow(makeWorkflow([makeNode(3)]), 'replacement.json', {
+      replaceActive: true,
+    });
+    state = useWorkflowStore.getState();
+    expect(state.activeSessionId).toBe(firstId);
+    expect(state.scopeStack).toEqual([{ type: 'root' }]);
+    expect(state.workflowPanelScrollTops).toEqual({});
+  });
+
   it('opening a second workflow creates a second tab and parks the first', () => {
     const store = useWorkflowStore.getState();
     store.loadWorkflow(makeWorkflow([makeNode(1)]), 'a.json');

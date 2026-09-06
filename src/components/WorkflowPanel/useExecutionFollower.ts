@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef } from "react";
 import { useWorkflowStore } from "@/hooks/useWorkflow";
 import { useGenerationSettingsStore } from "@/hooks/useGenerationSettings";
 import { userScrolledSince } from "@/utils/scrollInterrupt";
+import { resolveFollowTargetInScope } from "@/utils/executionFollowTarget";
 
 // Grace window right after engaging follow during which a scroll/drag is ignored,
 // so the very gesture that turned follow on (a tap, or a touch that emits a stray
@@ -32,9 +33,6 @@ export function useExecutionFollower(visible: boolean): void {
     (s) => s.followIntoSubgraphs,
   );
   const scrollToNode = useWorkflowStore((s) => s.scrollToNode);
-  const revealNodeWithParents = useWorkflowStore(
-    (s) => s.revealNodeWithParents,
-  );
   const navigateToSubgraphTrail = useWorkflowStore(
     (s) => s.navigateToSubgraphTrail,
   );
@@ -50,12 +48,14 @@ export function useExecutionFollower(visible: boolean): void {
       null;
     if (!executionItemKey) return false;
 
-    // Navigate into subgraph scope if the executing node is inside one
+    const subgraphSegments = executionItemKey.match(/subgraph:([^/]+)/g);
+    const executingTrail = (subgraphSegments ?? []).map((segment) =>
+      segment.replace('subgraph:', ''),
+    );
+
     if (followIntoSubgraphs) {
-      const subgraphSegments = executionItemKey.match(/subgraph:([^/]+)/g);
-      if (subgraphSegments) {
-        const trail = subgraphSegments.map((s) => s.replace('subgraph:', ''));
-        navigateToSubgraphTrail(trail);
+      if (executingTrail.length > 0) {
+        navigateToSubgraphTrail(executingTrail);
       } else {
         // Executing node is at root — exit any subgraph scope
         const currentScope = useWorkflowStore.getState().scopeStack;
@@ -63,10 +63,19 @@ export function useExecutionFollower(visible: boolean): void {
           useWorkflowStore.getState().exitToRoot();
         }
       }
+      requestAnimationFrame(() => scrollToNode(executionItemKey, "Running"));
+      return true;
     }
 
-    revealNodeWithParents(executionItemKey);
-    requestAnimationFrame(() => scrollToNode(executionItemKey, "Running"));
+    // Follow, but do not descend. Execution inside a subgraph is followed as far
+    // as the placeholder standing for it in the scope the user is in — the run
+    // is still tracked, just at the depth they chose to watch it from. Landing
+    // on the inner node would take them in, which is the thing this setting
+    // exists to refuse.
+    const { workflow, scopeStack } = useWorkflowStore.getState();
+    const target = resolveFollowTargetInScope(workflow, scopeStack, executionItemKey);
+    if (!target) return false;
+    requestAnimationFrame(() => scrollToNode(target, "Running"));
     return true;
   }, [
     executingNodeHierarchicalKey,
@@ -75,7 +84,6 @@ export function useExecutionFollower(visible: boolean): void {
     expandedNodeIdMap,
     followIntoSubgraphs,
     navigateToSubgraphTrail,
-    revealNodeWithParents,
     scrollToNode,
   ]);
 

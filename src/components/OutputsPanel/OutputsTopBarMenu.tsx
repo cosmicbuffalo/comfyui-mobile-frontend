@@ -1,6 +1,7 @@
 import type { RefObject } from 'react';
 import { useState } from 'react';
 import { useOutputsStore } from '@/hooks/useOutputs';
+import { useShowHiddenStore } from '@/hooks/useShowHidden';
 import { deleteRejectedOutputs, rejectedIdsForSources } from '@/utils/deleteRejectedOutputs';
 import { CheckIcon, DiceIcon, DocumentLinesIcon, EyeIcon, EyeOffIcon, FolderIcon, ArrowRightIcon, SearchIcon, TrashIcon } from '@/components/icons';
 import { ContextMenuButton } from '@/components/buttons/ContextMenuButton';
@@ -32,11 +33,11 @@ export function OutputsTopBarMenu({
   // it (and vice versa).
   const source = useOutputsStore((s) => s.source);
   const viewMode = useOutputsStore((s) => s.viewMode);
-  const showHidden = useOutputsStore((s) => s.showHidden);
+  const showHidden = useShowHiddenStore((s) => s.showHidden);
+  const toggleShowHidden = useShowHiddenStore((s) => s.toggleShowHidden);
   const searchOpen = useOutputsStore((s) => s.searchOpen);
   const setViewMode = useOutputsStore((s) => s.setViewMode);
   const setSearchOpen = useOutputsStore((s) => s.setSearchOpen);
-  const toggleShowHidden = useOutputsStore((s) => s.toggleShowHidden);
   const toggleSelectionMode = useOutputsStore((s) => s.toggleSelectionMode);
   const setNewFolderModalOpen = useOutputsStore((s) => s.setNewFolderModalOpen);
   const rejected = useOutputsStore((s) => s.rejected);

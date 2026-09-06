@@ -109,7 +109,7 @@ describe('isCrumbHidden', () => {
   });
 
   it('hides dot-prefixed segments', () => {
-    expect(isCrumbHidden('a/.secret/b', [])).toBe(true);
+    expect(isCrumbHidden('a/.hidden/b', [])).toBe(true);
   });
 
   it('hides a path whose ancestor is in the hidden set', () => {

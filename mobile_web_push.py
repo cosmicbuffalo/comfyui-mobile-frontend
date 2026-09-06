@@ -275,41 +275,6 @@ def _send_one(subscription, payload_json: str, vapid_obj):
         return "error"
 
 
-def send_to_all(title: str, body: str, data=None) -> dict:
-    """Blocking — fan a notification out to every subscription, pruning dead ones.
-    Call via loop.run_in_executor from async code."""
-    if not _PUSH_AVAILABLE:
-        return {"sent": 0, "pruned": 0, "total": 0}
-    with _lock:
-        vapid = _load_or_create_vapid()
-        subs = dict(_load_subscriptions())  # snapshot; send outside the lock
-    if not subs:
-        return {"sent": 0, "pruned": 0, "total": 0}
-
-    payload = {"title": title, "body": body}
-    if data:
-        payload["data"] = data
-    payload_json = json.dumps(payload)
-
-    sent = 0
-    dead = []
-    for endpoint, subscription in subs.items():
-        result = _send_one(subscription, payload_json, vapid["vapid_obj"])
-        if result == "ok":
-            sent += 1
-        elif result == "gone":
-            dead.append(endpoint)
-
-    if dead:
-        with _lock:
-            current = _load_subscriptions()
-            for endpoint in dead:
-                current.pop(endpoint, None)
-            _save_subscriptions()
-
-    return {"sent": sent, "pruned": len(dead), "total": len(subs)}
-
-
 def _send_grouped(build_payload, data=None) -> dict:
     """Fan out one notification per locale group so each subscription receives
     copy in its own language. `build_payload(locale)` returns (title, body).

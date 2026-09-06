@@ -13,10 +13,11 @@ function pngChunk(type: string, data: number[]): number[] {
   ];
 }
 
-function pngWithWorkflow(text: string): Uint8Array {
+function pngWithWorkflow(text: string, prompt?: string): Uint8Array {
   const sig = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
   return Uint8Array.from([
     ...sig,
+    ...(prompt ? pngChunk('tEXt', [...ascii('prompt'), 0, ...ascii(prompt)]) : []),
     ...pngChunk('tEXt', [...ascii('workflow'), 0, ...ascii(text)]),
     ...pngChunk('IEND', []),
   ]);
@@ -59,8 +60,14 @@ describe('readWorkflowFromFile', () => {
   });
 
   it('extracts a workflow from a PNG image', async () => {
-    const result = await readWorkflowFromFile(fakeFile('out.png', 'image/png', pngWithWorkflow(WF)));
+    const prompt = JSON.stringify({ '1': { inputs: { seed: 123 } } });
+    const result = await readWorkflowFromFile(
+      fakeFile('out.png', 'image/png', pngWithWorkflow(WF, prompt)),
+    );
     expect(result.kind).toBe('workflow');
+    if (result.kind === 'workflow') {
+      expect(result.executedPrompt).toEqual(JSON.parse(prompt));
+    }
   });
 
   it('reports no-workflow for an image without embedded data', async () => {

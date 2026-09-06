@@ -40,3 +40,6 @@ __pycache__
 
 # Local agent tooling state
 .claude/
+
+# Local demo capture artifacts (deliverables live in images/videos)
+demos/

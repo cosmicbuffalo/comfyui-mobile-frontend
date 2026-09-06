@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { NodeTypes, Workflow, WorkflowLink, WorkflowNode } from '@/api/types';
+import type { NodeTypes, Workflow, WorkflowGroup, WorkflowLink, WorkflowNode } from '@/api/types';
 import type { MobileLayout } from '@/utils/mobileLayout';
 import {
   createEmptyMobileLayout,
@@ -16,6 +16,7 @@ import { useBookmarksStore } from '../useBookmarks';
 import { useWorkflowErrorsStore } from '../useWorkflowErrors';
 import { useSeedStore } from '../useSeed';
 import { usePinnedWidgetStore } from '../usePinnedWidget';
+import { useWorkflowClipboardStore, type WorkflowClipboardPayload } from '../useWorkflowClipboard';
 import { queueAndGetEmbeddedWorkflow, queueAndGetPromptRequest } from './helpers/queueAndGetEmbeddedWorkflow';
 
 function makeNode(id: number, overrides?: Partial<WorkflowNode>): WorkflowNode {
@@ -149,6 +150,7 @@ beforeEach(() => {
     closeForNewWorkflowRequest: null,
   });
   useBookmarksStore.setState({ bookmarkedItems: [] });
+  useWorkflowClipboardStore.setState({ payload: null });
   useWorkflowErrorsStore.setState({
     error: null,
     nodeErrors: {},
@@ -1425,6 +1427,64 @@ describe('useWorkflow editing actions', () => {
     expect(next.mobileLayout!.root).toContainEqual({ type: 'node', id: 1 });
   });
 
+  it('duplicateContainer clones a group and its contents without replacing the clipboard', () => {
+    const inside = makeNode(1, { pos: [150, 150] });
+    const outside = makeNode(2, { pos: [900, 900] });
+    const groupKey = makeLocationPointer({ type: 'group', groupId: 10, subgraphId: null });
+    const workflow = makeWorkflow([inside, outside], []);
+    const registry = rootNodeStableRegistry([1, 2]);
+    useWorkflowStore.setState({
+      workflow,
+      ...registry,
+      itemKeyByPointer: { ...registry.itemKeyByPointer, [groupKey]: groupKey },
+      pointerByHierarchicalKey: { ...registry.pointerByHierarchicalKey, [groupKey]: groupKey },
+      mobileLayout: {
+        root: [
+          { type: 'group', id: 10, subgraphId: null, itemKey: groupKey },
+          { type: 'node', id: 2 },
+        ],
+        groups: { [groupKey]: [{ type: 'node', id: 1 }] },
+        subgraphs: {},
+        hiddenBlocks: {},
+      },
+    });
+    const clipboardBefore: WorkflowClipboardPayload = {
+      nodes: [structuredClone(outside)],
+      links: [],
+      subgraphs: [],
+      group: null,
+      summary: 'existing clipboard',
+    };
+    useWorkflowClipboardStore.setState({ payload: clipboardBefore });
+
+    const duplicatedIds = useWorkflowStore.getState().duplicateContainer(groupKey);
+
+    expect(duplicatedIds).toHaveLength(1);
+    const next = useWorkflowStore.getState().workflow as Workflow;
+    expect(next.groups).toHaveLength(2);
+    expect(next.nodes).toHaveLength(3);
+    expect(next.nodes.find((node) => duplicatedIds?.includes(node.id))?.type).toBe(inside.type);
+    expect(useWorkflowClipboardStore.getState().payload).toBe(clipboardBefore);
+  });
+
+  it('duplicateContainer also clones an empty group', () => {
+    const groupKey = makeLocationPointer({ type: 'group', groupId: 10, subgraphId: null });
+    useWorkflowStore.setState({
+      workflow: makeWorkflow([], []),
+      itemKeyByPointer: { [groupKey]: groupKey },
+      pointerByHierarchicalKey: { [groupKey]: groupKey },
+      mobileLayout: {
+        root: [{ type: 'group', id: 10, subgraphId: null, itemKey: groupKey }],
+        groups: { [groupKey]: [] },
+        subgraphs: {},
+        hiddenBlocks: {},
+      },
+    });
+
+    expect(useWorkflowStore.getState().duplicateContainer(groupKey)).toEqual([]);
+    expect(useWorkflowStore.getState().workflow?.groups).toHaveLength(2);
+  });
+
   it('deleteContainer can remove group and all nodes in it', () => {
     const inGroup = makeNode(1, {
       pos: [120, 120],
@@ -1811,6 +1871,113 @@ describe('useWorkflow editing actions', () => {
     expect(nextSubgraph?.nodes.map((node) => node.id)).toEqual([8]);
     expect(nextSubgraph?.links).toEqual([]);
     expect(nextSubgraph?.nodes.find((node) => node.id === 8)?.inputs[0]?.link).toBeNull();
+  });
+
+  it('deleteContainer removes a nested subgraph placeholder inside the group', () => {
+    const outerPlaceholder = makeNode(100, { type: 'sg-a' });
+    const nestedPlaceholderKey = makeLocationPointer({
+      type: 'node', nodeId: 200, subgraphId: 'sg-a'
+    });
+    const nestedPlaceholder = makeNode(200, {
+      type: 'sg-b',
+      itemKey: nestedPlaceholderKey,
+    });
+    const outerSurvivorKey = makeLocationPointer({
+      type: 'node', nodeId: 201, subgraphId: 'sg-a'
+    });
+    const outerSurvivor = makeNode(201, { itemKey: outerSurvivorKey });
+    const sharedPlaceholderKey = makeLocationPointer({
+      type: 'node', nodeId: 202, subgraphId: 'sg-a'
+    });
+    const sharedPlaceholder = makeNode(202, {
+      type: 'sg-b',
+      itemKey: sharedPlaceholderKey,
+    });
+    const nestedInnerKey = makeLocationPointer({
+      type: 'node', nodeId: 300, subgraphId: 'sg-b'
+    });
+    const nestedInner = makeNode(300, { itemKey: nestedInnerKey });
+    const groupKey = makeLocationPointer({
+      type: 'group', groupId: 20, subgraphId: 'sg-a'
+    });
+    const outerPlaceholderKey = rootNodeHierarchicalKey(100);
+
+    useWorkflowStore.setState({
+      workflow: {
+        last_node_id: 300,
+        last_link_id: 0,
+        nodes: [outerPlaceholder],
+        links: [],
+        groups: [],
+        config: {},
+        version: 1,
+        definitions: {
+          subgraphs: [
+            {
+              id: 'sg-a',
+              nodes: [nestedPlaceholder, outerSurvivor, sharedPlaceholder],
+              links: [],
+              groups: [{
+                id: 20,
+                itemKey: groupKey,
+                title: 'Nested placeholder group',
+                color: '#fff',
+                bounding: [0, 0, 500, 300],
+              }],
+            },
+            {
+              id: 'sg-b',
+              nodes: [nestedInner],
+              links: [],
+              groups: [],
+            },
+          ],
+        },
+      },
+      itemKeyByPointer: {
+        [outerPlaceholderKey]: outerPlaceholderKey,
+        [nestedPlaceholderKey]: nestedPlaceholderKey,
+        [outerSurvivorKey]: outerSurvivorKey,
+        [sharedPlaceholderKey]: sharedPlaceholderKey,
+        [nestedInnerKey]: nestedInnerKey,
+        [groupKey]: groupKey,
+      },
+      pointerByHierarchicalKey: {
+        [outerPlaceholderKey]: outerPlaceholderKey,
+        [nestedPlaceholderKey]: nestedPlaceholderKey,
+        [outerSurvivorKey]: outerSurvivorKey,
+        [sharedPlaceholderKey]: sharedPlaceholderKey,
+        [nestedInnerKey]: nestedInnerKey,
+        [groupKey]: groupKey,
+      },
+      mobileLayout: {
+        root: [{ type: 'subgraph', id: 'sg-a', nodeId: 100 }],
+        groups: {
+          [groupKey]: [{ type: 'subgraph', id: 'sg-b', nodeId: 200 }],
+        },
+        subgraphs: {
+          'sg-a': [
+            { type: 'group', id: 20, subgraphId: 'sg-a', itemKey: groupKey },
+            { type: 'node', id: 201 },
+            { type: 'subgraph', id: 'sg-b', nodeId: 202 },
+          ],
+          'sg-b': [{ type: 'node', id: 300 }],
+        },
+        hiddenBlocks: {},
+      },
+    });
+
+    useWorkflowStore.getState().deleteContainer(groupKey, { deleteNodes: true });
+
+    const next = useWorkflowStore.getState().workflow as Workflow;
+    expect(next.nodes.map((node) => node.id)).toEqual([100]);
+    const outer = next.definitions?.subgraphs?.find((subgraph) => subgraph.id === 'sg-a');
+    expect(outer?.groups).toEqual([]);
+    expect(outer?.nodes.map((node) => node.id)).toEqual([201, 202]);
+    // The other instance still reaches sg-b, so deleting this group must not
+    // erase the shared definition's contents.
+    const shared = next.definitions?.subgraphs?.find((subgraph) => subgraph.id === 'sg-b');
+    expect(shared?.nodes.map((node) => node.id)).toEqual([300]);
   });
 
   it('clears workflow node errors when loading a workflow without node types', () => {
@@ -2542,6 +2709,109 @@ describe('useWorkflow editing actions', () => {
     expect(embedded.nodes.find((n) => n.id === 2)?.mode).toBe(4);
   });
 
+  it('bypasses nodes in descendant groups in the same graph scope', () => {
+    const outerKey = makeLocationPointer({ type: 'group', groupId: 10, subgraphId: null });
+    const innerKey = makeLocationPointer({ type: 'group', groupId: 20, subgraphId: null });
+    const wf = makeWorkflow([
+      makeNode(1, { pos: [500, 150] }),
+      makeNode(2, { pos: [150, 150] }),
+      makeNode(3, { pos: [1000, 1000] }),
+    ], []);
+    wf.groups = [
+      { id: 10, itemKey: outerKey, title: 'Outer', color: '#fff', bounding: [100, 100, 800, 500] },
+      { id: 20, itemKey: innerKey, title: 'Inner', color: '#fff', bounding: [100, 100, 300, 400] },
+    ];
+    const nodeRegistry = rootNodeStableRegistry([1, 2, 3]);
+    useWorkflowStore.setState({
+      workflow: wf,
+      ...nodeRegistry,
+      itemKeyByPointer: {
+        ...nodeRegistry.itemKeyByPointer,
+        [outerKey]: outerKey,
+        [innerKey]: innerKey,
+      },
+      pointerByHierarchicalKey: {
+        ...nodeRegistry.pointerByHierarchicalKey,
+        [outerKey]: outerKey,
+        [innerKey]: innerKey,
+      },
+      mobileLayout: {
+        root: [{ type: 'group', id: 10, subgraphId: null, itemKey: outerKey }],
+        groups: {
+          [outerKey]: [
+            { type: 'node', id: 1 },
+            { type: 'group', id: 20, subgraphId: null, itemKey: innerKey },
+          ],
+          [innerKey]: [{ type: 'node', id: 2 }],
+        },
+        groupParents: {
+          [outerKey]: { scope: 'root' },
+          [innerKey]: { scope: 'group', groupKey: outerKey },
+        },
+        subgraphs: {},
+        hiddenBlocks: {},
+      },
+    });
+
+    useWorkflowStore.getState().bypassAllInContainer(outerKey, true);
+
+    const next = useWorkflowStore.getState().workflow;
+    expect(next?.nodes.find((n) => n.id === 1)?.mode).toBe(4);
+    expect(next?.nodes.find((n) => n.id === 2)?.mode).toBe(4);
+    expect(next?.nodes.find((n) => n.id === 3)?.mode).toBe(0);
+  });
+
+  it('bypassing a group with a shared subgraph leaves the definition and its other instances alone', () => {
+    const sgId = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
+    const groupPointer = makeLocationPointer({ type: 'group', groupId: 10, subgraphId: null });
+    // Placeholder 1 sits inside group 10's bounding box; placeholder 2 is outside it.
+    const wf: Workflow = {
+      ...makeWorkflow([
+        makeNode(1, { type: sgId, pos: [150, 150] }),
+        makeNode(2, { type: sgId, pos: [900, 900] })
+      ], []),
+      definitions: {
+        subgraphs: [
+          { id: sgId, name: 'Shared', nodes: [makeNode(10, { pos: [0, 0] })], links: [], groups: [] }
+        ]
+      }
+    };
+    useWorkflowStore.setState({
+      workflow: wf,
+      ...rootNodeStableRegistry([1, 2]),
+      itemKeyByPointer: {
+        ...rootNodeStableRegistry([1, 2]).itemKeyByPointer,
+        [groupPointer]: groupPointer
+      },
+      pointerByHierarchicalKey: {
+        ...rootNodeStableRegistry([1, 2]).pointerByHierarchicalKey,
+        [groupPointer]: groupPointer
+      },
+      mobileLayout: {
+        root: [
+          { type: 'group', id: 10, subgraphId: null, itemKey: groupPointer },
+          { type: 'subgraph', id: sgId, nodeId: 2 }
+        ],
+        groups: { [groupPointer]: [{ type: 'subgraph', id: sgId, nodeId: 1 }] },
+        subgraphs: { [sgId]: [{ type: 'node', id: 10 }] },
+        hiddenBlocks: {}
+      }
+    });
+
+    useWorkflowStore.getState().bypassAllInContainer(groupPointer, true);
+
+    const next = useWorkflowStore.getState().workflow as Workflow;
+    // The placeholder in the group carries the bypass; expansion applies it to
+    // the inner nodes at queue time.
+    expect(next.nodes.find((node) => node.id === 1)?.mode).toBe(4);
+    // The other instance of the same definition stays engaged, and the shared
+    // definition itself is untouched.
+    expect(next.nodes.find((node) => node.id === 2)?.mode).toBe(0);
+    expect(
+      next.definitions?.subgraphs?.find((sg) => sg.id === sgId)?.nodes[0]?.mode,
+    ).toBe(0);
+  });
+
   it('commitRepositionLayout syncs geometry so group bypass uses canonical geometry membership', () => {
     const groupPointer = makeLocationPointer({ type: 'group', groupId: 10, subgraphId: null });
     const groupHierarchicalKey = makeLocationPointer({ type: 'group', groupId: 10, subgraphId: null });
@@ -2963,6 +3233,34 @@ describe('useWorkflow editing actions', () => {
   });
 });
 
+describe('filenameIsPlaceholder', () => {
+  it('marks app-generated names as placeholders and clears the mark on save', () => {
+    const wf = makeWorkflow([makeNode(1, { widgets_values: [1] })], []);
+    // A pasted workflow: the caller mints the stand-in name itself.
+    useWorkflowStore.getState().loadWorkflow(wf, 'Pasted workflow (12:00:00)', {
+      filenameIsPlaceholder: true,
+    });
+    expect(useWorkflowStore.getState().filenameIsPlaceholder).toBe(true);
+
+    useWorkflowStore.getState().setSavedWorkflow(wf, 'named.json');
+    expect(useWorkflowStore.getState().filenameIsPlaceholder).toBe(false);
+  });
+
+  it('treats history and file sources as placeholder names', () => {
+    const wf = makeWorkflow([makeNode(1, { widgets_values: [1] })], []);
+    useWorkflowStore.getState().loadWorkflow(wf, 'history-abc.json', {
+      source: { type: 'history', promptId: 'abc' },
+    });
+    expect(useWorkflowStore.getState().filenameIsPlaceholder).toBe(true);
+
+    useWorkflowStore.getState().loadWorkflow(wf, 'flow.json', {
+      replaceActive: true,
+      source: { type: 'user', filename: 'flow.json' },
+    });
+    expect(useWorkflowStore.getState().filenameIsPlaceholder).toBe(false);
+  });
+});
+
 describe('setSavedWorkflow', () => {
   it('sets workflowSource to user type with the saved filename', () => {
     const wf = makeWorkflow([makeNode(1, { widgets_values: [42] })], []);
@@ -3152,6 +3450,421 @@ describe('popWidgetToPrimitive', () => {
     const created = state.workflow?.nodes.find((n) => n.id === newId);
     expect(created?.type).toBe('PrimitiveString');
     expect((created?.widgets_values as unknown[] | undefined)?.[0]).toBe('a photo of a dog');
+  });
+
+  describe('createGroupFromItems with a selected group', () => {
+    it('places the new group in the topmost selected item list slot', () => {
+      const nodes = [
+        makeNode(1, { pos: [0, 0] }),
+        makeNode(2, { pos: [300, 0] }),
+        makeNode(3, { pos: [600, 0] }),
+        makeNode(4, { pos: [900, 0] }),
+      ];
+      const workflow = makeWorkflow(nodes, []);
+      workflow.groups = [];
+      useWorkflowStore.setState({
+        workflow,
+        nodeTypes,
+        mobileLayout: {
+          root: nodes.map((node) => ({ type: 'node' as const, id: node.id })),
+          groups: {},
+          groupParents: {},
+          subgraphs: {},
+          hiddenBlocks: {},
+        },
+        scopeStack: [{ type: 'root' }],
+        ...rootNodeStableRegistry([1, 2, 3, 4]),
+      });
+
+      // Node 2 is the topmost selected item; node 4 is selected farther down.
+      useWorkflowStore.getState().createGroupFromItems([
+        rootNodeHierarchicalKey(4),
+        rootNodeHierarchicalKey(2),
+      ]);
+
+      const next = useWorkflowStore.getState();
+      const newGroupKey = makeLocationPointer({
+        type: 'group',
+        groupId: 1,
+        subgraphId: null,
+      });
+      expect(next.mobileLayout.root).toEqual([
+        { type: 'node', id: 1 },
+        { type: 'group', id: 1, subgraphId: null, itemKey: newGroupKey },
+        { type: 'node', id: 3 },
+      ]);
+      expect(next.mobileLayout.groups[newGroupKey]).toEqual([
+        { type: 'node', id: 2 },
+        { type: 'node', id: 4 },
+      ]);
+    });
+
+    it('replaces a nested selected item inside its existing list container', () => {
+      const inGroupA = makeNode(1, { pos: [120, 140] });
+      const inGroupB = makeNode(2, { pos: [140, 260] });
+      const loose = makeNode(3, { pos: [900, 900] });
+      const groupKey = makeLocationPointer({
+        type: 'group',
+        groupId: 10,
+        subgraphId: null,
+      });
+      useWorkflowStore.setState({
+        workflow: makeWorkflow([inGroupA, inGroupB, loose], []),
+        nodeTypes,
+        mobileLayout: {
+          root: [
+            { type: 'group', id: 10, subgraphId: null, itemKey: groupKey },
+            { type: 'node', id: 3 },
+          ],
+          groups: {
+            [groupKey]: [
+              { type: 'node', id: 1 },
+              { type: 'node', id: 2 },
+            ],
+          },
+          groupParents: { [groupKey]: { scope: 'root' } },
+          subgraphs: {},
+          hiddenBlocks: {},
+        },
+        scopeStack: [{ type: 'root' }],
+        ...rootNodeStableRegistry([1, 2, 3]),
+      });
+
+      useWorkflowStore.getState().createGroupFromItems([
+        rootNodeHierarchicalKey(2),
+      ]);
+
+      const next = useWorkflowStore.getState();
+      const newGroupKey = makeLocationPointer({
+        type: 'group',
+        groupId: 11,
+        subgraphId: null,
+      });
+      expect(next.mobileLayout.groups[groupKey]).toEqual([
+        { type: 'node', id: 1 },
+        { type: 'group', id: 11, subgraphId: null, itemKey: newGroupKey },
+      ]);
+      expect(next.mobileLayout.groups[newGroupKey]).toEqual([
+        { type: 'node', id: 2 },
+      ]);
+      expect(next.mobileLayout.groupParents?.[newGroupKey]).toEqual({
+        scope: 'group',
+        groupKey,
+      });
+    });
+
+    it('nests the selected group intact instead of pulling its members out', () => {
+      // Group 10 (from makeWorkflow) holds nodes 1 and 2; node 3 is loose.
+      const inGroupA = makeNode(1, { pos: [120, 140], size: [200, 100] });
+      const inGroupB = makeNode(2, { pos: [140, 260], size: [200, 100] });
+      const loose = makeNode(3, { pos: [900, 900], size: [200, 100] });
+      const groupKey = makeLocationPointer({ type: 'group', groupId: 10, subgraphId: null });
+      useWorkflowStore.setState({
+        workflow: makeWorkflow([inGroupA, inGroupB, loose], []),
+        nodeTypes,
+        scopeStack: [{ type: 'root' }],
+        ...rootNodeStableRegistry([1, 2, 3]),
+      });
+
+      // The group and its members can all be selected explicitly, along with
+      // an unrelated loose node.
+      useWorkflowStore.getState().createGroupFromItems([
+        groupKey,
+        rootNodeHierarchicalKey(1),
+        rootNodeHierarchicalKey(2),
+        rootNodeHierarchicalKey(3),
+      ]);
+
+      const next = useWorkflowStore.getState();
+      const groups = next.workflow?.groups ?? [];
+      // The old group survives alongside the new one.
+      expect(groups.map((g) => g.id).sort()).toEqual([10, 11]);
+      const oldGroup = groups.find((g) => g.id === 10)!;
+      const newGroup = groups.find((g) => g.id === 11)!;
+
+      // The full tidy pass can rewrite offsets and sizes, but the old group's
+      // rect and member hierarchy remain intact inside the new group.
+      expect(oldGroup.bounding[0]).toBeGreaterThanOrEqual(newGroup.bounding[0]);
+      expect(oldGroup.bounding[1]).toBeGreaterThanOrEqual(newGroup.bounding[1]);
+      expect(oldGroup.bounding[0] + oldGroup.bounding[2]).toBeLessThanOrEqual(
+        newGroup.bounding[0] + newGroup.bounding[2],
+      );
+      expect(oldGroup.bounding[1] + oldGroup.bounding[3]).toBeLessThanOrEqual(
+        newGroup.bounding[1] + newGroup.bounding[3],
+      );
+
+      // Layout parents the old group under the new group.
+      const newGroupKey = makeLocationPointer({ type: 'group', groupId: 11, subgraphId: null });
+      expect(next.mobileLayout.groupParents?.[groupKey]).toEqual({
+        scope: 'group',
+        groupKey: newGroupKey,
+      });
+      // The loose node is a direct member of the new group.
+      const newGroupItems = next.mobileLayout.groups[newGroupKey] ?? [];
+      expect(newGroupItems.some((ref) => ref.type === 'node' && ref.id === 3)).toBe(true);
+      // Nodes 1/2 stay members of the old group, not the new one.
+      const oldGroupItems = next.mobileLayout.groups[groupKey] ?? [];
+      expect(oldGroupItems.filter((ref) => ref.type === 'node').map((ref) => ref.id).sort()).toEqual([1, 2]);
+      expect(newGroupItems.some((ref) => ref.type === 'node' && (ref.id === 1 || ref.id === 2))).toBe(false);
+    });
+
+    it('relocates every nested group and node when only the outer group is selected', () => {
+      const parentKey = makeLocationPointer({ type: 'group', groupId: 10, subgraphId: null });
+      const childKey = makeLocationPointer({ type: 'group', groupId: 20, subgraphId: null });
+      const grandchildKey = makeLocationPointer({ type: 'group', groupId: 30, subgraphId: null });
+      const parent: WorkflowGroup = {
+        id: 10,
+        itemKey: parentKey,
+        title: 'Parent',
+        bounding: [100, 100, 600, 600],
+        color: '#fff',
+        font_size: 24,
+        flags: {},
+      };
+      const child: WorkflowGroup = {
+        id: 20,
+        itemKey: childKey,
+        title: 'Child',
+        bounding: [160, 180, 400, 350],
+        color: '#fff',
+        font_size: 24,
+        flags: {},
+      };
+      const grandchild: WorkflowGroup = {
+        id: 30,
+        itemKey: grandchildKey,
+        title: 'Grandchild',
+        bounding: [220, 240, 220, 160],
+        color: '#fff',
+        font_size: 24,
+        flags: {},
+      };
+      const nodes = [
+        makeNode(1, { pos: [110, 130], size: [40, 40] }),
+        makeNode(2, { pos: [500, 450], size: [40, 40] }),
+        makeNode(3, { pos: [250, 280], size: [40, 40] }),
+      ];
+      const workflow = makeWorkflow(nodes, []);
+      workflow.groups = [parent, child, grandchild];
+      useWorkflowStore.setState({
+        workflow,
+        nodeTypes,
+        scopeStack: [{ type: 'root' }],
+        ...rootNodeStableRegistry([1, 2, 3]),
+      });
+
+      useWorkflowStore.getState().createGroupFromItems([parentKey]);
+
+      const next = useWorkflowStore.getState();
+      const nextGroups = next.workflow?.groups ?? [];
+      const newGroupKey = makeLocationPointer({ type: 'group', groupId: 31, subgraphId: null });
+      expect(next.mobileLayout.groupParents?.[parentKey]).toEqual({
+        scope: 'group',
+        groupKey: newGroupKey,
+      });
+      expect(next.mobileLayout.groupParents?.[childKey]).toEqual({
+        scope: 'group',
+        groupKey: parentKey,
+      });
+      expect(next.mobileLayout.groupParents?.[grandchildKey]).toEqual({
+        scope: 'group',
+        groupKey: childKey,
+      });
+
+      // Creation now performs the same whole-graph geometry pass as a move.
+      // Committing the unchanged layout (the move-away/move-back workaround)
+      // must therefore be a no-op for every node and group coordinate.
+      const geometryBeforeReposition = {
+        nodes: next.workflow!.nodes.map((node) => ({
+          id: node.id,
+          pos: node.pos,
+          size: node.size,
+          collapsed: node.flags?.collapsed,
+        })),
+        groups: nextGroups.map((group) => ({
+          id: group.id,
+          bounding: group.bounding,
+        })),
+      };
+      useWorkflowStore.getState().commitRepositionLayout(next.mobileLayout);
+      const settled = useWorkflowStore.getState().workflow!;
+      expect({
+        nodes: settled.nodes.map((node) => ({
+          id: node.id,
+          pos: node.pos,
+          size: node.size,
+          collapsed: node.flags?.collapsed,
+        })),
+        groups: (settled.groups ?? []).map((group) => ({
+          id: group.id,
+          bounding: group.bounding,
+        })),
+      }).toEqual(geometryBeforeReposition);
+    });
+  });
+
+  describe('primitive value write-back on delete/disconnect', () => {
+    // Two CLIPTextEncode targets fed by one PrimitiveString (fan-out).
+    const setupFanOut = (primitiveWidgets: unknown) => {
+      const primitive = makeNode(9, {
+        type: 'PrimitiveString',
+        widgets_values: primitiveWidgets as string[],
+        outputs: [{ name: 'STRING', type: 'STRING', links: [70, 71] }],
+      });
+      const targetA = makeNode(1, {
+        type: 'CLIPTextEncode',
+        inputs: [{ name: 'text', type: 'STRING', widget: { name: 'text' }, link: 70 }],
+        widgets_values: ['stale a'],
+      });
+      const targetB = makeNode(2, {
+        type: 'CLIPTextEncode',
+        inputs: [{ name: 'text', type: 'STRING', widget: { name: 'text' }, link: 71 }],
+        widgets_values: ['stale b'],
+      });
+      useWorkflowStore.setState({
+        workflow: makeWorkflow(
+          [primitive, targetA, targetB],
+          [
+            [70, 9, 0, 1, 0, 'STRING'],
+            [71, 9, 0, 2, 0, 'STRING'],
+          ],
+        ),
+        nodeTypes: primitiveNodeTypes,
+        ...rootNodeStableRegistry([1, 2, 9]),
+      });
+    };
+    const widgetsOf = (id: number) =>
+      useWorkflowStore.getState().workflow?.nodes.find((n) => n.id === id)
+        ?.widgets_values as unknown[] | undefined;
+
+    it('deleting a primitive writes its current value into every widget it fed', () => {
+      setupFanOut(['edited prompt']);
+      useWorkflowStore.getState().deleteNode(rootNodeHierarchicalKey(9), false);
+
+      expect(widgetsOf(1)).toEqual(['edited prompt']);
+      expect(widgetsOf(2)).toEqual(['edited prompt']);
+      const nodes = useWorkflowStore.getState().workflow?.nodes ?? [];
+      expect(nodes.find((n) => n.id === 1)?.inputs[0]?.link).toBeNull();
+    });
+
+    it('disconnecting one input writes back only that target', () => {
+      setupFanOut(['edited prompt']);
+      useWorkflowStore.getState().disconnectInput(rootNodeHierarchicalKey(1), 0);
+
+      expect(widgetsOf(1)).toEqual(['edited prompt']);
+      expect(widgetsOf(2)).toEqual(['stale b']); // still connected
+      const nodes = useWorkflowStore.getState().workflow?.nodes ?? [];
+      expect(nodes.find((n) => n.id === 2)?.inputs[0]?.link).toBe(71);
+    });
+
+    it('handles the legacy record widgets_values form on the primitive', () => {
+      setupFanOut({ value: 'record form' });
+      useWorkflowStore.getState().deleteNode(rootNodeHierarchicalKey(9), false);
+      expect(widgetsOf(1)).toEqual(['record form']);
+    });
+
+    it('pads sparse widgets_values so the value lands at the right index', () => {
+      // Target whose widget sits at index 2 (two widget inputs before it) but
+      // whose widgets_values array is empty.
+      const nodeTypesWide: NodeTypes = {
+        ...primitiveNodeTypes,
+        Wide: {
+          input: {
+            required: {
+              a: ['STRING', {}],
+              b: ['STRING', {}],
+              text: ['STRING', {}],
+            },
+          },
+          output: [],
+          output_name: [],
+          name: 'Wide',
+          display_name: 'Wide',
+          description: '',
+          python_module: '',
+          category: '',
+        },
+      };
+      const primitive = makeNode(9, {
+        type: 'PrimitiveString',
+        widgets_values: ['deep value'],
+        outputs: [{ name: 'STRING', type: 'STRING', links: [70] }],
+      });
+      const target = makeNode(1, {
+        type: 'Wide',
+        inputs: [
+          { name: 'a', type: 'STRING', widget: { name: 'a' }, link: null },
+          { name: 'b', type: 'STRING', widget: { name: 'b' }, link: null },
+          { name: 'text', type: 'STRING', widget: { name: 'text' }, link: 70 },
+        ],
+        widgets_values: [],
+      });
+      useWorkflowStore.setState({
+        workflow: makeWorkflow([primitive, target], [[70, 9, 0, 1, 2, 'STRING']]),
+        nodeTypes: nodeTypesWide,
+        ...rootNodeStableRegistry([1, 9]),
+      });
+
+      useWorkflowStore.getState().deleteNode(rootNodeHierarchicalKey(9), false);
+      expect(widgetsOf(1)).toEqual([null, null, 'deep value']);
+    });
+
+    it('skips pure connection slots (no widget) and non-primitive sources', () => {
+      const source = makeNode(9, {
+        type: 'CLIPTextEncode', // not a primitive
+        widgets_values: ['not written'],
+        outputs: [{ name: 'CONDITIONING', type: 'CONDITIONING', links: [70] }],
+      });
+      const target = makeNode(1, {
+        type: 'CLIPTextEncode',
+        inputs: [{ name: 'cond', type: 'CONDITIONING', link: 70 }],
+        widgets_values: ['stale'],
+      });
+      useWorkflowStore.setState({
+        workflow: makeWorkflow([source, target], [[70, 9, 0, 1, 0, 'CONDITIONING']]),
+        nodeTypes: primitiveNodeTypes,
+        ...rootNodeStableRegistry([1, 9]),
+      });
+      useWorkflowStore.getState().deleteNode(rootNodeHierarchicalKey(9), false);
+      expect(widgetsOf(1)).toEqual(['stale']);
+    });
+
+    it('writes into a subgraph placeholder promoted widget (per-instance values)', () => {
+      const primitive = makeNode(9, {
+        type: 'PrimitiveString',
+        widgets_values: ['from primitive'],
+        outputs: [{ name: 'STRING', type: 'STRING', links: [70] }],
+      });
+      const placeholder = makeNode(1, {
+        type: 'SG-DEF',
+        inputs: [
+          { name: 'image', type: 'IMAGE', link: null },
+          { name: 'prompt', type: 'STRING', widget: { name: 'prompt' }, link: 70 },
+        ],
+        widgets_values: ['stale promoted'],
+      });
+      useWorkflowStore.setState({
+        workflow: {
+          ...makeWorkflow([primitive, placeholder], [[70, 9, 0, 1, 1, 'STRING']]),
+          definitions: {
+            subgraphs: [{ id: 'SG-DEF', nodes: [], links: [] }],
+          },
+        },
+        nodeTypes: primitiveNodeTypes,
+        ...rootNodeStableRegistry([1, 9]),
+      });
+
+      useWorkflowStore.getState().deleteNode(rootNodeHierarchicalKey(9), false);
+      // 'prompt' is the placeholder's first (and only) promoted input → index 0.
+      expect(widgetsOf(1)).toEqual(['from primitive']);
+    });
+
+    it('bulk delete via deleteSelectedItems inherits the write-back', () => {
+      setupFanOut(['bulk value']);
+      useWorkflowStore.getState().deleteSelectedItems([rootNodeHierarchicalKey(9)]);
+      expect(widgetsOf(1)).toEqual(['bulk value']);
+      expect(widgetsOf(2)).toEqual(['bulk value']);
+    });
   });
 
   it('ensureWidgetInputSlot returns the existing index or materializes a new slot', () => {

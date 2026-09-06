@@ -1,6 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useWorkflowStore } from '@/hooks/useWorkflow';
-import { getScopedWorkflowView } from '@/utils/canonicalWorkflowOps';
+import {
+  getScopedWorkflowView,
+  SUBGRAPH_INPUT_NODE_ID,
+  SUBGRAPH_OUTPUT_NODE_ID,
+} from '@/utils/canonicalWorkflowOps';
 import { runUndoTransaction } from '@/utils/undoTransaction';
 import { useConnectionSectionFoldsStore } from '@/hooks/useConnectionSectionFolds';
 import { useI18n } from '@/i18n';
@@ -37,6 +41,7 @@ import { NodeTypeSearchResult } from './NodeTypeSearchResult';
 import { SearchEmptyState } from './SearchEmptyState';
 import { Dialog } from './Dialog';
 import { FullscreenModalActions } from './FullscreenModalActions';
+import { resolveBoundaryPromotion } from '@/utils/boundaryPromotion';
 
 interface ConnectionModalBaseProps {
   isOpen: boolean;
@@ -96,11 +101,19 @@ interface OutputNodeCandidate {
   inputs: OutputCandidate[];
 }
 
+interface BoundarySlotCandidate {
+  slotIndex: number;
+  label: string;
+  type: string;
+  currentlyConnected: boolean;
+  hasExistingLink: boolean;
+}
+
 function makeOutputSelectionKey(nodeId: number, inputIndex: number): string {
   return `${nodeId}:${inputIndex}`;
 }
 
-function areKeySetsEqual(a: Set<string>, b: Set<string>): boolean {
+function areKeySetsEqual<T>(a: Set<T>, b: Set<T>): boolean {
   if (a.size !== b.size) return false;
   for (const key of a) {
     if (!b.has(key)) return false;
@@ -120,12 +133,20 @@ export function ConnectionModal(props: ConnectionModalProps) {
   const ensureWidgetInputSlot = useWorkflowStore((s) => s.ensureWidgetInputSlot);
   const addNode = useWorkflowStore((s) => s.addNode);
   const addNodeAndConnect = useWorkflowStore((s) => s.addNodeAndConnect);
+  const addBoundaryInput = useWorkflowStore((s) => s.addBoundaryInput);
+  const addBoundaryOutput = useWorkflowStore((s) => s.addBoundaryOutput);
+  const connectBoundaryInput = useWorkflowStore((s) => s.connectBoundaryInput);
+  const connectBoundaryOutput = useWorkflowStore((s) => s.connectBoundaryOutput);
   const scrollToNode = useWorkflowStore((s) => s.scrollToNode);
   const expandConnectionsSection = useConnectionSectionFoldsStore((s) => s.expand);
   const topScopeFrame = scopeStack[scopeStack.length - 1];
   const currentSubgraphId = topScopeFrame?.type === 'subgraph' ? topScopeFrame.id : null;
   const scopedWorkflow = useMemo(
     () => (workflow ? getScopedWorkflowView(workflow, currentSubgraphId) : null),
+    [currentSubgraphId, workflow],
+  );
+  const currentSubgraphDefinition = useMemo(
+    () => workflow?.definitions?.subgraphs?.find((def) => def.id === currentSubgraphId) ?? null,
     [currentSubgraphId, workflow],
   );
 
@@ -138,12 +159,32 @@ export function ConnectionModal(props: ConnectionModalProps) {
     // (or false-positive same-id) pre-selected targets.
     for (const link of scopedWorkflow.links) {
       const [, srcNodeId, srcSlot, tgtNodeId, tgtSlot] = link;
-      if (srcNodeId === nodeId && srcSlot === props.outputIndex) {
+      // Skip boundary links (target -20): the sentinel is never a candidate,
+      // so seeding it made the selection permanently "changed" and left Apply
+      // enabled with nothing actually selected.
+      if (srcNodeId === nodeId && srcSlot === props.outputIndex && tgtNodeId >= 0) {
         selected.add(makeOutputSelectionKey(tgtNodeId, tgtSlot));
       }
     }
     return selected;
   });
+  const initialOutputBoundarySelection = useMemo(() => {
+    const selected = new Set<number>();
+    if (mode !== 'output') return selected;
+    for (const link of currentSubgraphDefinition?.links ?? []) {
+      if (
+        link.origin_id === nodeId
+        && link.origin_slot === props.outputIndex
+        && link.target_id === SUBGRAPH_OUTPUT_NODE_ID
+      ) {
+        selected.add(link.target_slot);
+      }
+    }
+    return selected;
+  }, [currentSubgraphDefinition, mode, nodeId, props]);
+  const [selectedOutputBoundarySlots, setSelectedOutputBoundarySlots] = useState<Set<number>>(
+    initialOutputBoundarySelection,
+  );
   const [showOverwriteConfirm, setShowOverwriteConfirm] = useState(false);
   const [multiInputPickerNodeId, setMultiInputPickerNodeId] = useState<number | null>(null);
   const [multiInputPickerSelection, setMultiInputPickerSelection] = useState<Set<string>>(new Set());
@@ -180,6 +221,15 @@ export function ConnectionModal(props: ConnectionModalProps) {
   // resolved from the scoped link list, or from the broadcast feeding it when no
   // link is drawn. Used both to pre-select the form and to tell when the staged
   // selection has changed.
+  const initialInputBoundarySlot = useMemo<number | null>(() => {
+    if (mode !== 'input') return null;
+    const inputIndex = props.inputIndex;
+    const link = currentSubgraphDefinition?.links.find(
+      (candidate) => candidate.target_id === nodeId && candidate.target_slot === inputIndex,
+    );
+    return link?.origin_id === SUBGRAPH_INPUT_NODE_ID ? link.origin_slot : null;
+  }, [currentSubgraphDefinition, mode, nodeId, props]);
+
   const initialInputSource = useMemo<{ nodeId: number; outputIndex: number } | null>(() => {
     if (mode !== 'input' || !scopedWorkflow) return null;
     const inputIndex = (props as InputConnectionModalProps).inputIndex;
@@ -191,7 +241,7 @@ export function ConnectionModal(props: ConnectionModalProps) {
         : null;
     }
     const link = scopedWorkflow.links.find((l) => l[0] === linkId);
-    if (!link) return null;
+    if (!link || link[1] === SUBGRAPH_INPUT_NODE_ID) return null;
     return { nodeId: link[1], outputIndex: link[2] };
   }, [mode, scopedWorkflow, nodeId, props, ueResolution]);
   // Staged single-selection for the input picker: tapping a candidate selects
@@ -199,11 +249,31 @@ export function ConnectionModal(props: ConnectionModalProps) {
   // output picker so editing a wired input updates the form in place instead of
   // connecting + closing + scrolling on every tap.
   const [selectedInputSource, setSelectedInputSource] = useState(initialInputSource);
+  const [selectedInputBoundarySlot, setSelectedInputBoundarySlot] = useState<number | null>(
+    initialInputBoundarySlot,
+  );
 
   const currentNodeHierarchicalKey = useMemo(() => {
     const node = findWorkflowNodeInScope(workflow, nodeId, currentSubgraphId);
     return node?.itemKey ?? null;
   }, [currentSubgraphId, nodeId, workflow]);
+
+  // Inside a subgraph, a slot can be answered by exposing it on the boundary
+  // rather than by wiring it to a sibling — the connection the user wants is
+  // simply outside this scope. `resolveBoundaryPromotion` decides where that is
+  // a real, non-destructive choice.
+  const promoteBoundarySlot = useMemo(
+    () =>
+      resolveBoundaryPromotion({
+        scopedWorkflow,
+        currentSubgraphId,
+        nodeKey: currentNodeHierarchicalKey,
+        nodeId,
+        direction: mode,
+        slotIndex: mode === 'input' ? props.inputIndex : props.outputIndex,
+      }),
+    [scopedWorkflow, currentSubgraphId, currentNodeHierarchicalKey, nodeId, mode, props],
+  );
 
   // A GetNode reads its value from a SetNode by a shared name (no link). When the
   // modal is opened on a Get's (synthesized) input, we list the available
@@ -271,6 +341,53 @@ export function ConnectionModal(props: ConnectionModalProps) {
     scored.sort((a, b) => b.score - a.score || a.node.id - b.node.id);
     return scored;
   }, [mode, compatibleNodes, searchQuery, nodeTypes, workflow]);
+
+  const boundarySlotCandidates = useMemo<BoundarySlotCandidate[]>(() => {
+    if (!currentSubgraphDefinition) return [];
+    const query = searchQuery.trim();
+    const slots = mode === 'input'
+      ? currentSubgraphDefinition.inputs ?? []
+      : currentSubgraphDefinition.outputs ?? [];
+    const connectionType = mode === 'input' ? props.inputType : props.outputType;
+
+    return slots.flatMap((slot, slotIndex) => {
+      const type = String(slot.type ?? '*');
+      if (!areTypesCompatible(type, connectionType)) return [];
+      const label = slot.label || slot.localized_name || slot.name || `#${slotIndex + 1}`;
+      const text = `${label} ${type}`;
+      if (
+        query
+        && !fuzzyMatch(query, text)
+        && !isSubsequence(normalizeSearchText(query), normalizeSearchText(text))
+      ) {
+        return [];
+      }
+
+      if (mode === 'input') {
+        const currentlyConnected = currentSubgraphDefinition.links.some(
+          (link) => link.origin_id === SUBGRAPH_INPUT_NODE_ID
+            && link.origin_slot === slotIndex
+            && link.target_id === nodeId
+            && link.target_slot === props.inputIndex,
+        );
+        return [{ slotIndex, label, type, currentlyConnected, hasExistingLink: false }];
+      }
+
+      const feeders = currentSubgraphDefinition.links.filter(
+        (link) => link.target_id === SUBGRAPH_OUTPUT_NODE_ID && link.target_slot === slotIndex,
+      );
+      const currentlyConnected = feeders.some(
+        (link) => link.origin_id === nodeId && link.origin_slot === props.outputIndex,
+      );
+      return [{
+        slotIndex,
+        label,
+        type,
+        currentlyConnected,
+        hasExistingLink: feeders.length > 0 && !currentlyConnected,
+      }];
+    });
+  }, [currentSubgraphDefinition, mode, nodeId, props, searchQuery]);
 
   const compatibleTypes = useMemo(() => {
     if (mode !== 'input' || !nodeTypes) return [];
@@ -451,17 +568,25 @@ export function ConnectionModal(props: ConnectionModalProps) {
 
   const outputSelectionHasChanges = useMemo(() => {
     if (mode !== 'output') return false;
-    return !areKeySetsEqual(selectedOutputTargetKeys, initialOutputSelection);
-  }, [mode, selectedOutputTargetKeys, initialOutputSelection]);
+    return !areKeySetsEqual(selectedOutputTargetKeys, initialOutputSelection)
+      || !areKeySetsEqual(selectedOutputBoundarySlots, initialOutputBoundarySelection);
+  }, [
+    mode,
+    selectedOutputTargetKeys,
+    initialOutputSelection,
+    selectedOutputBoundarySlots,
+    initialOutputBoundarySelection,
+  ]);
 
   const inputSelectionHasChanges = useMemo(() => {
     if (mode !== 'input') return false;
+    if (selectedInputBoundarySlot !== initialInputBoundarySlot) return true;
     const a = selectedInputSource;
     const b = initialInputSource;
     if (!a && !b) return false;
     if (!a || !b) return true;
     return a.nodeId !== b.nodeId || a.outputIndex !== b.outputIndex;
-  }, [mode, selectedInputSource, initialInputSource]);
+  }, [mode, selectedInputSource, initialInputSource, selectedInputBoundarySlot, initialInputBoundarySlot]);
 
   const outputOverwriteCandidates = useMemo(() => {
     if (mode !== 'output') return [];
@@ -474,8 +599,23 @@ export function ConnectionModal(props: ConnectionModalProps) {
     return candidates;
   }, [mode, selectedOutputTargetKeys, initialOutputSelection, outputCandidatesByKey]);
 
+  const hasBoundaryOutputOverwrite = useMemo(() => {
+    if (mode !== 'output') return false;
+    return boundarySlotCandidates.some(
+      (candidate) => selectedOutputBoundarySlots.has(candidate.slotIndex)
+        && !initialOutputBoundarySelection.has(candidate.slotIndex)
+        && candidate.hasExistingLink,
+    );
+  }, [
+    mode,
+    boundarySlotCandidates,
+    selectedOutputBoundarySlots,
+    initialOutputBoundarySelection,
+  ]);
+
   const toggleInputSelection = (srcNodeId: number, srcOutputIndex: number) => {
     if (mode !== 'input') return;
+    setSelectedInputBoundarySlot(null);
     setSelectedInputSource((prev) =>
       prev && prev.nodeId === srcNodeId && prev.outputIndex === srcOutputIndex
         ? null
@@ -483,34 +623,92 @@ export function ConnectionModal(props: ConnectionModalProps) {
     );
   };
 
+  const toggleInputBoundarySelection = (slotIndex: number) => {
+    if (mode !== 'input') return;
+    setSelectedInputSource(null);
+    setSelectedInputBoundarySlot((previous) => previous === slotIndex ? null : slotIndex);
+  };
+
+  const toggleOutputBoundarySelection = (slotIndex: number) => {
+    if (mode !== 'output') return;
+    setSelectedOutputBoundarySlots((previous) => {
+      const next = new Set(previous);
+      if (next.has(slotIndex)) next.delete(slotIndex);
+      else next.add(slotIndex);
+      return next;
+    });
+  };
+
   // Clears the staged selection; the actual disconnect happens on Apply.
   const handleDisconnect = () => {
     if (mode !== 'input') return;
     setSelectedInputSource(null);
+    setSelectedInputBoundarySlot(null);
+  };
+
+  const getBoundaryInputTargets = (
+    slotIndex: number,
+    omitCurrentTarget: boolean,
+  ): Array<{ nodeKey: string; inputSlot: number }> => {
+    if (mode !== 'input') return [];
+    const latestWorkflow = useWorkflowStore.getState().workflow;
+    const definition = latestWorkflow?.definitions?.subgraphs?.find(
+      (candidate) => candidate.id === currentSubgraphId,
+    );
+    if (!definition) return [];
+    const targets: Array<{ nodeKey: string; inputSlot: number }> = [];
+    for (const link of definition.links) {
+      if (link.origin_id !== SUBGRAPH_INPUT_NODE_ID || link.origin_slot !== slotIndex) continue;
+      if (omitCurrentTarget && link.target_id === nodeId && link.target_slot === props.inputIndex) continue;
+      const targetNode = definition.nodes.find((candidate) => candidate.id === link.target_id);
+      if (targetNode?.itemKey) {
+        targets.push({ nodeKey: targetNode.itemKey, inputSlot: link.target_slot });
+      }
+    }
+    return targets;
   };
 
   const applyInputSelection = () => {
     if (mode !== 'input') return;
     if (!currentNodeHierarchicalKey) return;
-    if (!selectedInputSource) {
-      // A broadcast has no link to remove — it would simply be re-resolved on the
-      // next render. Clearing the selection is a no-op for it; the way to stop a
-      // broadcast is at the Anything Everywhere node that sends it.
-      if (initialInputSource && !ueResolution) {
+    runUndoTransaction(() => {
+      if (
+        initialInputBoundarySlot != null
+        && initialInputBoundarySlot !== selectedInputBoundarySlot
+      ) {
+        connectBoundaryInput(
+          initialInputBoundarySlot,
+          getBoundaryInputTargets(initialInputBoundarySlot, true),
+        );
+      }
+
+      if (
+        selectedInputBoundarySlot != null
+        && selectedInputBoundarySlot !== initialInputBoundarySlot
+      ) {
+        connectBoundaryInput(selectedInputBoundarySlot, [
+          ...getBoundaryInputTargets(selectedInputBoundarySlot, true),
+          { nodeKey: currentNodeHierarchicalKey, inputSlot: props.inputIndex },
+        ]);
+        return;
+      }
+
+      if (selectedInputSource) {
+        const srcHierarchicalKey = getHierarchicalKeyForNodeId(selectedInputSource.nodeId);
+        if (!srcHierarchicalKey) return;
+        connectNodes(
+          srcHierarchicalKey,
+          selectedInputSource.outputIndex,
+          currentNodeHierarchicalKey,
+          props.inputIndex,
+          props.inputType,
+        );
+      } else if (initialInputSource && !ueResolution) {
+        // A broadcast has no link to remove — it would simply be re-resolved on
+        // the next render. Stopping it is a job for its Anything Everywhere node.
         disconnectInput(currentNodeHierarchicalKey, props.inputIndex);
       }
-      onClose();
-      return;
-    }
-    const srcHierarchicalKey = getHierarchicalKeyForNodeId(selectedInputSource.nodeId);
-    if (!srcHierarchicalKey) return;
-    connectNodes(
-      srcHierarchicalKey,
-      selectedInputSource.outputIndex,
-      currentNodeHierarchicalKey,
-      props.inputIndex,
-      props.inputType,
-    );
+    }, 'Edit connections');
     onClose();
   };
 
@@ -643,35 +841,49 @@ export function ConnectionModal(props: ConnectionModalProps) {
     // below commits its own store set(), and N targets would otherwise stack
     // up to 2N separate undo snapshots.
     runUndoTransaction(() => {
-    for (const key of initialOutputSelection) {
-      if (selectedOutputTargetKeys.has(key)) continue;
-      const candidate = outputCandidatesByKey.get(key);
-      if (!candidate) continue;
-      const targetHierarchicalKey = getHierarchicalKeyForNodeId(candidate.nodeId);
-      if (!targetHierarchicalKey) continue;
-      disconnectInput(targetHierarchicalKey, candidate.inputIndex);
-    }
-    for (const key of selectedOutputTargetKeys) {
-      if (initialOutputSelection.has(key)) continue;
-      const candidate = outputCandidatesByKey.get(key);
-      if (!candidate) continue;
-      const targetHierarchicalKey = getHierarchicalKeyForNodeId(candidate.nodeId);
-      if (!targetHierarchicalKey || !currentNodeHierarchicalKey) continue;
-      // Un-materialized widget-inputs only exist in the type def — create the
-      // slot first (overriding the widget), then connect to it.
-      const targetInputIndex = candidate.isSynthetic
-        ? ensureWidgetInputSlot(targetHierarchicalKey, candidate.inputName, candidate.inputType)
-        : candidate.inputIndex;
-      if (targetInputIndex == null || targetInputIndex < 0) continue;
-      connectNodes(currentNodeHierarchicalKey, props.outputIndex, targetHierarchicalKey, targetInputIndex, candidate.inputType);
-    }
-    });
+      for (const key of initialOutputSelection) {
+        if (selectedOutputTargetKeys.has(key)) continue;
+        const candidate = outputCandidatesByKey.get(key);
+        if (!candidate) continue;
+        const targetHierarchicalKey = getHierarchicalKeyForNodeId(candidate.nodeId);
+        if (!targetHierarchicalKey) continue;
+        disconnectInput(targetHierarchicalKey, candidate.inputIndex);
+      }
+      for (const key of selectedOutputTargetKeys) {
+        if (initialOutputSelection.has(key)) continue;
+        const candidate = outputCandidatesByKey.get(key);
+        if (!candidate) continue;
+        const targetHierarchicalKey = getHierarchicalKeyForNodeId(candidate.nodeId);
+        if (!targetHierarchicalKey || !currentNodeHierarchicalKey) continue;
+        // Un-materialized widget-inputs only exist in the type def — create the
+        // slot first (overriding the widget), then connect to it.
+        const targetInputIndex = candidate.isSynthetic
+          ? ensureWidgetInputSlot(targetHierarchicalKey, candidate.inputName, candidate.inputType)
+          : candidate.inputIndex;
+        if (targetInputIndex == null || targetInputIndex < 0) continue;
+        connectNodes(currentNodeHierarchicalKey, props.outputIndex, targetHierarchicalKey, targetInputIndex, candidate.inputType);
+      }
+      for (const slotIndex of initialOutputBoundarySelection) {
+        if (!selectedOutputBoundarySlots.has(slotIndex)) {
+          connectBoundaryOutput(slotIndex, null);
+        }
+      }
+      if (currentNodeHierarchicalKey) {
+        for (const slotIndex of selectedOutputBoundarySlots) {
+          if (initialOutputBoundarySelection.has(slotIndex)) continue;
+          connectBoundaryOutput(slotIndex, {
+            nodeKey: currentNodeHierarchicalKey,
+            outputSlot: props.outputIndex,
+          });
+        }
+      }
+    }, 'Edit connections');
     onClose();
   };
 
   const handleSubmitOutput = () => {
     if (mode !== 'output') return;
-    if (outputOverwriteCandidates.length > 0) {
+    if (outputOverwriteCandidates.length > 0 || hasBoundaryOutputOverwrite) {
       setShowOverwriteConfirm(true);
       return;
     }
@@ -751,10 +963,74 @@ export function ConnectionModal(props: ConnectionModalProps) {
               onClose();
             }}
           >
-            Clear source
+            {t('Clear source')}
           </button>
         )}
       </div>
+    );
+  };
+
+  const renderBoundarySlotSection = () => {
+    if (boundarySlotCandidates.length === 0) return null;
+    const heading = mode === 'input' ? t('Subgraph inputs') : t('Subgraph outputs');
+
+    return (
+      <section className="connection-boundary-section rounded-xl border border-white/10 bg-slate-900/55 overflow-hidden mb-1">
+        <div className="px-3 py-2 border-b border-white/10 text-xs font-semibold uppercase tracking-wide text-slate-400">
+          {heading}
+        </div>
+        <div className="p-2 flex flex-col gap-2">
+          {boundarySlotCandidates.map((candidate) => {
+            const selected = mode === 'input'
+              ? selectedInputBoundarySlot === candidate.slotIndex
+              : selectedOutputBoundarySlots.has(candidate.slotIndex);
+            return (
+              <button
+                key={`boundary-slot-${mode}-${candidate.slotIndex}`}
+                type="button"
+                className={`connection-boundary-candidate w-full flex items-center justify-between gap-3 text-left px-3 py-2.5 rounded-lg border transition active:scale-[0.998] ${
+                  selected
+                    ? 'bg-cyan-500/15 border-cyan-400/40'
+                    : 'bg-slate-950/70 border-white/10 hover:bg-white/5'
+                }`}
+                onClick={() => {
+                  if (mode === 'input') toggleInputBoundarySelection(candidate.slotIndex);
+                  else toggleOutputBoundarySelection(candidate.slotIndex);
+                }}
+              >
+                <span className="min-w-0">
+                  <span className="flex items-center gap-2 min-w-0">
+                    <span className="text-sm font-semibold text-slate-100 truncate">
+                      {candidate.label}
+                    </span>
+                    {candidate.currentlyConnected && (
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-cyan-500/15 text-cyan-300 text-[10px] font-medium shrink-0">
+                        <CheckIcon className="w-3 h-3" />
+                        {t('Connected')}
+                      </span>
+                    )}
+                    {candidate.hasExistingLink && (
+                      <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-300 text-[10px] font-medium shrink-0">
+                        {t('Already linked')}
+                      </span>
+                    )}
+                  </span>
+                  <span className="block text-xs text-slate-400 truncate mt-0.5">
+                    {candidate.type}
+                  </span>
+                </span>
+                <span className={`w-5 h-5 rounded border flex items-center justify-center shrink-0 ${
+                  selected
+                    ? 'bg-cyan-500 border-cyan-500 text-slate-950'
+                    : 'bg-slate-950 border-white/20'
+                }`}>
+                  {selected && <CheckIcon className="w-3 h-3" />}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      </section>
     );
   };
 
@@ -817,6 +1093,8 @@ export function ConnectionModal(props: ConnectionModalProps) {
 
     return (
       <div className="px-3 pt-3 pb-20 flex flex-col gap-2">
+        {renderBoundarySlotSection()}
+
         {concreteNodes.map(renderNodeEntry)}
 
         {wildcardNodes.length > 0 && (
@@ -830,7 +1108,7 @@ export function ConnectionModal(props: ConnectionModalProps) {
           </>
         )}
 
-        {filteredNodes.length === 0 && (
+        {filteredNodes.length === 0 && boundarySlotCandidates.length === 0 && (
           <SearchEmptyState query={searchQuery} message={t('No matching nodes found')} />
         )}
 
@@ -842,19 +1120,19 @@ export function ConnectionModal(props: ConnectionModalProps) {
           <div className="w-8 h-8 rounded-full bg-cyan-500 flex items-center justify-center flex-shrink-0">
             <PlusIcon className="w-4 h-4 text-slate-950" />
           </div>
-          <span className="text-sm font-semibold text-slate-100">Add new node...</span>
+          <span className="text-sm font-semibold text-slate-100">{t('Add new node...')}</span>
         </button>
 
         {/* No Disconnect for a broadcast: there is no link here to remove, and
             it would just be re-resolved. Stopping it is a job for the sending
             Anything Everywhere node. */}
-        {inputProps.currentlyConnectedNodeId !== null && !ueResolution && (
+        {(inputProps.currentlyConnectedNodeId !== null || initialInputBoundarySlot != null) && !ueResolution && (
           <button
             type="button"
             className="w-full text-left rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm font-semibold text-red-300 hover:bg-red-500/20 active:scale-[0.998] transition"
             onClick={handleDisconnect}
           >
-            Disconnect
+            {t('Disconnect')}
           </button>
         )}
       </div>
@@ -962,12 +1240,12 @@ export function ConnectionModal(props: ConnectionModalProps) {
                 {hasConnectedFromThisOutput && (
                   <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-cyan-500/15 text-cyan-300 text-[10px] font-medium shrink-0">
                     <CheckIcon className="w-3 h-3" />
-                    Connected
+                    {t('Connected')}
                   </span>
                 )}
                 {hasExistingLink && (
                   <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-300 text-[10px] font-medium shrink-0">
-                    Already linked
+                    {t('Already linked')}
                   </span>
                 )}
               </div>
@@ -989,6 +1267,8 @@ export function ConnectionModal(props: ConnectionModalProps) {
 
     return (
       <div className="px-3 pt-3 pb-20 flex flex-col gap-2">
+        {renderBoundarySlotSection()}
+
         {concreteOutputNodes.map(renderOutputNodeEntry)}
 
         {wildcardOutputNodes.length > 0 && (
@@ -1002,7 +1282,7 @@ export function ConnectionModal(props: ConnectionModalProps) {
           </>
         )}
 
-        {outputNodeCandidates.length === 0 && (
+        {outputNodeCandidates.length === 0 && boundarySlotCandidates.length === 0 && (
           <SearchEmptyState query={searchQuery} message={t('No matching target nodes found')} />
         )}
 
@@ -1014,7 +1294,7 @@ export function ConnectionModal(props: ConnectionModalProps) {
           <div className="w-8 h-8 rounded-full bg-cyan-500 flex items-center justify-center flex-shrink-0">
             <PlusIcon className="w-4 h-4 text-slate-950" />
           </div>
-          <span className="text-sm font-semibold text-slate-100">Add new node...</span>
+          <span className="text-sm font-semibold text-slate-100">{t('Add new node...')}</span>
         </button>
       </div>
     );
@@ -1090,6 +1370,29 @@ export function ConnectionModal(props: ConnectionModalProps) {
               onClick: onClose,
               variant: 'secondary'
             },
+            ...(promoteBoundarySlot && currentAction === 'pick'
+              ? [{
+                  key: 'promote-boundary',
+                  label: promoteBoundarySlot.direction === 'input'
+                    ? t('Expose as subgraph input')
+                    : t('Expose as subgraph output'),
+                  onClick: () => {
+                    if (promoteBoundarySlot.direction === 'input') {
+                      addBoundaryInput({
+                        nodeKey: promoteBoundarySlot.nodeKey,
+                        inputSlot: promoteBoundarySlot.slotIndex,
+                      });
+                    } else {
+                      addBoundaryOutput({
+                        nodeKey: promoteBoundarySlot.nodeKey,
+                        outputSlot: promoteBoundarySlot.slotIndex,
+                      });
+                    }
+                    onClose();
+                  },
+                  variant: 'secondary' as const
+                }]
+              : []),
             ...(mode === 'output'
               && currentAction === 'pick'
               ? [{
@@ -1143,7 +1446,7 @@ export function ConnectionModal(props: ConnectionModalProps) {
             onClick={(event) => event.stopPropagation()}
           >
             <div className="px-4 py-3 text-sm font-semibold text-slate-100 border-b border-white/10">
-              Select compatible inputs
+              {t('Select compatible inputs')}
             </div>
             <div className="max-h-[45vh] overflow-y-auto">
               {outputNodeCandidates
@@ -1165,7 +1468,7 @@ export function ConnectionModal(props: ConnectionModalProps) {
                           <span className="text-slate-100 truncate">{candidate.inputName}</span>
                           {candidate.isOverrideable && (
                             <span className="inline-flex items-center px-1.5 py-0.5 rounded-full bg-cyan-500/15 text-cyan-300 text-[10px] font-medium shrink-0">
-                              Override
+                              {t('Override')}
                             </span>
                           )}
                         </span>
@@ -1186,14 +1489,14 @@ export function ConnectionModal(props: ConnectionModalProps) {
                 className="px-3 py-2 rounded-lg text-sm font-medium text-slate-300 hover:bg-white/10"
                 onClick={closeMultiInputPicker}
               >
-                Cancel
+                {t('Cancel')}
               </button>
               <button
                 type="button"
                 className="px-3 py-2 rounded-lg text-sm font-semibold text-slate-950 bg-cyan-500 hover:bg-cyan-400"
                 onClick={applyMultiInputPickerSelection}
               >
-                Apply
+                {t('Apply')}
               </button>
             </div>
           </div>
@@ -1207,7 +1510,9 @@ export function ConnectionModal(props: ConnectionModalProps) {
           // multi-input picker (z-2250).
           zIndex={2260}
           title={t('Overwrite existing connections?')}
-          description={t('Some selected inputs are already connected. Continuing will disconnect their current source and reconnect to this output.')}
+          description={hasBoundaryOutputOverwrite
+            ? t('Some selected slots are already connected. Continuing will disconnect their current source and reconnect them to this output.')
+            : t('Some selected inputs are already connected. Continuing will disconnect their current source and reconnect to this output.')}
           actions={[
             {
               label: t('Cancel'),

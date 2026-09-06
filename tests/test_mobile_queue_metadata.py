@@ -27,6 +27,20 @@ def test_upsert_and_get_prompt_metadata(tmp_path: Path):
     assert metadata["prompt-a"]["workflowDiff"] == {"prompts": [], "nodeChanges": []}
 
 
+def test_get_prompt_metadata_normalizes_the_requested_ids(tmp_path: Path):
+    """The route hands its `prompt_id` query values straight through, so the
+    lookup has to tolerate padding and non-string junk rather than missing the
+    entry."""
+    cache_path = tmp_path / "queue_metadata.json"
+    upsert_prompt_metadata(str(cache_path), "prompt-a", {"workflowLabel": "Workflow"})
+
+    metadata = get_prompt_metadata(
+        str(cache_path), ["  prompt-a  ", "", "   ", 123, None, {"id": "prompt-a"}]
+    )
+
+    assert list(metadata) == ["prompt-a"]
+
+
 def test_remap_prompt_metadata_moves_entry(tmp_path: Path):
     cache_path = tmp_path / "queue_metadata.json"
     upsert_prompt_metadata(str(cache_path), "old-prompt", {

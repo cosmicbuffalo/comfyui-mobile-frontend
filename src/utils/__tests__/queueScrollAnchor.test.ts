@@ -174,4 +174,58 @@ describe('queueScrollAnchor', () => {
     expect(restoreQueueScrollAnchor(c, anchor)).toBe(true);
     expect(c.scrollTop).toBe(375);
   });
+
+  // Every case above restores at `container.scrollTop === anchor.scrollTop`,
+  // which is the one position where the anchor's two halves cannot disagree.
+  // The reader is routinely somewhere else: `handleScroll` leaves the anchor
+  // untouched while a fling coasts, and re-captures nothing for a scroll with
+  // no user intent behind it.
+  it('does not undo the reader\'s own scrolling after compensating', () => {
+    // Captured at 1000 with the item 100px down the scrollport. The reader then
+    // covers 400 more without a re-capture, so the item correctly rides up to
+    // -300.
+    const anchor = { itemId: 'c1::header', offsetTop: 100, scrollTop: 1000 };
+    const c = container(0, 800, 1400);
+    const el = anchorEl('c1::header', -300, 100);
+    c.appendChild(el);
+
+    // Nothing has shifted: pure scrolling is not something to correct.
+    expect(restoreQueueScrollAnchor(c, anchor)).toBe(false);
+    expect(c.scrollTop).toBe(1400);
+
+    // 50px of content lands above the item, sliding it down to -250.
+    vi.mocked(el.getBoundingClientRect).mockReturnValue(rect(-250, 150));
+    expect(restoreQueueScrollAnchor(c, anchor)).toBe(true);
+    expect(c.scrollTop).toBe(1450);
+    vi.mocked(el.getBoundingClientRect).mockReturnValue(rect(-300, 100));
+
+    // …and that is the whole correction. Nothing has changed since, so this is
+    // a no-op — not a 400px snap back towards where the anchor was captured.
+    expect(restoreQueueScrollAnchor(c, anchor)).toBe(false);
+    expect(c.scrollTop).toBe(1450);
+  });
+
+  it('records the correction that landed, not the one it asked for', () => {
+    // At the very top of the range, so a downward correction has nowhere to go.
+    const c = document.createElement('div');
+    let top = 0;
+    Object.defineProperty(c, 'scrollTop', {
+      get: () => top,
+      // A scroller clamps: no negative scroll position exists.
+      set: (value: number) => { top = Math.max(0, value); },
+    });
+    vi.spyOn(c, 'getBoundingClientRect').mockReturnValue(rect(0, 800));
+    const el = anchorEl('c1::header', 40, 200);
+    c.appendChild(el);
+
+    // Content above the item shrank, so the pin wants to scroll up past 0.
+    const anchor = { itemId: 'c1::header', offsetTop: 90, scrollTop: 0 };
+    expect(restoreQueueScrollAnchor(c, anchor)).toBe(true);
+    expect(c.scrollTop).toBe(0);
+    // The item is still at 40 because the scroll never moved. Claiming the
+    // requested correction here would leave the anchor describing a position
+    // the list is not in, and the next call would act on the difference.
+    expect(anchor).toEqual({ itemId: 'c1::header', offsetTop: 40, scrollTop: 0 });
+    expect(restoreQueueScrollAnchor(c, anchor)).toBe(false);
+  });
 });

@@ -1,14 +1,16 @@
 import { useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { BypassToggleIcon, BookmarkIconSvg, BookmarkOutlineIcon, CheckIcon, ChevronRightIcon, ClipboardIcon, ClipboardDownloadIcon, CopyIcon, EyeIcon, EyeOffIcon, MoveUpDownIcon, NodeConnectionsIcon, EditIcon, ExternalLinkIcon, PinIconSvg, PinOutlineIcon, SaveDiskIcon, TrashIcon, ArrowRightIcon, WorkflowIcon } from '@/components/icons';
+import { BypassToggleIcon, BookmarkIconSvg, BookmarkOutlineIcon, CheckIcon, ClipboardIcon, ClipboardDownloadIcon, CopyIcon, EyeIcon, EyeOffIcon, MoveUpDownIcon, NodeConnectionsIcon, EditIcon, ExternalLinkIcon, PinIconSvg, PinOutlineIcon, PromotedWidgetIcon, SaveDiskIcon, TrashIcon, ArrowRightIcon, WorkflowIcon } from '@/components/icons';
 import { useWorkflowSelectionStore } from '@/hooks/useWorkflowSelection';
-import { useAnchoredMenuPosition } from '@/hooks/useAnchoredMenuPosition';
 import { useDismissOnOutsideClick } from '@/hooks/useDismissOnOutsideClick';
-import { ContextMenuButton } from '@/components/buttons/ContextMenuButton';
-import { ContextMenuBuilder } from '@/components/menus/ContextMenuBuilder';
 import { openLoraManagerUiInNewTab } from '@/utils/loraManagerUi';
 import { resolveWorkflowColor, themeColors, workflowColorPickerOptions } from '@/theme/colors';
 import { useI18n } from '@/i18n';
+import { useIsDesktop } from '@/hooks/useIsDesktop';
+import { SubgraphActionsModal } from '@/components/modals/SubgraphActionsModal';
+import { WidgetPickerModal } from '@/components/modals/WidgetPickerModal';
+import { WorkflowObjectContextMenu } from '@/components/WorkflowPanel/WorkflowObjectContextMenu';
+import type { PromotableWidget } from '@/utils/promotableWidgets';
 
 interface PinnableWidget {
   widgetIndex: number;
@@ -28,6 +30,12 @@ interface NodeCardMenuProps {
   showFastGroupsConfigAction: boolean;
   isBypassed: boolean;
   onEnterSubgraph?: () => void;
+  // Subgraph-type actions, provided only for subgraph placeholder cards.
+  // onReplaceSubgraph is provided only when another type exists to swap to.
+  onReplaceSubgraph?: () => void;
+  onDissolveSubgraph?: () => void;
+  onEditSubgraphLabels?: () => void;
+  onPopOutToRoot?: () => void;
   onEditLabel: () => void;
   // Provided only for SetNodes: starts inline rename of the relay name (the
   // outgoing connection label becomes an input).
@@ -54,8 +62,9 @@ interface NodeCardMenuProps {
     widgetType: string;
     options?: Record<string, unknown> | unknown[];
   } | null) => void;
+  promotableWidgets?: PromotableWidget[];
+  onPromoteWidget?: (widget: PromotableWidget) => void;
   isNodeBookmarked: boolean;
-  canAddNodeBookmark: boolean;
   onToggleNodeBookmark: () => void;
   toggleBypass: (itemKey: string) => void;
   setItemHidden: (itemKey: string, hidden: boolean) => void;
@@ -65,6 +74,7 @@ interface NodeCardMenuProps {
   onPasteBelow: () => void;
   pasteSummary: string | null;
   onMoveNode: () => void;
+  onMoveIntoSubgraph?: () => void;
   // Fired by the conversion menu items. Receives the desired target type; the
   // store decides whether the node is actually convertible. Optional so callers
   // that don't care about this feature aren't forced to wire it.
@@ -83,6 +93,10 @@ export function NodeCardMenu({
   showFastGroupsConfigAction,
   isBypassed,
   onEnterSubgraph,
+  onReplaceSubgraph,
+  onDissolveSubgraph,
+  onEditSubgraphLabels,
+  onPopOutToRoot,
   onEditLabel,
   onEditSetName,
   onEditFastGroupsConfig,
@@ -94,8 +108,9 @@ export function NodeCardMenu({
   hasPinnedWidget,
   toggleWidgetPin,
   setPinnedWidget,
+  promotableWidgets = [],
+  onPromoteWidget,
   isNodeBookmarked,
-  canAddNodeBookmark,
   onToggleNodeBookmark,
   toggleBypass,
   setItemHidden,
@@ -105,6 +120,7 @@ export function NodeCardMenu({
   onPasteBelow,
   pasteSummary,
   onMoveNode,
+  onMoveIntoSubgraph,
   onConvertImageOutputNode,
   connectionHighlightMode,
   setConnectionHighlightMode,
@@ -112,13 +128,16 @@ export function NodeCardMenu({
   rightLineCount
 }: NodeCardMenuProps) {
   const { t } = useI18n();
+  const isDesktop = useIsDesktop();
   const resolvedNodeColor = resolveWorkflowColor(nodeColor);
-  const [menuOpen, setMenuOpen] = useState(false);
   const [colorPopoverOpen, setColorPopoverOpen] = useState(false);
-  const [pinSubmenuOpen, setPinSubmenuOpen] = useState(false);
+  // Which widget picker is open, if any. Both actions need to be told WHICH
+  // widget when a node has several, and both ask in a modal rather than by
+  // unfolding the menu into a list.
+  const [widgetPicker, setWidgetPicker] = useState<'pin' | 'promote' | null>(null);
+  const [subgraphActionsOpen, setSubgraphActionsOpen] = useState(false);
   const enterSelectionMode = useWorkflowSelectionStore((s) => s.enterSelectionMode);
   const selectSelectionKeys = useWorkflowSelectionStore((s) => s.selectKeys);
-  const menuRef = useRef<HTMLDivElement>(null);
   const colorPopoverRef = useRef<HTMLDivElement>(null);
   const menuButtonRef = useRef<HTMLButtonElement>(null);
   const [colorPopoverStyle, setColorPopoverStyle] = useState<{
@@ -132,20 +151,6 @@ export function NodeCardMenu({
     width: 0,
     visibility: 'hidden'
   });
-  const closeMenu = () => {
-    setMenuOpen(false);
-    setColorPopoverOpen(false);
-    setPinSubmenuOpen(false);
-    resetMenuPosition();
-  };
-
-  const { menuStyle, resetMenuPosition } = useAnchoredMenuPosition({
-    open: menuOpen,
-    buttonRef: menuButtonRef,
-    menuRef,
-    repositionToken: pinSubmenuOpen
-  });
-
   useLayoutEffect(() => {
     if (!colorPopoverOpen) return;
 
@@ -176,13 +181,6 @@ export function NodeCardMenu({
   }, [colorPopoverOpen, nodeId]);
 
   useDismissOnOutsideClick({
-    open: menuOpen,
-    onDismiss: closeMenu,
-    triggerRef: menuButtonRef,
-    contentRef: menuRef,
-    ignoreScrollWithinContent: true
-  });
-  useDismissOnOutsideClick({
     open: colorPopoverOpen,
     onDismiss: () => setColorPopoverOpen(false),
     triggerRef: menuButtonRef,
@@ -207,45 +205,7 @@ export function NodeCardMenu({
     setConnectionHighlightMode(nodeHierarchicalKey, nextMode);
   };
 
-  const handleToggleMenu = (event: React.MouseEvent<HTMLButtonElement>) => {
-    event.stopPropagation();
-    resetMenuPosition();
-    setColorPopoverOpen(false);
-    setMenuOpen((prev) => !prev);
-  };
-
-  const handleEditLabelClick = (event: React.MouseEvent<HTMLButtonElement>) => {
-    event.stopPropagation();
-    onEditLabel();
-    closeMenu();
-  };
-
-  const handleEditSetNameClick = (event: React.MouseEvent<HTMLButtonElement>) => {
-    event.stopPropagation();
-    onEditSetName?.();
-    closeMenu();
-  };
-
-  const handleToggleBypassClick = (event: React.MouseEvent<HTMLButtonElement>) => {
-    event.stopPropagation();
-    toggleBypass(nodeHierarchicalKey);
-    closeMenu();
-  };
-
-  const handleHideNodeClick = (event: React.MouseEvent<HTMLButtonElement>) => {
-    event.stopPropagation();
-    setItemHidden(nodeHierarchicalKey, true);
-    closeMenu();
-  };
-
-  const handleOpenLoraManagerClick = (event: React.MouseEvent<HTMLButtonElement>) => {
-    event.stopPropagation();
-    openLoraManagerUiInNewTab();
-    closeMenu();
-  };
-
-  const handleSinglePinClick = (event: React.MouseEvent<HTMLButtonElement>) => {
-    event.stopPropagation();
+  const handleSinglePin = () => {
     if (!singlePinnableWidget) return;
     toggleWidgetPin(
       singlePinnableWidget.widgetIndex,
@@ -254,22 +214,15 @@ export function NodeCardMenu({
       singlePinnableWidget.options,
       singlePinnableWidget.inputName,
     );
-    closeMenu();
   };
 
-  const handleRemovePinClick = (event: React.MouseEvent<HTMLButtonElement>) => {
-    event.stopPropagation();
+  const handleRemovePin = () => {
     setPinnedWidget(null);
-    closeMenu();
   };
 
-  const handlePinSubmenuToggle = (event: React.MouseEvent<HTMLButtonElement>) => {
-    event.stopPropagation();
-    setPinSubmenuOpen(!pinSubmenuOpen);
-  };
 
-  const handlePinWidgetClick = (widget: PinnableWidget) => (event: React.MouseEvent<HTMLButtonElement>) => {
-    event.stopPropagation();
+
+  const handlePinWidget = (widget: PinnableWidget) => {
     setPinnedWidget({
       nodeId,
       widgetIndex: widget.widgetIndex,
@@ -278,7 +231,6 @@ export function NodeCardMenu({
       widgetType: widget.type,
       options: widget.options
     });
-    closeMenu();
   };
 
   return (
@@ -300,18 +252,241 @@ export function NodeCardMenu({
           />
         </button>
       )}
-      <ContextMenuButton
-        onClick={handleToggleMenu}
+      {isDesktop && (
+        <button
+          type="button"
+          className={`flex h-8 w-8 cursor-pointer items-center justify-center rounded-md transition-colors ${
+            isNodeBookmarked
+              ? 'text-amber-500 hover:bg-amber-500/10'
+              : 'text-slate-400 hover:bg-white/5 hover:text-slate-100'
+          } disabled:cursor-not-allowed disabled:opacity-35`}
+          aria-pressed={isNodeBookmarked}
+          aria-label={isNodeBookmarked ? t('Remove bookmark') : t('Bookmark node')}
+          onClick={(event) => {
+            event.stopPropagation();
+            onToggleNodeBookmark();
+          }}
+        >
+          {isNodeBookmarked ? (
+            <BookmarkIconSvg className="h-5 w-5" />
+          ) : (
+            <BookmarkOutlineIcon className="h-5 w-5" />
+          )}
+        </button>
+      )}
+      <WorkflowObjectContextMenu
         buttonRef={menuButtonRef}
         ariaLabel={t('Node options')}
-        buttonSize={8}
-        iconSize={5}
-        icon={isNodeBookmarked
+        triggerIcon={!isDesktop && isNodeBookmarked
             ? <BookmarkIconSvg className="w-5 h-5 text-amber-500" />
             : onEnterSubgraph
             ? <WorkflowIcon className="w-5 h-5 -scale-x-100 text-cyan-300" />
             : undefined
         }
+        onBeforeToggle={() => setColorPopoverOpen(false)}
+        // NOT onClose: choosing "Change color" opens the popover and then
+        // closes the menu, so closing the popover from the menu's own close
+        // shut it in the same tick and the picker could never be reached. The
+        // popover dismisses itself on an outside tap, and re-opening the menu
+        // resets it through onBeforeToggle above.
+        sections={{
+          cosmetic: [
+            // First in the menu, ahead of the cosmetic entries this section is
+            // otherwise made of: on a subgraph card, going inside is the reason
+            // the menu was opened nine times out of ten.
+            {
+              key: 'enter-subgraph',
+              label: t('Enter subgraph'),
+              icon: <ArrowRightIcon className="w-4 h-4" />,
+              onSelect: onEnterSubgraph,
+              hidden: !onEnterSubgraph,
+            },
+            {
+              key: 'edit-label',
+              label: t('Edit label'),
+              icon: <EditIcon className="w-4 h-4" />,
+              onSelect: onEditLabel,
+            },
+            {
+              key: 'change-color',
+              label: t('Change color'),
+              icon: (
+                <span
+                  className="inline-block w-3 h-3 rounded-full"
+                  style={{ backgroundColor: resolvedNodeColor || themeColors.workflow.defaultGroupDot }}
+                />
+              ),
+              onSelect: () => setColorPopoverOpen(true),
+            },
+          ],
+          bookmarkNavigation: [
+            {
+              key: 'toggle-bookmark',
+              label: isNodeBookmarked ? t('Remove bookmark') : t('Bookmark'),
+              icon: isNodeBookmarked
+                ? <BookmarkIconSvg className="w-4 h-4 text-amber-500" />
+                : <BookmarkOutlineIcon className="w-4 h-4" />,
+              onSelect: onToggleNodeBookmark,
+              hidden: isDesktop,
+            },
+            {
+              key: 'pop-out-to-root',
+              label: t('Pop out to root'),
+              icon: <ExternalLinkIcon className="w-4 h-4" />,
+              onSelect: onPopOutToRoot,
+              hidden: !onPopOutToRoot,
+            },
+          ],
+          actions: [
+            {
+              key: 'select-node',
+              label: t('Select'),
+              icon: <CheckIcon className="w-4 h-4" />,
+              onSelect: () => {
+                enterSelectionMode();
+                selectSelectionKeys([nodeHierarchicalKey]);
+              },
+            },
+            {
+              key: 'toggle-bypass',
+              // A subgraph placeholder's mode applies to this instance only.
+              label: isBypassed ? t('Engage') : t('Bypass'),
+              icon: <BypassToggleIcon className="w-4 h-4" isBypassed={isBypassed} />,
+              onSelect: () => toggleBypass(nodeHierarchicalKey),
+            },
+            {
+              key: 'hide-node',
+              label: t('Hide'),
+              icon: <EyeOffIcon className="w-4 h-4" />,
+              onSelect: () => setItemHidden(nodeHierarchicalKey, true),
+            },
+            {
+              key: 'duplicate-node',
+              label: t('Duplicate'),
+              icon: <CopyIcon className="w-4 h-4" />,
+              onSelect: onDuplicateNode,
+            },
+            {
+              key: 'copy-node',
+              label: t('Copy'),
+              icon: <ClipboardIcon className="w-4 h-4" />,
+              onSelect: onCopyNode,
+            },
+            {
+              key: 'paste-below',
+              label: pasteSummary ? t('Paste {summary} below', { summary: pasteSummary }) : t('Paste below'),
+              icon: <ClipboardDownloadIcon className="w-4 h-4" />,
+              onSelect: onPasteBelow,
+              hidden: !pasteSummary,
+            },
+            {
+              key: 'move-node',
+              label: t('Move'),
+              icon: <MoveUpDownIcon className="w-4 h-4" />,
+              onSelect: onMoveNode,
+            },
+            {
+              key: 'move-into-subgraph',
+              label: t('Move into subgraph'),
+              icon: <ArrowRightIcon className="w-4 h-4" />,
+              onSelect: onMoveIntoSubgraph,
+              hidden: !onMoveIntoSubgraph,
+            },
+          ],
+          special: [
+            {
+              key: 'subgraph-actions',
+              label: t('Subgraph actions'),
+              icon: <WorkflowIcon className="w-4 h-4 -scale-x-100" />,
+              onSelect: () => setSubgraphActionsOpen(true),
+              hidden: !onReplaceSubgraph && !onEditSubgraphLabels && !onDissolveSubgraph,
+            },
+            {
+              key: 'edit-set-name',
+              label: t('Edit set name'),
+              icon: <EditIcon className="w-4 h-4" />,
+              onSelect: onEditSetName,
+              hidden: !onEditSetName,
+            },
+            {
+              key: 'edit-fast-groups-config',
+              label: t('Edit config'),
+              icon: <EditIcon className="w-4 h-4" />,
+              onSelect: onEditFastGroupsConfig,
+              hidden: !showFastGroupsConfigAction,
+            },
+            {
+              key: 'convert-to-save-image',
+              label: t('Convert to Save Image'),
+              icon: <SaveDiskIcon className="w-4 h-4" />,
+              onSelect: () => onConvertImageOutputNode?.('SaveImage'),
+              hidden: !onConvertImageOutputNode || nodeType !== 'PreviewImage',
+            },
+            {
+              key: 'convert-to-preview-image',
+              label: t('Convert to Preview Image'),
+              icon: <EyeIcon className="w-4 h-4" />,
+              onSelect: () => onConvertImageOutputNode?.('PreviewImage'),
+              hidden: !onConvertImageOutputNode || nodeType !== 'SaveImage',
+            },
+            {
+              key: 'open-lora-manager',
+              label: t('Open LoRA Manager'),
+              icon: <ExternalLinkIcon className="w-4 h-4" />,
+              onSelect: openLoraManagerUiInNewTab,
+              hidden: !isLoraManagerNode,
+            },
+            {
+              key: 'promote-single-widget',
+              label: t('Promote widget'),
+              icon: <PromotedWidgetIcon className="w-4 h-4 text-pink-400" />,
+              onSelect: () => {
+                const widget = promotableWidgets[0];
+                if (widget) onPromoteWidget?.(widget);
+              },
+              hidden: !(onPromoteWidget && promotableWidgets.length === 1),
+            },
+            {
+              key: 'promote-widget-picker',
+              label: t('Promote widget'),
+              icon: <PromotedWidgetIcon className="w-4 h-4 text-pink-400" />,
+              onSelect: () => setWidgetPicker('promote'),
+              hidden: !(onPromoteWidget && promotableWidgets.length > 1),
+            },
+            {
+              key: 'pin-single-widget',
+              label: isSingleWidgetPinned ? t('Remove pin') : t('Pin widget'),
+              icon: isSingleWidgetPinned
+                ? <PinIconSvg className="w-4 h-4 text-fuchsia-500" />
+                : <PinOutlineIcon className="w-4 h-4" />,
+              onSelect: handleSinglePin,
+              hidden: !(pinnableWidgets.length > 0 && Boolean(singlePinnableWidget)),
+            },
+            {
+              key: 'remove-pin',
+              label: t('Remove pin'),
+              icon: <PinIconSvg className="w-4 h-4 text-fuchsia-500" />,
+              onSelect: handleRemovePin,
+              hidden: !(pinnableWidgets.length > 0 && !singlePinnableWidget && hasPinnedWidget),
+            },
+            {
+              key: 'pin-widget-picker',
+              label: t('Pin widget'),
+              icon: <PinOutlineIcon className="w-4 h-4" />,
+              onSelect: () => setWidgetPicker('pin'),
+              hidden: !(pinnableWidgets.length > 0 && !singlePinnableWidget),
+            },
+          ],
+          delete: [
+            {
+              key: 'delete-node',
+              label: t('Delete'),
+              icon: <TrashIcon className="w-4 h-4" />,
+              color: 'danger',
+              onSelect: onDeleteNode,
+            },
+          ],
+        }}
       />
       {colorPopoverOpen && createPortal(
         <div
@@ -345,260 +520,47 @@ export function NodeCardMenu({
         </div>,
         document.body
       )}
-
-      {menuOpen && createPortal(
-        <div
-          ref={menuRef}
-          className="fixed z-[1000] w-44"
-          style={menuStyle}
-        >
-          <ContextMenuBuilder
-            items={[
-              {
-                key: 'enter-subgraph',
-                label: t('Enter subgraph'),
-                icon: <ArrowRightIcon className="w-4 h-4" />,
-                onClick: (event) => {
-                  event.stopPropagation();
-                  onEnterSubgraph?.();
-                  closeMenu();
-                },
-                hidden: !onEnterSubgraph
-              },
-              {
-                type: 'divider',
-                key: 'divider-enter-subgraph',
-                className: onEnterSubgraph ? '' : 'hidden'
-              },
-              {
-                key: 'edit-label',
-                label: t('Edit label'),
-                icon: <EditIcon className="w-4 h-4" />,
-                onClick: handleEditLabelClick
-              },
-              {
-                key: 'edit-set-name',
-                label: t('Edit set name'),
-                icon: <EditIcon className="w-4 h-4" />,
-                onClick: handleEditSetNameClick,
-                hidden: !onEditSetName
-              },
-              {
-                key: 'change-color',
-                label: t('Change color'),
-                icon: (
-                  <span
-                    className="inline-block w-3 h-3 rounded-full"
-                    style={{ backgroundColor: resolvedNodeColor || themeColors.workflow.defaultGroupDot }}
-                  />
-                ),
-                onClick: (event) => {
-                  event.stopPropagation();
-                  setMenuOpen(false);
-                  setPinSubmenuOpen(false);
-                  resetMenuPosition();
-                  setColorPopoverOpen(true);
-                }
-              },
-              {
-                key: 'edit-fast-groups-config',
-                label: t('Edit config'),
-                icon: <EditIcon className="w-4 h-4" />,
-                onClick: (event) => {
-                  event.stopPropagation();
-                  onEditFastGroupsConfig?.();
-                  closeMenu();
-                },
-                hidden: !showFastGroupsConfigAction
-              },
-              {
-                type: 'divider',
-                key: 'divider-top-edit-color'
-              },
-              {
-                key: 'toggle-bookmark',
-                label: isNodeBookmarked ? t('Remove bookmark') : t('Bookmark node'),
-                icon: isNodeBookmarked
-                  ? <BookmarkOutlineIcon className="w-4 h-4" />
-                  : <BookmarkIconSvg className="w-4 h-4 text-amber-500" />,
-                onClick: (event) => {
-                  event.stopPropagation();
-                  onToggleNodeBookmark();
-                  closeMenu();
-                },
-                hidden: !(isNodeBookmarked || canAddNodeBookmark)
-              },
-              {
-                type: 'divider',
-                key: 'divider-node-actions'
-              },
-              {
-                key: 'select-node',
-                label: t('Select'),
-                icon: <CheckIcon className="w-4 h-4" />,
-                onClick: (event) => {
-                  event.stopPropagation();
-                  enterSelectionMode();
-                  selectSelectionKeys([nodeHierarchicalKey]);
-                  closeMenu();
-                }
-              },
-              {
-                key: 'toggle-bypass',
-                label: isBypassed ? t('Engage node') : t('Bypass node'),
-                icon: <BypassToggleIcon className="w-4 h-4" isBypassed={isBypassed} />,
-                onClick: handleToggleBypassClick,
-                // Subgraph placeholder bypass is derived from inner node bypass states.
-                // Hiding this action prevents placeholder mode from drifting out of sync.
-                hidden: Boolean(onEnterSubgraph)
-              },
-              {
-                key: 'hide-node',
-                label: t('Hide node'),
-                icon: <EyeOffIcon className="w-4 h-4" />,
-                onClick: handleHideNodeClick
-              },
-              {
-                key: 'duplicate-node',
-                label: t('Duplicate node'),
-                icon: <CopyIcon className="w-4 h-4" />,
-                onClick: (event) => {
-                  event.stopPropagation();
-                  onDuplicateNode();
-                  closeMenu();
-                }
-              },
-              {
-                // PreviewImage → SaveImage. Only shown on PreviewImage nodes
-                // when the parent wired up onConvertImageOutputNode.
-                key: 'convert-to-save-image',
-                label: t('Convert to Save Image'),
-                icon: <SaveDiskIcon className="w-4 h-4" />,
-                onClick: (event) => {
-                  event.stopPropagation();
-                  onConvertImageOutputNode?.('SaveImage');
-                  closeMenu();
-                },
-                hidden: !onConvertImageOutputNode || nodeType !== 'PreviewImage'
-              },
-              {
-                // SaveImage → PreviewImage. Drops the filename_prefix widget.
-                key: 'convert-to-preview-image',
-                label: t('Convert to Preview Image'),
-                icon: <EyeIcon className="w-4 h-4" />,
-                onClick: (event) => {
-                  event.stopPropagation();
-                  onConvertImageOutputNode?.('PreviewImage');
-                  closeMenu();
-                },
-                hidden: !onConvertImageOutputNode || nodeType !== 'SaveImage'
-              },
-              {
-                key: 'copy-node',
-                label: t('Copy'),
-                icon: <ClipboardIcon className="w-4 h-4" />,
-                onClick: (event) => {
-                  event.stopPropagation();
-                  onCopyNode();
-                  closeMenu();
-                }
-              },
-              {
-                key: 'paste-below',
-                label: pasteSummary ? t('Paste {summary} below', { summary: pasteSummary }) : t('Paste below'),
-                icon: <ClipboardDownloadIcon className="w-4 h-4" />,
-                onClick: (event) => {
-                  event.stopPropagation();
-                  onPasteBelow();
-                  closeMenu();
-                },
-                hidden: !pasteSummary
-              },
-              {
-                key: 'move-node',
-                label: t('Move'),
-                icon: <MoveUpDownIcon className="w-4 h-4" />,
-                onClick: (event) => {
-                  event.stopPropagation();
-                  onMoveNode();
-                  closeMenu();
-                }
-              },
-              {
-                key: 'open-lora-manager',
-                label: t('Open LoRA Manager'),
-                icon: <ExternalLinkIcon className="w-4 h-4" />,
-                onClick: handleOpenLoraManagerClick,
-                hidden: !isLoraManagerNode
-              },
-              {
-                type: 'divider',
-                key: 'divider-pin',
-                className: pinnableWidgets.length > 0 ? '' : 'hidden'
-              },
-              {
-                key: 'pin-single-widget',
-                label: isSingleWidgetPinned ? t('Remove pin') : t('Pin widget'),
-                icon: isSingleWidgetPinned
-                  ? <PinIconSvg className="w-4 h-4 text-fuchsia-500" />
-                  : <PinOutlineIcon className="w-4 h-4" />,
-                onClick: handleSinglePinClick,
-                hidden: !(pinnableWidgets.length > 0 && Boolean(singlePinnableWidget))
-              },
-              {
-                key: 'remove-pin',
-                label: t('Remove pin'),
-                icon: <PinIconSvg className="w-4 h-4 text-fuchsia-500" />,
-                onClick: handleRemovePinClick,
-                hidden: !(pinnableWidgets.length > 0 && !singlePinnableWidget && hasPinnedWidget)
-              },
-              {
-                key: 'pin-widget-submenu',
-                label: t('Pin widget'),
-                icon: <PinOutlineIcon className="w-4 h-4" />,
-                rightSlot: (
-                  <ChevronRightIcon className={`w-4 h-4 text-slate-400 transition-transform ${pinSubmenuOpen ? 'rotate-90' : ''}`} />
-                ),
-                onClick: handlePinSubmenuToggle,
-                hidden: !(pinnableWidgets.length > 0 && !singlePinnableWidget)
-              },
-              {
-                type: 'custom',
-                key: 'pin-widget-items',
-                hidden: !(pinnableWidgets.length > 0 && !singlePinnableWidget && pinSubmenuOpen),
-                render: (
-                  <div className="border-t border-white/10 bg-slate-950/70 max-h-48 overflow-auto">
-                    {pinnableWidgets.map((widget) => (
-                      <button
-                        key={widget.widgetIndex}
-                        className="w-full text-left px-4 py-2 text-sm hover:bg-white/10 text-slate-200"
-                        onClick={handlePinWidgetClick(widget)}
-                      >
-                        {widget.name}
-                      </button>
-                    ))}
-                  </div>
-                )
-              },
-              {
-                type: 'divider',
-                key: 'divider-delete'
-              },
-              {
-                key: 'delete-node',
-                label: t('Delete node'),
-                icon: <TrashIcon className="w-4 h-4" />,
-                color: 'danger',
-                onClick: (event) => {
-                  event.stopPropagation();
-                  onDeleteNode();
-                  closeMenu();
-                }
-              }
-            ]}
-          />
-        </div>,
-        document.body
+      {widgetPicker === 'pin' && (
+        <WidgetPickerModal
+          title={t('Pin widget')}
+          icon={<PinOutlineIcon className="h-5 w-5 text-fuchsia-400" />}
+          entries={pinnableWidgets.map((widget) => ({
+            key: String(widget.widgetIndex),
+            label: widget.name,
+          }))}
+          onPick={(key) => {
+            const widget = pinnableWidgets.find(
+              (candidate) => String(candidate.widgetIndex) === key,
+            );
+            if (widget) handlePinWidget(widget);
+          }}
+          onClose={() => setWidgetPicker(null)}
+        />
+      )}
+      {widgetPicker === 'promote' && (
+        <WidgetPickerModal
+          title={t('Promote widget')}
+          icon={<PromotedWidgetIcon className="h-5 w-5 text-pink-400" />}
+          entries={promotableWidgets.map((widget) => ({
+            key: `${widget.widgetIndex}:${widget.inputName}`,
+            label: widget.name,
+          }))}
+          onPick={(key) => {
+            const widget = promotableWidgets.find(
+              (candidate) => `${candidate.widgetIndex}:${candidate.inputName}` === key,
+            );
+            if (widget) onPromoteWidget?.(widget);
+          }}
+          onClose={() => setWidgetPicker(null)}
+        />
+      )}
+      {subgraphActionsOpen && (
+        <SubgraphActionsModal
+          onReplace={onReplaceSubgraph}
+          onEditWidgetLabels={onEditSubgraphLabels}
+          onDissolve={onDissolveSubgraph}
+          onClose={() => setSubgraphActionsOpen(false)}
+        />
       )}
     </div>
   );

@@ -14,6 +14,7 @@ import {
   reportVideoPlaybackIssue,
 } from '@/utils/mediaDiagnostics';
 import { useI18n } from '@/i18n';
+import { MaskIcon } from '@/components/MaskEditor/icons';
 
 export interface NodeCardBatchPreview {
   displaySrc: string;
@@ -39,6 +40,12 @@ interface NodeCardOutputPreviewProps {
   // tiled into two columns so the whole batch is visible at once. null/empty
   // falls back to the single-image preview below.
   previewImages?: NodeCardBatchPreview[] | null;
+  /**
+   * When set, an "Edit mask" affordance is drawn over the still preview. Only
+   * passed for a LoadImage-style node, where the preview IS the node's input
+   * and masking it is an edit to the workflow rather than to a result.
+   */
+  onEditMask?: () => void;
   frontendPreview?: FrontendNodeMediaPreview | null;
   latentPreviewUrl?: string | null;
   // A batched run previews every image at once; `latentPreviewUrl` is the first
@@ -325,16 +332,19 @@ export function NodeCardOutputPreview({
   videoLoop = false,
   videoPlaybackRate = 1,
   onFrontendPreviewStateChange,
+  onEditMask,
 }: NodeCardOutputPreviewProps) {
   const { t } = useI18n();
+  // The still image that has actually loaded. A LoadImage reference can exist
+  // before its preview succeeds (including a missing file), so the mask editor
+  // is only offered once THIS exact source has loaded — the comparison against
+  // `displaySrc` below is what withholds it, both before the first load and
+  // while a new source is loading over a previous success.
+  const [loadedImageSrc, setLoadedImageSrc] = useState<string | null>(null);
   // Subscribe so the preview refreshes immediately when the WebP preference is
   // toggled (must run before the early return to satisfy the rules of hooks).
   useGenerationSettingsStore((s) => s.webpPreviewEnabled);
   const isTiled = Boolean(previewImages && previewImages.length > 1);
-  if (!show || (
-    !previewImage && !previewText && !latentPreviewUrl && !isTiled && !frontendPreview
-  )) return null;
-
   // Real output beats a live latent, so tiles only render while nothing final
   // has arrived for this node.
   const latentTiles = !previewImage && !frontendPreview
@@ -367,10 +377,14 @@ export function NodeCardOutputPreview({
     )
     : null;
 
+  if (!show || (
+    !previewImage && !previewText && !latentPreviewUrl && !isTiled && !frontendPreview
+  )) return null;
+
   return (
     <div className="output-preview mb-3">
       <div className="text-xs text-slate-500 mb-1.5 uppercase tracking-wide">
-        Output Preview
+        {t('Output Preview')}
       </div>
       {isTiled ? (
         <div className="output-batch-grid grid grid-cols-2 gap-2">
@@ -445,7 +459,24 @@ export function NodeCardOutputPreview({
             className="w-full h-auto rounded-lg border border-white/10"
             loading="lazy"
             onClick={onImageClick}
+            onLoad={() => setLoadedImageSrc(displaySrc)}
+            onError={() => setLoadedImageSrc(null)}
           />
+          {onEditMask && loadedImageSrc === displaySrc && (
+            <button
+              type="button"
+              onClick={(event) => {
+                // The image itself opens the viewer; this button must not do
+                // both.
+                event.stopPropagation();
+                onEditMask();
+              }}
+              className="node-card-edit-mask absolute right-2 top-2 flex items-center gap-2 rounded-lg border border-white/20 bg-slate-950/80 px-3 py-2.5 text-sm font-medium text-slate-100 backdrop-blur-sm"
+            >
+              <MaskIcon className="h-5 w-5" />
+              {t('Edit mask')}
+            </button>
+          )}
           {isExecuting && overallProgress !== null && (
             <div className="absolute inset-0 bg-black/40 rounded-lg flex items-end p-3">
               <div className="w-full">

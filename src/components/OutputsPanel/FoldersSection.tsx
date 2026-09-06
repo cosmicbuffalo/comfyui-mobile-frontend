@@ -15,6 +15,7 @@ interface OutputsFoldersSectionProps {
   setCurrentFolder: (folder: string) => void;
   handleOpen: (file: FileItem) => void;
   handleMenu: (file: FileItem, event: MouseEvent) => void;
+  toggleFavorite?: (id: string) => void;
   toggleSelection: (id: string, event: MouseEvent, options?: { range?: boolean }) => void;
   showContextMenus?: boolean;
   sortMode: SortMode;
@@ -30,6 +31,7 @@ export function OutputsFoldersSection({
   setCurrentFolder,
   handleOpen,
   handleMenu,
+  toggleFavorite,
   toggleSelection,
   showContextMenus = true,
   sortMode,
@@ -62,6 +64,7 @@ export function OutputsFoldersSection({
               onNavigateFolder={setCurrentFolder}
               onOpen={handleOpen}
               onMenu={handleMenu}
+              onToggleFavorite={toggleFavorite}
               onToggleSelection={toggleSelection}
               showContextMenu={showContextMenus}
               sortMode={sortMode}

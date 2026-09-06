@@ -1,6 +1,6 @@
 # ComfyUI Mobile User Guide
 
-This guide walks through every feature in the mobile frontend as of `v3.1.0`
+This guide walks through every feature in the mobile frontend as of `v3.3.0`
 
 ## Table of Contents
 
@@ -70,10 +70,12 @@ This guide walks through every feature in the mobile frontend as of `v3.1.0`
   - [Missing Nodes](#missing-nodes)
   - [Containers (Groups and Subgraphs)](#containers-groups-and-subgraphs)
     - [Subgraph Navigation](#subgraph-navigation)
+    - [Subgraph Editing](#subgraph-editing)
   - [Node Cards](#node-cards)
   - [Node Connections](#node-connections)
   - [Parameters and Widgets](#parameters-and-widgets)
   - [Popping a Widget Out](#popping-a-widget-out)
+  - [Enqueue with Variations](#enqueue-with-variations)
   - [Set/Get Nodes](#setget-nodes)
   - [Rich Model Picker](#rich-model-picker)
   - [Image Comparer Nodes](#image-comparer-nodes)
@@ -83,6 +85,7 @@ This guide walks through every feature in the mobile frontend as of `v3.1.0`
   - [Search](#workflow-search)
   - [Notes](#notes)
   - [Output Preview](#output-preview)
+  - [Mask Editor](#mask-editor)
   - [Errors](#errors)
 - [Queue Page](#queue-page)
   - [Queue List and Status](#queue-list-and-status)
@@ -128,7 +131,7 @@ Open the [Main Menu](#main-menu) and look under **Save Workflow**. Use **Save** 
 
 Open the [Workflow Options Menu](#workflow-options-menu) (the `...` in the top-right of the workflow page) and tap **Undo**. **Redo** sits right below it. Both entries only appear when there's something to undo or redo, so an untouched workflow shows neither.
 
-History is kept per [tab](#workflow-tabs), so undoing in one workflow never disturbs another. Rapid edits to the same widget collapse into a single step (typing in a prompt box doesn't become fifty undo steps), and multi-part actions like [popping a widget out](#popping-a-widget-out) undo in one go rather than leaving a half-finished state. Seed changes made by a run are deliberately excluded, so queueing generations doesn't flood your history. See [Undo and Redo](#undo-and-redo).
+History is kept per [tab](#workflow-tabs), so undoing in one workflow never disturbs another, and it survives a page refresh. Rapid edits to the same widget collapse into a single step (typing in a prompt box doesn't become fifty undo steps), and multi-part actions like [popping a widget out](#popping-a-widget-out) undo in one go rather than leaving a half-finished state. Seed changes made by a run are deliberately excluded, so queueing generations doesn't flood your history. See [Undo and Redo](#undo-and-redo).
 
 <a id="how-do-i-select-copy-and-paste-several-nodes-at-once"></a>
 ### How do I select, copy, and paste several nodes at once?
@@ -147,7 +150,7 @@ Open the [Workflow Options Menu](#workflow-options-menu) and tap **Add node** to
 <a id="how-do-i-turn-a-widget-into-a-connected-input-node"></a>
 ### How do I turn a widget into a connected input node?
 
-Any text, integer, float, or boolean widget shows a small **dotted-circle button** next to its label. Tap it, confirm, and the app creates a matching core primitive node (`PrimitiveString`, `PrimitiveInt`, and so on) directly above the node and wires it into that input, keeping the current value. This is handy when you want one prompt or seed feeding several nodes at once. See [Popping a Widget Out](#popping-a-widget-out).
+Open the widget row's `...` menu and tap **Pop out widget**. Any text, integer, float, or boolean widget can go. Confirm, and the app creates a matching core primitive node (`PrimitiveString`, `PrimitiveInt`, and so on) directly above the node and wires it into that input, keeping the current value. This is handy when you want one prompt or seed feeding several nodes at once. See [Popping a Widget Out](#popping-a-widget-out).
 
 <a id="how-do-i-use-setget-nodes"></a>
 ### How do I use Set/Get nodes?
@@ -184,7 +187,7 @@ In both the **My Workflows** and **Templates** panels ([Main Menu](#main-menu) �
 <a id="how-do-i-hide-workflows-i-dont-want-to-see"></a>
 ### How do I hide workflows I don't want to see?
 
-In **My Workflows**, open a workflow's or folder's `...` menu and choose **Hide**. Hidden items disappear from the list until you turn on **Show hidden** from the panel's top `...` menu; while that's on, hidden items show faded with an **Unhide** action in their menu. This is a declutter convenience only — it is **not** access control, and it doesn't restrict the server in any way. The hidden list is saved to your ComfyUI user data, so it persists across sessions and devices.
+In **My Workflows**, open a workflow's or folder's `...` menu and choose **Hide**. Hidden items disappear from the list until you turn on **Show hidden** from the panel's top `...` menu (or press `Command+Shift+.`, which toggles it anywhere in the app); while that's on, hidden items show faded with an **Unhide** action in their menu. This is a declutter convenience only — it is **not** access control, and it doesn't restrict the server in any way. The hidden list is saved to your ComfyUI user data, so it persists across sessions and devices.
 
 <a id="how-do-i-install-or-manage-custom-nodes"></a>
 ### How do I install or manage custom nodes?
@@ -207,6 +210,8 @@ If you have more than one workflow open in [tabs](#workflow-tabs), the picker fi
 ### How do I load the workflow of one of my output images?
 
 Click on the image you would like to load the workflow for in your outputs list, then click the small button with the workflow icon overlaid on top of the image viewer. This will load the workflow embedded in the image into the workflow panel, you will be prompted to confirm if your current loaded workflow has changes, since any unsaved changes will be lost.
+
+You don't have to open the file first: **Load workflow** is also in the file's `...` menu on the [Outputs Page](#outputs-page). For a video that entry appears only once the app has confirmed there is a workflow it can reach, so a clip saved on its own simply doesn't offer it.
 
 > [!NOTE]
 > It is currently possible to load workflows for videos too, but only if one of the following applies:
@@ -233,7 +238,7 @@ Tap the queue/follow button in the [Bottom Bar](#bottom-bar) to open the [Image 
 <a id="how-do-i-favorite-an-output"></a>
 ### How do I favorite an output?
 
-Open any saved output image in the [Image Viewer](#image-viewer) — from the [Outputs Page](#outputs-page), the [Queue Page](#queue-page), or [Follow Queue Mode](#follow-queue-mode) — and tap the heart button next to the load-workflow and use-in-workflow buttons. The heart fills in solid red to indicate the image is favorited. Tap again to unfavorite. You can also favorite a file from the [Outputs Page](#outputs-page) by opening its `...` menu and tapping **Favorite**. Favorited files show a small red heart indicator on their card.
+Open any saved output image in the [Image Viewer](#image-viewer) — from the [Outputs Page](#outputs-page), the [Queue Page](#queue-page), or [Follow Queue Mode](#follow-queue-mode) — and tap the heart button next to the load-workflow and use-in-workflow buttons. The heart fills in solid red to indicate the image is favorited. Tap again to unfavorite. On desktop, you can also hover an Outputs card or row and click its heart directly; folder rows support this too. The file's `...` menu also offers **Favorite**. Favorited items keep a red heart button visible.
 
 <a id="how-do-i-see-my-favorites"></a>
 ### How do I see my favorites?
@@ -333,7 +338,7 @@ Use [Swipe Navigation](#swipe-navigation): swipe left from the Workflow page to 
 <a id="how-do-i-edit-nodes-inside-a-subgraph"></a>
 ### How do I edit nodes inside a subgraph?
 
-On the workflow page, find the subgraph placeholder node card. Open its `...` menu and tap **Enter subgraph** to drill into it. A breadcrumb bar appears at the top showing your current scope (e.g., _Root / My Subgraph_). You can then view and edit the inner nodes of that subgraph just like root-level nodes. Tap **Root** in the breadcrumb, use the device back button, or swipe back to return to the root workflow. If the subgraph exposes widget controls on the placeholder card itself (promoted or proxy widgets), you can edit those directly without entering the subgraph.
+On the workflow page, find the subgraph placeholder node card. Open its `...` menu and tap **Enter subgraph** to drill into it. A breadcrumb bar appears at the top showing your current scope (e.g., _Root / My Subgraph_). You can then view and edit the inner nodes of that subgraph just like root-level nodes. Tap **Root** in the breadcrumb, use the device back button, or swipe back to return to the root workflow. If the subgraph exposes widget controls on the placeholder card itself, you can edit those directly without entering the subgraph — see [Subgraph Editing](#subgraph-editing) for how a widget gets onto the boundary.
 
 <a id="how-do-i-turn-on-latent-previews"></a>
 ### How do I turn on latent previews?
@@ -362,7 +367,7 @@ Open the main menu from the top-left hamburger icon to access workflow load/save
 #### Load Workflow
 
 - My Workflows: load saved workflows from the ComfyUI server (see [My Workflows](#my-workflows-folders-bookmarks-hidden) below for folders, bookmarks, and hiding).
-- Templates: load bundled templates grouped by module name from installed custom nodes. Templates can be bookmarked and filtered the same way as saved workflows.
+- Templates: browse ComfyUI's whole template catalog. Each has its preview image, title and description, cloud API templates are marked, and a category dropdown (Use Cases, Image, Video, Audio, 3D Model, LLM, Utility, Getting Started, plus one entry per installed pack) narrows the list. Search spans the catalog, including tags and model names. Templates can be bookmarked and filtered the same way as saved workflows.
 - Paste JSON: paste workflow JSON to load it directly.
 - From Device: upload a local JSON workflow file.
 
@@ -404,7 +409,7 @@ The **My Workflows** panel is a browser for the workflows saved on your server, 
 Expand the **Server** section in the main menu for backend tools and app preferences:
 
 - **Custom nodes** — opens the [Custom Nodes Manager](#custom-nodes-manager).
-- **Refresh model metadata** — fetches preview images, names, versions, and badges for your models so the [Rich Model Picker](#rich-model-picker) can show them. Works with or without Lora Manager installed (the two share the same metadata sidecars). The button shows progress while it runs.
+- **Refresh model metadata** — rescans LoRAs, checkpoints, and embeddings, then fetches their preview images, names, versions, and badges so the [Rich Model Picker](#rich-model-picker) can show them. When Lora Manager is installed this refreshes its catalogs directly; otherwise the app uses its compatible built-in scanner. The button shows progress while it runs, then briefly confirms completion.
 - **Preferences** — opens the app [Preferences](#preferences) page.
 - **Restart ComfyUI** — restarts the backend (after a confirmation). See [Restart the ComfyUI backend server](#restart-the-comfyui-backend-server).
 - The section also surfaces server stats (VRAM, system RAM, PyTorch/Python versions) when available.
@@ -570,12 +575,18 @@ Tap the `...` button in the top-right to access workflow-wide actions:
 <a id="undo-and-redo"></a>
 ### Undo and Redo
 
-**Undo** and **Redo** live at the bottom of the [Workflow Options Menu](#workflow-options-menu). Each entry appears only when there's something to step to, so a freshly loaded workflow shows neither.
+**Undo** and **Redo** live at the bottom of the [Workflow Options Menu](#workflow-options-menu). Each entry appears only when there's something to step to, so a freshly loaded workflow shows neither. On desktop, you can also press `Command+Z` / `Ctrl+Z` to undo and `Shift+Command+Z` / `Shift+Ctrl+Z` (or `Ctrl+Y`) to redo when you are not typing in a text field.
+
+After each undo or redo a brief banner names the action — **Undo: Create subgraph**, **Redo: Rename subgraph slot** — and under it the item the step changed, named the way its card names it, with its id: **Sampler 1 #1**. Where a step changed several items, the one it takes you to is named and the rest are counted (**+2 more**); a step that changed nothing with a card of its own shows the action alone.
+
+The panel then goes there: it scrolls that node, group or subgraph into view and flashes it, entering the subgraph the change was made in if that is where it lives. A step that changed a single widget goes all the way down to **that widget's row**, and the banner names it (**Sampler 4 #4 · steps**).
 
 - **Per tab.** Each open [workflow tab](#workflow-tabs) keeps its own history, so undoing in one never reaches into another.
+- **It survives a refresh.** Each tab's history is stored on the device, so reloading the page — or returning to a tab the browser reclaimed in the background — leaves the last ten steps takeable in both directions.
 - **Sensible steps.** Fast successive edits to the same widget coalesce into one entry instead of one per keystroke, and composite actions — [popping a widget out](#popping-a-widget-out), applying a batch of connection changes — record as a single step so undo can't strand you halfway through one.
 - **Runs don't pollute history.** Seed values changed by running the workflow are excluded, so queueing a few generations doesn't bury your actual edits.
-- History covers workflow structure and values; it isn't a substitute for saving, and it doesn't survive unloading the workflow.
+- **What is not in it.** History covers the workflow itself — its nodes, values, wiring, groups and subgraphs. Display choices are not edits and are not undoable: hiding or collapsing an item, bookmarks, connection highlighting, which tab is open, and where you are in a subgraph. Saving, running, and anything on the outputs or queue pages are outside it too.
+- History is not a substitute for saving, and a tab starts a fresh history whenever it loads a workflow (including **Reload** and **Revert**).
 
 <a id="node-selection-mode"></a>
 ### Node Selection Mode
@@ -588,6 +599,8 @@ Selection mode lets you act on several nodes and groups together. (This is the w
 - **Acting:** the [Bottom Bar](#bottom-bar) shows how many items are selected and opens the selection actions sheet:
   - **Copy** — put the selection on the clipboard.
   - **Create group** — wrap the selected items in a new group.
+  - **Create subgraph** — wrap the selected items in a new subgraph, with their outside connections becoming its inputs and outputs.
+  - **Move into subgraph** — move the selection into a subgraph that already exists. Shown only when the current scope holds one to move into.
   - **Delete** — remove the selected items.
   - **Cancel selection** — leave the mode without acting.
 
@@ -639,10 +652,56 @@ If you load a workflow that uses custom nodes your ComfyUI server doesn't have i
   - Tap any intermediate crumb in a deeply nested stack to jump to that level.
 - The device's **back button or back gesture** exits the current subgraph scope (same as tapping Root).
 - While inside a subgraph, all node cards, connection traversal, and editing actions operate on the inner nodes of that subgraph.
-- Subgraph placeholder nodes also display promoted widget controls directly on their card (no need to enter the subgraph to adjust common parameters):
-  - **Slot-promoted widgets** (set by the subgraph author via the `input.widget` mechanism) appear as standard widget controls.
-  - **Proxy widgets** (set via `properties.proxyWidgets`) reference inner node widgets and route updates to those inner nodes transparently.
-  - Seed-mode controls (randomize, increment, decrement) work on promoted seed slots.
+- Subgraph placeholder nodes also display promoted widget controls directly on their card, so common parameters can be adjusted without entering the subgraph, and seed-mode controls (randomize, increment, decrement) work on a promoted seed. See [Subgraph Editing](#subgraph-editing) for how a widget gets onto the boundary in the first place.
+
+<a id="subgraph-editing"></a>
+#### Subgraph Editing
+
+Most of what follows happens inside a subgraph scope, so enter one first (see [Subgraph Navigation](#subgraph-navigation)) — though the boundary can also be renamed and reordered from a placeholder card out in the graph above.
+
+**The boundary.** A subgraph scope opens with a connections section of its own at the top, laid out like a node card: the subgraph's **inputs** on the left, its **outputs** on the right. These are what cross the boundary — what the graph above feeds in and what it reads back out.
+
+- Tap a slot to jump to the inner node it is wired to.
+- Long-press a slot to change what it connects to inside.
+- **+** adds a slot, choosing from the inner inputs and outputs that are not exposed yet.
+- On an inner node's card, a connection wired to the boundary is outlined and names the slot it crosses. Tapping it goes to that slot; long-pressing it edits that node's own connection, the same as any other.
+- Every slot row has a `...` menu: **Rename**, **Move up**, **Move down**, and **Remove input** / **Remove output**. The same menu is on the placeholder's own rows outside, so a slot can be renamed, reordered or removed without entering the subgraph at all.
+- Slot order belongs to the subgraph **type**, so reordering a slot reorders it for every instance. On a placeholder card, the slot's menu says so when the type has more than one.
+- A slot's name can belong to the type or to one instance. **Rename** asks which when the type has more than one instance, lists what the other instances call the slot, and clearing an instance name returns it to the shared one. A slot carrying an instance-only name tints that row's `...` button, and its menu says the other instances call it something else.
+- Editing a connection on an inner node lists the enclosing subgraph's own slots as targets too, under **Subgraph inputs** / **Subgraph outputs**, so an inner node can be wired to the edge from its own card.
+
+**Promoting a widget.** A widget on an inner node can be lifted onto the boundary from its row's `...` menu, in one of two forms:
+
+- **Promote as widget** draws an editable control on the placeholder card, and each instance of the type owns its own value for it — twelve instances of one subgraph can each carry their own seed.
+- **Promote as input** draws a plain connection socket instead. The value stays on the inner node, shared by every instance of the type, and the graph above can wire something into it.
+- **Switch to input** and **Switch to widget** change form afterwards, carrying the value to wherever it now lives. **Unpromote** brings it home to the inner node and takes the slot away.
+- A promoted widget stays an editable control **inside** the subgraph as well, reading and writing the value of the instance you entered through — the scope header names that instance and lets you change it. The row falls back to a connection only when that instance really is fed from outside.
+- Where the two names differ, both are shown: `text ⇠ positive` inside the subgraph — this `text` widget is the subgraph's `positive` input — and `positive ⇢ text` on the placeholder.
+
+**Types and instances.** Every subgraph is a reusable type. Duplicating or pasting a placeholder makes another **instance** of the same definition — the inner nodes are shared, so editing one instance's insides changes them all.
+
+- Instances are numbered. Put `{n}` in the type's name, or in a slot or widget label, and each instance renders its own number: `Segment {n}` reads as _Segment 1_ and _Segment 2_.
+  - The resolved name is written onto each instance's node title too, so other frontends — and nodes that read titles, like rgthree's Fast Bypasser — show "Segment 5" rather than the template. A title you set by hand is left alone.
+  - Nodes and groups **inside** a subgraph can carry the tokens as well, rendered the same way while the type has a single instance. With several instances they share one copy, so the template stays as written.
+  - `{n+1}` renders the number after this instance, for a label that counts from something other than one. Braces holding anything else are left as you typed them.
+- A card belonging to a shared type carries a badge showing which instance it is and how many exist; tapping it goes inside.
+- Inside a shared type, the header says how many instances an edit will reach, and lets you switch which instance the boundary is read through — the inner nodes are the same either way, but what feeds them from outside is not.
+- **Fork subgraph** breaks one instance onto a type of its own, so you can change it without touching the rest.
+
+**Building subgraphs.**
+
+- **Create subgraph** — in [select mode](#node-selection-mode), choose nodes and groups, then pick this from the selection menu. They move into a new subgraph, and whatever they were connected to becomes its inputs and outputs.
+- **Move into subgraph** — same menu, for moving nodes and groups into a subgraph that already exists. It is offered only where the current scope actually holds one to move into. If the destination is shared, you are told, and offered the chance to fork it first.
+  - Moving into a shared type can strand nodes outside it. The boundary belongs to the type, so a move that takes over a slot retires that slot for *every* instance — and the nodes that were feeding it on the other instances would be left feeding nothing, with their values dropped. Instead each sibling's value is carried inside first, onto that instance's own promoted widget, so no instance quietly changes what it runs.
+  - The nodes that supplied those values are then feeding nothing, so **These nodes now feed nothing** lists them by name and id and offers **Remove** or **Keep them**. Nothing is deleted unless you say so, and either way the workflow is already consistent. A node that still feeds something else is never listed, however much was harvested from it, and **Remove** is its own [undo](#undo-and-redo) step.
+- **Dissolve subgraph** — from the placeholder's `...` menu, unpacks the contents into the graph around it.
+- **Replace subgraph** — from the same menu, swaps the placeholder onto a different type. Connections whose names and types match are carried across; anything that cannot be matched is reported before it is dropped.
+
+**Naming.** **Edit widget labels** on a placeholder's menu renames what the subgraph exposes — boundary slots and promoted widgets — in one place. A single row can also be renamed from its own `...` menu. Each label can be set for the whole type or for one instance only.
+
+**Pop out to root.** A node's `...` menu offers **Pop out to root** when the node's connections all run one way and stay inside the subgraph. It lifts the node out to the root graph — through however many levels of nesting it sat under — promoting whatever boundary slots its connections need on the way out. A node that only feeds others arrives as one root node feeding every instance; a node that is only fed arrives as one copy per instance, since each instance was feeding it something of its own.
+
+**The subgraph types list**, in the workflow options menu, is the inventory: every subgraph the workflow defines, how many nodes and slots it has, and every place it is used. Tap an instance to go to it. Rename a type here, or delete one — either unpacking its instances into the graph or deleting them along with it.
 
 <a id="node-cards"></a>
 ### Node Cards
@@ -653,7 +712,8 @@ Each node is displayed as a card with controls and status:
 - Bypass state: bypassed nodes are visually dimmed purple.
 - Execution status: running nodes show a pulse; collapsed nodes show a progress ring.
 - Errors: a warning icon opens a detailed error popover.
-- Node `...` menu (ellipsis): edit label, change color, bookmark node, select, bypass/engage node, hide node, duplicate node, copy, move node, delete node, and pin a widget.
+- Node `...` menu (ellipsis): edit label, change color, bookmark node, select, bypass/engage node, hide node, duplicate node, copy, move node, delete node, and pin a widget. Inside a subgraph it also offers **Pop out to root** where that applies — see [Subgraph Editing](#subgraph-editing).
+- Deleting a node asks what to do with its connections: **Delete & Reconnect** bridges what the node sat between, **Delete & Disconnect** simply removes it. A node with nothing attached, or one where a reconnect would bridge nothing, gets a single button instead of a choice that makes no difference.
 - On image-output nodes the menu also offers **Convert to Save Image** / **Convert to Preview Image**, so you can promote a preview you want to keep (or demote a save you don't). A custom filename prefix survives the round trip.
 - On KJNodes relay nodes the menu includes **Edit set name** for renaming the channel — see [Set/Get Nodes](#setget-nodes).
 - On supported LoRA Manager nodes, the same menu also includes **Open LoRA Manager** (opens LoRA Manager web UI in a new tab).
@@ -678,12 +738,14 @@ Each node is displayed as a card with controls and status:
 ### Parameters and Widgets
 
 - Controls adapt to widget type (number, text, combo, toggle, etc.).
+- Every widget row has a `...` menu holding the actions that belong to that one value: **Rename**, **Pin widget** / **Remove pin**, **Reset to default** (disabled when the value already is the default), **Pop out widget**, **Enqueue with variations** on a combo (see [Enqueue with Variations](#enqueue-with-variations)), and — inside a subgraph or on a subgraph placeholder — the boundary actions described under [Subgraph Editing](#subgraph-editing). Every row has one, including the seed block on a sampler card.
+- An open combo reads as one panel with its option list, and the rest of the page dims. The tap that dismisses the list is absorbed by the dim, so it doesn't press whatever sat underneath.
 - Textarea/textbox widgets have buttons to easily copy to clipboard or clear the contents of the box.
 - Combo widgets that take a file (e.g. **LoadImage**, VHS **LoadVideo**) add two ways to set their value without leaving your phone:
   - **Browse files** opens a picker with **Outputs** and **Inputs** tabs, so you can pick any image (or video) already on the server. Choosing an output materializes it into ComfyUI's input folder server-side as a **hard link** — instant regardless of file size and using no extra disk space, with an automatic copy fallback when the two folders sit on different filesystems. There's no download/re-upload round trip either way.
   - **Load from camera roll** (or **Upload video from device** on video nodes) uploads a file straight from your device into the input folder.
 - A widget can be pinned to the bottom bar for quick editing from any page.
-  - Pin a widget via the node card's `...` menu.
+  - Pin a widget from its own row's `...` menu, or from the node card's `...` menu — which asks which widget when the card has more than one to choose from.
   - Tap the pinned widget shortcut in the bottom bar to open an overlay editor.
   - The editor leaves the bottom bar reachable, so you can queue runs while it's open — handy for quickly iterating on a prompt or seed.
 - KSampler nodes expose seed and seed-control widgets for fixed or randomized runs.
@@ -693,14 +755,24 @@ Each node is displayed as a card with controls and status:
 <a id="popping-a-widget-out"></a>
 ### Popping a Widget Out
 
-Sometimes a value should live in its own node — so several nodes can share one prompt, or so you can wire something else into it later. Any **text, integer, float, or boolean** widget can be promoted in place:
+Sometimes a value should live in its own node — so several nodes can share one prompt, or so you can wire something else into it later. Any **text, integer, float, or boolean** widget can be moved out into a node of its own:
 
-- Tap the small **dotted-circle button** beside the widget's label. (The dotted circle stands for the new connection the value is about to pop into.)
+- Open the widget row's `...` menu and tap **Pop out widget**.
 - A confirmation explains what will happen; tap **Pop out** to go ahead.
 - The app creates the matching core primitive node — `PrimitiveString`, `PrimitiveInt`, `PrimitiveFloat`, `PrimitiveBoolean` — places it just above the source node, connects it to that input, and carries the current value over so nothing changes about how the workflow runs.
 - Popped-out text gets a multiline editor, which is easier for long prompts than the inline control was.
 
-The whole operation is a single [undo](#undo-and-redo) step. The button is hidden on bypassed nodes and on nodes whose only content is that one widget (where popping it out would leave an empty node behind).
+The whole operation is a single [undo](#undo-and-redo) step. The entry is hidden on bypassed nodes and on nodes whose only content is that one widget (where popping it out would leave an empty node behind).
+
+<a id="enqueue-with-variations"></a>
+### Enqueue with Variations
+
+**Enqueue with variations** runs one generation per option of a combo widget, so a setting can be compared without editing and re-running it by hand.
+
+- It sits on the widget's own `...` menu — sampler, scheduler, checkpoint, LoRA, upscaler, anything chosen from a list.
+- Tick the options you want (whole rows are tappable, with **Select all** and **Deselect all** above the list), then **Run variations** queues them in list order.
+- Everything else is held exactly as it stands, **including a seed set to randomize** — that seed does not advance between the runs, so the setting you picked is the only thing that moved.
+- Each queued job is named after the value it is testing, and the workflow saved with each output carries that value, so the results stay reproducible one by one.
 
 <a id="setget-nodes"></a>
 ### Set/Get Nodes
@@ -762,12 +834,14 @@ The mobile UI has dedicated controls for supported `(LoraManager)` node families
 <a id="bookmarks"></a>
 ### Bookmarks
 
-- Items can be bookmarked for quick access (up to five bookmarks per workflow).
+- Items can be bookmarked for quick access.
   - Bookmark nodes, groups, or subgraphs via each item's `...` menu.
 - Bookmarks appear fixed to the edge of the screen
   - click a bookmark button to scroll to that item
-  - long press to reposition the bookmarks list, tap again to lock in place
-- Bookmarks will be remembered when loading workflows
+  - long press to reposition the bookmarks list, tap again to lock it in place
+  - with many bookmarks the bar scrolls; the arrow buttons step through them forward or back, and tapping a faded end scrolls that way
+  - on desktop the bookmarks are full named bars pinned beside the node column, each with a one-click removal; nested items show their parent above the name
+- Bookmarks follow the workflow's *family*: they come along when you save under a new name or open the workflow from an output, they are kept in the server's user data so they appear on every device, and a bookmark on one version shows on the versions that have that node
 - Use the "Clear Bookmarks" button in the workflow page `...` menu to delete all bookmarks for a workflow
 
 <a id="reposition-mode"></a>
@@ -791,7 +865,8 @@ The mobile UI has dedicated controls for supported `(LoraManager)` node families
 ### Notes
 
 - Note nodes or note-like text properties render as a note block.
-- Double-tap the note to edit it.
+- **MarkdownNote** nodes render their formatted markdown — headings, bold and italic, lists, links, tables, quotes, code blocks and images — instead of the raw syntax. Plain **Note** nodes stay verbatim text.
+- Double-tap the note to edit it. Editing shows the raw markdown, and the formatting comes back when you finish.
 - URLs are automatically turned into links.
 - Textarea tools allow copy and clear actions.
 
@@ -801,6 +876,26 @@ The mobile UI has dedicated controls for supported `(LoraManager)` node families
 - Nodes with output images show a preview thumbnail.
 - Tap the preview to open the full-screen Image Viewer.
 - Nodes with string/text outputs can also show a text preview block on the card.
+
+<a id="mask-editor"></a>
+### Mask Editor
+
+Inpainting workflows need a mask, and one can be painted here rather than on a desktop. **LoadImage**-style cards carry an **Edit mask** button in the corner of their image preview; the image itself opens the [Image Viewer](#image-viewer), so the two don't collide. The button is on a node's *input* image only — an output has no node to write a mask back to.
+
+**Tools.** **Mask brush**, **Eraser**, **Paint bucket**, **Color select**, and a **Paint brush** that paints actual RGB colour rather than mask. Beside them sit **Undo**, **Redo**, **Invert mask**, **Clear mask** and **Fit to view**. On a phone the tools and their settings are a strip under the canvas; on a wide screen they move into a rail down the left.
+
+**Settings** follow the tool you are holding:
+
+- Brushes and the eraser: **Brush size**, **Opacity**, **Hardness**, **Spacing**, and a round or square **Brush shape** — plus **Paint color** for the paint brush.
+- Paint bucket: **Tolerance** and **Fill opacity**. It fills the connected area sharing the tapped point's mask state, so tapping masked pixels clears that area instead.
+- Color select: **Tolerance**, **Selection opacity**, a **Compare by** method (RGB, HSL, LAB), and switches for applying to the whole image rather than the tapped area, and for stopping at existing mask edges.
+- **Mask display** is always available — show the mask as black, white or a negative, at whatever opacity reads best over your image.
+
+**Moving around.** One finger draws. A second finger pans and zooms, and the dab the first finger had started is undone, so pinching never leaves a stray mark. Dragging from the empty area around the image pans instead of drawing. With a mouse: middle-drag or hold `Space` and drag to pan, and the wheel zooms. A trackpad's two-finger scroll pans instead; `Ctrl` forces zoom and `Shift` or `Command` forces pan, for when that guess is wrong.
+
+**Saving.** **Save** writes the edit back to that node's image widget and closes. Masks are stored the way ComfyUI stores them — as the alpha channel of a PNG in `input/clipspace` — so an edit made here opens for further editing in ComfyUI's own mask editor, and one made there opens here. Paint strokes are kept as their own layer, so re-opening an edit gives you the strokes back rather than baked into the picture.
+
+**Undo history** outlives the editor: reopen the same image and your steps are still there, continuing from the last save — including after a page reload. Closing without saving discards that session's strokes and their history, so Undo can never re-apply an edit you abandoned. How many steps are kept scales with the size of the image (up to twenty), so a large image keeps fewer.
 
 <a id="errors"></a>
 ### Errors
@@ -818,6 +913,7 @@ The queue page shows pending, running, and completed generations. Get to the que
 ### Queue List and Status
 
 - Items are grouped by status: pending, running, then completed.
+- Pending jobs sit in a section of their own, headed **_n_ Pending**; tap the header to fold them away or bring them back. More than two pending jobs arrive folded, so a big batch doesn't push the running generation off the screen, and a fold or unfold you make by hand holds until the queue drains.
 - Completed items are sorted by most recent run.
 - Tap a card header to fold or unfold its outputs.
 - Running items show progress and the currently executing node.
@@ -918,7 +1014,7 @@ The outputs `...` menu also holds **Workflow Panel**, **Select**, **Search**, **
 
 - Mark files as favorites for quick access.
 - Favorite files show a solid red heart indicator.
-- Favorite or unfavorite from the file's `...` context menu, from the heart button in the [Image Viewer](#image-viewer), or from the selection actions when in [Selection Mode](#select-mode).
+- Favorite or unfavorite from the file's `...` context menu, from the heart button in the [Image Viewer](#image-viewer), from the desktop hover controls on output cards and folder rows, or from the selection actions when in [Selection Mode](#select-mode).
 - Use the "favorites only" filter to view just your favorited files.
 - The filter keeps folders that hold favorites further down, labelled with how many are inside, so you can still navigate to nested favorites. Favorites behind hidden (dot-prefixed) folders only count while **Show hidden** is on — otherwise a folder would open onto an empty grid.
 - Favorites persist across sessions, and are stored on the server by file content — so they survive a rename, and a new file that happens to reuse an old filename doesn't inherit its state.
@@ -928,9 +1024,9 @@ The outputs `...` menu also holds **Workflow Panel**, **Select**, **Search**, **
 
 Rejecting is the counterpart to favoriting: a way to mark the results of a run you don't want, so you can clear them out in one pass instead of deleting them one at a time.
 
-- The **✕** button sits next to the heart on outputs in the [Image Viewer](#image-viewer), on [Queue Page](#queue-page) cards, and on [Outputs Page](#outputs-page) cards. In the viewer, `x` does the same thing.
+- The **✕** button sits next to the heart on outputs in the [Image Viewer](#image-viewer) and on [Queue Page](#queue-page) cards. On desktop, hover an Outputs card or row to reveal matching heart and ✕ controls. **Reject** / **Clear rejected mark** is in the file's `...` menu too. In the viewer, `x` does the same thing.
 - Tapping ✕ on an ordinary output marks it **rejected** — the ✕ gains a solid red disc, and the card shows a rejected badge.
-- Tapping ✕ on a **favorited** output removes the favorite instead of rejecting it. An output is never both at once.
+- In the viewer and on Queue cards, tapping ✕ on a **favorited** output removes the favorite. On the Outputs page a favorited file shows only the heart on hover; its `...` menu's **Reject** switches it straight to rejected. An output is never both at once.
 - Tap it again on a rejected output to clear the mark.
 - **Nothing is deleted until you ask.** Use **Delete Rejected (_n_)** in the [Queue Options Menu](#queue-options-menu) or **Delete rejected (_n_)** in the outputs `...` menu to remove them all after a confirmation. Both entries are hidden when nothing is rejected.
 - A delete acts on exactly the set that was marked when it started, so anything you reject while it's running keeps its mark for next time. Queue and outputs cards for deleted files are cleaned up automatically, and any file that couldn't be deleted stays marked rather than quietly disappearing from the list.
@@ -949,6 +1045,10 @@ Rejecting is the counterpart to favoriting: a way to mark the results of a run y
   - Move selected files to a different folder.
   - Delete selected files.
   - **Bulk process:** run a saved workflow once per selected image. Pick a saved workflow, then pick which of its Load Image nodes to feed; each selected image is swapped into that node and queued as its own run. The workflow is never loaded into the Workflow page, so whatever you have open stays untouched.
+- **Looking at a file full size without losing the selection.** A tap toggles selection while you are selecting, so opening the viewer has its own gesture: **press and hold** a card. The selection you have built so far is untouched.
+  - The viewer keeps only what selecting needs: a **select/deselect** button beside the heart and the metadata toggle, and the running tally in the header. Delete, download and use-in-workflow step aside — those are the bottom bar's bulk actions while you are selecting.
+  - Favorite and reject still work from in there, and swiping moves through the folder as usual, so you can go along a run deciding as you look.
+  - The chrome stays put rather than fading, and while the viewer is open the bottom bar's filter/sort button becomes the selection actions button — the listing is covered, so there is nothing to filter.
 
 <a id="file-actions"></a>
 ### File Actions
@@ -956,8 +1056,9 @@ Rejecting is the counterpart to favoriting: a way to mark the results of a run y
 - Tap the `...` on any file to open a context menu with actions:
   - Open the file in the viewer.
   - Favorite or unfavorite the file.
+  - Reject the file or clear its rejected mark.
   - Rename the file or folder.
-  - Load workflow metadata from the image (if available).
+  - Load workflow metadata from the image (if available). This is offered for a video too, when the app finds a workflow it can reach for that clip — see [How do I load the workflow of one of my output images?](#how-do-i-load-the-workflow-of-one-of-my-output-images).
   - Use the image in your workflow (load into a LoadImage node).
   - Move the file to another folder.
   - Delete the file.
@@ -996,12 +1097,28 @@ The full-screen viewer supports images and videos while keeping access to the bo
 <a id="keyboard-shortcuts"></a>
 ### Keyboard Shortcuts
 
+On the desktop-responsive Workflow page:
+
+| Key | Action |
+| --- | --- |
+| `Command+F` / `Ctrl+F` | Open and focus workflow search |
+| `Command+Z` / `Ctrl+Z` | Undo the last workflow edit |
+| `Shift+Command+Z` / `Shift+Ctrl+Z` | Redo the last undone workflow edit |
+| `Ctrl+Y` | Redo the last undone workflow edit |
+| `Command+S` / `Ctrl+S` | Save the current workflow; opens Save As if it has not been named yet |
+| `Shift+Command+S` / `Shift+Ctrl+S` | Open Save As |
+
+On the Outputs page, `Command+F` / `Ctrl+F` opens and focuses output search.
+
+**Show hidden** is one preference shared by every list that can hide things — outputs, the queue, the workflow lists, the input picker — and `Command+Shift+.` toggles it from anywhere in the app, the way Finder does. It is `Command` specifically: `Ctrl+Shift+.` is deliberately left alone.
+
 The image viewer accepts these keys when no text input is focused:
 
 | Key | Action |
 | --- | --- |
 | `←` | Previous (newer) image |
 | `→` | Next (older) image |
+| `Space` | Play or pause the current video |
 | `Escape` | Close the topmost open modal if any; otherwise close the viewer |
 | `Delete` / `Backspace` | Open the delete confirmation dialog (same as the trash button) |
 | `f` | Toggle favorite (same as the heart button) |
@@ -1051,8 +1168,8 @@ Outputs from an A/B comparison node (rgthree's **Image Comparer**) can be inspec
 <a id="video-playback"></a>
 ### Video Playback
 
-- Video outputs play inline with native controls.
-- The viewer preserves follow mode but currently disables zoom gestures for videos.
+- Video outputs play inline with the viewer's own controls: play/pause, a scrubbable timeline with elapsed and total time, and a mute toggle. Playback speed opens in its own panel with a one-tap reset, and the rate you pick is shared by every video the viewer plays — swiping to the next clip, or closing and reopening the viewer, keeps it.
+- Videos zoom and pan like images, and follow mode is preserved.
 - Local videos stream through a seekable playback cache, and posters come from cached still frames, so playback starts quickly instead of waiting on a full download. Videos whose index sits at the end of the file no longer restart their download before they can begin playing.
 - Regenerating a video under a filename you've used before invalidates both the playback and poster caches, so you never see the previous video's thumbnail on the new one.
 

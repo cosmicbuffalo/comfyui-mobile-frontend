@@ -13,14 +13,20 @@ import { NodeCardParameters } from '../Parameters';
 vi.mock('@/components/InputControls/WidgetControl', () => ({
   WidgetControl: ({
     name,
+    value,
     compactTrailingControls,
+    isPromoted,
   }: {
     name: string;
+    value?: unknown;
     compactTrailingControls?: boolean;
+    isPromoted?: boolean;
   }) => (
     <div
       data-widget-control={name}
+      data-widget-value={String(value ?? '')}
       data-compact-trailing-controls={compactTrailingControls || undefined}
+      data-promoted={isPromoted || undefined}
     >
       {name}
     </div>
@@ -95,6 +101,11 @@ describe('NodeCardParameters seed controls', () => {
   it('compensates for the top padding on a standard first parameter', async () => {
     const content = await renderFirstWidget('STRING');
     expect(content?.classList).toContain('-mt-2');
+  });
+
+  it('reserves bottom clearance for the last parameter focus ring', async () => {
+    const content = await renderFirstWidget('STRING');
+    expect(content?.classList).toContain('pb-1');
   });
 
   it('does not pull up a composite first parameter such as Power LoRA', async () => {
@@ -213,6 +224,153 @@ describe('NodeCardParameters seed controls', () => {
       container.querySelector('[data-widget-control="Seed control"]')
         ?.getAttribute('data-compact-trailing-controls'),
     ).toBe('true');
+  });
+
+  it('renders a relabelled promoted seed once under its edited label', async () => {
+    const node: WorkflowNode = {
+      id: 1774,
+      itemKey: 'node:1774',
+      type: 'subgraph-placeholder',
+      pos: [0, 0],
+      size: [320, 200],
+      flags: {},
+      order: 0,
+      mode: 0,
+      inputs: [{
+        name: 'seed',
+        label: 'interpolation_seed',
+        type: 'INT',
+        widget: { name: 'seed' },
+        link: null,
+      }],
+      outputs: [],
+      properties: {},
+      widgets_values: [1120826007],
+    };
+    useWorkflowStore.setState({
+      workflow: {
+        last_node_id: node.id,
+        last_link_id: 0,
+        nodes: [node],
+        links: [],
+        groups: [],
+        config: {},
+        version: 1,
+      },
+      nodeTypes: {},
+      scopeStack: [{ type: 'root' }],
+    });
+
+    await act(async () => {
+      root.render(
+        <NodeCardParameters
+          node={node}
+          isBypassed={false}
+          isKSampler={false}
+          workflowExists
+          nodeTypesExists
+          visibleInputWidgets={[]}
+          visibleWidgets={[{
+            widgetIndex: 0,
+            name: 'interpolation_seed',
+            inputName: 'seed',
+            inputIndex: 0,
+            type: 'INT',
+            value: 1120826007,
+          }]}
+          errorInputNames={new Set()}
+          onUpdateNodeWidget={vi.fn()}
+          onUpdateNodeWidgets={vi.fn()}
+          getWidgetIndexForInput={() => null}
+          findSeedWidgetIndex={() => 0}
+          findSeedControlWidgetIndex={() => null}
+          isPlaceholder
+          setSeedMode={vi.fn()}
+          isWidgetPinned={() => false}
+          toggleWidgetPin={vi.fn()}
+          showFastGroupConfig={false}
+          setShowFastGroupConfig={vi.fn()}
+          boundaryTargetNames={{ 0: ['seed'] }}
+          onRenameBoundarySlot={vi.fn()}
+        />,
+      );
+    });
+
+    expect(container.querySelectorAll('.number-control-interpolation_seed')).toHaveLength(1);
+    expect(container.querySelector('.number-control-seed')).toBeNull();
+    expect(container.textContent).toContain('interpolation_seed');
+    expect(container.textContent).not.toContain('interpolation_seed ⇢ seed');
+  });
+
+  it('keeps the instance seed controls on an inner node after widget promotion', async () => {
+    const setSeedMode = vi.fn();
+    const node: WorkflowNode = {
+      id: 1836,
+      itemKey: 'root/subgraph:video/node:1836',
+      type: 'GIMMVFI_interpolate',
+      pos: [0, 0],
+      size: [320, 200],
+      flags: {},
+      order: 0,
+      mode: 0,
+      inputs: [{ name: 'seed', type: 'INT', widget: { name: 'seed' }, link: 1397 }],
+      outputs: [],
+      properties: {},
+      widgets_values: [1120826007, 'randomize'],
+    };
+    useSeedStore.setState({ seedModes: { 1774: 'increment' }, seedLastValues: {} });
+
+    await act(async () => {
+      root.render(
+        <NodeCardParameters
+          node={node}
+          isBypassed={false}
+          isKSampler={false}
+          workflowExists
+          nodeTypesExists
+          visibleInputWidgets={[]}
+          visibleWidgets={[{
+            widgetIndex: 0,
+            name: 'seed',
+            inputName: 'seed',
+            inputIndex: 0,
+            type: 'INT',
+            value: 777,
+            connected: true,
+          }]}
+          errorInputNames={new Set()}
+          onUpdateNodeWidget={vi.fn()}
+          onUpdateNodeWidgets={vi.fn()}
+          getWidgetIndexForInput={() => null}
+          findSeedWidgetIndex={() => 0}
+          findSeedControlWidgetIndex={() => null}
+          promotedSeedModeNodeId={1774}
+          setSeedMode={setSeedMode}
+          isWidgetPinned={() => false}
+          toggleWidgetPin={vi.fn()}
+          resolveWidgetValue={(index) => index === 0 ? 777 : undefined}
+          showFastGroupConfig={false}
+          setShowFastGroupConfig={vi.fn()}
+        />,
+      );
+    });
+
+    expect(container.querySelector<HTMLInputElement>('.number-input-field-seed')?.value).toBe('777');
+    expect(
+      container.querySelector('[data-widget-control="Seed control"]')
+        ?.getAttribute('data-widget-value'),
+    ).toBe('increment');
+    expect(container.querySelector('.number-input-field-seed')?.className).toContain('border-pink-500');
+    expect(
+      container.querySelector('[data-widget-control="Seed control"]')
+        ?.getAttribute('data-promoted'),
+    ).toBe('true');
+
+    const randomize = Array.from(container.querySelectorAll('button')).find(
+      (button) => button.textContent?.includes('Randomize each time'),
+    );
+    await act(async () => randomize?.click());
+    expect(setSeedMode).toHaveBeenCalledWith(1774, 'randomize');
   });
 
   it('keeps control_after_generate in the generic list when the seed input is linked', async () => {

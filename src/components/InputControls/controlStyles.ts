@@ -1,7 +1,19 @@
 export const controlLabelClassName = "block text-sm font-medium text-slate-300";
 
+/**
+ * A label row that also carries a trailing accessory — the row's `...` menu.
+ *
+ * The accessory must be a SIBLING of the <label>, never inside it: a label
+ * forwards clicks to its first labelable descendant, so a button in there turns
+ * the whole label — the widget name and the space it stretches across — into a
+ * second trigger for that button. Flex rather than block so the two sit on one
+ * line the way they did when the accessory was nested.
+ */
+export const controlLabelRowClassName =
+  "control-label-row flex items-center gap-1 text-sm font-medium text-slate-300";
+
 export const controlInputBaseClassName =
-  "w-full p-3 comfy-input text-base";
+  "w-full p-3 comfy-input text-base outline-none focus:ring-2";
 
 export const controlInputDarkClassName =
   "text-slate-100 bg-slate-950/80 border-white/10 placeholder:text-slate-500";

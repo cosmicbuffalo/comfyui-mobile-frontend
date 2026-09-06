@@ -4,7 +4,7 @@ import { ComboControl } from "./ComboControl";
 import { ModelComboControl } from "./ModelComboControl";
 import { FullscreenWidgetModal } from "../modals/FullscreenWidgetModal";
 import { useState, type ReactNode } from "react";
-import { PlusIcon, WarningTriangleIcon } from "../icons";
+import { PlusIcon, PromotedWidgetIcon, WarningTriangleIcon } from "../icons";
 import { createDefaultLoraEntry, normalizeLoraEntry } from "@/utils/loraManager";
 import { normalizeTriggerWordEntry } from "@/utils/triggerWordToggle";
 import { modelWidgetKind } from "@/utils/modelWidgetKind";
@@ -47,6 +47,12 @@ interface WidgetControlProps {
   /** Small control rendered inline right after the widget's label text. */
   labelAccessory?: ReactNode;
   /**
+   * Renamed label to show in place of the widget's name. Display only: `name`
+   * stays the widget's real name, which is what values, pins and model-kind
+   * detection are keyed by.
+   */
+  displayLabel?: string;
+  /**
    * Explicit Lora Manager catalog for this widget. Use when the widget name has
    * been renamed for display (e.g. CR LoRA Stack shows "Selected LoRA") so that
    * name-based detection can't infer it. Omit to auto-detect from the name.
@@ -75,6 +81,7 @@ export function WidgetControl({
   containerClass,
   isPromoted = false,
   labelAccessory,
+  displayLabel,
   modelKind,
 }: WidgetControlProps) {
   const { t } = useI18n();
@@ -113,7 +120,7 @@ export function WidgetControl({
           ? (stashedModelKind ?? modelWidgetKind(name))
           : null;
 
-  const label = name.replace(/_/g, " ");
+  const label = displayLabel ?? name.replace(/_/g, " ");
 
   const resolvedHasPin =
     hasPin ?? (Boolean(onTogglePin) || isPinned);
@@ -145,6 +152,7 @@ export function WidgetControl({
     isPinned,
     onTogglePin,
     labelAccessory,
+    displayLabel,
   };
 
   const renderControl = () => {
@@ -559,6 +567,89 @@ export function WidgetControl({
     );
   }
 
+  // rgthree Power Puter: the outputs chip row. Upstream draws this on the node
+  // canvas as a wrapping strip of chips, each opening a context menu of output
+  // types plus a Delete entry once more than one output exists, and a trailing
+  // "+" chip capped at ten. Editing an entry rewrites the node's output slots,
+  // so the change is dispatched through the store rather than as a plain widget
+  // value -- see `setPowerPuterOutputs`.
+  if (type === "POWER_PUTER_OUTPUTS") {
+    const puterOptions = (options as {
+      choices?: string[];
+      maxOutputs?: number;
+    }) || {};
+    const outputTypes: string[] = Array.isArray(value) && value.length > 0
+      ? (value as string[])
+      : ["STRING"];
+    const choices = puterOptions.choices ?? ["STRING", "INT", "FLOAT", "BOOLEAN", "*"];
+    const maxOutputs = puterOptions.maxOutputs ?? 10;
+    const canDelete = outputTypes.length > 1;
+
+    const replaceAt = (index: number, next: string) => {
+      const copy = [...outputTypes];
+      copy[index] = next;
+      onChange(copy);
+    };
+    const removeAt = (index: number) => {
+      if (!canDelete) return;
+      onChange(outputTypes.filter((_, i) => i !== index));
+    };
+
+    return (
+      <div className={`${layoutContainerClass} power-puter-outputs flex flex-col gap-2`}>
+        {!hideLabel && (
+          <span className="power-puter-outputs-label block text-sm font-medium text-slate-300 ml-1">
+            {t("Outputs")}
+          </span>
+        )}
+        <div className="power-puter-outputs-chips flex flex-wrap items-center gap-2">
+          {outputTypes.map((outputType, index) => (
+            <div
+              key={`power-puter-output-${index}`}
+              className={`power-puter-output-chip flex items-center gap-1 pl-2 pr-1 py-1 ${controlNestedSurfaceClassName} rounded-full`}
+            >
+              <select
+                value={choices.includes(outputType) ? outputType : choices[0]}
+                onChange={(e) => replaceAt(index, e.target.value)}
+                disabled={disabled}
+                aria-label={t("Output {n} type", { n: index + 1 })}
+                className="power-puter-output-type bg-transparent text-sm text-slate-100 outline-none disabled:opacity-60"
+              >
+                {choices.map((choice) => (
+                  <option key={choice} value={choice} className="bg-slate-800">
+                    {choice}
+                  </option>
+                ))}
+              </select>
+              {canDelete && (
+                <button
+                  type="button"
+                  onClick={() => removeAt(index)}
+                  disabled={disabled}
+                  aria-label={t("Remove output {n}", { n: index + 1 })}
+                  className="power-puter-output-remove w-6 h-6 flex items-center justify-center rounded-full text-slate-400 hover:text-red-300 disabled:opacity-40"
+                >
+                  &times;
+                </button>
+              )}
+            </div>
+          ))}
+          {outputTypes.length < maxOutputs && (
+            <button
+              type="button"
+              onClick={() => onChange([...outputTypes, "STRING"])}
+              disabled={disabled}
+              aria-label={t("Add output")}
+              className={`power-puter-output-add flex items-center gap-1 px-3 py-1 rounded-full ${controlGhostButtonClassName}`}
+            >
+              <PlusIcon className="w-4 h-4" />
+            </button>
+          )}
+        </div>
+      </div>
+    );
+  }
+
   if (type === "POWER_LORA_ADD") {
     const handlePowerLoraAddClick = () => {
       onChange({
@@ -630,10 +721,20 @@ export function WidgetControl({
         >
           <label
             id={`widget-label-${name}`}
-            className="text-[10px] font-bold text-slate-400 uppercase tracking-wider truncate mr-2"
+            className="inline-flex min-w-0 items-center gap-1 text-[10px] font-bold text-slate-400 uppercase tracking-wider mr-2"
           >
-            {label}
+            <span className="truncate">{label}</span>
+            {isPromoted && (
+              <PromotedWidgetIcon className="w-3.5 h-3.5 shrink-0 text-pink-500" />
+            )}
           </label>
+          {/* This branch renders every type the specialised controls do not —
+              previews, custom node widgets — and dropped the row's actions and
+              its promoted marker on the floor along with them. Outside the
+              <label>, because a label forwards clicks to the first labelable
+              thing inside it and would make the widget's name a second trigger
+              for this button. */}
+          {labelAccessory}
           {hasError && (
             <div
               id={`widget-error-icon-${name}`}

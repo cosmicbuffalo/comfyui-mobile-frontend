@@ -5,7 +5,7 @@ import {
   controlInputBaseClassName,
   controlInputDarkClassName,
   controlInputFocusClassNameForState,
-  controlLabelClassName,
+  controlLabelRowClassName,
   controlStateClassName,
 } from "./controlStyles";
 import { useI18n } from "@/i18n";
@@ -25,6 +25,7 @@ interface NumberControlProps {
   step?: number;
   isInt?: boolean;
   hideLabel?: boolean;
+  displayLabel?: string;
   hasError?: boolean;
   isPromoted?: boolean;
   labelAccessory?: ReactNode;
@@ -50,6 +51,7 @@ export function NumberControl({
   step: stepProp,
   isInt: isIntProp,
   hideLabel = false,
+  displayLabel,
   hasError = false,
   isPromoted = false,
   labelAccessory,
@@ -110,15 +112,15 @@ export function NumberControl({
   const control = (
     <div className={`${containerClass ?? ""} number-control-${name} pt-2`}>
       {!hideLabel && (
-        <label className={`${controlLabelClassName} mb-1`}>
-          <span className="inline-flex items-center gap-1">
-            <span>{name}</span>
-            {labelAccessory}
+        <div className={`${controlLabelRowClassName} mb-1`}>
+            <label className="inline-flex min-w-0 items-center gap-1">
+              <span>{displayLabel ?? name}</span>
             {isPromoted && (
               <PromotedWidgetIcon className="w-3.5 h-3.5 text-pink-500" />
             )}
-          </span>
-        </label>
+            </label>
+            {labelAccessory}
+          </div>
       )}
 
       <div
@@ -161,7 +163,7 @@ export function NumberControl({
   return (
     <FullscreenWidgetModal
       isOpen
-      title={name}
+      title={displayLabel ?? name}
       onClose={() => onModalClose?.()}
       viewerSidebar
     >

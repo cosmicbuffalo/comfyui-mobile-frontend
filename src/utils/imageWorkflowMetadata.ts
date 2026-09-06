@@ -176,6 +176,17 @@ function readExifWorkflow(exif: Uint8Array | null): string | null {
   return value.slice(sep + 1);
 }
 
+function readExifPrompt(exif: Uint8Array | null): string | null {
+  if (!exif) return null;
+  // comfy_api ImageSaveHelper stores prompt JSON in EXIF Model (0x0110).
+  const value = readExifTagString(exif, [0x0110]);
+  if (!value) return null;
+  const sep = value.indexOf(':');
+  if (sep === -1) return null;
+  if (value.slice(0, sep).trim().toLowerCase() !== 'prompt') return null;
+  return value.slice(sep + 1);
+}
+
 function parseWorkflowJson(raw: string | null): Workflow | null {
   if (!raw) return null;
   try {
@@ -189,16 +200,53 @@ function parseWorkflowJson(raw: string | null): Workflow | null {
   return null;
 }
 
-/** Extract an embedded workflow from raw image bytes, or null if none/invalid. */
-export function extractWorkflowFromImageBytes(bytes: Uint8Array): Workflow | null {
-  if (isPng(bytes)) return parseWorkflowJson(readPngTextValue(bytes, 'workflow'));
-  if (isWebp(bytes)) return parseWorkflowJson(readExifWorkflow(readWebpExif(bytes)));
-  if (isJpeg(bytes)) return parseWorkflowJson(readExifWorkflow(readJpegExif(bytes)));
-  return null;
+function parsePromptJson(raw: string | null): unknown {
+  if (!raw) return undefined;
+  try {
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' ? parsed : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
-/** Read a File and extract its embedded ComfyUI workflow, or null if none. */
-export async function extractWorkflowFromImageFile(file: File): Promise<Workflow | null> {
+export interface EmbeddedWorkflowMetadata {
+  workflow: Workflow;
+  prompt?: unknown;
+}
+
+/** Extract workflow and executed prompt metadata from raw image bytes. */
+export function extractWorkflowMetadataFromImageBytes(
+  bytes: Uint8Array,
+): EmbeddedWorkflowMetadata | null {
+  let workflowRaw: string | null = null;
+  let promptRaw: string | null = null;
+  if (isPng(bytes)) {
+    workflowRaw = readPngTextValue(bytes, 'workflow');
+    promptRaw = readPngTextValue(bytes, 'prompt');
+  } else {
+    const exif = isWebp(bytes)
+      ? readWebpExif(bytes)
+      : isJpeg(bytes)
+        ? readJpegExif(bytes)
+        : null;
+    workflowRaw = readExifWorkflow(exif);
+    promptRaw = readExifPrompt(exif);
+  }
+
+  const workflow = parseWorkflowJson(workflowRaw);
+  if (!workflow) return null;
+  const prompt = parsePromptJson(promptRaw);
+  return {
+    workflow,
+    ...(prompt !== undefined ? { prompt } : {}),
+  };
+}
+
+/** Read a File and extract its embedded workflow plus executed prompt. */
+export async function extractWorkflowMetadataFromImageFile(
+  file: File,
+): Promise<EmbeddedWorkflowMetadata | null> {
   const buffer = await file.arrayBuffer();
-  return extractWorkflowFromImageBytes(new Uint8Array(buffer));
+  return extractWorkflowMetadataFromImageBytes(new Uint8Array(buffer));
 }

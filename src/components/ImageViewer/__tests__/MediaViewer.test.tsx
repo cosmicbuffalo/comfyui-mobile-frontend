@@ -3,6 +3,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ViewerImage } from '@/utils/viewerImages';
 import { MediaViewer } from '@/components/ImageViewer/MediaViewer';
+import { useImageViewerStore } from '@/hooks/useImageViewer';
 
 const getFileWorkflowAvailabilityMock = vi.fn();
 const getImageMetadataMock = vi.fn();
@@ -77,6 +78,11 @@ describe('MediaViewer workflow availability', () => {
     getFileWorkflowAvailabilityMock.mockResolvedValue(false);
     getImageMetadataMock.mockReset();
     getImageMetadataMock.mockResolvedValue({});
+    // A failed image kicks off a HEAD probe to find out whether the file is
+    // gone. Default it to an answer that says nothing about the file, so only
+    // the tests that care opt into a 404 — and none of them touch the network.
+    vi.stubGlobal('fetch', vi.fn(async () => ({ status: 500 })));
+    useImageViewerStore.getState().setVideoPlaybackRate(1);
   });
 
   afterEach(async () => {
@@ -125,6 +131,246 @@ describe('MediaViewer workflow availability', () => {
     expect(video?.getAttribute('src')).toBe(
       '/mobile/api/video/playable?filename=clip.mp4&subfolder=renders&type=output',
     );
+    expect(video?.controls).toBe(false);
+    expect(document.querySelector('button[aria-label="Pause"]')).not.toBeNull();
+    expect(document.querySelector('button[aria-label="Unmute"]')).not.toBeNull();
+    expect(
+      document.querySelector('button[aria-label="Unmute"]')?.parentElement?.className,
+    ).toContain('top-14');
+    expect(document.querySelector('input[aria-label="Video timeline"]')).not.toBeNull();
+  });
+
+  it('drives play, mute, elapsed time, and seeking through custom overlay controls', async () => {
+    await act(async () => {
+      root.render(
+        <MediaViewer
+          open={true}
+          items={[makeVideoItem()]}
+          index={0}
+          onIndexChange={() => {}}
+          onClose={() => {}}
+          onDelete={() => {}}
+          onLoadWorkflow={() => {}}
+          onLoadInWorkflow={() => {}}
+        />,
+      );
+    });
+
+    const video = document.querySelector<HTMLVideoElement>('#media-viewer-overlay video')!;
+    let paused = false;
+    Object.defineProperties(video, {
+      duration: { configurable: true, value: 12.5 },
+      currentTime: { configurable: true, writable: true, value: 2.1 },
+      paused: { configurable: true, get: () => paused },
+    });
+    const pause = vi.fn(() => {
+      paused = true;
+      video.dispatchEvent(new Event('pause'));
+    });
+    const play = vi.fn(() => {
+      paused = false;
+      video.dispatchEvent(new Event('play'));
+      return Promise.resolve();
+    });
+    Object.defineProperties(video, {
+      pause: { configurable: true, value: pause },
+      play: { configurable: true, value: play },
+    });
+
+    await act(async () => {
+      video.dispatchEvent(new Event('loadedmetadata'));
+      video.dispatchEvent(new Event('timeupdate'));
+    });
+
+    const scrubber = document.querySelector('.video-scrubber')!;
+    expect(scrubber.textContent).toContain('0:02');
+    expect(scrubber.textContent).toContain('0:12');
+
+    const timeline = scrubber.querySelector<HTMLInputElement>('input[type="range"]')!;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set?.call(timeline, '7.25');
+      timeline.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    expect(video.currentTime).toBe(7.25);
+
+    await act(async () => {
+      document.querySelector<HTMLButtonElement>('button[aria-label="Unmute"]')?.click();
+    });
+    expect(video.muted).toBe(false);
+    expect(document.querySelector('button[aria-label="Mute"]')).not.toBeNull();
+
+    await act(async () => {
+      document.querySelector<HTMLButtonElement>('button[aria-label="Pause"]')?.click();
+    });
+    expect(pause).toHaveBeenCalledTimes(1);
+    expect(document.querySelector('button[aria-label="Play"]')).not.toBeNull();
+
+    await act(async () => {
+      document.querySelector<HTMLButtonElement>('button[aria-label="Play"]')?.click();
+      await Promise.resolve();
+    });
+    expect(play).toHaveBeenCalledTimes(1);
+    expect(document.querySelector('button[aria-label="Pause"]')).not.toBeNull();
+
+    const nextVideo = makeVideoItem('output/renders/next.mp4');
+    nextVideo.src = '/view?filename=next.mp4&subfolder=renders&type=output';
+    nextVideo.filename = 'next.mp4';
+    nextVideo.file = { id: 'output/renders/next.mp4', name: 'next.mp4', type: 'video' };
+    await act(async () => {
+      root.render(
+        <MediaViewer
+          open={true}
+          items={[nextVideo]}
+          index={0}
+          onIndexChange={() => {}}
+          onClose={() => {}}
+          onDelete={() => {}}
+          onLoadWorkflow={() => {}}
+          onLoadInWorkflow={() => {}}
+        />,
+      );
+    });
+
+    expect(document.querySelector<HTMLVideoElement>('#media-viewer-overlay video')?.muted).toBe(true);
+    expect(document.querySelector('button[aria-label="Unmute"]')).not.toBeNull();
+  });
+
+  it('morphs the global speed control, shows a thumb-aligned drag readout, and resets it', async () => {
+    vi.useFakeTimers();
+    await act(async () => {
+      root.render(
+        <MediaViewer
+          open={true}
+          items={[makeVideoItem()]}
+          index={0}
+          onIndexChange={() => {}}
+          onClose={() => {}}
+          onDelete={() => {}}
+          onLoadWorkflow={() => {}}
+          onLoadInWorkflow={() => {}}
+        />,
+      );
+    });
+
+    const firstVideo = document.querySelector<HTMLVideoElement>('#media-viewer-overlay video')!;
+    const speedButton = document.querySelector<HTMLButtonElement>('button[aria-label="Playback speed"]')!;
+    await act(async () => {
+      firstVideo.dispatchEvent(new Event('loadedmetadata'));
+      speedButton.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, cancelable: true }));
+    });
+
+    const morphingControl = document.querySelector<HTMLElement>('.playback-speed-control > div')!;
+    // Pointer-down alone must not morph or expose the range beneath that same
+    // in-progress gesture; that caused real touch taps to alter the speed and
+    // immediately show Reset without ever presenting a usable slider.
+    expect(morphingControl.dataset.state).toBe('closed');
+    expect(useImageViewerStore.getState().videoPlaybackRate).toBe(1);
+
+    await act(async () => {
+      speedButton.dispatchEvent(new MouseEvent('pointerup', { bubbles: true, cancelable: true }));
+      speedButton.dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 1 }));
+    });
+    expect(morphingControl.dataset.state).toBe('open');
+    expect(morphingControl.style.height).toBe('200px');
+    expect(morphingControl.className).toContain('w-9');
+    expect(document.querySelector('[role="slider"][aria-label="Playback speed"]')).toBeNull();
+    expect(document.querySelector('button[aria-label="Reset playback speed"]')).toBeNull();
+
+    await act(async () => {
+      vi.advanceTimersByTime(300);
+    });
+    const slider = document.querySelector<HTMLElement>('[role="slider"][aria-label="Playback speed"]')!;
+    expect(slider).not.toBeNull();
+    Object.defineProperty(slider, 'getBoundingClientRect', {
+      configurable: true,
+      value: () => ({
+        top: 0,
+        right: 36,
+        bottom: 200,
+        left: 0,
+        width: 36,
+        height: 200,
+        x: 0,
+        y: 0,
+        toJSON: () => ({}),
+      }),
+    });
+
+    await act(async () => {
+      slider.dispatchEvent(new MouseEvent('pointerdown', {
+        bubbles: true,
+        cancelable: true,
+        clientY: 62.5,
+      }));
+    });
+
+    const readout = morphingControl.querySelector('output');
+    expect(readout?.textContent).toContain('150%');
+    expect(readout?.querySelector('[aria-hidden="true"]')).not.toBeNull();
+    expect(firstVideo.playbackRate).toBe(1.5);
+    expect(useImageViewerStore.getState().videoPlaybackRate).toBe(1.5);
+    expect(document.querySelector('button[aria-label="Reset playback speed"]')).not.toBeNull();
+
+    await act(async () => {
+      window.dispatchEvent(new MouseEvent('pointerup', { bubbles: true }));
+    });
+    expect(morphingControl.querySelector('output')).toBeNull();
+
+    await act(async () => {
+      document.querySelector<HTMLButtonElement>('button[aria-label="Close playback speed controls"]')
+        ?.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }));
+    });
+    expect(morphingControl.dataset.state).toBe('closed');
+    expect(morphingControl.style.height).toBe('36px');
+    expect(morphingControl.className).toContain('bg-cyan-400/25');
+
+    // WebView fallback: a synthesized click with no pointer-up must still open.
+    await act(async () => {
+      document.querySelector<HTMLButtonElement>('button[aria-label="Playback speed"]')
+        ?.dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 1 }));
+    });
+    expect(morphingControl.dataset.state).toBe('open');
+    expect(morphingControl.style.height).toBe('200px');
+    await act(async () => {
+      document.querySelector<HTMLButtonElement>('button[aria-label="Close playback speed controls"]')
+        ?.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }));
+    });
+
+    const nextVideo = makeVideoItem('output/renders/speed-next.mp4');
+    nextVideo.src = '/view?filename=speed-next.mp4&subfolder=renders&type=output';
+    nextVideo.filename = 'speed-next.mp4';
+    nextVideo.file = {
+      id: 'output/renders/speed-next.mp4',
+      name: 'speed-next.mp4',
+      type: 'video',
+    };
+    await act(async () => {
+      root.render(
+        <MediaViewer
+          open={true}
+          items={[nextVideo]}
+          index={0}
+          onIndexChange={() => {}}
+          onClose={() => {}}
+          onDelete={() => {}}
+          onLoadWorkflow={() => {}}
+          onLoadInWorkflow={() => {}}
+        />,
+      );
+    });
+    const nextVideoElement = document.querySelector<HTMLVideoElement>('#media-viewer-overlay video')!;
+    await act(async () => {
+      nextVideoElement.dispatchEvent(new Event('loadedmetadata'));
+    });
+    expect(nextVideoElement.playbackRate).toBe(1.5);
+
+    await act(async () => {
+      document.querySelector<HTMLButtonElement>('button[aria-label="Reset playback speed"]')?.click();
+    });
+    expect(nextVideoElement.playbackRate).toBe(1);
+    expect(useImageViewerStore.getState().videoPlaybackRate).toBe(1);
+    expect(document.querySelector('button[aria-label="Reset playback speed"]')).toBeNull();
+    expect(morphingControl.className).toContain('bg-black/45');
   });
 
   // Regression: the "hide Load Workflow on images with no workflow" fix
@@ -380,6 +626,123 @@ describe('MediaViewer workflow availability', () => {
     expect(
       document.querySelector('#media-viewer-overlay > div.pointer-events-none')?.className,
     ).toContain('opacity-100');
+  });
+
+  it('immediately toggles the visible chrome when the video surface is tapped', async () => {
+    await act(async () => {
+      root.render(
+        <MediaViewer
+          open={true}
+          items={[makeVideoItem()]}
+          index={0}
+          onIndexChange={() => {}}
+          onClose={() => {}}
+          onDelete={() => {}}
+          onLoadWorkflow={() => {}}
+          onLoadInWorkflow={() => {}}
+        />,
+      );
+    });
+
+    const stage = document.querySelector<HTMLElement>(
+      '#media-viewer-overlay > div.absolute.inset-x-0',
+    )!;
+    stage.setPointerCapture = vi.fn();
+    const chrome = () => document.querySelector(
+      '#media-viewer-overlay > div.pointer-events-none',
+    );
+    const tapStage = () => {
+      stage.dispatchEvent(new MouseEvent('pointerdown', {
+        bubbles: true,
+        clientX: 100,
+        clientY: 100,
+      }));
+      stage.dispatchEvent(new MouseEvent('pointerup', {
+        bubbles: true,
+        clientX: 100,
+        clientY: 100,
+      }));
+    };
+
+    await act(async () => tapStage());
+    expect(chrome()?.className).toContain('opacity-0');
+
+    await act(async () => tapStage());
+    expect(chrome()?.className).toContain('opacity-100');
+  });
+
+  it('zooms and pans video without waking idle chrome', async () => {
+    await act(async () => {
+      root.render(
+        <MediaViewer
+          open={true}
+          items={[makeVideoItem()]}
+          index={0}
+          onIndexChange={() => {}}
+          onClose={() => {}}
+          onDelete={() => {}}
+          onLoadWorkflow={() => {}}
+          onLoadInWorkflow={() => {}}
+        />,
+      );
+    });
+
+    const overlay = document.querySelector<HTMLElement>('#media-viewer-overlay')!;
+    const stage = overlay.querySelector<HTMLElement>(':scope > div.absolute.inset-x-0')!;
+    const video = overlay.querySelector<HTMLVideoElement>('video')!;
+    Object.defineProperties(stage, {
+      clientWidth: { configurable: true, value: 800 },
+      clientHeight: { configurable: true, value: 600 },
+      setPointerCapture: { configurable: true, value: vi.fn() },
+    });
+    Object.defineProperties(video, {
+      videoWidth: { configurable: true, value: 800 },
+      videoHeight: { configurable: true, value: 450 },
+      duration: { configurable: true, value: 10 },
+      currentTime: { configurable: true, writable: true, value: 0 },
+    });
+    await act(async () => {
+      video.dispatchEvent(new Event('loadedmetadata'));
+    });
+
+    const chrome = () => overlay.querySelector<HTMLElement>(':scope > div.pointer-events-none')!;
+    const pointer = (type: string, x: number, y: number) => {
+      const event = new MouseEvent(type, { bubbles: true, clientX: x, clientY: y });
+      Object.defineProperty(event, 'pointerId', { value: 1 });
+      stage.dispatchEvent(event);
+    };
+
+    // A stationary tap hides the chrome first.
+    await act(async () => {
+      pointer('pointerdown', 400, 300);
+      pointer('pointerup', 400, 300);
+    });
+    expect(chrome().className).toContain('opacity-0');
+
+    // Ctrl-wheel zoom changes the video transform but not chrome visibility.
+    await act(async () => {
+      overlay.dispatchEvent(new WheelEvent('wheel', {
+        bubbles: true,
+        cancelable: true,
+        ctrlKey: true,
+        clientX: 400,
+        clientY: 300,
+        deltaY: -100,
+      }));
+    });
+    expect(video.style.transform).toContain('scale(1.5)');
+    expect(chrome().className).toContain('opacity-0');
+
+    // A drag pans the zoomed video and is consumed as a transform gesture,
+    // never as the tap that would wake the chrome.
+    const beforePan = video.style.transform;
+    await act(async () => {
+      pointer('pointerdown', 400, 300);
+      pointer('pointermove', 340, 300);
+      pointer('pointerup', 340, 300);
+    });
+    expect(video.style.transform).not.toBe(beforePan);
+    expect(chrome().className).toContain('opacity-0');
   });
 
   it('uses the original image instead of an orientation-stripping preview', async () => {
@@ -690,4 +1053,109 @@ describe('MediaViewer workflow availability', () => {
     });
   });
 
+});
+
+// Deleting an output leaves its history entry — and so its viewer slot —
+// behind, which used to strand the user on "Unable to load this image" for
+// every deleted file in a run of history. The viewer now confirms the file is
+// really gone (404) and steps over the slot.
+describe('MediaViewer deleted media', () => {
+  let container: HTMLDivElement;
+  let root: Root;
+  let onIndexChange: ReturnType<typeof vi.fn<(index: number) => void>>;
+
+  const item = (name: string) => makeImageItem(`output/${name}`, name);
+
+  const viewer = (items: ViewerImage[], index: number) =>
+    act(async () => {
+      root.render(
+        <MediaViewer
+          open={true}
+          items={items}
+          index={index}
+          onIndexChange={onIndexChange}
+          onClose={() => {}}
+          onDelete={() => {}}
+          onLoadWorkflow={() => {}}
+          onLoadInWorkflow={() => {}}
+        />,
+      );
+    });
+
+  /** Fail the visible image and let the probe (and anything it triggers) run. */
+  const failCurrentImage = async () => {
+    const img = document.querySelector<HTMLImageElement>('#media-viewer-overlay img')!;
+    await act(async () => {
+      img.dispatchEvent(new Event('error'));
+    });
+    await flushEffects();
+    await flushEffects();
+  };
+
+  const respondWith = (status: number) => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({ status })));
+  };
+
+  beforeEach(() => {
+    vi.stubGlobal('ResizeObserver', ResizeObserverMock);
+    container = document.createElement('div');
+    document.body.appendChild(container);
+    root = createRoot(container);
+    onIndexChange = vi.fn();
+    getFileWorkflowAvailabilityMock.mockReset();
+    getFileWorkflowAvailabilityMock.mockResolvedValue(false);
+    getImageMetadataMock.mockReset();
+    getImageMetadataMock.mockResolvedValue({});
+  });
+
+  afterEach(async () => {
+    await act(async () => {
+      root.unmount();
+    });
+    container.remove();
+    vi.unstubAllGlobals();
+  });
+
+  it('moves on from the slot it opened on when the file is gone', async () => {
+    respondWith(404);
+    await viewer([item('deleted.png'), item('kept.png')], 0);
+    await failCurrentImage();
+
+    expect(onIndexChange).toHaveBeenCalledWith(1);
+  });
+
+  it('falls back to the previous slot when the deleted one is last', async () => {
+    respondWith(404);
+    await viewer([item('kept.png'), item('deleted.png')], 1);
+    await failCurrentImage();
+
+    expect(onIndexChange).toHaveBeenCalledWith(0);
+  });
+
+  it('steps over a slot already known to be deleted', async () => {
+    respondWith(404);
+    const items = [item('first.png'), item('deleted.png'), item('third.png')];
+    await viewer(items, 1);
+    await failCurrentImage();
+    onIndexChange.mockClear();
+
+    // Back at a live slot, a swipe towards the deleted one must land past it.
+    await viewer(items, 0);
+    await act(async () => {
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight' }));
+    });
+
+    expect(onIndexChange).toHaveBeenCalledWith(2);
+  });
+
+  it('stays put when the load failed for a reason other than deletion', async () => {
+    // A server restart or a dropped connection fails every image. Skipping on
+    // that would hide the whole run instead of one deleted file.
+    respondWith(500);
+    await viewer([item('offline.png'), item('kept.png')], 0);
+    await failCurrentImage();
+
+    expect(onIndexChange).not.toHaveBeenCalled();
+    expect(document.querySelector('.image-load-error')).not.toBeNull();
+  });
 });

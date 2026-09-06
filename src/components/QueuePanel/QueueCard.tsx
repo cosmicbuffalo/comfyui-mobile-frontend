@@ -17,6 +17,8 @@ import { LoadingSpinner } from '@/components/LoadingSpinner';
 import type { HistoryOutputImage } from '@/api/types';
 import { isHistoryEntryData, type ItemStatus, type QueueItemData, type UnifiedItem, type ViewerImage } from './types';
 import { getMediaType, isVideoFilename } from '@/utils/media';
+import { formatVideoDuration } from '@/utils/formatVideoDuration';
+import { useVideoDurations, type VideoDurationRequest } from '@/hooks/useVideoDurations';
 import { ContextMenuButton } from '@/components/buttons/ContextMenuButton';
 import { Collapsible } from '@/components/Collapsible';
 import { FoldIcon } from '@/components/FoldIcon';
@@ -82,6 +84,8 @@ interface QueueMediaEntryProps {
   favorited: boolean;
   rejected: boolean;
   sizeLabel: string | null;
+  /** Length of this video, probed server-side; absent for images and failed probes. */
+  videoDurationSeconds: number | undefined;
   dims: { w: number; h: number; exact?: boolean } | undefined;
   metadata: ReturnType<typeof extractMetadata> | null;
   isTopDoneItem: boolean;
@@ -125,6 +129,7 @@ function QueueMediaEntry({
   favorited,
   rejected,
   sizeLabel,
+  videoDurationSeconds,
   dims,
   metadata,
   isTopDoneItem,
@@ -339,6 +344,8 @@ function QueueMediaEntry({
   // preview's — a 1920x1080 output reported as 1280x720. Aspect-ratio placement
   // above uses the dims regardless: downscaling preserves the ratio.
   const dimsAreExact = Boolean(dims?.exact);
+  const showVideoDuration =
+    isVideo && typeof videoDurationSeconds === 'number' && videoDurationSeconds > 0;
   const mediaElementStyle: React.CSSProperties = { ...(mediaStyle ?? {}) };
   if (knownAspect != null && mediaElementStyle.aspectRatio == null) {
     mediaElementStyle.aspectRatio = String(knownAspect);
@@ -553,11 +560,16 @@ function QueueMediaEntry({
           )}
         </>
       )}
-      {(sizeLabel || dimsAreExact) && (
+      {(sizeLabel || dimsAreExact || showVideoDuration) && (
         <div className="absolute bottom-2 left-2 flex items-center gap-1 pointer-events-none">
           {sizeLabel && (
             <span className="px-2 py-1 text-xs font-semibold rounded bg-black/60 text-white backdrop-blur-sm shadow-sm">
               {sizeLabel}
+            </span>
+          )}
+          {showVideoDuration && (
+            <span className="video-duration-badge px-2 py-1 text-xs font-semibold rounded bg-black/60 text-white backdrop-blur-sm shadow-sm tabular-nums">
+              {formatVideoDuration(videoDurationSeconds!)}
             </span>
           )}
           {dimsAreExact && dims && (
@@ -1104,6 +1116,23 @@ function QueueCardComponent({
       cancelled = true;
     };
   }, [expanded, visibleImages]);
+
+  // Video lengths for the overlay badge. The card shows a still poster for any
+  // video it isn't actively playing, so there is no media element to read a
+  // duration from — the server probes the files, batched per source.
+  const videoDurationRequests = useMemo<VideoDurationRequest[]>(() => {
+    if (!expanded) return [];
+    return visibleImages.flatMap((img: HistoryOutputImage) => {
+      if (!isVideoFilename(img.filename)) return [];
+      if (img.type !== 'output' && img.type !== 'temp') return [];
+      return [{
+        source: img.type,
+        path: img.subfolder ? `${img.subfolder}/${img.filename}` : img.filename,
+        key: getImageUrl(img.filename, img.subfolder, img.type, img.cacheToken),
+      }];
+    });
+  }, [expanded, visibleImages]);
+  const videoDurations = useVideoDurations(videoDurationRequests);
 
   const handleToggleButtonClick = (event: React.MouseEvent<HTMLButtonElement>) => {
     event.stopPropagation();
@@ -1690,6 +1719,7 @@ function QueueCardComponent({
       favorited: favoriteIds.has(fileId),
       rejected: rejectedIds.has(fileId),
       sizeLabel: sizeBytes !== undefined ? formatBytes(sizeBytes) : null,
+      videoDurationSeconds: videoDurations[src],
       dims: outputDimensions[src],
       metadata,
       isTopDoneItem,
@@ -1726,7 +1756,7 @@ function QueueCardComponent({
           {isGenerating && <span className="w-2 h-2 bg-cyan-300 rounded-full animate-pulse" />}
           {wasAutoRestored && (
             <span className="rounded border border-cyan-300/30 bg-cyan-400/15 px-1.5 py-0.5 text-[10px] font-bold text-cyan-200">
-              AUTO-RESTORED
+              {t('AUTO-RESTORED')}
             </span>
           )}
           {isRunning && isActuallyRunning && overallProgress != null && (
@@ -1898,7 +1928,10 @@ function QueueCardComponent({
                 {/* Thumbnail tab bar under the slot; one thumbnail per media
                     entry with a label badge, tap to pin a preview/output. */}
                 {mediaTabs.length > 1 && (
-                  <div className="queue-media-tabs flex items-stretch gap-1.5 overflow-x-auto bg-slate-950/80 px-1.5 py-1.5 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
+                  <div
+                    className="queue-media-tabs flex items-stretch gap-1.5 overflow-x-auto bg-slate-950/80 px-1.5 py-1.5 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden"
+                    data-swipe-nav-ignore="true"
+                  >
                     {mediaTabs.map((tab) => {
                       const isActive = activeMediaTab?.key === tab.key;
                       const isVideoThumb = !tab.rawSrc && isVideoFilename(tab.img.filename);
@@ -1958,7 +1991,7 @@ function QueueCardComponent({
             ) : isRunning ? null : (
               <div className={placeholderClass} style={{ minHeight: '100px' }}>
                 <LoadingSpinner size="lg" color="gray" />
-                <span className="text-xs mt-2 opacity-40">Waiting to start...</span>
+                <span className="text-xs mt-2 opacity-40">{t('Waiting to start...')}</span>
               </div>
             )}
           </div>

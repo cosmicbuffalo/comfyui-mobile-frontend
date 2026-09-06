@@ -19,11 +19,97 @@ export function isSubgraphPlaceholder(node: WorkflowNode, canonical: Workflow): 
   return subgraphs.some((sg) => sg.id === node.type);
 }
 
+// Subgraph boundary sentinel node IDs. Inside a definition's link table, the
+// subgraph's own input slots act as link origins from node -10 and its output
+// slots as link targets on node -20; neither is a real node in any node list.
+export const SUBGRAPH_INPUT_NODE_ID = -10;
+export const SUBGRAPH_OUTPUT_NODE_ID = -20;
+
+// -----------------------------------------------------------------------------
+// Mobile-specific definition metadata, namespaced under def.extra so it
+// round-trips untouched through the desktop frontend and the backend.
+//
+// Shared-instance model: several placeholder nodes may point at ONE definition
+// (node.type === def.id). Inner content — the definition's nodes, links,
+// groups, proxy-widget values, and the definition-keyed inner layout — is
+// shared by design across those instances; placeholder-level state (title,
+// widgets_values for slot-promoted/boundary widgets, instance number) is
+// per-instance, and placeholder-level operations must resolve by node id,
+// never by first-placeholder-of-type.
+// -----------------------------------------------------------------------------
+
+const MOBILE_DEF_META_KEY = 'comfyui-mobile';
+
+export interface MobileSubgraphDefMeta {
+  /** Next instance number to hand out; instance numbers are stable, gaps allowed. */
+  nextInstanceNumber?: number;
+  /** Custom labels for proxy widgets, keyed "<innerNodeId>:<widgetName>". */
+  proxyLabels?: Record<string, string>;
+  /**
+   * Group titles rendered from a template, keyed by group id — a group has no
+   * properties bag to record it in, and without the template kept somewhere
+   * the rendered title would be the only copy left of it.
+   */
+  autoGroupTitles?: Record<string, { template: string; rendered?: string }>;
+}
+
+export function getMobileDefMeta(def: WorkflowSubgraphDefinition): MobileSubgraphDefMeta {
+  const meta = def.extra?.[MOBILE_DEF_META_KEY];
+  return meta && typeof meta === 'object' ? (meta as MobileSubgraphDefMeta) : {};
+}
+
+export function withMobileDefMeta(
+  def: WorkflowSubgraphDefinition,
+  patch: Partial<MobileSubgraphDefMeta>,
+): WorkflowSubgraphDefinition {
+  return {
+    ...def,
+    extra: {
+      ...(def.extra ?? {}),
+      [MOBILE_DEF_META_KEY]: { ...getMobileDefMeta(def), ...patch },
+    },
+  };
+}
+
+/** Remove the mobile metadata namespace entirely (used when a def is forked
+ * into a context where its promotion/instance lineage no longer applies). */
+export function stripMobileDefMeta(def: WorkflowSubgraphDefinition): WorkflowSubgraphDefinition {
+  if (!def.extra || !(MOBILE_DEF_META_KEY in def.extra)) return def;
+  const rest = { ...def.extra };
+  delete rest[MOBILE_DEF_META_KEY];
+  return { ...def, extra: rest };
+}
+
+/** Node property holding a placeholder's per-instance number (distinct from node id). */
+export const MOBILE_INSTANCE_NUMBER_PROPERTY = 'mobileInstanceNumber';
+
+export function getInstanceNumber(node: WorkflowNode): number | undefined {
+  const value = node.properties?.[MOBILE_INSTANCE_NUMBER_PROPERTY];
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+}
+
 // ScopeFrame is defined here to avoid circular dependencies with useWorkflow.ts.
 // useWorkflow.ts imports ScopeFrame from here and re-exports it.
 export type ScopeFrame =
   | { type: 'root' }
-  | { type: 'subgraph'; id: string; placeholderNodeId: number };
+  | {
+      type: 'subgraph';
+      id: string;
+      /**
+       * The instance the boundary is read through: which outer nodes its slots
+       * reach, and which per-instance labels apply. Entering a subgraph enters
+       * the TYPE — the nodes shown are the definition's — so this is context,
+       * not identity, and the user can switch it without leaving.
+       */
+      placeholderNodeId: number;
+      /**
+       * The instance actually entered through, when it is no longer
+       * `placeholderNodeId`. Leaving lands on the instance the user switched
+       * to rather than the one they arrived by, which is where their attention
+       * ended up.
+       */
+      enteredPlaceholderNodeId?: number;
+    };
 
 export interface ScopePatch {
   nodes?: WorkflowNode[];

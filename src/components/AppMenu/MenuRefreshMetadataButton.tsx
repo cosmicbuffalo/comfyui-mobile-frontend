@@ -1,19 +1,18 @@
-import { CloudDownloadIcon } from "@/components/icons";
+import { CheckIcon, CloudDownloadIcon } from "@/components/icons";
 import { useLoraManagerMetadataStore } from "@/hooks/useLoraManagerMetadata";
 import { useI18n } from "@/i18n";
 import { MenuErrorNotice } from "./MenuErrorNotice";
 import { menuIconClassName, menuSurfaceButtonDisabledClassName, menuTextClassName } from "./menuStyles";
 
 /**
- * "Refresh model metadata" button for the Server menu section. Runs our built-in
- * Civitai fetcher across all model kinds — populating preview/name/version/badge
- * data and writing Lora Manager-compatible sidecars. Always available (the
- * fetcher ships with the app), *including* when Lora Manager is installed (they
- * share sidecars, so refreshing here updates both).
+ * "Refresh model metadata" button for the Server menu section. Refreshes every
+ * model kind through Lora Manager when it is installed, or through our built-in
+ * compatible scanner otherwise.
  */
 export function MenuRefreshMetadataButton() {
   const { t } = useI18n();
   const refreshing = useLoraManagerMetadataStore((s) => s.refreshing);
+  const refreshDone = useLoraManagerMetadataStore((s) => s.refreshDone);
   const refreshLabel = useLoraManagerMetadataStore((s) => s.refreshLabel);
   const refreshError = useLoraManagerMetadataStore((s) => s.refreshError);
   const setRefreshError = useLoraManagerMetadataStore((s) => s.setRefreshError);
@@ -25,14 +24,20 @@ export function MenuRefreshMetadataButton() {
     <>
       <button
         onClick={refreshAllMetadata}
-        disabled={refreshing}
+        disabled={refreshing || refreshDone}
         className={menuSurfaceButtonDisabledClassName}
       >
-        <CloudDownloadIcon className={menuIconClassName} />
-        <span className={menuTextClassName}>
+        {refreshDone ? (
+          <CheckIcon className="w-6 h-6 shrink-0 text-emerald-400" />
+        ) : (
+          <CloudDownloadIcon className={menuIconClassName} />
+        )}
+        <span className={refreshDone ? "min-w-0 font-medium text-emerald-200" : menuTextClassName}>
           {refreshing
             ? t("Refreshing {label}", { label: refreshLabel ?? "" }).trim()
-            : t("Refresh model metadata")}
+            : refreshDone
+              ? `${t("Done")}!`
+              : t("Refresh model metadata")}
         </span>
       </button>
       {!refreshing && (

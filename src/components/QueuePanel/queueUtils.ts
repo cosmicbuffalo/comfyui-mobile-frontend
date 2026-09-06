@@ -2,6 +2,7 @@ import { getImageUrl } from '@/api/client';
 import type { HistoryOutputImage } from '@/api/types';
 import { isHistoryEntryData, type QueueItemData, type UnifiedItem } from './types';
 import { isVideoFilename } from '@/utils/media';
+import { HIDDEN_WORKFLOW_EXTRA_DATA_KEY } from '@/utils/workflowHidden';
 
 interface QueueOutputDisplayOptions {
   includeInputImages?: boolean;
@@ -34,6 +35,48 @@ export function compareUnifiedQueueItems(a: UnifiedItem, b: UnifiedItem): number
     return (b.timestamp ?? 0) - (a.timestamp ?? 0);
   }
   return 0;
+}
+
+export function isQueueItemHidden(item: UnifiedItem): boolean {
+  if (isHistoryEntryData(item.data)) return Boolean(item.data.hidden);
+  return item.data.extra?.[HIDDEN_WORKFLOW_EXTRA_DATA_KEY] === true;
+}
+
+// Above this many queued jobs the Pending block is taller than the screen on a
+// phone, pushing the generating card out of view — so it arrives folded. Two or
+// fewer sit comfortably above the running card and stay visible.
+export const PENDING_AUTO_COLLAPSE_THRESHOLD = 2;
+
+/**
+ * Whether the Pending section renders folded. An explicit user fold/unfold wins
+ * while it stands; with no choice on record the count decides, so a big batch
+ * arrives folded and a small one doesn't.
+ *
+ * The count only ever decides *once*, because the caller latches the answer
+ * (see `shouldLatchPendingAutoCollapse`). Left underived, this reads the count
+ * afresh on every render and so unfolds again on the way back down — a queue
+ * draining past the threshold would drop its remaining cards into the top of
+ * the list with nobody having asked for it.
+ */
+export function isPendingSectionCollapsed(
+  override: boolean | null,
+  pendingCount: number,
+): boolean {
+  return override ?? pendingCount > PENDING_AUTO_COLLAPSE_THRESHOLD;
+}
+
+/**
+ * Whether the automatic fold above should be written down as the standing
+ * choice. Folding is one-way: a batch big enough to bury the running card
+ * arrives folded, and from then on only the reader can open it. Nothing that
+ * happens to the queue afterwards — draining, or being added to — unfolds a
+ * section that is folded.
+ */
+export function shouldLatchPendingAutoCollapse(
+  override: boolean | null,
+  pendingCount: number,
+): boolean {
+  return override === null && pendingCount > PENDING_AUTO_COLLAPSE_THRESHOLD;
 }
 
 export function isDisplayableQueueOutput(

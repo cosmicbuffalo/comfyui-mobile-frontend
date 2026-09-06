@@ -63,25 +63,34 @@ const redoLen = (s = 'tab-A') => useWorkflowUndoStore.getState().histories[s]?.r
 
 describe('useWorkflowUndo', () => {
   beforeEach(() => {
-    useWorkflowUndoStore.setState({ histories: {} });
+    useWorkflowUndoStore.setState({ histories: {}, feedback: null });
     loadActive([1]);
-    useWorkflowUndoStore.setState({ histories: {} });
+    useWorkflowUndoStore.setState({ histories: {}, feedback: null });
   });
 
   it('records an edit and undoes/redoes it', () => {
     edit([1, 2]);
     expect(undoLen()).toBe(1);
     expect(ids()).toEqual([1, 2]);
+    expect(useWorkflowUndoStore.getState().histories['tab-A'].undo[0].actionLabel).toBe('Add node');
 
     useWorkflowUndoStore.getState().undo();
     expect(ids()).toEqual([1]);
     expect(undoLen()).toBe(0);
     expect(redoLen()).toBe(1);
+    expect(useWorkflowUndoStore.getState().feedback).toMatchObject({
+      direction: 'undo',
+      actionLabel: 'Add node',
+    });
 
     useWorkflowUndoStore.getState().redo();
     expect(ids()).toEqual([1, 2]);
     expect(undoLen()).toBe(1);
     expect(redoLen()).toBe(0);
+    expect(useWorkflowUndoStore.getState().feedback).toMatchObject({
+      direction: 'redo',
+      actionLabel: 'Add node',
+    });
   });
 
   it('clears redo when a new edit follows an undo', () => {

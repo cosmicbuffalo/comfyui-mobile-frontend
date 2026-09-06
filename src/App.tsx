@@ -1,10 +1,8 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import { TopBar } from './components/TopBar';
 import { LoadingSpinner } from './components/LoadingSpinner';
 import { WorkflowPanel } from './components/WorkflowPanel';
 import { BottomBar } from './components/BottomBar';
-import { QueuePanel } from './components/QueuePanel';
-import { ImageViewer } from './components/ImageViewer';
 import { ConnectionLostOverlay } from './components/BackendStatusOverlay';
 import { ShareHandoffController } from './components/ShareHandoffController';
 import { NoWorkflowImageDialog } from './components/modals/NoWorkflowImageDialog';
@@ -26,8 +24,42 @@ import { useBookmarksStore } from './hooks/useBookmarks';
 import * as api from './api/client';
 import { getCachedNodeTypes, setCachedNodeTypes } from './utils/nodeTypesCache';
 import { buildOutputPreferredViewerImages, type ViewerImage } from './utils/viewerImages';
-import { OutputsPanel } from './components/OutputsPanel';
 import { useOutputsStore } from './hooks/useOutputs';
+import { useShowHiddenStore } from './hooks/useShowHidden';
+import { useShowHiddenShortcut } from './hooks/useShowHiddenShortcut';
+import { useMaskEditorStore } from './hooks/useMaskEditor';
+
+const QueuePanel = lazy(() =>
+  import('./components/QueuePanel').then((module) => ({ default: module.QueuePanel })),
+);
+const OutputsPanel = lazy(() =>
+  import('./components/OutputsPanel').then((module) => ({ default: module.OutputsPanel })),
+);
+const ImageViewer = lazy(() =>
+  import('./components/ImageViewer').then((module) => ({ default: module.ImageViewer })),
+);
+const MaskEditorModal = lazy(() =>
+  import('./components/MaskEditor/MaskEditorModal').then((module) => ({
+    default: module.MaskEditorModal,
+  })),
+);
+
+function DeferredPanelFallback({ visible }: { visible: boolean }) {
+  if (!visible) return null;
+  return (
+    <div className="absolute inset-0 flex items-center justify-center" aria-label="Loading panel">
+      <LoadingSpinner />
+    </div>
+  );
+}
+
+function DeferredOverlayFallback() {
+  return (
+    <div className="fixed inset-0 z-[2100] flex items-center justify-center bg-slate-950/80">
+      <LoadingSpinner />
+    </div>
+  );
+}
 
 function App() {
   const currentPanel = useNavigationStore((s) => s.currentPanel);
@@ -37,6 +69,8 @@ function App() {
   const viewerOpen = useImageViewerStore((s) => s.viewerOpen);
   const setViewerState = useImageViewerStore((s) => s.setViewerState);
   const followQueue = useWorkflowStore((s) => s.followQueue);
+  const workflowScopeDepth = useWorkflowStore((s) => s.scopeStack.length);
+  const exitWorkflowToRoot = useWorkflowStore((s) => s.exitToRoot);
 
   // The workflow store hydrates asynchronously from IndexedDB; gate the UI on it
   // so a refresh doesn't flash an empty workflow before the saved one restores.
@@ -74,6 +108,23 @@ function App() {
   const outputsSelectionActionOpen = useOutputsStore((s) => s.selectionActionOpen);
   const outputsCurrentFolder = useOutputsStore((s) => s.currentFolder);
   const outputsNavigateUp = useOutputsStore((s) => s.navigateUp);
+  const toggleShowHidden = useShowHiddenStore((s) => s.toggleShowHidden);
+  const maskEditorOpen = useMaskEditorStore((s) => s.target !== null);
+  const [activatedPanels, setActivatedPanels] = useState(() => ({
+    outputs: currentPanel === 'outputs',
+    queue: currentPanel === 'queue',
+  }));
+
+  // Load secondary panels on first visit, then keep them mounted so their
+  // scroll position and transient UI state survive panel navigation.
+  useEffect(() => {
+    if (currentPanel === 'workflow') return;
+    setActivatedPanels((current) =>
+      current[currentPanel] ? current : { ...current, [currentPanel]: true },
+    );
+  }, [currentPanel]);
+
+  useShowHiddenShortcut({ enabled: true, onToggle: toggleShowHidden });
 
   useWebSocket();
 
@@ -90,11 +141,22 @@ function App() {
     if (currentPanel === 'outputs' && outputsCurrentFolder) {
       outputsNavigateUp();
     } else if (currentPanel === 'workflow') {
-      setCurrentPanel('outputs');
+      if (workflowScopeDepth > 1) {
+        exitWorkflowToRoot();
+      } else {
+        setCurrentPanel('outputs');
+      }
     } else if (currentPanel === 'queue') {
       setCurrentPanel('workflow');
     }
-  }, [currentPanel, outputsCurrentFolder, outputsNavigateUp, setCurrentPanel]);
+  }, [
+    currentPanel,
+    exitWorkflowToRoot,
+    outputsCurrentFolder,
+    outputsNavigateUp,
+    setCurrentPanel,
+    workflowScopeDepth,
+  ]);
 
   const canSwipeLeft = currentPanel === 'workflow' || currentPanel === 'outputs';
   const canSwipeRight = currentPanel === 'workflow'
@@ -291,9 +353,17 @@ function App() {
         }}
       >
         <>
-          <OutputsPanel visible={currentPanel === 'outputs'} />
+          <Suspense fallback={<DeferredPanelFallback visible={currentPanel === 'outputs'} />}>
+            {(activatedPanels.outputs || currentPanel === 'outputs') && (
+              <OutputsPanel visible={currentPanel === 'outputs'} />
+            )}
+          </Suspense>
           <WorkflowPanel visible={currentPanel === 'workflow'} onImageClick={openViewer} />
-          <QueuePanel visible={currentPanel === 'queue'} onImageClick={openViewer} />
+          <Suspense fallback={<DeferredPanelFallback visible={currentPanel === 'queue'} />}>
+            {(activatedPanels.queue || currentPanel === 'queue') && (
+              <QueuePanel visible={currentPanel === 'queue'} onImageClick={openViewer} />
+            )}
+          </Suspense>
         </>
         <div
           id="bottom-bar-spacer"
@@ -310,9 +380,17 @@ function App() {
         onOpenFollowQueue={openFollowQueueViewer}
       />
 
-      <ImageViewer
-        onClose={handleImageViewerClose}
-      />
+      {viewerOpen && (
+        <Suspense fallback={<DeferredOverlayFallback />}>
+          <ImageViewer onClose={handleImageViewerClose} />
+        </Suspense>
+      )}
+
+      {maskEditorOpen && (
+        <Suspense fallback={<DeferredOverlayFallback />}>
+          <MaskEditorModal />
+        </Suspense>
+      )}
 
       <ConnectionLostOverlay />
       <NoWorkflowImageDialog />

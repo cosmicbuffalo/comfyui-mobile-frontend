@@ -189,6 +189,67 @@ describe('dissolveSubgraph', () => {
     expect(def.nodes[0]?.widgets_values).toEqual(['stale']);
   });
 
+  it('bakes boundary-only values that precede visible promoted inputs', () => {
+    const nodeTypes: NodeTypes = {
+      InnerA: {
+        input: {
+          required: {
+            prompt: ['STRING', {}],
+            strength: ['FLOAT', { default: 1 }],
+          },
+        },
+        output: [],
+        output_name: [],
+        name: 'InnerA',
+        display_name: 'Inner A',
+        description: '',
+        python_module: '',
+        category: 'test',
+      },
+    };
+    const def: WorkflowSubgraphDefinition = {
+      id: SG_ID,
+      name: 'Hidden boundary widget',
+      inputs: [
+        { name: 'prompt', type: 'STRING' },
+        { name: 'strength', type: 'FLOAT' },
+      ],
+      outputs: [],
+      nodes: [
+        makeNode(10, 'InnerA', {
+          inputs: [
+            { name: 'prompt', type: 'STRING', link: 1, widget: { name: 'prompt' } },
+            { name: 'strength', type: 'FLOAT', link: 2, widget: { name: 'strength' } },
+          ],
+          widgets_values: ['stale prompt', 0.5],
+        }),
+      ],
+      links: [
+        { id: 1, origin_id: -10, origin_slot: 0, target_id: 10, target_slot: 0, type: 'STRING' },
+        { id: 2, origin_id: -10, origin_slot: 1, target_id: 10, target_slot: 1, type: 'FLOAT' },
+      ],
+      groups: [],
+    } as unknown as WorkflowSubgraphDefinition;
+    const placeholder = makeNode(5, SG_ID, {
+      inputs: [
+        { name: 'strength', type: 'FLOAT', link: null, widget: { name: 'strength' } },
+      ],
+      widgets_values: ['fresh prompt', 0.8],
+    });
+
+    const next = dissolveSubgraph(
+      makeWorkflow([placeholder], [], [def]),
+      SG_ID,
+      null,
+      nodeTypes,
+    )!.workflow;
+
+    expect(next.nodes.find((node) => node.type === 'InnerA')?.widgets_values).toEqual([
+      'fresh prompt',
+      0.8,
+    ]);
+  });
+
   it('dissolves multiple instances independently and keeps IDs distinct', () => {
     const wf = makeRootFixture();
     const placeholderB = makeNode(6, SG_ID, { inputs: [], outputs: [] });

@@ -5,6 +5,9 @@ import { RejectButton } from "@/components/buttons/RejectButton";
 import { LoadWorkflowButton } from "@/components/buttons/LoadWorkflowButton";
 import { UseInWorkflowButton } from "@/components/buttons/UseInWorkflowButton";
 import { MetadataButton } from "@/components/buttons/MetadataButton";
+import { SelectionCheckMark } from '@/components/buttons/SelectionCheckbox';
+import { OverlayCircleButton } from '@/components/buttons/OverlayCircleButton';
+import { useI18n } from '@/i18n';
 
 interface MediaViewerActionsProps {
   isVideo: boolean;
@@ -21,6 +24,7 @@ interface MediaViewerActionsProps {
   onDelete: () => void;
   onLoadWorkflow: () => void;
   onUseInWorkflow: () => void;
+  /** Omitted when the item cannot be masked (a video, or no file behind it). */
   onToggleMetadata: () => void;
   onToggleFavorite: () => void;
   onReject: () => void;
@@ -36,6 +40,16 @@ interface MediaViewerActionsProps {
   // Inward shift for the right-side button group so it clears the pinned widget
   // sidebar. The left group (delete/reject) doesn't move.
   rightInset?: string;
+  /**
+   * Select mode strips this row back to the controls that make sense while
+   * picking items: reject, favorite, the metadata toggle, and the selection
+   * checkbox. Everything that acts on a single file (delete, download, load
+   * into a workflow, mask) is hidden, because in select mode the bottom bar's
+   * selection actions operate on the whole set instead.
+   */
+  selectionMode?: boolean;
+  isSelected?: boolean;
+  onToggleSelection?: () => void;
 }
 
 export function MediaViewerActions({
@@ -60,14 +74,18 @@ export function MediaViewerActions({
   downloadFileId,
   onDownloadLoadingChange,
   rightInset,
+  selectionMode = false,
+  isSelected = false,
+  onToggleSelection,
 }: MediaViewerActionsProps) {
+  const { t } = useI18n();
   return (
     <div
       className="absolute inset-x-0 px-3 pb-2 pt-2 flex items-center justify-between"
       style={{ bottom: "calc(var(--bottom-bar-offset, 0px) + 4px)" }}
     >
       <div className="flex items-center gap-2">
-        <DeleteButton onClick={onDelete} disabled={deleteDisabled} />
+        {!selectionMode && <DeleteButton onClick={onDelete} disabled={deleteDisabled} />}
         {canReject && (
           <RejectButton
             onClick={onReject}
@@ -80,14 +98,14 @@ export function MediaViewerActions({
         {canFavorite && (
           <FavoriteButton onClick={onToggleFavorite} isFavorited={isFavorited} />
         )}
-        {canDownload && (
+        {!selectionMode && canDownload && (
           <DownloadButton
             onClick={onDownload}
             fileId={downloadFileId}
             onLoadingChange={onDownloadLoadingChange}
           />
         )}
-        {canLoadWorkflow && (
+        {!selectionMode && canLoadWorkflow && (
           <LoadWorkflowButton
             onClick={onLoadWorkflow}
             progress={loadWorkflowProgress}
@@ -95,7 +113,7 @@ export function MediaViewerActions({
         )}
         {!isVideo && (
           <>
-          <UseInWorkflowButton onClick={onUseInWorkflow} />
+          {!selectionMode && <UseInWorkflowButton onClick={onUseInWorkflow} />}
           {showMetadataToggle && (
             <MetadataButton
               onClick={onToggleMetadata}
@@ -103,6 +121,20 @@ export function MediaViewerActions({
             />
           )}
           </>
+        )}
+        {/* Rightmost in this corner, so the checkbox sits where the thumb
+            already is for selection work. Built on OverlayCircleButton like
+            every other control here: that is what supplies the matching 36px
+            disc and, crucially, pointer-events-auto — the chrome layer above
+            is pointer-events-none, so a bare button here is unclickable. */}
+        {selectionMode && onToggleSelection && (
+          <OverlayCircleButton
+            onClick={onToggleSelection}
+            ariaLabel={isSelected ? t('Deselect image') : t('Select image')}
+            ariaPressed={isSelected}
+            className="text-white"
+            icon={<SelectionCheckMark selected={isSelected} unselectedBorderClassName="border-white/80" />}
+          />
         )}
       </div>
     </div>

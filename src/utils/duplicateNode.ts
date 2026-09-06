@@ -5,16 +5,20 @@ import type {
   WorkflowSubgraphLink,
   WorkflowSubgraphDefinition,
 } from '@/api/types';
+import { numberSubgraphInstances } from '@/utils/subgraphInstanceNumbers';
 import {
+  MOBILE_INSTANCE_NUMBER_PROPERTY,
   getLinkId,
   getLinkOriginId,
   getLinkOriginSlot,
   getLinkType,
+  getMobileDefMeta,
   isSubgraphPlaceholder,
   makeScopeLink,
   maxNodeIdAcrossScopes,
   resolveNodeByHierarchicalKey,
   resolveScopeForHierarchicalKey,
+  withMobileDefMeta,
   type ScopeContext,
 } from '@/utils/canonicalWorkflowOps';
 
@@ -32,7 +36,7 @@ export interface DuplicateNodeResult {
   originalNodeId: number;
 }
 
-function generateUuid(): string {
+export function generateUuid(): string {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
     return crypto.randomUUID();
   }
@@ -48,6 +52,25 @@ export function generateUniqueSubgraphId(defs: WorkflowSubgraphDefinition[]): st
   let id = generateUuid();
   while (existing.has(id)) id = generateUuid();
   return id;
+}
+
+/**
+ * A display name not already used by any definition: the base itself when
+ * free, otherwise the base's stem (trailing " N" stripped) with the lowest
+ * free numeric suffix — "Foo" → "Foo 2", "Foo 2" → "Foo 3".
+ */
+export function uniquifySubgraphName(
+  base: string | undefined,
+  defs: WorkflowSubgraphDefinition[],
+): string {
+  const taken = new Set(defs.map((d) => d.name).filter((n): n is string => Boolean(n)));
+  const name = base?.trim() ? base.trim() : 'Subgraph';
+  if (!taken.has(name)) return name;
+  const stem = name.replace(/ \d+$/, '').trim() || name;
+  for (let i = 2; ; i += 1) {
+    const candidate = `${stem} ${i}`;
+    if (!taken.has(candidate)) return candidate;
+  }
 }
 
 /**
@@ -141,7 +164,7 @@ export function cloneSubgraphDefinition(
   newSubgraphId: string,
   startNodeId: number,
   subgraphIdMap?: Map<string, string>,
-): { def: WorkflowSubgraphDefinition; nextNodeId: number } {
+): { def: WorkflowSubgraphDefinition; nextNodeId: number; nodeIdMap: Map<number, number> } {
   let nextNodeId = startNodeId;
   const nodeIdMap = new Map<number, number>();
   for (const inner of def.nodes ?? []) {
@@ -168,7 +191,7 @@ export function cloneSubgraphDefinition(
     return clone;
   });
 
-  const newDef: WorkflowSubgraphDefinition = {
+  let newDef: WorkflowSubgraphDefinition = {
     ...structuredClone(def),
     id: newSubgraphId,
     itemKey: undefined,
@@ -176,15 +199,32 @@ export function cloneSubgraphDefinition(
     links,
     groups,
   };
-  return { def: newDef, nextNodeId };
+
+  // The mobile meta's proxyLabels are keyed "<innerNodeId>:<widgetName>";
+  // those ids were just re-minted, so re-key the labels or every custom
+  // proxy-widget label silently detaches from its widget on the clone.
+  const proxyLabels = getMobileDefMeta(newDef).proxyLabels;
+  if (proxyLabels) {
+    const remapped: Record<string, string> = {};
+    for (const [key, label] of Object.entries(proxyLabels)) {
+      const separator = key.indexOf(':');
+      const oldId = Number(key.slice(0, separator));
+      const mapped = nodeIdMap.get(oldId);
+      remapped[mapped != null ? `${mapped}${key.slice(separator)}` : key] = label;
+    }
+    newDef = withMobileDefMeta(newDef, { proxyLabels: remapped });
+  }
+
+  return { def: newDef, nextNodeId, nodeIdMap };
 }
 
 /**
  * Duplicate a node (or subgraph placeholder) identified by its hierarchical
  * key. The copy keeps all widget values and incoming connections; outgoing
- * connections are left blank. For a subgraph placeholder, the whole definition
- * is deep-copied into a new definition and the new placeholder points at it.
- * Returns null if the node can't be resolved.
+ * connections are left blank. For a subgraph placeholder, the copy is another
+ * instance of the SAME definition — every subgraph is a reusable type, so a
+ * copy stays a copy and edits inside it reach the original. Forking is its own
+ * action. Returns null if the node can't be resolved.
  */
 export function duplicateWorkflowNode(
   workflow: Workflow,
@@ -199,29 +239,43 @@ export function duplicateWorkflowNode(
     const sourceDef = defs.find((sg) => sg.id === original.type);
     if (!sourceDef) return null;
 
-    const newSubgraphId = generateUniqueSubgraphId(defs);
-    let nextNodeId = maxNodeIdAcrossScopes(workflow) + 1;
-    const cloned = cloneSubgraphDefinition(sourceDef, newSubgraphId, nextNodeId);
-    nextNodeId = cloned.nextNodeId;
-    const newPlaceholderId = nextNodeId++;
-
-    let nextWorkflow: Workflow = {
-      ...workflow,
-      last_node_id: Math.max(workflow.last_node_id ?? 0, newPlaceholderId),
+    // Every definition is a shared "subgraph type": duplicating one of its
+    // placeholders creates another INSTANCE of the same definition (same
+    // node.type, fresh instance number) rather than forking the definition.
+    // Forking is its own deliberate action, because it is the one that stops
+    // later edits from reaching the copies.
+    const numbered = numberSubgraphInstances(workflow, sourceDef.id);
+    const newPlaceholderId = maxNodeIdAcrossScopes(numbered.workflow) + 1;
+    const instanceNumber = numbered.next;
+    const workflowWithCounter: Workflow = {
+      ...numbered.workflow,
+      last_node_id: Math.max(numbered.workflow.last_node_id ?? 0, newPlaceholderId),
       definitions: {
-        ...(workflow.definitions ?? {}),
-        subgraphs: [...defs, cloned.def],
+        ...(numbered.workflow.definitions ?? {}),
+        subgraphs: (numbered.workflow.definitions?.subgraphs ?? []).map((sg) =>
+          sg.id === sourceDef.id
+            ? withMobileDefMeta(sg, { nextInstanceNumber: instanceNumber + 1 })
+            : sg,
+        ),
       },
     };
-
-    const built = buildNodeDuplicateInScope(
-      scope,
-      original,
-      newPlaceholderId,
-      newSubgraphId,
+    const scopeAfter = resolveScopeForHierarchicalKey(workflowWithCounter, itemKey);
+    const originalAfter =
+      resolveNodeByHierarchicalKey(scopeAfter.nodes, itemKey) ?? original;
+    const built = buildNodeDuplicateInScope(scopeAfter, originalAfter, newPlaceholderId);
+    const nodes = built.nodes.map((n) =>
+      n.id === newPlaceholderId
+        ? {
+            ...n,
+            properties: {
+              ...(n.properties ?? {}),
+              [MOBILE_INSTANCE_NUMBER_PROPERTY]: instanceNumber,
+            },
+          }
+        : n,
     );
-    nextWorkflow = scope.applyPatch(nextWorkflow, {
-      nodes: built.nodes,
+    const nextWorkflow = scopeAfter.applyPatch(workflowWithCounter, {
+      nodes,
       links: built.links as WorkflowLink[] | WorkflowSubgraphLink[],
       last_link_id: built.lastLinkId,
     });

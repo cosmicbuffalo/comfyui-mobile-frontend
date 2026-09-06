@@ -1,14 +1,23 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { Workflow, WorkflowInput, WorkflowOutput } from '@/api/types';
-import { getScopedWorkflowView } from '@/utils/canonicalWorkflowOps';
+import {
+  SUBGRAPH_INPUT_NODE_ID,
+  SUBGRAPH_OUTPUT_NODE_ID,
+  getScopedWorkflowView,
+} from '@/utils/canonicalWorkflowOps';
 import { useWorkflowStore } from '@/hooks/useWorkflow';
 import { useI18n } from '@/i18n';
 import { useConnectionSectionFoldsStore } from '@/hooks/useConnectionSectionFolds';
 import { useLongPress } from '@/hooks/useLongPress';
 import { connectionButtonDomId } from '@/utils/connectionFlash';
+import { subgraphBoundaryFoldKey } from '@/utils/subgraphBoundaryFold';
 import { findConnectedNode, findConnectedOutputNodes } from '@/utils/nodeOrdering';
 import { ConnectionModal } from '@/components/modals/ConnectionModal';
+import { EditBoundarySlotLabelModal } from '@/components/modals/EditBoundarySlotLabelModal';
+import { collectSubgraphInstances } from '@/utils/boundarySlotLabels';
+import { RowActionsMenu } from '@/components/WorkflowPanel/NodeCard/RowActionsMenu';
+import { ArrowDownIcon, EditIcon, NoEntryIcon } from '@/components/icons';
 import { resolveRerouteConnectionLabel } from '@/utils/rerouteLabels';
 import { resolveSetGetConnectionLabel } from '@/utils/setGetLabels';
 import { getSetGetName, isGetNode, isSetGetNode, isSetNode } from '@/utils/setGetNodes';
@@ -27,16 +36,7 @@ import {
 } from '@/utils/subgraphPlaceholderLabels';
 import { ContextMenuBuilder } from '@/components/menus/ContextMenuBuilder';
 import { ConnectionRow } from './ConnectionRow';
-
-function getTypeClass(type: string): string {
-  const normalizedType = String(type).split(',')[0].trim(); // Handle multi-types like "FLOAT,INT"
-  const knownTypes = ['IMAGE', 'LATENT', 'MODEL', 'CLIP', 'VAE', 'CONDITIONING', 'INT', 'FLOAT', 'STRING', 'BOOLEAN', 'MASK'];
-
-  if (knownTypes.includes(normalizedType)) {
-    return `type-${normalizedType}`;
-  }
-  return 'type-default';
-}
+import { getTypeClass } from './slotTypeClass';
 
 function normalizeTypes(type: string): string[] {
   return String(type)
@@ -69,12 +69,14 @@ export const ConnectionButton = memo(function ConnectionButton({
   // at the top level and nested nodes in `definitions.subgraphs`.
   const workflow = useWorkflowStore((s) => s.workflow);
   const scopeStack = useWorkflowStore((s) => s.scopeStack);
-  const exitSubgraph = useWorkflowStore((s) => s.exitSubgraph);
   const scrollToNode = useWorkflowStore((s) => s.scrollToNode);
-  const revealNodeWithParents = useWorkflowStore((s) => s.revealNodeWithParents);
+  const jumpToWorkflowItem = useWorkflowStore((s) => s.jumpToWorkflowItem);
   const expandConnectionsSection = useConnectionSectionFoldsStore((s) => s.expand);
   const nodeTypes = useWorkflowStore((s) => s.nodeTypes);
   const hiddenItems = useWorkflowStore((s) => s.hiddenItems);
+  const moveBoundarySlot = useWorkflowStore((s) => s.moveBoundarySlot);
+  const removeBoundarySlot = useWorkflowStore((s) => s.removeBoundarySlot);
+  const [renamingBoundarySlot, setRenamingBoundarySlot] = useState(false);
   const topScopeFrame = scopeStack[scopeStack.length - 1];
   const currentSubgraphId = topScopeFrame?.type === 'subgraph' ? topScopeFrame.id : null;
 
@@ -168,12 +170,70 @@ export const ConnectionButton = memo(function ConnectionButton({
       });
     }
   }, [scopedWorkflow, scopeStack, slot, direction]);
+  // Which boundary slot the connection crosses (subgraph input for an inner
+  // input, subgraph output for an inner output) — so the row can NAME the
+  // boundary slot instead of only showing a cyan ring, and so long-press can
+  // open the boundary editor on the right slot.
+  const boundarySlot = useMemo(() => {
+    if (!isBoundaryConnection || !scopedWorkflow) return null;
+    const top = scopeStack[scopeStack.length - 1];
+    if (top?.type !== 'subgraph') return null;
+    const def = workflow?.definitions?.subgraphs?.find((sg) => sg.id === top.id);
+    if (!def) return null;
+    if (direction === 'input') {
+      const input = slot as WorkflowInput;
+      const link = scopedWorkflow.links.find((l) => l[0] === input.link);
+      if (!link || link[1] !== -10) return null;
+      const entry = def.inputs?.[link[2]];
+      return entry
+        ? { index: link[2], label: entry.label || entry.localized_name || entry.name || `#${link[2]}`, type: String(entry.type ?? '*') }
+        : null;
+    }
+    const output = slot as WorkflowOutput;
+    for (const linkId of output.links ?? []) {
+      const link = scopedWorkflow.links.find((l) => l[0] === linkId);
+      if (link && link[3] === -20) {
+        const entry = def.outputs?.[link[4]];
+        return entry
+          ? { index: link[4], label: entry.label || entry.localized_name || entry.name || `#${link[4]}`, type: String(entry.type ?? '*') }
+          : null;
+      }
+    }
+    return null;
+  }, [isBoundaryConnection, scopedWorkflow, scopeStack, workflow, slot, direction]);
   const [menuOpen, setMenuOpen] = useState(false);
   const [connectionModalOpen, setConnectionModalOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
   const buttonRef = useRef<HTMLButtonElement>(null);
   const [menuPosition, setMenuPosition] = useState<{ top: number; right?: number; left?: number } | null>(null);
   const updatePositionRef = useRef<(() => void) | null>(null);
+
+  /**
+   * When this row belongs to a subgraph PLACEHOLDER, it is a boundary slot seen
+   * from outside, and the same actions the slot list offers from inside belong
+   * here. Without this, a fully-wired subgraph had no reachable rename, reorder
+   * or remove at all: every one of its slots draws as a connection rather than
+   * a widget, and only widgets carried a menu on the card.
+   */
+  const placeholderSlot = useMemo(() => {
+    const node = findWorkflowNodeInScope(workflow, nodeId, currentSubgraphId);
+    const definition = node
+      ? workflow?.definitions?.subgraphs?.find((sg) => sg.id === node.type)
+      : undefined;
+    if (!node || !definition) return null;
+    const slots = (direction === 'input' ? definition.inputs : definition.outputs) ?? [];
+    if (slotIndex < 0 || slotIndex >= slots.length) return null;
+    return {
+      subgraphId: definition.id,
+      instanceNodeId: node.id,
+      // The boundary belongs to the TYPE, so a reorder here rearranges every
+      // instance of it — including cards the user cannot see from this one.
+      instanceCount: collectSubgraphInstances(workflow, definition.id).length,
+      moveUpTo: slotIndex > 0 ? slotIndex - 1 : null,
+      moveDownTo: slotIndex < slots.length - 1 ? slotIndex + 1 : null,
+      type: String(slots[slotIndex]?.type ?? '*'),
+    };
+  }, [workflow, nodeId, currentSubgraphId, direction, slotIndex]);
 
   const resolvedLabel = useMemo(() => {
     const node = findWorkflowNodeInScope(workflow, nodeId, currentSubgraphId);
@@ -408,7 +468,6 @@ export const ConnectionButton = memo(function ConnectionButton({
   const navigateToConnectedNode = useCallback(
     (itemKey: string, targetNodeId: number | null) => {
       expandConnectionsSection(itemKey);
-      revealNodeWithParents(itemKey);
       const reciprocal =
         targetNodeId != null ? resolveReciprocalConnection(targetNodeId) : null;
       const flashId = reciprocal
@@ -416,30 +475,29 @@ export const ConnectionButton = memo(function ConnectionButton({
         : null;
       scrollToNode(itemKey, undefined, flashId);
     },
-    [expandConnectionsSection, revealNodeWithParents, scrollToNode, resolveReciprocalConnection],
+    [expandConnectionsSection, scrollToNode, resolveReciprocalConnection],
   );
 
-  // Navigate out of the subgraph to the placeholder node.
+  // A promoted slot points INWARD, to the subgraph's own connections section,
+  // not out to the placeholder in the parent scope. Which outer node it reaches
+  // depends on which instance you are looking through, and that belongs on the
+  // boundary row where the instance is chosen — following it from in here would
+  // silently pick one.
   const handleBoundaryClick = useCallback(() => {
+    if (!boundarySlot) return;
     const top = scopeStack[scopeStack.length - 1];
-    if (top?.type !== 'subgraph') return;
-    const parentFrame = scopeStack[scopeStack.length - 2];
-    const parentSubgraphId = parentFrame?.type === 'subgraph' ? parentFrame.id : null;
-    const placeholderNode = findWorkflowNodeInScope(
-      workflow,
-      top.placeholderNodeId,
-      parentSubgraphId,
-    );
-    exitSubgraph();
-    if (placeholderNode?.itemKey) {
-      const itemKey = placeholderNode.itemKey;
-      // Delay to allow scope state to settle before scrolling. No reciprocal
-      // flash for boundary crossings — the target is a placeholder, not a slot.
-      setTimeout(() => {
-        navigateToConnectedNode(itemKey, null);
-      }, 50);
-    }
-  }, [scopeStack, workflow, exitSubgraph, navigateToConnectedNode]);
+    // The section folds like any other connections section, and a folded one
+    // has no button to reveal — so unfold it first, then let it render.
+    if (top?.type === 'subgraph') expandConnectionsSection(subgraphBoundaryFoldKey(top.id));
+    jumpToWorkflowItem({
+      kind: 'boundarySlot',
+      domId: connectionButtonDomId(
+        direction === 'input' ? SUBGRAPH_INPUT_NODE_ID : SUBGRAPH_OUTPUT_NODE_ID,
+        direction,
+        boundarySlot.index,
+      ),
+    });
+  }, [boundarySlot, direction, scopeStack, expandConnectionsSection, jumpToWorkflowItem]);
 
   const handleClick = () => {
     // The click that follows a hold must not also act on the tap behaviour.
@@ -470,6 +528,12 @@ export const ConnectionButton = memo(function ConnectionButton({
   // Long-press opens connection editor: populated inputs, or any output. Wireless
   // relays (Set output / Get input) have no link to edit here, so long-press is a
   // no-op for them.
+  //
+  // A slot wired to the subgraph boundary opens the same editor as any other.
+  // It used to open the boundary slot's own editor instead, from a time when
+  // this modal could not express a sentinel link and would have orphaned it;
+  // the modal reads and writes boundary wiring itself now, and the long-press
+  // is a request to edit THIS node's connection, not the slot it crosses.
   const { handlers: longPressHandlers, consumeLongPress } = useLongPress({
     onLongPress: () => setConnectionModalOpen(true),
     enabled:
@@ -617,10 +681,85 @@ export const ConnectionButton = memo(function ConnectionButton({
         hasConnection={hasConnection}
         isEmptyRequiredInput={isEmptyRequiredInput}
         isBoundaryConnection={isBoundaryConnection}
+        // The same condition that adds "⇠ slot" to the label: this row crosses
+        // the boundary, so it names a promoted slot and carries the marker.
+        isPromoted={Boolean(boundarySlot)}
         isBroadcastConnection={ueResolution != null || isBroadcastOutput}
         hideLabel={hideLabel}
-        resolvedLabel={resolvedLabel}
+        resolvedLabel={
+          // Name the boundary slot the connection crosses (unless it shares
+          // the inner slot's name): "clip ⇠ style" reads "fed by subgraph
+          // input style", "IMAGE ⇢ result" "feeds subgraph output result".
+          boundarySlot && boundarySlot.label !== resolvedLabel
+            ? direction === 'input'
+              ? `${resolvedLabel} ⇠ ${boundarySlot.label}`
+              : `${resolvedLabel} ⇢ ${boundarySlot.label}`
+            : resolvedLabel
+        }
         labelEditor={setNameEditor}
+        labelAdornment={
+          placeholderSlot ? (
+            <RowActionsMenu
+              // Keyed by slot name, which a reorder leaves alone.
+              menuKey={`placeholder-slot:${currentSubgraphId ?? 'root'}:${nodeId}:${direction}:${resolvedLabel}`}
+              rowName={resolvedLabel}
+              typeLabel={placeholderSlot.type.toUpperCase()}
+              note={
+                placeholderSlot.instanceCount > 1
+                  ? t('Order is shared by all {count} instances', {
+                      count: placeholderSlot.instanceCount,
+                    })
+                  : undefined
+              }
+              compact
+              sections={{
+                primary: [
+                  {
+                    key: 'rename',
+                    label: t('Rename'),
+                    icon: <EditIcon className="w-4 h-4" />,
+                    onSelect: () => setRenamingBoundarySlot(true),
+                  },
+                  {
+                    key: 'move-up',
+                    label: t('Move up'),
+                    icon: <ArrowDownIcon className="w-4 h-4 rotate-180" />,
+                    hidden: placeholderSlot.moveUpTo === null,
+                    onSelect: () => placeholderSlot.moveUpTo !== null && moveBoundarySlot(
+                      direction,
+                      slotIndex,
+                      placeholderSlot.moveUpTo,
+                      { subgraphId: placeholderSlot.subgraphId },
+                    ),
+                  },
+                  {
+                    key: 'move-down',
+                    label: t('Move down'),
+                    icon: <ArrowDownIcon className="w-4 h-4" />,
+                    hidden: placeholderSlot.moveDownTo === null,
+                    onSelect: () => placeholderSlot.moveDownTo !== null && moveBoundarySlot(
+                      direction,
+                      slotIndex,
+                      placeholderSlot.moveDownTo,
+                      { subgraphId: placeholderSlot.subgraphId },
+                    ),
+                  },
+                ],
+                secondary: [
+                  {
+                    key: 'remove',
+                    label: direction === 'input' ? t('Remove input') : t('Remove output'),
+                    icon: <NoEntryIcon className="w-4 h-4" />,
+                    color: 'danger',
+                    onSelect: () => removeBoundarySlot(direction, slotIndex, {
+                      subgraphId: placeholderSlot.subgraphId,
+                    }),
+                  },
+                ],
+              }}
+            />
+          ) : undefined
+        }
         shouldWrapResolvedLabel={shouldWrapResolvedLabel}
         sizeClass={sizeClass}
         arrowClass={arrowClass}
@@ -707,6 +846,16 @@ export const ConnectionButton = memo(function ConnectionButton({
             originHadConnection={hasConnection}
           />
         )
+      )}
+
+      {renamingBoundarySlot && placeholderSlot && (
+        <EditBoundarySlotLabelModal
+          onClose={() => setRenamingBoundarySlot(false)}
+          direction={direction}
+          slotIndex={slotIndex}
+          subgraphId={placeholderSlot.subgraphId}
+          instanceNodeId={placeholderSlot.instanceNodeId}
+        />
       )}
     </div>
   );

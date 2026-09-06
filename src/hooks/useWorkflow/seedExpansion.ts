@@ -126,28 +126,20 @@ export function inferSeedMode(
     if (specialMode) {
       return specialMode;
     }
-    const outputs = node.outputs ?? [];
-    const hasSeedOutput = outputs.some(
-      (output) =>
-        String(output.name || "")
-          .toLowerCase()
-          .includes("seed") &&
-        String(output.type || "")
-          .toUpperCase()
-          .includes("INT"),
-    );
-    const trailingWidgets = node.widgets_values.slice(seedIndex + 1);
-    const hasEmptyTrailingWidgets =
-      trailingWidgets.length > 0 &&
-      trailingWidgets.every(
-        (value) => value === "" || value === null || value === undefined,
-      );
-    const hasSeedRangeProps =
-      node.properties &&
-      ("randomMin" in node.properties || "randomMax" in node.properties);
-    if (hasSeedOutput && hasEmptyTrailingWidgets && hasSeedRangeProps) {
-      return "randomize";
-    }
+    // No control widget and no special value: the seed is a plain number, and a
+    // plain number is a FIXED seed.
+    //
+    // Do not reach for a shape heuristic here ("has a SEED INT output, has
+    // empty trailing widgets, carries randomMin/randomMax properties" =>
+    // `randomize`). Every one of those is true of EVERY rgthree Seed node --
+    // it sets randomMin/randomMax in its constructor -- so it reads concrete
+    // seeds as randomize too. It buys nothing either: a freshly created
+    // rgthree Seed holds -1, which the special-value check above already
+    // reads as `randomize`.
+    //
+    // rgthree's own getSeedToUse() is unambiguous here: -1/-2/-3 are the three
+    // dynamic modes and anything else is returned verbatim.
+    return "fixed";
   }
 
   return "fixed";

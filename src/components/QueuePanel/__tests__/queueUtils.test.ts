@@ -5,6 +5,9 @@ import {
   getBatchSources,
   getDisplayableQueueOutputs,
   getPromptInputImages,
+  isQueueItemHidden,
+  isPendingSectionCollapsed,
+  shouldLatchPendingAutoCollapse,
   preserveQueueImageOrder,
 } from '../queueUtils';
 import type { UnifiedItem } from '../types';
@@ -20,6 +23,40 @@ const output = (
 });
 
 describe('queueUtils', () => {
+  it('identifies hidden completed and live queue items', () => {
+    const hiddenHistory: UnifiedItem = {
+      id: 'done-hidden',
+      status: 'done',
+      data: {
+        prompt_id: 'done-hidden',
+        timestamp: 1,
+        outputs: { images: [] },
+        prompt: {},
+        hidden: true,
+      },
+    };
+    const hiddenPending: UnifiedItem = {
+      id: 'pending-hidden',
+      status: 'pending',
+      data: {
+        number: 1,
+        prompt_id: 'pending-hidden',
+        prompt: {},
+        extra: { mobile_hidden_workflow: true },
+        outputs_to_execute: [],
+      },
+    };
+    const visiblePending: UnifiedItem = {
+      ...hiddenPending,
+      id: 'pending-visible',
+      data: { ...hiddenPending.data, extra: {} },
+    };
+
+    expect(isQueueItemHidden(hiddenHistory)).toBe(true);
+    expect(isQueueItemHidden(hiddenPending)).toBe(true);
+    expect(isQueueItemHidden(visiblePending)).toBe(false);
+  });
+
   it('shows pending above running with the next-to-run prompt at the pending bottom', () => {
     const queueItem = (
       id: string,
@@ -165,5 +202,64 @@ describe('queueUtils', () => {
     expect(getBatchSources('prompt-1', list)).toEqual([
       '/view?filename=saved-video.mp4&subfolder=&type=output',
     ]);
+  });
+});
+
+describe('isPendingSectionCollapsed', () => {
+  it('leaves a short pending list open', () => {
+    expect(isPendingSectionCollapsed(null, 0)).toBe(false);
+    expect(isPendingSectionCollapsed(null, 2)).toBe(false);
+  });
+
+  it('folds a batch bigger than the threshold', () => {
+    expect(isPendingSectionCollapsed(null, 3)).toBe(true);
+    expect(isPendingSectionCollapsed(null, 40)).toBe(true);
+  });
+
+  it('lets an explicit choice override the count either way', () => {
+    // Unfolding a 40-job batch must stick, and folding a 1-job one too.
+    expect(isPendingSectionCollapsed(false, 40)).toBe(false);
+    expect(isPendingSectionCollapsed(true, 1)).toBe(true);
+  });
+});
+
+describe('shouldLatchPendingAutoCollapse', () => {
+  it('latches the first time a batch is big enough to fold itself', () => {
+    expect(shouldLatchPendingAutoCollapse(null, 3)).toBe(true);
+    expect(shouldLatchPendingAutoCollapse(null, 40)).toBe(true);
+  });
+
+  it('does not latch a batch that was never folded', () => {
+    expect(shouldLatchPendingAutoCollapse(null, 0)).toBe(false);
+    expect(shouldLatchPendingAutoCollapse(null, 2)).toBe(false);
+  });
+
+  it('never overrules a choice the reader has already made', () => {
+    // Having unfolded a big batch by hand, it must not be re-folded from under
+    // them on the next poll.
+    expect(shouldLatchPendingAutoCollapse(false, 40)).toBe(false);
+    // And a standing fold needs no re-writing.
+    expect(shouldLatchPendingAutoCollapse(true, 40)).toBe(false);
+  });
+
+  it('is what stops a draining queue unfolding itself', () => {
+    // The whole point, as a sequence. A batch of five arrives with nothing on
+    // record, so it folds and that answer is written down…
+    let override: boolean | null = null;
+    expect(isPendingSectionCollapsed(override, 5)).toBe(true);
+    expect(shouldLatchPendingAutoCollapse(override, 5)).toBe(true);
+    override = true;
+
+    // …and now the count can fall as far as it likes without opening it. Read
+    // live instead of latched, a count of 2 here would report `false` and drop
+    // the remaining cards into the top of the list unasked.
+    for (const remaining of [4, 3, 2, 1]) {
+      expect(isPendingSectionCollapsed(override, remaining)).toBe(true);
+      expect(shouldLatchPendingAutoCollapse(override, remaining)).toBe(false);
+    }
+    expect(isPendingSectionCollapsed(null, 2)).toBe(false);
+
+    // Refilling does not re-decide anything either; it is already folded.
+    expect(isPendingSectionCollapsed(override, 30)).toBe(true);
   });
 });

@@ -1,4 +1,5 @@
 import {
+  type GroupParentRef,
   type ItemRef,
     makeLocationPointer,
   parseLocationPointer,
@@ -37,6 +38,10 @@ import {
   updateNodeWidgetValues,
   updateNodeWidgetsValues,
 } from "./layoutOps";
+import { findScopeTrailForSubgraph } from "@/utils/subgraphInstanceNavigation";
+import { flashJumpTarget, revealJumpTarget } from "@/utils/workflowJumpDom";
+import { retryReveal } from "@/utils/retryReveal";
+import { groupKeyScopeId } from "@/utils/workflowJumpTargets";
 import { dissolveSubgraph } from "@/utils/dissolveSubgraph";
 import { findConnectedNode } from "@/utils/nodeOrdering";
 import {
@@ -55,11 +60,17 @@ import { resolveWorkflowColor, themeColors } from "@/theme/colors";
 import { stripNodeWidgetIndexMap } from "./helpers";
 import { t } from "@/i18n";
 import { usePinnedWidgetStore } from "@/hooks/usePinnedWidget";
+import { useParameterSectionFoldsStore } from "@/hooks/useParameterSectionFolds";
 import {
   useWorkflowErrorsStore,
 } from "@/hooks/useWorkflowErrors";
 import { userScrolledSince } from "@/utils/scrollInterrupt";
+import { pruneOrphanedBoundarySlots } from "@/utils/pruneOrphanedBoundarySlots";
 import type { WorkflowGet, WorkflowSet, WorkflowState } from "./state";
+import {
+  buildPowerPuterOutputSlots,
+  toPowerPuterOutputsValue,
+} from '@/utils/powerPuter';
 
 /**
  * Node / container / visibility control actions for the useWorkflow store:
@@ -417,7 +428,7 @@ export function createNodeControlActions(set: WorkflowSet, get: WorkflowGet) {
           nextWorkflow = stripNodeWidgetIndexMap(nextWorkflow, node.id);
         }
         set({ workflow: nextWorkflow });
-        useWorkflowErrorsStore.getState().clearNodeError(node.id);
+        useWorkflowErrorsStore.getState().clearNodeError(node.id, node.itemKey);
         if (rebuilt && typeDef && scope.subgraphId == null) {
           // A branch switch renumbers the slots after the combo, so any pin on
           // this node must follow its input to the new index — or disappear
@@ -472,7 +483,78 @@ export function createNodeControlActions(set: WorkflowSet, get: WorkflowGet) {
         );
         const nextWorkflow = scope.applyPatch(workflow, { nodes: nextNodes });
         set({ workflow: nextWorkflow });
-        useWorkflowErrorsStore.getState().clearNodeError(node.id);
+        useWorkflowErrorsStore.getState().clearNodeError(node.id, node.itemKey);
+      };
+      /**
+       * Rewrite a Power Puter's output list.
+       *
+       * Unlike every other widget edit, this one changes the node's shape: the
+       * outputs widget IS the node's output slots, so the widget value, the
+       * `outputs` array and the link table all have to move together. Upstream
+       * does the same three things in `setOutputs()` plus its chip menu
+       * (`disconnectOutput` before `removeOutput`); leaving a link behind that
+       * points at a slot index which no longer exists corrupts the graph.
+       *
+       * Retyping a slot deliberately keeps its links -- upstream only warns
+       * ("you should check for compatibility") rather than disconnecting,
+       * because `*` -> concrete and concrete -> `*` are both legitimate.
+       */
+      const setPowerPuterOutputs: WorkflowState["setPowerPuterOutputs"] = (
+        itemKey,
+        widgetIndex,
+        outputs,
+      ) => {
+        const { workflow } = get();
+        if (!workflow) return;
+        const scope = resolveScopeForHierarchicalKey(workflow, itemKey);
+        const node = resolveNodeByHierarchicalKey(scope.nodes, itemKey);
+        if (!node) return;
+        if (outputs.length === 0) return;
+
+        const nextOutputs = buildPowerPuterOutputSlots(node.outputs ?? [], outputs);
+
+        // Links carried by slots that no longer exist must go, along with the
+        // `link` pointer on whatever input was consuming them.
+        const droppedLinkIds = new Set<number>();
+        (node.outputs ?? []).slice(outputs.length).forEach((output) => {
+          output.links?.forEach((linkId) => droppedLinkIds.add(linkId));
+        });
+
+        const nextLinks = droppedLinkIds.size === 0
+          ? scope.links
+          : scope.links.filter((link) => !droppedLinkIds.has(getLinkId(link)));
+
+        const nextNodes = scope.nodes.map((n) => {
+          if (n.id === node.id) {
+            return updateNodeWidgetValues(
+              { ...n, outputs: nextOutputs },
+              widgetIndex,
+              toPowerPuterOutputsValue(outputs),
+              'outputs',
+            );
+          }
+          if (droppedLinkIds.size === 0) return n;
+          const hasDroppedInput = n.inputs?.some(
+            (input) => input.link != null && droppedLinkIds.has(input.link),
+          );
+          if (!hasDroppedInput) return n;
+          return {
+            ...n,
+            inputs: n.inputs.map((input) =>
+              input.link != null && droppedLinkIds.has(input.link)
+                ? { ...input, link: null }
+                : input,
+            ),
+          };
+        });
+
+        set({
+          workflow: scope.applyPatch(workflow, {
+            nodes: nextNodes,
+            links: nextLinks as typeof scope.links,
+          }),
+        });
+        useWorkflowErrorsStore.getState().clearNodeError(node.id, node.itemKey);
       };
       const updateSubgraphInnerNodeWidget: WorkflowState["updateSubgraphInnerNodeWidget"] = (
         subgraphId,
@@ -614,8 +696,11 @@ export function createNodeControlActions(set: WorkflowSet, get: WorkflowGet) {
         // value is still invalid.
         if (newMode === 4) {
           const errorsStore = useWorkflowErrorsStore.getState();
-          if (errorsStore.nodeErrors[String(node.id)]?.length) {
-            errorsStore.clearNodeError(node.id);
+          const bypassErrors =
+            (node.itemKey ? errorsStore.nodeErrorsByItemKey[node.itemKey] : undefined)
+            ?? errorsStore.nodeErrors[String(node.id)];
+          if (bypassErrors?.length) {
+            errorsStore.clearNodeError(node.id, node.itemKey);
             const remaining = Object.values(
               useWorkflowErrorsStore.getState().nodeErrors,
             ).flat();
@@ -653,6 +738,28 @@ export function createNodeControlActions(set: WorkflowSet, get: WorkflowGet) {
         if (document.body.dataset.textareaFocus === "true") {
           return;
         }
+        // Travel to the item's own scope. Like revealing ancestors, this is not
+        // a choice a caller should have to make: scrolling to something in a
+        // subgraph you are not standing in is the same request, and the callers
+        // that did not do it simply scrolled to a card that was never going to
+        // render. Skipped when already in that scope, so an instance of a
+        // shared type is never swapped for a different one.
+        const currentTop = get().scopeStack[get().scopeStack.length - 1];
+        const currentScopeId = currentTop?.type === "subgraph" ? currentTop.id : null;
+        const targetScopeId = identity.subgraphId ?? null;
+        if (currentScopeId !== targetScopeId) {
+          const trail = findScopeTrailForSubgraph(workflow, targetScopeId);
+          // `attemptScroll` below already retries until the card exists, so the
+          // re-render this triggers needs no wait of its own.
+          if (trail) set({ scopeStack: trail });
+        }
+        // Ancestors are revealed here rather than by each caller. There is no
+        // case for scrolling to something still buried inside a collapsed group
+        // — it is the same request either way — and leaving it to the callers
+        // meant the ones that forgot (a connection made in the connection
+        // editor, a node added from the add modal, an image assigned from the
+        // picker) scrolled to a card that never appeared.
+        get().revealNodeWithParents(itemKey);
         get().setItemCollapsed(itemKey, false);
         // If the user starts manually scrolling/dragging after this reveal kicks
         // off, abort: don't keep retrying to find the node or re-correcting the
@@ -736,6 +843,14 @@ export function createNodeControlActions(set: WorkflowSet, get: WorkflowGet) {
               );
             }
             if ("vibrate" in navigator) navigator.vibrate(10);
+            // Lets whoever sent us here (the bookmark bar) flash its own
+            // control in the same instant, instead of on the click that
+            // started a scroll which only lands a few hundred ms later.
+            window.dispatchEvent(
+              new CustomEvent("workflow-node-highlighted", {
+                detail: { nodeId, itemKey },
+              }),
+            );
 
             if (label) {
               window.dispatchEvent(
@@ -841,11 +956,152 @@ export function createNodeControlActions(set: WorkflowSet, get: WorkflowGet) {
             }
             requestAnimationFrame(() => settleThenAlign(framesLeft - 1));
           };
+          // Already on screen: fire the cue now rather than waiting on an
+          // arrival that may never be signalled. The flash is what the press
+          // asked for, and it was being lost whenever the node needed little or
+          // no scrolling — the settle path only lights up on movement it can
+          // measure. The alignment still runs; `flashOnArrival` fires once, so
+          // the arrival path finds it already done.
+          const containerRect = container?.getBoundingClientRect();
+          const visibleTop = containerRect ? containerRect.top : 0;
+          const visibleBottom = containerRect ? containerRect.bottom : window.innerHeight;
+          const nodeRect = nodeEl.getBoundingClientRect();
+          if (nodeRect.bottom > visibleTop && nodeRect.top < visibleBottom) {
+            flashOnArrival();
+          }
+
           settleThenAlign(30);
         };
 
         attemptScroll(10, 2);
       };
+
+      /**
+       * Go to anything in the workflow.
+       *
+       * The whole sequence lives here — travel to the target's scope, reveal it
+       * and its ancestors, wait for it to render, scroll, flash — so a jump
+       * behaves the same wherever it was started from. Callers used to supply
+       * their own halves of this and disagreed on every one of them: five
+       * different waits, three different flashes, and scope travel in two of
+       * the seven places that needed it.
+       *
+       * A node card is handed to `scrollToNode`, whose alignment engine can
+       * drive it — it measures against the card's scroll anchor and corrects as
+       * the content settles. The other kinds have no anchor, so they are
+       * scrolled into view directly, retrying while the scope re-renders.
+       */
+      const jumpToWorkflowItem: WorkflowState["jumpToWorkflowItem"] = (
+        target,
+        options,
+      ) => {
+        if (target.kind === "node") {
+          get().scrollToNode(target.itemKey, options?.label, options?.alsoFlashDomId);
+          return;
+        }
+        if (target.kind === "boundarySlot") {
+          // Lives in the scope already on screen, by construction: it is part of
+          // that subgraph's own connections section.
+          revealJumpTarget({ kind: "connection", domId: target.domId });
+          return;
+        }
+
+        if (target.kind === "widget") {
+          // The card has to be reached before its row can be: travel to the
+          // scope, reveal the ancestors, un-collapse the card, and open its
+          // parameters section — a row inside a folded section is not rendered
+          // at all, so without that there would be nothing to find.
+          const widgetState = get();
+          const widgetWorkflow = widgetState.workflow;
+          if (!widgetWorkflow) return;
+          const widgetIdentity = resolveNodeIdentityFromHierarchicalKey(
+            widgetWorkflow,
+            target.itemKey,
+            widgetState.pointerByHierarchicalKey,
+          );
+          const currentWidgetFrame = get().scopeStack[get().scopeStack.length - 1];
+          const currentWidgetScopeId =
+            currentWidgetFrame?.type === "subgraph" ? currentWidgetFrame.id : null;
+          const targetWidgetScopeId = widgetIdentity?.subgraphId ?? null;
+          if (widgetIdentity && currentWidgetScopeId !== targetWidgetScopeId) {
+            const trail = findScopeTrailForSubgraph(widgetWorkflow, targetWidgetScopeId);
+            if (trail) set({ scopeStack: trail });
+          }
+          get().revealNodeWithParents(target.itemKey);
+          get().setItemHidden(target.itemKey, false);
+          get().setItemCollapsed(target.itemKey, false);
+          useParameterSectionFoldsStore.getState().expand(target.itemKey);
+          retryReveal(
+            () => revealJumpTarget({ kind: "connection", domId: target.domId }),
+            // Never drawn — a widget promoted to a subgraph boundary lives on
+            // the placeholder, and the specialised control rows (seed pairs,
+            // grouped stacks) carry no row id. The card is the honest landing.
+            () => {
+              revealJumpTarget({ kind: "node", nodeId: target.nodeId }, options?.align);
+            },
+          );
+          return;
+        }
+
+        const { workflow, pointerByHierarchicalKey } = get();
+        if (!workflow) return;
+
+        if (target.kind === "group") {
+          // A group has no `revealNodeWithParents` of its own, so its ancestors
+          // are opened here: a group nested in a collapsed group renders
+          // nothing to scroll to, and retrying would never find it.
+          const { mobileLayout, itemKeyByPointer } = get();
+          const scopeId = groupKeyScopeId(target.groupKey);
+          const currentFrame = get().scopeStack[get().scopeStack.length - 1];
+          const currentId = currentFrame?.type === "subgraph" ? currentFrame.id : null;
+          if (currentId !== scopeId) {
+            const trail = findScopeTrailForSubgraph(workflow, scopeId);
+            if (trail) set({ scopeStack: trail });
+          }
+          let ancestor: string | null = target.groupKey;
+          const seen = new Set<string>();
+          while (ancestor && !seen.has(ancestor)) {
+            seen.add(ancestor);
+            const key = itemKeyByPointer[ancestor] ?? ancestor;
+            get().setItemHidden(key, false);
+            get().setItemCollapsed(key, false);
+            const parent: GroupParentRef | undefined =
+              mobileLayout.groupParents?.[ancestor];
+            ancestor = parent?.scope === "group" ? parent.groupKey : null;
+          }
+          retryReveal(() =>
+            revealJumpTarget({ kind: "group", groupKey: target.groupKey }, options?.align),
+          );
+          return;
+        }
+
+        const identity = resolveNodeIdentityFromHierarchicalKey(
+          workflow,
+          target.itemKey,
+          pointerByHierarchicalKey,
+        );
+        if (!identity) return;
+        const currentTop = get().scopeStack[get().scopeStack.length - 1];
+        const currentScopeId = currentTop?.type === "subgraph" ? currentTop.id : null;
+        if (currentScopeId !== (identity.subgraphId ?? null)) {
+          const trail = findScopeTrailForSubgraph(workflow, identity.subgraphId ?? null);
+          if (trail) set({ scopeStack: trail });
+        }
+        get().revealNodeWithParents(target.itemKey);
+        get().setItemHidden(target.itemKey, false);
+        get().setItemCollapsed(target.itemKey, false);
+        retryReveal(() =>
+          revealJumpTarget(
+            { kind: "container", nodeId: identity.nodeId },
+            options?.align,
+          ),
+        );
+        if (options?.alsoFlashDomId) {
+          const extra = document.getElementById(options.alsoFlashDomId);
+          if (extra) flashJumpTarget(extra);
+        }
+      };
+
       const showAllHiddenNodes: WorkflowState["showAllHiddenNodes"] = () => {
         set({ hiddenItems: {} });
       };
@@ -881,11 +1137,18 @@ export function createNodeControlActions(set: WorkflowSet, get: WorkflowGet) {
         );
         if (!resolved) return;
         if (resolved.type === "group") {
+          // Only nodes living in the group's own scope get a new mode. A
+          // contained subgraph is bypassed through its placeholder — expansion
+          // pushes that mode onto the inner nodes at queue time — so writing
+          // mode into the definition would drag every other instance of a
+          // shared subgraph along with it.
+          const containerScopeId = resolved.subgraphId ?? null;
           const targetNodes = collectBypassGroupTargetNodes(
             workflow,
             resolved.groupId,
             resolved.subgraphId,
-          );
+            { includeDescendantGroups: true },
+          ).filter((target) => (target.subgraphId ?? null) === containerScopeId);
           if (targetNodes.length === 0) return;
           const rootTargetIds = new Set<number>(
             targetNodes
@@ -1023,6 +1286,10 @@ export function createNodeControlActions(set: WorkflowSet, get: WorkflowGet) {
                 workflow,
                 mobileLayout,
                 itemKey,
+                // Removing a placeholder is enough to orphan and prune its
+                // definition. If another instance still reaches that shared
+                // definition, its inner nodes must remain untouched.
+                { descendIntoSubgraphs: false },
               )
             : [];
 
@@ -1082,6 +1349,17 @@ export function createNodeControlActions(set: WorkflowSet, get: WorkflowGet) {
                 },
               };
             }
+          }
+          // Deleting a group's nodes inside a subgraph can orphan boundary
+          // slots whose interior links those nodes carried; the slots go with
+          // them, instance values carried by name.
+          if (targetNodes.length > 0 && subgraphId) {
+            nextWorkflow = pruneOrphanedBoundarySlots(
+              workflow,
+              nextWorkflow,
+              get().nodeTypes,
+              subgraphId,
+            );
           }
 
           const uiCleanup = clearNodeUiStateForTargets(
@@ -1151,6 +1429,12 @@ export function createNodeControlActions(set: WorkflowSet, get: WorkflowGet) {
         const targetSubgraph = subgraphDefs.find((sg) => sg.id === subgraphId);
         if (!targetSubgraph) return;
 
+        // Definition-level operation: "delete subgraph and nodes" removes the
+        // definition and EVERY placeholder instance of it; dissolve promotes
+        // inner content once per instance (dissolveSubgraph handles N:1).
+        // Parent-scope resolution goes through the layout's single subgraph
+        // item per definition — fine today because subgraph containers only
+        // exist at root; instance-scoped parents would need ItemRef.nodeId.
         const subgraphRef: ItemRef = { type: "subgraph", id: subgraphId };
         const location = findItemInLayout(mobileLayout, subgraphRef);
         const parentSubgraphId = location
@@ -1474,12 +1758,14 @@ export function createNodeControlActions(set: WorkflowSet, get: WorkflowGet) {
     updateNodeWidget,
     renameSetGetNode,
     updateNodeWidgets,
+    setPowerPuterOutputs,
     updateSubgraphInnerNodeWidget,
     updateNodeProperties,
     updateNodeTitle,
     convertImageOutputNode,
     toggleBypass,
     scrollToNode,
+    jumpToWorkflowItem,
     showAllHiddenNodes,
     setItemCollapsed,
     bypassAllInContainer,

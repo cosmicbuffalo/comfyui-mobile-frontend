@@ -360,6 +360,56 @@ def test_post_event_prunes_a_legacy_unlisted_relay_without_requesting_it(monkeyp
     assert m._post_event(target, {}) == "gone"
 
 
+def test_post_event_treats_410_as_gone(monkeypatch):
+    """The relay answers 410 for a server the phone removed while this node
+    was unreachable — the phone's goodbye, delivered on our next attempt.
+    Anything but pruning would retry a dead letter forever."""
+    monkeypatch.setattr(m.requests, "post", lambda *a, **k: _Resp(410))
+    target = {"relay_url": "https://relay.example/", "pairing_code": "X"}
+    assert m._post_event(target, {}) == "gone"
+
+
+def test_a_410_prunes_the_target_from_the_registry(monkeypatch):
+    monkeypatch.setattr(m, "_verify_pairing", lambda *a, **k: True)
+    assert m.add_target("https://relay.example/", "ABCD-EFGH")
+    monkeypatch.setattr(m.requests, "post", lambda *a, **k: _Resp(410))
+    result = m.send_completion("p", "success", 1)
+    assert result["pruned"] == 1
+    assert m.target_count() == 0
+
+
+def test_a_409_corrects_the_notifications_flag_without_deleting(monkeypatch):
+    """The relay enforcing a phone-side disable answers /event with 409. The
+    target must survive — its Live Activity role and a future re-enable depend
+    on it — with only its notifications flag corrected."""
+    monkeypatch.setattr(m, "_verify_pairing", lambda *a, **k: True)
+    assert m.add_target("https://relay.example/", "ABCD-EFGH", live_activity=True)
+    monkeypatch.setattr(m.requests, "post", lambda *a, **k: _Resp(409))
+    result = m.send_completion("p", "success", 1)
+    assert result["sent"] == 0
+    assert m.target_count() == 1
+    # list_targets() hides notifications-off entries (the app's bell reads
+    # that view, so a corrected target reads as disabled) — check raw state.
+    target = m._load_targets()[0]
+    assert target.get("notifications") is False
+    assert target.get("live_activity") is True
+    assert m.list_targets() == []
+    # And the corrected flag sticks: the next send has no eligible targets.
+    calls = []
+    def record(*a, **k):
+        calls.append(a)
+        return _Resp(200)
+    monkeypatch.setattr(m.requests, "post", record)
+    m.send_completion("p2", "success", 1)
+    assert calls == []
+
+
+def test_a_409_on_the_live_activity_path_is_not_a_mute(monkeypatch):
+    monkeypatch.setattr(m.requests, "post", lambda *a, **k: _Resp(409))
+    target = {"relay_url": "https://relay.example/", "pairing_code": "X"}
+    assert m._post_event(target, {}, path="/live-activity/event") != "muted"
+
+
 def test_post_event_treats_other_non_200_as_error(monkeypatch):
     monkeypatch.setattr(m.requests, "post", lambda *a, **k: _Resp(500))
     target = {"relay_url": "https://relay.example/", "pairing_code": "X"}

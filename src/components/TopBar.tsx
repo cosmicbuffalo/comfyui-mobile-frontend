@@ -18,6 +18,7 @@ import { TopBarPanelNavigation } from './TopBar/PanelNavigation';
 import type { PanelMode } from '@/hooks/useNavigation';
 import { useWorkflowHiddenStore } from '@/hooks/useWorkflowHidden';
 import { isWorkflowHidden } from '@/utils/workflowHidden';
+import { useI18n } from '@/i18n';
 
 interface TopBarProps {
   mode?: PanelMode;
@@ -35,6 +36,7 @@ function getScrollSelectors(mode: TopBarProps['mode']): string[] {
 }
 
 export function TopBar({ mode = 'workflow' }: TopBarProps) {
+  const { t } = useI18n();
   const barRef = useRef<HTMLDivElement>(null);
   const lastTapRef = useRef<number>(0);
   const appMenuOpen = useAppMenuStore((s) => s.appMenuOpen);
@@ -140,17 +142,19 @@ export function TopBar({ mode = 'workflow' }: TopBarProps) {
   const title = useMemo(() => {
     switch (mode) {
       case 'queue':
-        return 'Queue';
+        return t('Queue');
       case 'outputs':
-        return outputsSource === 'output' ? 'Outputs' : 'Inputs';
+        return outputsSource === 'output' ? t('Outputs') : t('Inputs');
       case 'workflow':
       default:
         if (currentFilename) {
           return getDisplayName(currentFilename);
         }
-        return workflow ? 'Untitled' : 'ComfyUI Mobile';
+        // The product name is the one string that stays as it is: it names the
+        // app rather than describing anything.
+        return workflow ? t('Untitled') : 'ComfyUI Mobile';
     }
-  }, [mode, outputsSource, currentFilename, workflow]);
+  }, [mode, outputsSource, currentFilename, workflow, t]);
 
   const rightControls = useMemo(() => {
     switch (mode) {
@@ -184,18 +188,24 @@ export function TopBar({ mode = 'workflow' }: TopBarProps) {
     <div
       id="top-bar-root"
       ref={barRef}
-      className="fixed top-0 left-0 right-0 bg-slate-950/88 border-b border-white/10 text-slate-100 z-[2000] safe-area-top"
+      className="fixed top-0 left-0 right-0 text-slate-100 z-[2000]"
       data-top-bar="true"
     >
-      <div id="top-bar-content" className="flex items-center justify-between px-4 py-3">
-        <MenuButton onClick={() => setAppMenuOpen(true)} />
-        <div className="grid min-w-0 flex-1 grid-cols-[0_minmax(0,1fr)_0] items-center lg:grid-cols-[1fr_minmax(12rem,24rem)_1fr]">
-          <TopBarPanelNavigation mode={mode} side="left" />
-          <div id="top-bar-center-slot" className="col-start-2 min-w-0 w-full">{middleContent}</div>
-          <TopBarPanelNavigation mode={mode} side="right" />
-        </div>
-        <div id="top-bar-right-slot" className="w-10 h-10 flex items-center justify-center">
-          {rightControls}
+      <div
+        className={`bg-slate-950/88 safe-area-top ${
+          mode === 'workflow' ? '' : 'border-b border-white/10'
+        }`}
+      >
+        <div id="top-bar-content" className="flex items-center justify-between px-4 py-3">
+          <MenuButton onClick={() => setAppMenuOpen(true)} />
+          <div className="grid min-w-0 flex-1 grid-cols-[0_minmax(0,1fr)_0] items-center lg:grid-cols-[1fr_minmax(12rem,24rem)_1fr]">
+            <TopBarPanelNavigation mode={mode} side="left" />
+            <div id="top-bar-center-slot" className="col-start-2 min-w-0 w-full">{middleContent}</div>
+            <TopBarPanelNavigation mode={mode} side="right" />
+          </div>
+          <div id="top-bar-right-slot" className="w-10 h-10 flex items-center justify-center">
+            {rightControls}
+          </div>
         </div>
       </div>
       <AppMenu open={appMenuOpen} onClose={() => setAppMenuOpen(false)} />

@@ -27,8 +27,6 @@ import { useI18n } from '@/i18n';
  * spoofed User-Agent marker alone cannot authorize a headless generation. It
  * stages into the first compatible LoadImage node in workflow order, submits
  * exactly one run, reports a structured result to Swift, and renders no tab UI.
- *
- * Tracks the iOS app side: https://github.com/cosmicbuffalo/comfyui-mobile-frontend-private/issues/34
  */
 type Phase =
   | 'idle'                  // no handoff params present

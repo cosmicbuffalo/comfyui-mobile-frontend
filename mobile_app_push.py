@@ -516,6 +516,22 @@ def _post_event(target, payload, path="/event") -> str:
         # pairing expired; safe to forget this target.
         if resp.status_code == 404:
             return "gone"
+        # The phone removed this server without ever reaching us for cleanup
+        # (it was unreachable at the time). The relay refuses our events for
+        # it from now on, so this target is a dead letter: delete it. This is
+        # the self-cleaning half of removal — the phone's goodbye, delivered
+        # by the relay the first time we try to speak.
+        if resp.status_code == 410:
+            print(f"{_LOG_PREFIX} relay reports this server was removed from the "
+                  f"paired device; pruning its target", flush=True)
+            return "gone"
+        # The phone switched notifications off while we were unreachable, and
+        # the relay is enforcing it. Correct our own flag — never delete: the
+        # target's Live Activity role (and a future re-enable) must survive.
+        if resp.status_code == 409 and path == "/event":
+            print(f"{_LOG_PREFIX} relay reports notifications muted for this "
+                  f"device; correcting local flag", flush=True)
+            return "muted"
         print(f"{_LOG_PREFIX} app push relay returned {resp.status_code} for {url}", flush=True)
         if path == "/live-activity/event" and (
             resp.status_code in (408, 429) or resp.status_code >= 500
@@ -557,12 +573,15 @@ def _send(payload, path="/event") -> dict:
     retryable = 0
     failed = 0
     dead = []
+    muted = []
     for target in targets:
         result = _post_event(target, payload, path=path)
         if result == "ok":
             sent += 1
         elif result == "gone":
             dead.append((target.get("relay_url"), target.get("pairing_code")))
+        elif result == "muted":
+            muted.append((target.get("relay_url"), target.get("pairing_code")))
         elif result == "retry":
             retryable += 1
         else:
@@ -579,6 +598,15 @@ def _send(payload, path="/event") -> dict:
                 if (t.get("relay_url"), t.get("pairing_code")) not in dead
             ]
             _targets[:] = remaining
+            _save_targets()
+
+    if muted:
+        with _lock:
+            current = _load_targets()
+            for t in current:
+                if (t.get("relay_url"), t.get("pairing_code")) in muted:
+                    t["notifications"] = False
+            _targets[:] = current
             _save_targets()
 
     result = {"sent": sent, "pruned": len(dead), "total": len(targets)}

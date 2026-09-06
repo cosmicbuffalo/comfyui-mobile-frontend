@@ -15,10 +15,16 @@ import server
 import folder_paths
 import file_utils as _file_utils
 from file_utils import safe_join as _safe_join
-from mobile_metadata import MetadataPathError, extract_workflow_from_metadata, resolve_metadata_path
+from mobile_metadata import (
+    MetadataPathError,
+    extract_prompt_from_metadata,
+    extract_workflow_from_metadata,
+    resolve_metadata_path,
+)
 import mobile_image_dimensions as _mobile_image_dimensions
 import mobile_image_preview as _mobile_image_preview
 import mobile_push as _mobile_push
+import mobile_video_metadata as _mobile_video_metadata
 import mobile_video_playback as _mobile_video_playback
 import mobile_video_thumbs as _mobile_video_thumbs
 from aiohttp import web
@@ -56,6 +62,29 @@ async def api_file_dimensions(request):
     except Exception as e:
         return web.json_response({"error": str(e)}, status=500)
 
+
+async def api_video_durations(request):
+    """Durations for a batch of videos currently rendered in the file grid."""
+    try:
+        data = await request.json()
+        source = data.get('source', 'output')
+        paths = data.get('paths')
+        if source not in _ASSET_SOURCES:
+            return web.json_response({"error": "source must be output/input/temp"}, status=400)
+        if not isinstance(paths, list):
+            return web.json_response({"error": "paths must be a list"}, status=400)
+        base_dir = _source_base_dir(source)
+        loop = asyncio.get_event_loop()
+        durations = await loop.run_in_executor(
+            None,
+            _mobile_video_metadata.get_durations_for_paths,
+            base_dir,
+            paths[:512],
+        )
+        return web.json_response({"durations": durations})
+    except Exception as e:
+        return web.json_response({"error": str(e)}, status=500)
+
 async def api_file_metadata(request):
     try:
         filepath = request.query.get('path', '')
@@ -70,11 +99,12 @@ async def api_file_metadata(request):
         loop = asyncio.get_event_loop()
         metadata = await loop.run_in_executor(None, _read_pnginfo_metadata, metadata_path)
         workflow = extract_workflow_from_metadata(metadata)
+        prompt = extract_prompt_from_metadata(metadata)
 
         if not workflow:
             return web.json_response({"error": "No workflow metadata found"}, status=404)
 
-        return web.json_response({"workflow": workflow})
+        return web.json_response({"workflow": workflow, "prompt": prompt})
     except MetadataPathError as e:
         return web.json_response({"error": str(e)}, status=e.status_code)
     except Exception as e:
@@ -409,5 +439,6 @@ def register_routes(mobile_app):
     mobile_app.router.add_get('/api/video/playable', api_get_playable_video)
     mobile_app.router.add_get('/api/file-metadata', api_file_metadata)
     mobile_app.router.add_post('/api/file-dimensions', api_file_dimensions)
+    mobile_app.router.add_post('/api/video-durations', api_video_durations)
     mobile_app.router.add_get('/api/workflow-availability', api_workflow_availability)
     mobile_app.router.add_get('/api/image-metadata', api_image_metadata)

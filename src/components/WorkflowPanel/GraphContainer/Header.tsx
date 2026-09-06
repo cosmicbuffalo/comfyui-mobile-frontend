@@ -1,13 +1,16 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
+  ArrowRightIcon,
   BookmarkIconSvg,
+  BookmarkOutlineIcon,
   BypassToggleIcon,
   CaretDownIcon,
   CaretRightIcon,
   CheckIcon,
   ClipboardIcon,
   ClipboardDownloadIcon,
+  CopyIcon,
   EditIcon,
   EyeOffIcon,
   MoveUpDownIcon,
@@ -16,16 +19,14 @@ import {
   WorkflowIcon,
 } from "@/components/icons";
 import { FoldIcon } from "@/components/FoldIcon";
-import { useAnchoredMenuPosition } from "@/hooks/useAnchoredMenuPosition";
 import { useDismissOnOutsideClick } from "@/hooks/useDismissOnOutsideClick";
-import { useWorkflowStore } from "@/hooks/useWorkflow";
-import { ContextMenuButton } from '@/components/buttons/ContextMenuButton';
-import { ContextMenuBuilder } from '@/components/menus/ContextMenuBuilder';
 import { SelectionCheckbox } from '@/components/buttons/SelectionCheckbox';
 import { useWorkflowSelectionStore } from '@/hooks/useWorkflowSelection';
 import { resolveWorkflowColor, themeColors, workflowColorPickerOptions } from "@/theme/colors";
 import { hexToRgba } from "@/utils/grouping";
 import { useI18n } from "@/i18n";
+import { useIsDesktop } from "@/hooks/useIsDesktop";
+import { WorkflowObjectContextMenu } from '@/components/WorkflowPanel/WorkflowObjectContextMenu';
 
 type GraphContainerType = "group" | "subgraph";
 
@@ -37,7 +38,6 @@ interface GraphContainerHeaderProps {
   isCollapsed: boolean;
   hiddenNodeCount: number;
   isBookmarked: boolean;
-  canShowBookmarkAction: boolean;
   /** True when the group has expanded children, so "fold all" is the action. */
   canFoldAll: boolean;
   color: string;
@@ -50,6 +50,9 @@ interface GraphContainerHeaderProps {
   onDelete: () => void;
   onShowHiddenNodes: () => void;
   onMove: () => void;
+  /** Absent when this scope holds no subgraph the group could move into. */
+  onMoveIntoSubgraph?: () => void;
+  onDuplicate: () => void;
   onCopy: () => void;
   onPaste: () => void;
   pasteSummary: string | null;
@@ -63,11 +66,9 @@ interface GraphContainerHeaderProps {
   showUnbypassAllAction?: boolean;
   bypassState?: 'none' | 'partial' | 'all';
   bypassedNodeCount?: number;
-  // Select mode: this container's own hierarchical key and its member node keys.
-  // When in select mode the menu button is replaced with a selection checkbox;
-  // toggling a group ON also auto-selects its members (companion keys).
+  // Select mode: this container's own hierarchical key. Contents are selected
+  // explicitly from the actions rendered inside an unfolded group.
   selectionKey?: string;
-  selectionMemberKeys?: string[];
 }
 
 export function GraphContainerHeader({
@@ -78,7 +79,6 @@ export function GraphContainerHeader({
   isCollapsed,
   hiddenNodeCount,
   isBookmarked,
-  canShowBookmarkAction,
   canFoldAll,
   color,
   onToggleCollapse,
@@ -90,6 +90,8 @@ export function GraphContainerHeader({
   onDelete,
   onShowHiddenNodes,
   onMove,
+  onMoveIntoSubgraph,
+  onDuplicate,
   onCopy,
   onPaste,
   pasteSummary,
@@ -104,9 +106,9 @@ export function GraphContainerHeader({
   bypassState = 'none',
   bypassedNodeCount = 0,
   selectionKey,
-  selectionMemberKeys,
 }: GraphContainerHeaderProps) {
   const { t } = useI18n();
+  const isDesktop = useIsDesktop();
   const selectionMode = useWorkflowSelectionStore((s) => s.selectionMode);
   const isContainerSelected = useWorkflowSelectionStore((s) =>
     selectionKey ? s.selectedKeys.includes(selectionKey) : false,
@@ -121,7 +123,6 @@ export function GraphContainerHeader({
   // their placeholder card.
   const showSelectionCheckbox =
     selectionMode && containerType === "group" && Boolean(selectionKey);
-  const [menuOpen, setMenuOpen] = useState(false);
   const [colorPopoverOpen, setColorPopoverOpen] = useState(false);
   const [colorPopoverPlacement, setColorPopoverPlacement] = useState<"above" | "below">("below");
   const [colorPopoverStyle, setColorPopoverStyle] = useState<{
@@ -138,14 +139,8 @@ export function GraphContainerHeader({
   const [isEditingLabel, setIsEditingLabel] = useState(false);
   const [labelValue, setLabelValue] = useState("");
   const labelInputRef = useRef<HTMLInputElement>(null);
-  const menuRef = useRef<HTMLDivElement>(null);
   const colorPopoverRef = useRef<HTMLDivElement>(null);
   const menuButtonRef = useRef<HTMLButtonElement>(null);
-  const { menuStyle, resetMenuPosition } = useAnchoredMenuPosition({
-    open: menuOpen,
-    buttonRef: menuButtonRef,
-    menuRef,
-  });
 
   const displayTitle = title.trim() || `${containerType} ${containerId}`;
   const resolvedContainerColor = resolveWorkflowColor(containerColor);
@@ -155,55 +150,13 @@ export function GraphContainerHeader({
       ? hexToRgba(resolvedColor, 0.22)
       : hexToRgba(resolvedColor, 0.15);
   const hasHiddenNodes = hiddenNodeCount > 0;
-  const showBookmarkAction = isBookmarked || canShowBookmarkAction;
   const canChangeColor = typeof onChangeColor === "function";
   const countClassName = containerType === "subgraph" ? "text-cyan-300" : "text-slate-500";
+  // Only reachable when `onChangeColor` was given: both the menu entry and the
+  // swatch popover are gated on `canChangeColor`, which is that prop.
   const handleChangeColor = (nextColor: string) => {
-    if (onChangeColor) {
-      onChangeColor(nextColor);
-      return;
-    }
-    if (containerType !== "group") return;
-    const numericContainerId =
-      typeof containerId === "number" ? containerId : Number(containerId);
-    if (!Number.isFinite(numericContainerId)) return;
-    useWorkflowStore.setState((state) => {
-      const currentWorkflow = state.workflow;
-      if (!currentWorkflow) return state;
-      const currentGroups = currentWorkflow.groups ?? [];
-      let changed = false;
-      const updatedGroups = currentGroups.map((group) => {
-        if (group.id !== numericContainerId) return group;
-        changed = true;
-        return {
-          ...group,
-          color: nextColor,
-        };
-      });
-      if (!changed) return state;
-      return {
-        workflow: {
-          ...currentWorkflow,
-          groups: updatedGroups,
-        },
-      };
-    });
+    onChangeColor?.(nextColor);
   };
-  const closeMenu = () => {
-    setMenuOpen(false);
-    resetMenuPosition();
-  };
-
-  useDismissOnOutsideClick({
-    open: menuOpen,
-    onDismiss: () => {
-      setMenuOpen(false);
-      resetMenuPosition();
-    },
-    triggerRef: menuButtonRef,
-    contentRef: menuRef,
-    ignoreScrollWithinContent: true,
-  });
   useDismissOnOutsideClick({
     open: colorPopoverOpen,
     onDismiss: () => setColorPopoverOpen(false),
@@ -282,6 +235,21 @@ export function GraphContainerHeader({
     onToggleCollapse();
   };
 
+  const openColorPopover = () => {
+    const buttonRect = menuButtonRef.current?.getBoundingClientRect();
+    if (buttonRect) {
+      const estimatedPopoverHeight = 56;
+      const viewportPadding = 8;
+      const maxBottom = window.innerHeight - 104;
+      const canOpenBelow =
+        buttonRect.bottom + estimatedPopoverHeight <= maxBottom - viewportPadding;
+      setColorPopoverPlacement(canOpenBelow ? "below" : "above");
+    } else {
+      setColorPopoverPlacement("below");
+    }
+    setColorPopoverOpen(true);
+  };
+
   return (
     <div
       id={`${containerType}-header-${containerId}`}
@@ -347,34 +315,210 @@ export function GraphContainerHeader({
       </div>
 
       {showSelectionCheckbox ? (
-        <SelectionCheckbox
-          selected={isContainerSelected}
-          ariaLabel={isContainerSelected ? t('Deselect group') : t('Select group')}
-          onClick={(event) => {
-            event.stopPropagation();
-            if (selectionKey) toggleSelectionKey(selectionKey, selectionMemberKeys ?? []);
-          }}
-        />
-      ) : (
-        <ContextMenuButton
-          onClick={(event) => {
-            event.stopPropagation();
-            resetMenuPosition();
-            setColorPopoverOpen(false);
-            setMenuOpen((prev) => !prev);
-          }}
-          ariaLabel={`${containerType} options`}
-          buttonRef={menuButtonRef}
-          buttonSize={8}
-          iconSize={5}
-          icon={isBookmarked ? (
-            <BookmarkIconSvg className="w-5 h-5 text-amber-500" />
-          ) : containerType === "subgraph" ? (
-            <WorkflowIcon className="w-5 h-5 -scale-x-100 text-cyan-300" />
-          ) : (
-            undefined
+        <div className="flex shrink-0 items-center gap-1">
+          {isDesktop && (
+            <button
+              type="button"
+              className={`flex h-8 w-8 cursor-pointer items-center justify-center rounded-md ${
+                isBookmarked ? "text-amber-500" : "text-slate-400"
+              }`}
+              aria-pressed={isBookmarked}
+              aria-label={isBookmarked ? t("Remove bookmark") : t("Bookmark")}
+              onClick={(event) => {
+                event.stopPropagation();
+                onToggleBookmark();
+              }}
+            >
+              {isBookmarked ? (
+                <BookmarkIconSvg className="h-5 w-5" />
+              ) : (
+                <BookmarkOutlineIcon className="h-5 w-5" />
+              )}
+            </button>
           )}
-        />
+          <SelectionCheckbox
+            selected={isContainerSelected}
+            ariaLabel={isContainerSelected ? t('Deselect group') : t('Select group')}
+            onClick={(event) => {
+              event.stopPropagation();
+              if (selectionKey) toggleSelectionKey(selectionKey);
+            }}
+          />
+        </div>
+      ) : (
+        <div className="flex shrink-0 items-center gap-1">
+          {isDesktop && (
+            <button
+              type="button"
+              className={`flex h-8 w-8 cursor-pointer items-center justify-center rounded-md transition-colors ${
+                isBookmarked
+                  ? "text-amber-500 hover:bg-amber-500/10"
+                  : "text-slate-400 hover:bg-white/5 hover:text-slate-100"
+              }`}
+              aria-pressed={isBookmarked}
+              aria-label={isBookmarked ? t("Remove bookmark") : t("Bookmark")}
+              onClick={(event) => {
+                event.stopPropagation();
+                onToggleBookmark();
+              }}
+            >
+              {isBookmarked ? (
+                <BookmarkIconSvg className="h-5 w-5" />
+              ) : (
+                <BookmarkOutlineIcon className="h-5 w-5" />
+              )}
+            </button>
+          )}
+          <WorkflowObjectContextMenu
+            ariaLabel={`${containerType} options`}
+            buttonRef={menuButtonRef}
+            triggerIcon={!isDesktop && isBookmarked ? (
+              <BookmarkIconSvg className="w-5 h-5 text-amber-500" />
+            ) : containerType === "subgraph" ? (
+              <WorkflowIcon className="w-5 h-5 -scale-x-100 text-cyan-300" />
+            ) : (
+              undefined
+            )}
+            onBeforeToggle={() => setColorPopoverOpen(false)}
+            sections={{
+              cosmetic: [
+                {
+                  key: 'edit-label',
+                  label: t('Edit label'),
+                  icon: <EditIcon className="w-4 h-4" />,
+                  onSelect: () => {
+                    setLabelValue(displayTitle);
+                    setIsEditingLabel(true);
+                  },
+                },
+                {
+                  key: 'change-color',
+                  label: t('Change color'),
+                  icon: (
+                    <span
+                      className="inline-block w-3 h-3 rounded-full"
+                      style={{
+                        backgroundColor:
+                          resolvedContainerColor || themeColors.workflow.defaultGroupDot,
+                      }}
+                    />
+                  ),
+                  onSelect: openColorPopover,
+                  hidden: !canChangeColor,
+                },
+              ],
+              bookmarkNavigation: [
+                {
+                  key: 'toggle-bookmark',
+                  label: isBookmarked ? t('Remove bookmark') : t('Bookmark'),
+                  icon: isBookmarked
+                    ? <BookmarkIconSvg className="w-4 h-4 text-amber-500" />
+                    : <BookmarkOutlineIcon className="w-4 h-4" />,
+                  onSelect: onToggleBookmark,
+                  hidden: isDesktop,
+                },
+              ],
+              actions: [
+                {
+                  key: 'select-group',
+                  label: t('Select'),
+                  icon: <CheckIcon className="w-4 h-4" />,
+                  onSelect: () => {
+                    if (!selectionKey) return;
+                    enterSelectionMode();
+                    selectSelectionKeys([selectionKey]);
+                  },
+                  hidden: !canSelectFromMenu,
+                },
+                {
+                  key: 'bypass-all',
+                  label: t('Bypass all nodes'),
+                  icon: <BypassToggleIcon isBypassed className="w-4 h-4" />,
+                  onSelect: () => onBypassAll(true),
+                  hidden: !showBypassAllAction,
+                },
+                {
+                  key: 'unbypass-all',
+                  label: t('Engage all nodes'),
+                  icon: <BypassToggleIcon isBypassed={false} className="w-4 h-4" />,
+                  onSelect: () => onBypassAll(false),
+                  hidden: !showUnbypassAllAction,
+                },
+                {
+                  key: 'hide-container',
+                  label: t('Hide'),
+                  icon: <EyeOffIcon className="w-4 h-4" />,
+                  onSelect: onHide,
+                },
+                {
+                  key: 'duplicate-container',
+                  label: t('Duplicate'),
+                  icon: <CopyIcon className="w-4 h-4" />,
+                  onSelect: onDuplicate,
+                },
+                {
+                  key: 'copy-container',
+                  label: t('Copy'),
+                  icon: <ClipboardIcon className="w-4 h-4" />,
+                  onSelect: onCopy,
+                },
+                {
+                  key: 'paste-into-container',
+                  label: pasteSummary ? t('Paste {summary} here', { summary: pasteSummary }) : t('Paste here'),
+                  icon: <ClipboardDownloadIcon className="w-4 h-4" />,
+                  onSelect: onPaste,
+                  hidden: !pasteSummary,
+                },
+                {
+                  key: 'move-container',
+                  label: t('Move'),
+                  icon: <MoveUpDownIcon className="w-4 h-4" />,
+                  onSelect: onMove,
+                },
+                {
+                  key: 'move-into-subgraph',
+                  label: t('Move into subgraph'),
+                  icon: <ArrowRightIcon className="w-4 h-4" />,
+                  onSelect: onMoveIntoSubgraph,
+                  hidden: !onMoveIntoSubgraph,
+                },
+              ],
+              special: [
+                {
+                  key: 'add-node',
+                  label: t('Add node'),
+                  icon: <PlusIcon className="w-4 h-4" />,
+                  onSelect: onAddNode,
+                },
+                {
+                  key: 'fold-all',
+                  label: canFoldAll ? t('Fold all') : t('Unfold all'),
+                  icon: canFoldAll
+                    ? <CaretRightIcon className="w-4 h-4" />
+                    : <CaretDownIcon className="w-4 h-4" />,
+                  onSelect: onToggleFoldAll,
+                  hidden: isCollapsed && !canFoldAll,
+                },
+                {
+                  key: 'show-hidden-nodes',
+                  label: t('Show hidden nodes'),
+                  icon: <EyeOffIcon className="w-4 h-4" />,
+                  onSelect: onShowHiddenNodes,
+                  hidden: !hasHiddenNodes,
+                },
+              ],
+              delete: [
+                {
+                  key: 'delete-container',
+                  label: t('Delete'),
+                  icon: <TrashIcon className="w-4 h-4" />,
+                  color: 'danger',
+                  onSelect: onDelete,
+                },
+              ],
+            }}
+          />
+        </div>
       )}
       {canChangeColor && colorPopoverOpen &&
         createPortal(
@@ -408,199 +552,6 @@ export function GraphContainerHeader({
             </div>
           </div>,
           document.body,
-        )}
-
-      {menuOpen &&
-        createPortal(
-          <div
-            ref={menuRef}
-            className="fixed z-[1000] w-44"
-            style={menuStyle}
-          >
-            <ContextMenuBuilder
-              items={[
-                {
-                  key: 'edit-label',
-                  label: t('Edit label'),
-                  icon: <EditIcon className="w-4 h-4" />,
-                  onClick: (event) => {
-                    event.stopPropagation();
-                    setLabelValue(displayTitle);
-                    setIsEditingLabel(true);
-                    closeMenu();
-                  }
-                },
-                {
-                  key: 'change-color',
-                  label: t('Change color'),
-                  icon: (
-                    <span
-                      className="inline-block w-3 h-3 rounded-full"
-                      style={{
-                        backgroundColor:
-                          resolvedContainerColor || themeColors.workflow.defaultGroupDot,
-                      }}
-                    />
-                  ),
-                  onClick: (event) => {
-                    event.stopPropagation();
-                    const buttonRect = menuButtonRef.current?.getBoundingClientRect();
-                    if (buttonRect) {
-                      const estimatedPopoverHeight = 56;
-                      const viewportPadding = 8;
-                      const maxBottom = window.innerHeight - 104;
-                      const canOpenBelow =
-                        buttonRect.bottom + estimatedPopoverHeight <= maxBottom - viewportPadding;
-                      setColorPopoverPlacement(canOpenBelow ? "below" : "above");
-                    } else {
-                      setColorPopoverPlacement("below");
-                    }
-                    setColorPopoverOpen(true);
-                    closeMenu();
-                  },
-                  hidden: !canChangeColor
-                },
-                {
-                  type: 'divider',
-                  key: 'divider-top-edit-color'
-                },
-                {
-                  key: 'toggle-bookmark',
-                  label: isBookmarked ? t("Remove bookmark") : t("Bookmark"),
-                  icon: <BookmarkIconSvg className="w-4 h-4 text-amber-500" />,
-                  onClick: (event) => {
-                    event.stopPropagation();
-                    onToggleBookmark();
-                    closeMenu();
-                  },
-                  hidden: !showBookmarkAction
-                },
-                {
-                  key: 'select-group',
-                  label: t('Select'),
-                  icon: <CheckIcon className="w-4 h-4" />,
-                  onClick: (event) => {
-                    event.stopPropagation();
-                    if (selectionKey) {
-                      enterSelectionMode();
-                      selectSelectionKeys([selectionKey, ...(selectionMemberKeys ?? [])]);
-                    }
-                    closeMenu();
-                  },
-                  hidden: !canSelectFromMenu
-                },
-                {
-                  key: 'add-node',
-                  label: t('Add node'),
-                  icon: <PlusIcon className="w-4 h-4" />,
-                  onClick: (event) => {
-                    event.stopPropagation();
-                    onAddNode();
-                    closeMenu();
-                  }
-                },
-                {
-                  key: 'fold-all',
-                  label: canFoldAll ? t("Fold all") : t("Unfold all"),
-                  icon: canFoldAll
-                    ? <CaretRightIcon className="w-4 h-4" />
-                    : <CaretDownIcon className="w-4 h-4" />,
-                  onClick: (event) => {
-                    event.stopPropagation();
-                    onToggleFoldAll();
-                    closeMenu();
-                  },
-                  hidden: isCollapsed && !canFoldAll
-                },
-                {
-                  key: 'bypass-all',
-                  label: t('Bypass all nodes'),
-                  icon: <BypassToggleIcon isBypassed className="w-4 h-4" />,
-                  onClick: (event) => {
-                    event.stopPropagation();
-                    onBypassAll(true);
-                    closeMenu();
-                  },
-                  hidden: !showBypassAllAction
-                },
-                {
-                  key: 'unbypass-all',
-                  label: t('Engage all nodes'),
-                  icon: <BypassToggleIcon isBypassed={false} className="w-4 h-4" />,
-                  onClick: (event) => {
-                    event.stopPropagation();
-                    onBypassAll(false);
-                    closeMenu();
-                  },
-                  hidden: !showUnbypassAllAction
-                },
-                {
-                  key: 'show-hidden-nodes',
-                  label: t('Show hidden nodes'),
-                  icon: <EyeOffIcon className="w-4 h-4" />,
-                  onClick: (event) => {
-                    event.stopPropagation();
-                    onShowHiddenNodes();
-                    closeMenu();
-                  },
-                  hidden: !hasHiddenNodes
-                },
-                {
-                  key: 'hide-container',
-                  label: containerType === 'group' ? t('Hide group') : t('Hide subgraph'),
-                  icon: <EyeOffIcon className="w-4 h-4" />,
-                  onClick: (event) => {
-                    event.stopPropagation();
-                    onHide();
-                    closeMenu();
-                  }
-                },
-                {
-                  key: 'copy-container',
-                  label: containerType === 'group' ? t('Copy group') : t('Copy subgraph'),
-                  icon: <ClipboardIcon className="w-4 h-4" />,
-                  onClick: (event) => {
-                    event.stopPropagation();
-                    onCopy();
-                    closeMenu();
-                  }
-                },
-                {
-                  key: 'paste-into-container',
-                  label: pasteSummary ? t('Paste {summary} here', { summary: pasteSummary }) : t('Paste here'),
-                  icon: <ClipboardDownloadIcon className="w-4 h-4" />,
-                  onClick: (event) => {
-                    event.stopPropagation();
-                    onPaste();
-                    closeMenu();
-                  },
-                  hidden: !pasteSummary
-                },
-                {
-                  key: 'move-container',
-                  label: containerType === 'group' ? t('Move group') : t('Move subgraph'),
-                  icon: <MoveUpDownIcon className="w-4 h-4" />,
-                  onClick: (event) => {
-                    event.stopPropagation();
-                    onMove();
-                    closeMenu();
-                  }
-                },
-                {
-                  key: 'delete-container',
-                  label: containerType === 'group' ? t('Delete group') : t('Delete subgraph'),
-                  icon: <TrashIcon className="w-4 h-4" />,
-                  color: 'danger',
-                  onClick: (event) => {
-                    event.stopPropagation();
-                    onDelete();
-                    closeMenu();
-                  }
-                }
-              ]}
-            />
-          </div>,
-          document.body
         )}
     </div>
   );

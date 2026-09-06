@@ -331,3 +331,115 @@ def test_object_info_remap_cache_expires_and_is_lru_bounded(monkeypatch):
         lambda: float("inf"),
     )
     assert mobile_init._object_info_remap_get((latest,)) == (False, None)
+
+
+def test_build_remapped_object_info_drops_aliases_the_auth_gate_refuses(
+    tmp_path: Path, monkeypatch
+):
+    """A name the gate removed must not come back under its real path.
+
+    comfyui-multiuser filters /object_info by the alias names it can see on
+    disk. Remapping one of those into a different string afterwards would put a
+    file the user may not load back on the menu — for an `isolated` account,
+    that is somebody else's filename on screen.
+    """
+    import mobile_object_info as mobile_init
+
+    input_dir = tmp_path / "input"
+    (input_dir / "sub").mkdir(parents=True)
+    (input_dir / "sub" / "mine.png").write_bytes(b"mine")
+    (input_dir / "sub" / "theirs.png").write_bytes(b"theirs")
+    cache = tmp_path / "aliases.json"
+    aliases = ensure_aliases(
+        str(cache), str(input_dir), ["sub/mine.png", "sub/theirs.png"]
+    )
+    monkeypatch.setattr(mobile_init, "INPUT_ALIASES_CACHE_PATH", str(cache))
+    monkeypatch.setattr(
+        mobile_init.folder_paths, "get_input_directory", lambda: str(input_dir)
+    )
+
+    refused = aliases["sub/theirs.png"]
+
+    class FakeGate:
+        @staticmethod
+        def is_enabled():
+            return True
+
+        @staticmethod
+        def can_use_input(name, user=None):
+            return name != refused
+
+    monkeypatch.setattr(mobile_init, "_multiuser_api", lambda: FakeGate)
+
+    body = json.dumps(
+        {"LoadImage": {"choices": [aliases["sub/mine.png"], refused, "plain.png"]}}
+    ).encode()
+
+    remapped = json.loads(
+        mobile_init._build_remapped_object_info(body, {"id": "u1"})
+    )
+
+    assert remapped["LoadImage"]["choices"] == ["sub/mine.png", "plain.png"]
+
+
+def test_the_alias_remap_is_unchanged_without_the_auth_node(tmp_path: Path, monkeypatch):
+    """No gate installed: every alias still resolves, exactly as before."""
+    import mobile_object_info as mobile_init
+
+    input_dir = tmp_path / "input"
+    (input_dir / "sub").mkdir(parents=True)
+    (input_dir / "sub" / "photo.png").write_bytes(b"pixels")
+    cache = tmp_path / "aliases.json"
+    alias = ensure_aliases(str(cache), str(input_dir), ["sub/photo.png"])["sub/photo.png"]
+    monkeypatch.setattr(mobile_init, "INPUT_ALIASES_CACHE_PATH", str(cache))
+    monkeypatch.setattr(
+        mobile_init.folder_paths, "get_input_directory", lambda: str(input_dir)
+    )
+    monkeypatch.setattr(mobile_init, "_multiuser_api", lambda: None)
+
+    body = json.dumps({"LoadImage": {"choices": [alias]}}).encode()
+    remapped = json.loads(mobile_init._build_remapped_object_info(body, {"id": "u1"}))
+    assert remapped["LoadImage"]["choices"] == ["sub/photo.png"]
+
+
+def test_a_second_live_name_for_one_file_gets_its_own_alias(tmp_path: Path):
+    """Two live names for one inode must not share an alias.
+
+    `photo.jpeg` and a hard-linked `photo.png` are the same bytes but two
+    different widget values. Sharing one alias made the recorded source path
+    flip to whichever name was queued last, so an already-embedded workflow
+    reloaded as the *other* name -- a file that may not exist any more, which
+    the combo then flags as missing while the run still works off the link.
+    """
+    input_dir = tmp_path / "input"
+    input_dir.mkdir()
+    jpeg = input_dir / "photo.jpeg"
+    jpeg.write_bytes(b"image-data")
+    png = input_dir / "photo.png"
+    os.link(jpeg, png)
+    cache = tmp_path / "aliases.json"
+
+    jpeg_alias = ensure_aliases(str(cache), str(input_dir), ["photo.jpeg"])["photo.jpeg"]
+    png_alias = ensure_aliases(str(cache), str(input_dir), ["photo.png"])["photo.png"]
+
+    assert jpeg_alias != png_alias
+    # Each embedded workflow reloads as the name it was queued with.
+    assert resolve_aliases(str(cache), str(input_dir), [jpeg_alias, png_alias]) == {
+        jpeg_alias: "photo.jpeg",
+        png_alias: "photo.png",
+    }
+    # Re-queueing either one is still stable rather than minting a third alias.
+    assert ensure_aliases(str(cache), str(input_dir), ["photo.jpeg"])["photo.jpeg"] == jpeg_alias
+
+
+def test_one_batch_naming_both_hard_linked_names_keeps_them_apart(tmp_path: Path):
+    input_dir = tmp_path / "input"
+    input_dir.mkdir()
+    jpeg = input_dir / "photo.jpeg"
+    jpeg.write_bytes(b"image-data")
+    os.link(jpeg, input_dir / "photo.png")
+    cache = tmp_path / "aliases.json"
+
+    aliases = ensure_aliases(str(cache), str(input_dir), ["photo.jpeg", "photo.png"])
+
+    assert aliases["photo.jpeg"] != aliases["photo.png"]

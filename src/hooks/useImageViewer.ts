@@ -10,6 +10,11 @@ interface ImageViewerState {
   // True when the viewer's overlays have faded out after the idle timeout.
   // Surfaced from MediaViewer so siblings (e.g. the bottom bar) can fade in sync.
   viewerIdle: boolean;
+  // Shared by every fullscreen-viewer video. Keep this outside MediaViewer's
+  // component state so swiping between clips (or closing and reopening the
+  // viewer) never creates competing playback-rate values.
+  videoPlaybackRate: number;
+  setVideoPlaybackRate: (rate: number) => void;
   setViewerState: (
     next: Partial<Pick<ImageViewerState, 'viewerOpen' | 'viewerImages' | 'viewerIndex' | 'viewerScale' | 'viewerTranslate' | 'viewerIdle'>>
   ) => void;
@@ -22,6 +27,11 @@ export const useImageViewerStore = create<ImageViewerState>()((set) => ({
   viewerScale: 1,
   viewerTranslate: { x: 0, y: 0 },
   viewerIdle: false,
+  videoPlaybackRate: 1,
+  setVideoPlaybackRate: (rate) => {
+    if (!Number.isFinite(rate)) return;
+    set({ videoPlaybackRate: Math.min(2, Math.max(0.1, rate)) });
+  },
   setViewerState: (next) => {
     set((state) => {
       const candidate = {

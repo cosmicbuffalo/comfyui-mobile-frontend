@@ -82,8 +82,11 @@ function clearedWorkflowContent(): Partial<WorkflowState> {
     diffBaseWorkflow: null,
     lastEnqueuedWorkflow: null,
     scopeStack: [{ type: "root" as const }],
+    workflowPanelScrollTops: {},
     currentFilename: null,
+    filenameIsPlaceholder: false,
     currentWorkflowKey: null,
+    currentLineageId: null,
     collapsedItems: {},
     hiddenItems: {},
     mobileLayout: createEmptyMobileLayout(),
@@ -135,7 +138,9 @@ export type SessionNormalizable = {
   pointerByHierarchicalKey: Record<string, string>;
   hiddenItems: Record<string, boolean>;
   collapsedItems: Record<string, boolean>;
+  workflowPanelScrollTops?: Record<string, number>;
   currentWorkflowKey: string | null;
+  currentLineageId?: string | null;
 };
 
 /** Reconcile a rehydrated store draft so the tab strip, the active session, and
@@ -151,7 +156,10 @@ export function reconcileRehydratedSessions(state: WorkflowState): void {
   const promoteSnapshot = (snap: WorkflowSessionSnapshot): void => {
     const target = state as unknown as Record<string, unknown>;
     for (const field of SESSION_STATE_FIELDS) {
-      target[field] = snap[field as SessionStateField];
+      target[field] =
+        field === "workflowPanelScrollTops"
+          ? (snap[field as SessionStateField] ?? {})
+          : snap[field as SessionStateField];
     }
   };
   let sessions = (Array.isArray(state.sessions) ? state.sessions : [])
@@ -232,6 +240,9 @@ function normalizeSessionInPlace(
   s: SessionNormalizable,
   savedWorkflowStates: Record<string, SavedWorkflowState>,
 ): Record<string, SavedWorkflowState> {
+  s.workflowPanelScrollTops = normalizeWorkflowPanelScrollTops(
+    s.workflowPanelScrollTops,
+  );
   if (!s.workflow) {
     s.mobileLayout = createEmptyMobileLayout();
     s.itemKeyByPointer = {};
@@ -311,6 +322,29 @@ function normalizeSessionInPlace(
     };
   }
   return savedWorkflowStates;
+}
+
+const MAX_WORKFLOW_PANEL_SCROLL_POSITIONS = 256;
+
+function normalizeWorkflowPanelScrollTops(
+  value: unknown,
+): Record<string, number> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+
+  const normalized: Record<string, number> = {};
+  let count = 0;
+  for (const [key, scrollTop] of Object.entries(value)) {
+    if (key !== "root" && !key.startsWith("subgraph:")) continue;
+    if (key.length > 512) continue;
+    if (typeof scrollTop !== "number" || !Number.isFinite(scrollTop)) continue;
+
+    normalized[key] = Math.max(0, scrollTop);
+    count += 1;
+    if (count >= MAX_WORKFLOW_PANEL_SCROLL_POSITIONS) {
+      break;
+    }
+  }
+  return normalized;
 }
 
 export {

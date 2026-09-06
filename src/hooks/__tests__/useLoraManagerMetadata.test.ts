@@ -57,20 +57,41 @@ vi.mock("@/api/loraManagerClient", () => ({
     standalone: false,
   })),
   fetchAllModels: vi.fn(async () => SAMPLE),
-  fetchStandaloneModels: vi.fn(async () => SAMPLE),
+  refreshLoraManagerModels: vi.fn(async () => true),
   triggerPopulate: vi.fn(async () => null),
   getPopulateStatus: vi.fn(async () => null),
 }));
 
 import { useLoraManagerMetadataStore } from "../useLoraManagerMetadata";
-import { resolveModelProvider } from "@/api/loraManagerClient";
+import {
+  fetchAllModels,
+  getPopulateStatus,
+  refreshLoraManagerModels,
+  resolveModelProvider,
+  triggerPopulate,
+} from "@/api/loraManagerClient";
 
 // Reset shared store + mock state between every test so describe blocks (and any
 // future ones) don't leak provider/availability state into each other.
 beforeEach(() => {
-  useLoraManagerMetadataStore.setState({ available: null, standalone: false });
+  useLoraManagerMetadataStore.setState({
+    available: null,
+    standalone: false,
+    refreshing: false,
+    refreshDone: false,
+    refreshLabel: null,
+    refreshError: null,
+  });
   vi.mocked(resolveModelProvider).mockReset();
   vi.mocked(resolveModelProvider).mockResolvedValue({ base: "/api/lm", standalone: false });
+  vi.mocked(fetchAllModels).mockReset();
+  vi.mocked(fetchAllModels).mockResolvedValue(SAMPLE);
+  vi.mocked(refreshLoraManagerModels).mockReset();
+  vi.mocked(refreshLoraManagerModels).mockResolvedValue(true);
+  vi.mocked(triggerPopulate).mockReset();
+  vi.mocked(triggerPopulate).mockResolvedValue(null);
+  vi.mocked(getPopulateStatus).mockReset();
+  vi.mocked(getPopulateStatus).mockResolvedValue(null);
 });
 
 async function loadCheckpoints() {
@@ -144,5 +165,83 @@ describe("useLoraManagerMetadata availability", () => {
     // A subsequent call must genuinely retry (the old guard blocked forever).
     store.getState().ensureAvailable();
     await vi.waitFor(() => expect(store.getState().available).toBe(true));
+  });
+});
+
+describe("useLoraManagerMetadata refresh", () => {
+  it("prefers a LoRA Manager scan and metadata fetch for every model kind", async () => {
+    const store = useLoraManagerMetadataStore;
+
+    store.getState().refreshAllMetadata();
+    expect(store.getState().refreshing).toBe(true);
+    await vi.waitFor(() => expect(store.getState().refreshing).toBe(false));
+
+    expect(refreshLoraManagerModels).toHaveBeenCalledTimes(3);
+    expect(vi.mocked(refreshLoraManagerModels).mock.calls).toEqual([
+      ["checkpoints"],
+      ["loras"],
+      ["embeddings"],
+    ]);
+    expect(triggerPopulate).not.toHaveBeenCalled();
+    expect(store.getState().refreshDone).toBe(true);
+    expect(store.getState().refreshError).toBeNull();
+  });
+
+  it("falls back to the built-in fetcher when LoRA Manager is absent", async () => {
+    vi.useFakeTimers();
+    try {
+      vi.mocked(resolveModelProvider).mockResolvedValue({
+        base: "/mobile/api/models",
+        standalone: true,
+      });
+      vi.mocked(triggerPopulate).mockResolvedValue({
+        running: true,
+        total: 1,
+        processed: 0,
+        updated: 0,
+      });
+      vi.mocked(getPopulateStatus).mockResolvedValue({
+        running: false,
+        total: 1,
+        processed: 1,
+        updated: 1,
+      });
+
+      const store = useLoraManagerMetadataStore;
+      store.getState().refreshAllMetadata();
+
+      // Each category polls once after two seconds, then advances to the next.
+      await vi.advanceTimersByTimeAsync(6_000);
+      await Promise.resolve();
+
+      expect(refreshLoraManagerModels).not.toHaveBeenCalled();
+      expect(vi.mocked(triggerPopulate).mock.calls).toEqual([
+        ["checkpoints", false],
+        ["loras", false],
+        ["embeddings", false],
+      ]);
+      expect(store.getState().refreshing).toBe(false);
+      expect(store.getState().refreshDone).toBe(true);
+      expect(store.getState().refreshError).toBeNull();
+
+      await vi.advanceTimersByTimeAsync(4_999);
+      expect(store.getState().refreshDone).toBe(true);
+
+      await vi.advanceTimersByTimeAsync(1);
+      expect(store.getState().refreshDone).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not show completion when LoRA Manager refresh fails", async () => {
+    vi.mocked(refreshLoraManagerModels).mockResolvedValue(false);
+    const store = useLoraManagerMetadataStore;
+
+    store.getState().refreshAllMetadata();
+    await vi.waitFor(() => expect(store.getState().refreshing).toBe(false));
+
+    expect(store.getState().refreshDone).toBe(false);
+    expect(store.getState().refreshError).not.toBeNull();
   });
 });

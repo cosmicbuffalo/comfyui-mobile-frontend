@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactElement } from "react";
 import type { WorkflowNode } from "@/api/types";
 import { getScopedWorkflowView } from "@/utils/canonicalWorkflowOps";
@@ -30,19 +30,26 @@ import {
 import { collectAllWorkflowGroups } from "@/utils/workflowNodes";
 import { NodeCard } from "./WorkflowPanel/NodeCard";
 import { AddItemControls } from "./WorkflowPanel/AddItemControls";
+import { SubgraphConnectionsSection } from "./WorkflowPanel/SubgraphConnectionsSection";
+import { SubgraphScopeHeader } from "./WorkflowPanel/SubgraphScopeHeader";
 import { ContainerFooter } from "./WorkflowPanel/ContainerFooter";
 import { GraphContainerHeader } from "./WorkflowPanel/GraphContainer/Header";
 import { useWorkflowClipboardStore } from "@/hooks/useWorkflowClipboard";
 import { GraphContainerPlaceholder } from "./WorkflowPanel/GraphContainer/Placeholder";
 import { GroupHiddenSelectionPlaceholder } from "./WorkflowPanel/GroupHiddenSelectionPlaceholder";
-import { computeNodeGroupsFor } from "@/utils/nodeGroups";
+import { GroupSelectionActions } from "./WorkflowPanel/GroupSelectionActions";
 import { AddNodeModal } from "@/components/modals/AddNodeModal";
 import { DeleteContainerModal } from "@/components/modals/DeleteContainerModal";
+import { MoveIntoSubgraphModal } from "@/components/modals/MoveIntoSubgraphModal";
+import { RemoveHarvestedNodesDialog } from "@/components/modals/RemoveHarvestedNodesDialog";
 import { SearchBar } from "@/components/SearchBar";
 import { resolveWorkflowColor, themeColors } from "@/theme/colors";
 import { requireHierarchicalKey } from "@/utils/itemKeys";
 import {
+  ArrowRightIcon,
+  BookmarkIconSvg,
   CaretDownIcon,
+  CaretUpIcon,
   DocumentIcon,
   EmptyWorkflowIcon,
 } from "@/components/icons";
@@ -51,6 +58,16 @@ import { useErrorBadges } from "./WorkflowPanel/useErrorBadges";
 import { useExecutionFollower } from "./WorkflowPanel/useExecutionFollower";
 import { useI18n } from "@/i18n";
 import { useBookmarkBar } from "./WorkflowPanel/useBookmarkBar";
+import { ParentageEntry } from "@/components/ParentageEntry";
+import { BOOKMARK_CHIP_ALPHA } from "@/utils/workflowSurfaceColor";
+import { collectGroupSelectionKeys } from "@/utils/workflowSelection";
+import { resolveNodeIdentityFromHierarchicalKey } from "@/utils/workflowHierarchy";
+import { useWorkflowPanelScrollMemory } from "./WorkflowPanel/useWorkflowPanelScrollMemory";
+import { useIsDesktop } from "@/hooks/useIsDesktop";
+import { usePanelSearchShortcut } from "@/hooks/usePanelSearchShortcut";
+import { useWorkflowUndoShortcuts } from "@/hooks/useWorkflowUndoShortcuts";
+import { WorkflowUndoToast } from "./WorkflowPanel/WorkflowUndoToast";
+import { collectMoveIntoSubgraphTargets } from "@/utils/moveIntoSubgraphTargets";
 
 export const WorkflowPanel = memo(function WorkflowPanel({
   visible,
@@ -64,6 +81,7 @@ export const WorkflowPanel = memo(function WorkflowPanel({
   ) => void;
 }) {
   const { t } = useI18n();
+  const isDesktop = useIsDesktop();
   const workflow = useWorkflowStore((s) => s.workflow);
   const executingNodePath = useWorkflowStore((s) => s.executingNodePath);
   const connectionHighlightModes = useWorkflowStore(
@@ -71,6 +89,9 @@ export const WorkflowPanel = memo(function WorkflowPanel({
   );
   const bookmarkBarSide = useBookmarksStore((s) => s.bookmarkBarSide);
   const bookmarkBarTop = useBookmarksStore((s) => s.bookmarkBarTop);
+  const bookmarkBarCollapsed = useBookmarksStore((s) => s.bookmarkBarCollapsed);
+  const bookmarkBarCollapsedTop = useBookmarksStore((s) => s.bookmarkBarCollapsedTop);
+  const setBookmarkBarCollapsed = useBookmarksStore((s) => s.setBookmarkBarCollapsed);
   const setBookmarkBarPosition = useBookmarksStore(
     (s) => s.setBookmarkBarPosition,
   );
@@ -79,11 +100,13 @@ export const WorkflowPanel = memo(function WorkflowPanel({
   );
   const setItemCollapsed = useWorkflowStore((s) => s.setItemCollapsed);
   const scrollToNode = useWorkflowStore((s) => s.scrollToNode);
+  const jumpToWorkflowItem = useWorkflowStore((s) => s.jumpToWorkflowItem);
   const revealNodeWithParents = useWorkflowStore(
     (s) => s.revealNodeWithParents,
   );
   const nodeTypes = useWorkflowStore((s) => s.nodeTypes);
   const nodeErrors = useWorkflowErrorsStore((s) => s.nodeErrors);
+  const nodeErrorsByItemKey = useWorkflowErrorsStore((s) => s.nodeErrorsByItemKey);
   const searchOpen = useWorkflowStore((s) => s.searchOpen);
   const searchQuery = useWorkflowStore((s) => s.searchQuery);
   const setSearchQuery = useWorkflowStore((s) => s.setSearchQuery);
@@ -104,6 +127,8 @@ export const WorkflowPanel = memo(function WorkflowPanel({
   const bypassAllInContainer = useWorkflowStore((s) => s.bypassAllInContainer);
   const deleteContainer = useWorkflowStore((s) => s.deleteContainer);
   const copyContainer = useWorkflowStore((s) => s.copyContainer);
+  const duplicateContainer = useWorkflowStore((s) => s.duplicateContainer);
+  const moveItemsIntoSubgraph = useWorkflowStore((s) => s.moveItemsIntoSubgraph);
   const pasteIntoContainer = useWorkflowStore((s) => s.pasteIntoContainer);
   const clipboardSummary = useWorkflowClipboardStore((s) => s.payload?.summary ?? null);
   const updateContainerTitle = useWorkflowStore((s) => s.updateContainerTitle);
@@ -115,9 +140,6 @@ export const WorkflowPanel = memo(function WorkflowPanel({
   const addGroupNearNode = useWorkflowStore((s) => s.addGroupNearNode);
   const enterSubgraph = useWorkflowStore((s) => s.enterSubgraph);
   const exitSubgraph = useWorkflowStore((s) => s.exitSubgraph);
-  const navigateToSubgraphTrail = useWorkflowStore(
-    (s) => s.navigateToSubgraphTrail,
-  );
   const bookmarkedItems = useBookmarksStore((s) => s.bookmarkedItems);
   const toggleBookmark = useBookmarksStore((s) => s.toggleBookmark);
   const wrapperRef = useRef<HTMLDivElement>(null);
@@ -135,6 +157,9 @@ export const WorkflowPanel = memo(function WorkflowPanel({
     displayName: string;
     nodeCount: number;
   } | null>(null);
+  const [moveIntoSubgraphItemKeys, setMoveIntoSubgraphItemKeys] = useState<string[] | null>(null);
+  // Nodes a move left feeding nothing; non-empty opens the removal offer.
+  const [harvestedNodeIds, setHarvestedNodeIds] = useState<number[]>([]);
   const reposition = useRepositionMode();
   const loadWorkflow = useWorkflowStore((s) => s.loadWorkflow);
   const [topBarHeight, setTopBarHeight] = useState(69);
@@ -180,17 +205,51 @@ export const WorkflowPanel = memo(function WorkflowPanel({
   const currentScopeFrame = scopeStack[scopeStack.length - 1];
   const currentSubgraphId =
     currentScopeFrame?.type === "subgraph" ? currentScopeFrame.id : null;
+  // The breadcrumb retains a transparent row at root to avoid changing the top
+  // bar's measured height. Let the root viewport extend beneath that row so it
+  // remains visually absent and content can scroll through it.
+  const workflowViewportTop = currentSubgraphId
+    ? topBarHeight
+    : Math.max(0, topBarHeight - 33);
 
   // Selection is scoped to the current view: clear it whenever the scope changes
   // (entering/exiting a subgraph) so bulk ops always act within one scope.
   const clearWorkflowSelection = useWorkflowSelectionStore((s) => s.clearSelection);
   const workflowSelectionMode = useWorkflowSelectionStore((s) => s.selectionMode);
+  const exitWorkflowSelectionMode = useWorkflowSelectionStore((s) => s.exitSelectionMode);
   useEffect(() => {
     clearWorkflowSelection();
   }, [currentSubgraphId, clearWorkflowSelection]);
 
+  useEffect(() => {
+    if (!visible || !workflowSelectionMode) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape' || event.defaultPrevented) return;
+      exitWorkflowSelectionMode();
+    };
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [visible, workflowSelectionMode, exitWorkflowSelectionMode]);
+
+  usePanelSearchShortcut({
+    visible,
+    searchOpen,
+    setSearchOpen,
+    inputRef: searchInputRef,
+  });
+  useWorkflowUndoShortcuts(visible);
+
   // Bottom-of-list quick-add: add a node or an empty group at the bottom of the
   // current scope (root or the subgraph we're inside).
+  // "Move into subgraph" only leads somewhere when this scope actually holds a
+  // subgraph the item could go into. Inside a subgraph with nothing nested in
+  // it, the action opened a picker with no destinations, so it is not offered.
+  const canMoveIntoSubgraph = useCallback(
+    (itemKey: string) =>
+      collectMoveIntoSubgraphTargets(workflow, scopeStack, [itemKey]).length > 0,
+    [workflow, scopeStack],
+  );
+
   const handleAddNodeInScope = useCallback(() => {
     setAddNodeGroupId(null);
     setAddNodeSubgraphId(currentSubgraphId);
@@ -206,17 +265,6 @@ export const WorkflowPanel = memo(function WorkflowPanel({
         .map((frame) => frame.placeholderNodeId),
     [scopeStack],
   );
-  const currentScopeSubgraphTrail = useMemo(
-    () =>
-      scopeStack
-        .filter(
-          (frame): frame is Extract<ScopeFrame, { type: "subgraph" }> =>
-            frame.type === "subgraph",
-        )
-        .map((frame) => frame.id),
-    [scopeStack],
-  );
-
   const executingNodeIdInScope = useMemo(() => {
     if (!executingNodePath) return null;
     const parts = executingNodePath
@@ -247,31 +295,47 @@ export const WorkflowPanel = memo(function WorkflowPanel({
 
   const {
     bookmarkBarRef,
+    bookmarkListRef,
+    bookmarkListMaskStyle,
+    bookmarkTopFade,
+    bookmarkBottomFade,
+    bookmarkEdgeFadeSize,
+    bookmarkListScrollLocked,
+    canCycleBookmarks,
+    canCycleBookmarksBack,
+    updateBookmarkScrollFades,
+    scrollBookmarkEdge,
     bookmarkEntries,
     isBookmarkRepositioning,
     bookmarkBarStyle,
     handleBookmarkButtonClick,
+    handleBookmarkParentClick,
     handleBookmarkCycleClick,
+    handleBookmarkCycleBackClick,
+    consumeBookmarkPressIntent,
     handleBookmarkPointerDown,
     handleBookmarkPointerMove,
     handleBookmarkPointerUp,
     handleBookmarkPointerCancel,
   } = useBookmarkBar({
+    workflow,
+    nodeTypes,
+    isDesktop,
     mobileLayout,
     nodeItemKeyByScopedKey,
     subgraphItemKeyById,
-    currentScopeSubgraphTrail,
-    currentScopeWorkflow,
-    setItemCollapsed,
-    scrollToNode,
+    jumpToWorkflowItem,
     revealNodeWithParents,
-    setItemHidden,
-    navigateToSubgraphTrail,
-    itemKeyByPointer,
     bookmarkedItems,
     bookmarkBarSide,
     bookmarkBarTop,
     setBookmarkBarPosition,
+    bookmarkBarCollapsed,
+    bookmarkBarCollapsedTop,
+    // Only desktop pins the exit button in the gutter; on mobile it rides in
+    // the scope header, where nothing else competes for the space.
+    leftGutterReserved: isDesktop && Boolean(currentSubgraphId),
+    setBookmarkBarCollapsed,
     wrapperRef,
     previousTopBarHeightRef,
     topBarHeight,
@@ -505,14 +569,15 @@ export const WorkflowPanel = memo(function WorkflowPanel({
     const map = new Map<number, number>();
     let order = 0;
     for (const node of orderedNodes) {
-      const errors = nodeErrors[String(node.id)];
+      const errors = (node.itemKey ? nodeErrorsByItemKey[node.itemKey] : undefined)
+        ?? nodeErrors[String(node.id)];
       if (errors && errors.length > 0) {
         order += 1;
         map.set(node.id, order);
       }
     }
     return map;
-  }, [orderedNodes, nodeErrors]);
+  }, [orderedNodes, nodeErrors, nodeErrorsByItemKey]);
 
   const highlightedNodeIds = useMemo(() => {
     if (!currentScopeWorkflow) return new Set<number>();
@@ -692,40 +757,13 @@ export const WorkflowPanel = memo(function WorkflowPanel({
       );
   }, []);
 
-  // Per-tab scroll memory. The node-list container is a single DOM element reused
-  // across workflow tabs, so without this every tab would share one scrollTop.
-  // We stash each session's scrollTop as it scrolls and restore it on tab switch.
-  // (Kept in a ref, not state — scrolling shouldn't trigger re-renders, and the
-  // value need not survive a full reload.)
-  const sessionScrollTopsRef = useRef<Map<string, number>>(new Map());
-  const restoredSessionRef = useRef<string | null>(null);
-  const isRestoringScrollRef = useRef(false);
-
-  const handleNodeListScroll = useCallback(() => {
-    if (isRestoringScrollRef.current) return;
-    const el = parentRef.current;
-    if (!el || !activeSessionId) return;
-    // Only record once we've restored this session's position, so a clamp-fired
-    // scroll during the switch can't overwrite the saved value with the wrong one.
-    if (restoredSessionRef.current !== activeSessionId) return;
-    sessionScrollTopsRef.current.set(activeSessionId, el.scrollTop);
-  }, [activeSessionId]);
-
-  useLayoutEffect(() => {
-    if (restoredSessionRef.current === activeSessionId) return;
-    restoredSessionRef.current = activeSessionId;
-    const el = parentRef.current;
-    if (!el) return;
-    const saved = activeSessionId
-      ? sessionScrollTopsRef.current.get(activeSessionId) ?? 0
-      : 0;
-    isRestoringScrollRef.current = true;
-    el.scrollTo({ top: saved, behavior: "auto" });
-    // Release the guard after the browser settles the clamp scroll event.
-    requestAnimationFrame(() => {
-      isRestoringScrollRef.current = false;
-    });
-  }, [activeSessionId]);
+  // The same list element is reused across tabs and subgraph scopes. Preserve
+  // each view independently so scrolling inside a subgraph cannot move root.
+  const handleNodeListScroll = useWorkflowPanelScrollMemory(
+    parentRef,
+    activeSessionId,
+    scopeStack,
+  );
 
   useEffect(() => {
     if (!searchOpen) return;
@@ -892,46 +930,6 @@ export const WorkflowPanel = memo(function WorkflowPanel({
     };
   }, [enterSubgraph]);
 
-  // Select mode: all member node / subgraph-placeholder keys geometrically inside
-  // a group (or a nested subgroup of it), so selecting the group auto-selects
-  // them. Geometry-based (not the rendered children) so it INCLUDES hidden
-  // members and works even when the group is folded.
-  const collectGroupMemberSelectionKeys = useCallback(
-    (groupId: number, subgraphId: string | null): string[] => {
-      if (!workflow) return [];
-      const subgraph =
-        subgraphId == null
-          ? null
-          : workflow.definitions?.subgraphs?.find((s) => s.id === subgraphId) ?? null;
-      const scopeNodes = subgraphId == null ? workflow.nodes : subgraph?.nodes ?? [];
-      const scopeGroups = subgraphId == null ? workflow.groups ?? [] : subgraph?.groups ?? [];
-      const target = scopeGroups.find((g) => g.id === groupId);
-      if (!target) return [];
-      // The target plus any group fully nested inside it, so members of nested
-      // subgroups are included too.
-      const [tx, ty, tw, th] = target.bounding;
-      const memberGroupIds = new Set<number>([groupId]);
-      for (const g of scopeGroups) {
-        if (g.id === groupId) continue;
-        const [gx, gy, gw, gh] = g.bounding;
-        if (gx >= tx && gy >= ty && gx + gw <= tx + tw && gy + gh <= ty + th) {
-          memberGroupIds.add(g.id);
-        }
-      }
-      const nodeToGroup = computeNodeGroupsFor(scopeNodes, scopeGroups);
-      const keys: string[] = [];
-      for (const node of scopeNodes) {
-        const groupOfNode = nodeToGroup.get(node.id);
-        if (groupOfNode != null && memberGroupIds.has(groupOfNode)) {
-          const key = nodeItemKeyByScopedKey.get(scopedNodeKey(node.id, subgraphId));
-          if (key) keys.push(key);
-        }
-      }
-      return keys;
-    },
-    [workflow, nodeItemKeyByScopedKey],
-  );
-
   // Keys are identity-based (group key / placeholder id / node id) — never
   // positional. An index in the key remounts every later sibling's subtree
   // on delete/search/collapse, losing local state and re-decoding previews.
@@ -954,19 +952,34 @@ export const WorkflowPanel = memo(function WorkflowPanel({
           item.group.itemKey,
           `group ${item.group.id}`,
         );
-        // Member resolution is only needed in select mode; skip the geometry
-        // pass entirely otherwise. Includes hidden members so the group's
-        // checkbox + the hidden-nodes placeholder both act on them.
-        const groupSelectionMemberKeys = workflowSelectionMode
-          ? collectGroupMemberSelectionKeys(item.group.id, item.subgraphId ?? null)
-          : undefined;
-        const groupHiddenSelectionKeys = workflowSelectionMode
-          ? (groupSelectionMemberKeys ?? []).filter((key) => hiddenItems[key])
+        const groupSubgraphId = item.subgraphId ?? null;
+        const groupSelectionChildKeys = workflowSelectionMode && workflow
+          ? collectGroupSelectionKeys(
+              mobileLayout,
+              workflow,
+              item.group.id,
+              groupSubgraphId,
+              'children',
+            )
+          : [];
+        const groupSelectionDescendantKeys = workflowSelectionMode && workflow
+          ? collectGroupSelectionKeys(
+              mobileLayout,
+              workflow,
+              item.group.id,
+              groupSubgraphId,
+              'descendants',
+            )
+          : [];
+        const groupHiddenSelectionKeys = workflowSelectionMode && workflow
+          ? groupSelectionChildKeys.filter(
+              (key) =>
+                hiddenItems[key]
+                && Boolean(resolveNodeIdentityFromHierarchicalKey(workflow, key)),
+            )
           : [];
         const hiddenState = getHiddenStateForGroup(groupHierarchicalKey);
         const isGroupBookmarked = bookmarkedItems.includes(groupHierarchicalKey);
-        const canShowGroupBookmarkAction =
-          bookmarkedItems.length < 5 || isGroupBookmarked;
         const hiddenNodeCount = hiddenState.hiddenNodeCount;
         // Derive from the group's own node counts (not item.children) so these
         // actions stay available when the group is folded — folding empties
@@ -1000,7 +1013,6 @@ export const WorkflowPanel = memo(function WorkflowPanel({
               containerType="group"
               containerId={group.id}
               selectionKey={groupHierarchicalKey}
-              selectionMemberKeys={groupSelectionMemberKeys}
               title={group.title?.trim() || `Group ${group.id}`}
               nodeCount={item.nodeCount}
               isCollapsed={item.isCollapsed}
@@ -1009,7 +1021,6 @@ export const WorkflowPanel = memo(function WorkflowPanel({
               bypassedNodeCount={item.bypassedNodeCount}
               hiddenNodeCount={hiddenNodeCount}
               isBookmarked={isGroupBookmarked}
-              canShowBookmarkAction={canShowGroupBookmarkAction}
               canFoldAll={hasExpandedChildren}
               onToggleCollapse={() => setItemCollapsed(groupHierarchicalKey, !item.isCollapsed)}
               onToggleBookmark={() => toggleBookmark(groupHierarchicalKey)}
@@ -1049,6 +1060,12 @@ export const WorkflowPanel = memo(function WorkflowPanel({
                   subgraphId: item.subgraphId ?? null,
                 })
               }
+              onMoveIntoSubgraph={
+                canMoveIntoSubgraph(groupHierarchicalKey)
+                  ? () => setMoveIntoSubgraphItemKeys([groupHierarchicalKey])
+                  : undefined
+              }
+              onDuplicate={() => duplicateContainer(groupHierarchicalKey)}
               onCopy={() => copyContainer(groupHierarchicalKey)}
               onPaste={() => pasteIntoContainer(groupHierarchicalKey)}
               pasteSummary={clipboardSummary}
@@ -1087,6 +1104,12 @@ export const WorkflowPanel = memo(function WorkflowPanel({
                   item.isCollapsed ? "opacity-0" : "opacity-100"
                 }`}
               >
+                {workflowSelectionMode && !item.isCollapsed && (
+                  <GroupSelectionActions
+                    childrenKeys={groupSelectionChildKeys}
+                    descendantKeys={groupSelectionDescendantKeys}
+                  />
+                )}
                 {hiddenNodeCount > 0 && item.nodeCount > 0 && (
                   <div className="px-3 pb-2 -mt-1 text-xs text-slate-400 text-center">
                     {hiddenNodeCount} hidden node
@@ -1160,6 +1183,21 @@ export const WorkflowPanel = memo(function WorkflowPanel({
                 `subgraph-${item.subgraph.id}-${placeholderNode.id}`,
                 { type: "subgraph", id: item.subgraph.id, nodeId: placeholderNode.id },
               )}
+              onMoveIntoSubgraph={
+                canMoveIntoSubgraph(
+                  requireHierarchicalKey(
+                    placeholderNode.itemKey,
+                    `subgraph-placeholder ${item.subgraph.id}`,
+                  ),
+                )
+                  ? () => setMoveIntoSubgraphItemKeys([
+                      requireHierarchicalKey(
+                        placeholderNode.itemKey,
+                        `subgraph-placeholder ${item.subgraph.id}`,
+                      ),
+                    ])
+                  : undefined
+              }
               onEnterSubgraph={enterSubgraphHandlers(placeholderNode.id)}
             />
           </div>
@@ -1182,6 +1220,15 @@ export const WorkflowPanel = memo(function WorkflowPanel({
               type: "node",
               id: item.node.id,
             })}
+            onMoveIntoSubgraph={
+              canMoveIntoSubgraph(
+                requireHierarchicalKey(item.node.itemKey, `node ${item.node.id}`),
+              )
+                ? () => setMoveIntoSubgraphItemKeys([
+                    requireHierarchicalKey(item.node.itemKey, `node ${item.node.id}`),
+                  ])
+                : undefined
+            }
           />
         </div>
       );
@@ -1278,12 +1325,28 @@ export const WorkflowPanel = memo(function WorkflowPanel({
           {nestedItems.length === 0 ? (
             <div className="flex items-center justify-center h-full text-slate-400">
               <div className="text-center p-6 rounded-xl border border-white/10 bg-slate-900/95">
-                <p className="text-sm font-semibold text-slate-100">No matching nodes</p>
-                <p className="text-xs mt-2">Try a different search.</p>
+                <p className="text-sm font-semibold text-slate-100">{t('No matching nodes')}</p>
+                <p className="text-xs mt-2">{t('Try a different search.')}</p>
               </div>
             </div>
           ) : (
-            <div id="node-list-inner" className="mx-auto w-full max-w-3xl">
+            <div
+              id="node-list-inner"
+              className="mx-auto w-full max-w-3xl"
+              // Trailing scroll range an open inline combo borrows so a widget
+              // in the last node can still reach the top of the scrollport.
+              // It lives on the content, never on the scroller's own padding:
+              // a flex item's automatic minimum size will not compress padding,
+              // so padding here would grow the container past the viewport and
+              // make the whole document scrollable.
+              style={{ paddingBottom: "var(--combo-open-scroll-space, 0px)" }}
+            >
+              {currentSubgraphId && !searchActive && (
+                <>
+                  <SubgraphScopeHeader subgraphId={currentSubgraphId} />
+                  <SubgraphConnectionsSection subgraphId={currentSubgraphId} />
+                </>
+              )}
               {renderItems(nestedItems)}
               {!searchActive && (
                 <AddItemControls
@@ -1330,7 +1393,9 @@ export const WorkflowPanel = memo(function WorkflowPanel({
     if (!file) return;
     const result = await readWorkflowFromFile(file);
     if (result.kind === "workflow") {
-      loadWorkflow(result.workflow, result.filename);
+      loadWorkflow(result.workflow, result.filename, {
+        filenameIsPlaceholder: result.filenameIsPlaceholder,
+      });
       useWorkflowErrorsStore.getState().setError(null);
     } else if (result.kind === "no-workflow") {
       useNoWorkflowImageModal.getState().show(result.filename);
@@ -1344,7 +1409,7 @@ export const WorkflowPanel = memo(function WorkflowPanel({
       id="node-list-wrapper"
       ref={wrapperRef}
       className="absolute inset-x-0 bottom-0 bg-slate-950/88"
-      style={{ display: visible ? "block" : "none", top: topBarHeight }}
+      style={{ display: visible ? "block" : "none", top: workflowViewportTop }}
       onDragEnter={handleFileDragEnter}
       onDragOver={handleFileDragOver}
       onDragLeave={handleFileDragLeave}
@@ -1361,6 +1426,7 @@ export const WorkflowPanel = memo(function WorkflowPanel({
           </div>
         </div>
       )}
+      <WorkflowUndoToast />
       {content}
       <AddNodeModal
         isOpen={addNodeModalOpen}
@@ -1393,6 +1459,33 @@ export const WorkflowPanel = memo(function WorkflowPanel({
           }}
         />
       )}
+      {moveIntoSubgraphItemKeys && (
+        <MoveIntoSubgraphModal
+          itemKeys={moveIntoSubgraphItemKeys}
+          onClose={() => setMoveIntoSubgraphItemKeys(null)}
+          onConfirm={(placeholderItemKey) => {
+            const moved = moveItemsIntoSubgraph(
+              moveIntoSubgraphItemKeys,
+              placeholderItemKey,
+            );
+            setMoveIntoSubgraphItemKeys(null);
+            if (moved) {
+              jumpToWorkflowItem({ kind: 'subgraph', itemKey: placeholderItemKey });
+              // The move may have stranded sibling instances' feeder nodes
+              // after carrying their values inside; offer to clean those up.
+              if (moved.harvestedFrom.length > 0) {
+                setHarvestedNodeIds(moved.harvestedFrom);
+              }
+            }
+          }}
+        />
+      )}
+      {harvestedNodeIds.length > 0 && (
+        <RemoveHarvestedNodesDialog
+          nodeIds={harvestedNodeIds}
+          onClose={() => setHarvestedNodeIds([])}
+        />
+      )}
       {reposition.overlayOpen && reposition.initialTarget && (
         <RepositionOverlay
           mobileLayout={mobileLayout}
@@ -1403,46 +1496,223 @@ export const WorkflowPanel = memo(function WorkflowPanel({
           onCancel={reposition.cancelOverlay}
         />
       )}
+      {isDesktop && currentSubgraphId && (
+        // Outside the centred node column and pinned to the wrapper rather than
+        // to the list, so it stays put however far the list is scrolled: leaving
+        // a subgraph is always one click away, never a scroll first.
+        <button
+          type="button"
+          className="subgraph-exit-desktop absolute z-[200] flex h-10 w-10 cursor-pointer items-center justify-center rounded-full border border-white/10 bg-slate-900 text-slate-300 shadow-md hover:bg-white/5"
+          style={{ top: "16px", right: "calc(50% + 24rem + 0.75rem)" }}
+          aria-label={t("Exit subgraph")}
+          onClick={() => exitSubgraph()}
+        >
+          <ArrowRightIcon
+            className="w-5 h-5 rotate-180"
+            style={{position: "relative", left: "3px"}}
+          />
+        </button>
+      )}
+
       {bookmarkEntries.length > 0 && (
         <div
           ref={bookmarkBarRef}
-          className={`absolute z-[200] flex flex-col items-center gap-2 pointer-events-auto ${
+          // `select-none` on the whole gutter, not just its buttons: the bar is
+          // a drag surface (long-press to reposition) and nothing in it is worth
+          // copying, so without it iOS starts a text selection mid-drag. The
+          // app-wide `-webkit-touch-callout: none` in index.css only suppresses
+          // the callout menu; selection is governed separately. `user-select`
+          // inherits, so this covers the entries, chips, cycle controls and edge
+          // zones in one go.
+          className={`absolute z-[200] flex select-none flex-col items-center gap-2 pointer-events-auto ${
+            bookmarkBarCollapsed ? "bookmark-bar-collapsing" : "bookmark-bar-expanding"
+          } ${
+            // Collapsed, the gutter is one button wide whatever the platform.
+            isDesktop && !bookmarkBarCollapsed
+              ? "desktop-bookmark-bar items-stretch w-56"
+              : ""
+          } ${
             isBookmarkRepositioning
-              ? "rounded-2xl ring-2 ring-cyan-400/70 bg-slate-900/60 shadow-lg"
+              // The outline itself is in index.css, where it can be drawn
+              // without taking part in layout. Dimmed while it is being carried,
+              // so the list underneath — the thing being positioned against —
+              // stays readable through it.
+              // No `shadow-lg`: the class owns box-shadow, which it needs for
+              // the wash's spread, and the drop shadow is folded in there.
+              ? `bookmark-bar-repositioning opacity-60 ${
+                  // Collapsed, the gutter IS the round button, so the outline
+                  // traces it rather than boxing it.
+                  bookmarkBarCollapsed ? "rounded-full" : "rounded-2xl"
+                }`
               : ""
           }`}
+          // The gutter owns its horizontal gestures — flick away to change
+          // side, flick toward the edge to collapse — so a swipe that starts on
+          // it must never also be read as a swipe between panels.
+          data-swipe-nav-ignore="true"
           style={bookmarkBarStyle}
           onPointerDown={handleBookmarkPointerDown}
           onPointerMove={handleBookmarkPointerMove}
           onPointerUp={handleBookmarkPointerUp}
           onPointerCancel={handleBookmarkPointerCancel}
         >
+          {bookmarkBarCollapsed ? (
+            <button
+              type="button"
+              // Long-press to reposition still belongs to the container, so this
+              // only has to handle the tap. The gutter keeps its drag surface
+              // whether it is showing one button or twenty.
+              className={`bookmark-bar-collapsed w-10 h-10 shrink-0 cursor-pointer rounded-full border text-amber-500 shadow-md flex items-center justify-center select-none ${
+                // Transparent while repositioning so the gutter's amber wash
+                // shows through it: collapsed, the button covers the whole
+                // gutter, so an opaque fill left the outline as the only sign
+                // of the mode — while the expanded bar shows the wash across
+                // its whole body.
+                isBookmarkRepositioning
+                  ? "border-amber-400/40 bg-transparent"
+                  : "border-white/10 bg-slate-900"
+              }`}
+              aria-label={t("Show bookmarks")}
+              aria-expanded={false}
+              onClick={() => {
+                if (consumeBookmarkPressIntent()) return;
+                setBookmarkBarCollapsed(false);
+              }}
+            >
+              <BookmarkIconSvg className="w-5 h-5" />
+            </button>
+          ) : (
+          <>
+          {/* Pinned above the scrolling list, like the forward control below it,
+              so both stay reachable however far the list is scrolled. */}
+          {isDesktop && (
+            <button
+              type="button"
+              // Pinned above the list rather than scrolling with it: it is the
+              // way out of a bar too tall to see the end of, which is exactly
+              // when it would otherwise be scrolled out of reach.
+              className="desktop-bookmark-collapse flex h-8 shrink-0 cursor-pointer items-center justify-center gap-1.5 rounded-lg border border-white/10 bg-slate-900/95 text-xs text-slate-300 shadow-sm hover:bg-white/5"
+              aria-label={t("Collapse bookmarks")}
+              onClick={() => setBookmarkBarCollapsed(true)}
+            >
+              <BookmarkIconSvg className="w-4 h-4 text-amber-500" />
+              {t("Collapse bookmarks")}
+            </button>
+          )}
+          {!isDesktop && canCycleBookmarksBack && (
+            <button
+              type="button"
+              className="w-10 h-10 shrink-0 cursor-pointer rounded-full border border-white/10 bg-slate-900 text-slate-300 shadow-sm flex items-center justify-center select-none"
+              aria-label={t("Cycle bookmarks backwards")}
+              onClick={handleBookmarkCycleBackClick}
+            >
+              <CaretUpIcon className="w-5 h-5" />
+            </button>
+          )}
+          <div className="relative flex min-h-0 w-full flex-1 flex-col">
           <div
-            className={`flex flex-col items-center gap-2 ${
-              isBookmarkRepositioning ? "p-2 cursor-grab" : ""
+            ref={bookmarkListRef}
+            data-bookmark-scroll="true"
+            onScroll={updateBookmarkScrollFades}
+            // The list scrolls once there are more bookmarks than fit beside the
+            // node column; the cycle button below stays pinned so it's reachable
+            // no matter how far the list is scrolled. Desktop keeps a scrollbar
+            // and `pr-2` reserves room so it never sits on the entries' edges;
+            // the mobile gutter floats over the node list, where a scrollbar
+            // track reads as chrome laid on the content, so it is hidden.
+            // `overflow-x-hidden` and `pan-y` together: the list scrolls only
+            // vertically, so a sideways drag on an entry is left for the bar's
+            // own collapse gesture instead of being eaten as a rubber-banding
+            // horizontal scroll that goes nowhere.
+            className={`bookmark-bar-list flex min-h-0 flex-1 flex-col gap-2 overflow-x-hidden overscroll-contain ${
+              bookmarkListScrollLocked ? "overflow-y-hidden" : "overflow-y-auto"
+            } ${
+              isDesktop
+                ? "items-stretch pr-2"
+                : "items-center [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden"
+            } ${
+              isBookmarkRepositioning ? "cursor-grab" : ""
             }`}
+            // `none` while repositioning: the browser keeps panning a list it
+            // was already scrolling, which is what stole the drag that should
+            // have followed the hold.
+            style={{
+              ...bookmarkListMaskStyle,
+              touchAction: isBookmarkRepositioning ? "none" : "pan-y",
+            }}
           >
-            {bookmarkEntries.map((entry, index) => (
+            {bookmarkEntries.map((entry, index) => isDesktop ? (
+              <div key={entry.itemKey}>
+                <ParentageEntry
+                  label={entry.text}
+                  parents={entry.parents.map((parent, parentIndex) => ({
+                    ...parent,
+                    key: `${parentIndex}:${parent.label}`,
+                  }))}
+                  surfaceColor={entry.surfaceColor}
+                  borderColor={entry.borderColor}
+                  className="desktop-bookmark-entry"
+                  parentClassName="bookmark-parent-chip"
+                  removeClassName="desktop-bookmark-remove"
+                  bookmarkFlashKey={entry.itemKey}
+                  onClick={handleBookmarkButtonClick(entry, index)}
+                  onParentClick={(parentIndex, event) =>
+                    handleBookmarkParentClick(entry.parents[parentIndex].itemKey)(event)
+                  }
+                  parentAriaLabel={(parent) => `Jump to ${parent.label}`}
+                  onRemove={() => toggleBookmark(entry.itemKey)}
+                  removeAriaLabel={t('Remove bookmark')}
+                />
+              </div>
+            ) : (
               <button
                 key={entry.itemKey}
                 type="button"
-                className="w-10 h-10 rounded-full border border-white/10 bg-slate-900/70 text-[11px] font-bold text-slate-100 shadow-sm backdrop-blur-sm select-none"
+                data-bookmark-flash-key={entry.itemKey}
+                className="w-10 h-10 shrink-0 cursor-pointer rounded-full border border-white/10 text-[11px] font-bold text-slate-100 shadow-sm select-none"
                 onClick={handleBookmarkButtonClick(entry, index)}
+                style={{
+                  backgroundColor: hexToRgba(entry.surfaceColor, BOOKMARK_CHIP_ALPHA),
+                  borderColor: hexToRgba(entry.borderColor, BOOKMARK_CHIP_ALPHA),
+                }}
               >
-                {entry.text}
+                {entry.compactText}
               </button>
             ))}
-            {bookmarkEntries.length > 1 && (
-              <button
-                type="button"
-                className="w-10 h-10 rounded-full border border-white/10 bg-slate-900/70 text-slate-300 shadow-sm backdrop-blur-sm flex items-center justify-center select-none"
-                aria-label={t("Cycle bookmarks")}
-                onClick={handleBookmarkCycleClick}
-              >
-                <CaretDownIcon className="w-4 h-4" />
-              </button>
-            )}
           </div>
+          {/* Tapping a faded end scrolls that way instead of activating the
+              bookmark showing through it. */}
+          {bookmarkTopFade > 0 && !bookmarkListScrollLocked && (
+            <button
+              type="button"
+              className="absolute inset-x-0 top-0 cursor-pointer"
+              style={{ height: bookmarkEdgeFadeSize }}
+              aria-label={t("Scroll bookmarks up")}
+              onClick={() => scrollBookmarkEdge("up")}
+            />
+          )}
+          {bookmarkBottomFade > 0 && !bookmarkListScrollLocked && (
+            <button
+              type="button"
+              className="absolute inset-x-0 bottom-0 cursor-pointer"
+              style={{ height: bookmarkEdgeFadeSize }}
+              aria-label={t("Scroll bookmarks down")}
+              onClick={() => scrollBookmarkEdge("down")}
+            />
+          )}
+          </div>
+          {!isDesktop && canCycleBookmarks && (
+            <button
+              type="button"
+              className="w-10 h-10 shrink-0 cursor-pointer rounded-full border border-white/10 bg-slate-900 text-slate-300 shadow-sm flex items-center justify-center select-none"
+              aria-label={t("Cycle bookmarks")}
+              onClick={handleBookmarkCycleClick}
+            >
+              <CaretDownIcon className="w-5 h-5" />
+            </button>
+          )}
+          </>
+          )}
         </div>
       )}
     </div>

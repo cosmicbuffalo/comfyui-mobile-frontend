@@ -38,7 +38,7 @@ function makeNode(id: number, inputs = 0, outputs = 0): WorkflowNode {
 }
 
 function makeWorkflow(overrides: Partial<Workflow> = {}): Workflow {
-  return {
+  const workflow: Workflow = {
     last_node_id: 0,
     last_link_id: 0,
     nodes: [],
@@ -47,6 +47,19 @@ function makeWorkflow(overrides: Partial<Workflow> = {}): Workflow {
     config: {},
     version: 0.4,
     ...overrides,
+  };
+  // A real workflow's link allocator clears the ids already in use, and the
+  // validator now repairs one that doesn't (stock reissues from that counter,
+  // so a stale one overwrites a live link). Deriving it here keeps a fixture
+  // that declares `links: [[10, …]]` from reading as a workflow needing
+  // repair, which would defeat the "unchanged when already valid" tests.
+  const linkIds = [
+    ...workflow.links.map((link) => link[0]),
+    ...(workflow.definitions?.subgraphs ?? []).flatMap((sg) => (sg.links ?? []).map((l) => l.id)),
+  ];
+  return {
+    ...workflow,
+    last_link_id: Math.max(workflow.last_link_id, 0, ...linkIds),
   };
 }
 
@@ -72,11 +85,34 @@ describe('validateAndNormalizeWorkflow — fixture round-trip', () => {
     expect(sg4123!.outputs?.[0]?.linkIds).toEqual([2163]);
   });
 
-  it('does not modify the original workflow object reference', () => {
+  it('repairs a link allocator the desktop frontend left stale', () => {
+    // Not a contrived case: this fixture is a real desktop-authored workflow,
+    // and its "Backend" definition already runs interior link ids up to 2431
+    // while the root declares 2131. Stock hands out `state.lastLinkId + 1` and
+    // subgraphs share the root's counter, so the next connection drawn inside
+    // that subgraph would be given an id 300 live links already hold.
     const wf = loadFixture();
+    expect(wf.last_link_id).toBe(2131);
+
     const result = validateAndNormalizeWorkflow(wf);
-    // When no corrections needed, the same object is returned
-    expect(result).toBe(wf);
+
+    // 2431 is the highest id the file already held; the 11 above it are the
+    // boundary links `migrateProxyWidgets` adds when it retires this fixture's
+    // legacy `proxyWidgets` lists into real boundary inputs.
+    expect(result.last_link_id).toBe(2442);
+    // Beyond the counter and the proxy migration, nothing moves: the node list
+    // is the same length and every node that carried no legacy widget list comes
+    // back byte-for-byte. (Identity is no longer the right assertion — migrating
+    // a placeholder necessarily rebuilds the graph around it.)
+    expect(result.nodes).toHaveLength(wf.nodes.length);
+    const carriedProxies = new Set(
+      wf.nodes.filter((node) => node.properties?.proxyWidgets).map((node) => node.id),
+    );
+    expect(carriedProxies.size, 'the fixture is the one with legacy lists').toBeGreaterThan(0);
+    for (const node of wf.nodes) {
+      if (carriedProxies.has(node.id)) continue;
+      expect(result.nodes.find((candidate) => candidate.id === node.id)).toEqual(node);
+    }
   });
 });
 
@@ -172,6 +208,11 @@ describe('validateAndNormalizeWorkflow — SubgraphIO.linkIds repair', () => {
   it('returns same reference when no subgraph corrections needed', () => {
     const subgraph: WorkflowSubgraphDefinition = {
       id: 'sg-already-valid',
+      inputNode: { id: -10, bounding: [-400, 0, 120, 60] as [number, number, number, number] },
+      outputNode: { id: -20, bounding: [400, 0, 120, 60] as [number, number, number, number] },
+      version: 1,
+      revision: 0,
+      state: { lastGroupId: 0, lastNodeId: 0, lastLinkId: 0, lastRerouteId: 0 },
       nodes: [],
       links: [
         { id: 301, origin_id: -10, origin_slot: 0, target_id: 10, target_slot: 0, type: 'INT' },
@@ -190,6 +231,11 @@ describe('validateAndNormalizeWorkflow — SubgraphIO.linkIds repair', () => {
   it('does not modify subgraphs that have no links', () => {
     const subgraph: WorkflowSubgraphDefinition = {
       id: 'sg-no-links',
+      inputNode: { id: -10, bounding: [-400, 0, 120, 60] as [number, number, number, number] },
+      outputNode: { id: -20, bounding: [400, 0, 120, 60] as [number, number, number, number] },
+      version: 1,
+      revision: 0,
+      state: { lastGroupId: 0, lastNodeId: 0, lastLinkId: 0, lastRerouteId: 0 },
       nodes: [],
       links: [],
       inputs: [{ id: 'slot-0', name: 'x', type: 'INT' }],
@@ -340,5 +386,51 @@ describe('validateAndNormalizeWorkflow — root link garbage collection', () => 
     const once = validateAndNormalizeWorkflow(wf);
     const twice = validateAndNormalizeWorkflow(once);
     expect(twice).toBe(once);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// widgets_values_named
+// ---------------------------------------------------------------------------
+
+describe('validateAndNormalizeWorkflow — widgets_values_named', () => {
+  it('strips the named widget-value mirror from root and subgraph nodes', () => {
+    const rootNode = {
+      ...makeNode(1),
+      widgets_values: ['edited on mobile'],
+      widgets_values_named: { text: 'stale desktop value' },
+    } as unknown as WorkflowNode;
+    const innerNode = {
+      ...makeNode(2),
+      widgets_values: [7],
+      widgets_values_named: { steps: 20 },
+    } as unknown as WorkflowNode;
+    const wf = makeWorkflow({
+      nodes: [rootNode],
+      definitions: {
+        subgraphs: [
+          {
+            id: 'sg-1',
+            nodes: [innerNode],
+            links: [],
+            inputs: [],
+            outputs: [],
+          } as unknown as WorkflowSubgraphDefinition,
+        ],
+      },
+    });
+
+    const result = validateAndNormalizeWorkflow(wf);
+
+    expect('widgets_values_named' in result.nodes[0]).toBe(false);
+    expect(result.nodes[0].widgets_values).toEqual(['edited on mobile']);
+    const inner = result.definitions!.subgraphs![0].nodes[0];
+    expect('widgets_values_named' in inner).toBe(false);
+    expect(inner.widgets_values).toEqual([7]);
+  });
+
+  it('leaves a workflow without the mirror untouched', () => {
+    const wf = makeWorkflow({ nodes: [makeNode(1)] });
+    expect(validateAndNormalizeWorkflow(wf)).toBe(wf);
   });
 });

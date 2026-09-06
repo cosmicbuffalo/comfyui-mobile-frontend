@@ -8,7 +8,7 @@ describe('isWorkflowSourceHidden', () => {
       ['private'],
     )).toBe(true);
     expect(isWorkflowSourceHidden(
-      { type: 'user', filename: '.private/flow.json' },
+      { type: 'user', filename: '.hidden/flow.json' },
     )).toBe(true);
   });
 
@@ -36,7 +36,7 @@ describe('isWorkflowHidden', () => {
       'private/flow.json',
       ['private'],
     )).toBe(true);
-    expect(isWorkflowHidden(null, '.drafts/flow.json', [])).toBe(true);
+    expect(isWorkflowHidden(null, '.hidden/flow.json', [])).toBe(true);
   });
 
   it('does not flag a workflow whose filename is not hidden', () => {

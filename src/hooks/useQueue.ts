@@ -85,6 +85,13 @@ export interface QueueState {
   // bar (compact); 'stacked' = every output shown at once (vertical column on
   // mobile, a single centered row on desktop). Global, persisted.
   queueOutputLayout: 'tabbed' | 'stacked';
+  // Whether the user has explicitly folded/unfolded the Pending section of the
+  // queue list. `null` means they haven't, and the section follows the
+  // auto-collapse rule (see isPendingSectionCollapsed) instead — a long pending
+  // run otherwise buries the generating/completed cards below a full screen of
+  // scrolling. Global, persisted; cleared once the queue drains so the next
+  // batch gets the default again.
+  pendingCollapsedOverride: boolean | null;
   previewVisibility: Record<string, boolean>;
   previewVisibilityDefault: boolean;
   // Per-prompt workflow diff/prompt-preview, computed at enqueue time.
@@ -128,6 +135,8 @@ export interface QueueState {
   toggleShowPromptPreview: () => void;
   setQueueOutputLayout: (layout: 'tabbed' | 'stacked') => void;
   toggleQueueOutputLayout: () => void;
+  setPendingCollapsed: (collapsed: boolean) => void;
+  clearPendingCollapsedOverride: () => void;
   recordWorkflowDiff: (promptId: string, diff: QueueWorkflowDiff) => void;
   fetchQueueMetadata: (promptIds: string[]) => Promise<void>;
   setPreviewVisibility: (promptId: string, visible: boolean) => void;
@@ -536,6 +545,7 @@ export const useQueueStore = create<QueueState>()(
         showQueueTimestamps: state.showQueueTimestamps,
         showPromptPreview: state.showPromptPreview,
         queueOutputLayout: state.queueOutputLayout,
+        pendingCollapsedOverride: state.pendingCollapsedOverride,
         previewVisibility: state.previewVisibility,
         previewVisibilityDefault: state.previewVisibilityDefault,
         workflowDiffs: state.workflowDiffs,

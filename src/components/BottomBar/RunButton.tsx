@@ -127,7 +127,7 @@ export function RunButton() {
         disabled={isStopping}
         className="w-full py-3 px-6 rounded-xl font-semibold text-lg min-h-[48px] transition-all bg-red-500 text-white active:bg-red-600 disabled:opacity-70"
       >
-        {isStopping ? 'Stopping...' : 'Stop'}
+        {isStopping ? t('Stopping...') : t('Stop')}
       </button>
       </div>
     );

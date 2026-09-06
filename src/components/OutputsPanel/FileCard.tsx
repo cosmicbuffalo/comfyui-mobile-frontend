@@ -5,9 +5,13 @@ import {
   HeartIcon, RejectedIcon, VideoCameraIcon, EyeOffIcon
 } from '@/components/icons';
 import { ContextMenuButton } from '@/components/buttons/ContextMenuButton';
+import { FavoriteButton } from '@/components/buttons/FavoriteButton';
+import { RejectButton } from '@/components/buttons/RejectButton';
 import { formatBytes } from '@/utils/formatBytes';
 import { useI18n } from '@/i18n';
 import { formatRelativeAge } from '@/utils/outputsBrowser';
+import { useLongPress } from '@/hooks/useLongPress';
+import { formatVideoDuration } from '@/utils/formatVideoDuration';
 
 interface SelectionClickOptions {
   range?: boolean;
@@ -22,10 +26,15 @@ interface FileCardProps {
   isRejected?: boolean;
   onNavigateFolder: (folder: string) => void;
   onOpen: (file: FileItem) => void;
+  /** Optional hold action, independent from the normal tap action. */
+  onLongPressOpen?: (file: FileItem) => void;
   onMenu: (file: FileItem, e: MouseEvent) => void;
+  onToggleFavorite?: (id: string) => void;
+  onToggleRejected?: (id: string) => void;
   onToggleSelection: (id: string, event: MouseEvent, options?: SelectionClickOptions) => void;
   showContextMenu?: boolean;
   sortMode?: SortMode;
+  videoDurationSeconds?: number;
 }
 
 function SelectionBadge({
@@ -70,10 +79,14 @@ function FileCardComponent({
   isRejected = false,
   onNavigateFolder,
   onOpen,
+  onLongPressOpen,
   onMenu,
+  onToggleFavorite,
+  onToggleRejected,
   onToggleSelection,
   showContextMenu = true,
   sortMode,
+  videoDurationSeconds,
 }: FileCardProps) {
   const { t } = useI18n();
   const isFolder = file.type === 'folder';
@@ -88,6 +101,7 @@ function FileCardComponent({
     : (file.modifiedDate ?? file.date);
   const relativeAge = formatRelativeAge(metadataDate);
   const [previewError, setPreviewError] = useState(false);
+  const [desktopActionsDismissed, setDesktopActionsDismissed] = useState(false);
 
   const folderMetadata = isFolder && typeof file.count === 'number' ? (
     <div className="folder-metadata flex min-w-0 items-center gap-x-1 overflow-hidden whitespace-nowrap text-xs text-slate-400">
@@ -143,7 +157,19 @@ function FileCardComponent({
   }, [file.previewUrl, file.id]);
   /* eslint-enable react-hooks/set-state-in-effect */
 
+  // In select mode a tap toggles selection, so opening the viewer needs its own
+  // gesture: press and hold. Folders have nothing to view, so they keep the
+  // tap-only behaviour.
+  const canLongPressOpen = (selectionMode || Boolean(onLongPressOpen)) && !isFolder;
+  const { handlers: longPressHandlers, consumeLongPress } = useLongPress({
+    enabled: canLongPressOpen,
+    onLongPress: () => (onLongPressOpen ?? onOpen)(file),
+  });
+
   const handleClick = (event: MouseEvent) => {
+    // A real click follows the hold's pointerup; without consuming it the hold
+    // would open the viewer AND the release would toggle the selection.
+    if (consumeLongPress()) return;
     if (selectionMode) {
       onToggleSelection(file.id, event);
     } else if (isFolder) {
@@ -163,11 +189,86 @@ function FileCardComponent({
     onToggleSelection(file.id, event, { range: true });
   };
 
+  const handleToggleFavorite = () => {
+    // Entering a state collapses the chooser to its persistent icon. Clearing
+    // that state should reveal the neutral chooser immediately, even though
+    // the pointer has not left and re-entered the card.
+    setDesktopActionsDismissed(!isFavorited);
+    onToggleFavorite?.(file.id);
+  };
+
+  const handleToggleRejected = () => {
+    setDesktopActionsDismissed(!isRejected);
+    onToggleRejected?.(file.id);
+  };
+
+  const hoverActionsVisibility = desktopActionsDismissed
+    ? 'invisible opacity-0 pointer-events-none'
+    : 'invisible opacity-0 pointer-events-none group-hover:visible group-hover:opacity-100 group-hover:pointer-events-auto';
+  const persistentStateVisibility = desktopActionsDismissed
+    ? 'visible opacity-100'
+    : 'visible opacity-100 group-hover:invisible group-hover:opacity-0';
+  const showRejectHover = !isFolder && Boolean(onToggleRejected) && !isFavorited;
+  const showFavoriteHover = !isRejected;
+  const showsBothHoverActions = showRejectHover && showFavoriteHover;
+
+  // The favorite/reject badges normally only render on touch layouts, because
+  // desktop swaps in the interactive hover buttons instead. Those buttons are
+  // suppressed in selection mode, so keep the static badges visible there or
+  // the state disappears entirely on desktop.
+  const staticStateBadges = selectionMode ? '' : 'lg:hidden';
+
+  const desktopStateActions = !selectionMode && onToggleFavorite ? (
+    <div
+      className={`desktop-output-state-controls relative hidden h-9 shrink-0 lg:block ${showsBothHoverActions ? 'w-[76px]' : 'w-9'}`}
+      onClick={(event) => event.stopPropagation()}
+    >
+      <div className={`desktop-state-hover-actions absolute inset-0 flex items-center justify-end gap-1 transition-opacity ${hoverActionsVisibility}`}>
+        {showRejectHover && onToggleRejected && (
+          <RejectButton
+            onClick={handleToggleRejected}
+            isRejected={isRejected}
+            isFavorited={false}
+          />
+        )}
+        {showFavoriteHover && (
+          <FavoriteButton
+            onClick={handleToggleFavorite}
+            isFavorited={isFavorited}
+            toggleable
+          />
+        )}
+      </div>
+      {isFavorited && (
+        <div className={`persistent-state-action absolute right-0 top-0 transition-opacity ${persistentStateVisibility}`}>
+          <FavoriteButton
+            onClick={handleToggleFavorite}
+            isFavorited
+            toggleable
+            bare
+          />
+        </div>
+      )}
+      {isRejected && !isFolder && onToggleRejected && (
+        <div className={`persistent-state-action absolute right-0 top-0 transition-opacity ${persistentStateVisibility}`}>
+          <RejectButton
+            onClick={handleToggleRejected}
+            isRejected
+            isFavorited={false}
+            bare
+          />
+        </div>
+      )}
+    </div>
+  ) : null;
+
   if (viewMode === 'list') {
     return (
       <div
-        className={`file-card-list-item flex items-center gap-3 p-2 rounded-xl border border-white/10 bg-slate-900/95 hover:bg-slate-800/95 ${isSelected ? 'ring-2 ring-cyan-400' : ''} ${isHidden ? 'opacity-60' : ''}`}
+        className={`file-card-list-item group flex items-center gap-3 p-2 rounded-xl border border-white/10 bg-slate-900/95 hover:bg-slate-800/95 ${isSelected ? 'ring-2 ring-cyan-400' : ''} ${isHidden ? 'opacity-60' : ''}`}
         onClick={handleClick}
+        onMouseLeave={() => setDesktopActionsDismissed(false)}
+        {...longPressHandlers}
       >
         <div className={`file-preview-container w-10 h-10 flex-shrink-0 flex items-center justify-center rounded text-slate-400 overflow-hidden relative ${isFolder ? '' : 'bg-slate-950/80'}`}>
           {isFolder ? (
@@ -175,7 +276,7 @@ function FileCardComponent({
           ) : file.previewUrl && !previewError ? (
             <img
               src={file.previewUrl}
-              className="w-full h-full object-cover"
+              className="w-full h-full object-cover select-none"
               loading="lazy"
               onError={() => setPreviewError(true)}
             />
@@ -211,12 +312,11 @@ function FileCardComponent({
           ) : null}
         </div>
         <div className="file-actions-container flex items-center gap-2 text-slate-300">
-          {isFavorited && (
-            <HeartIcon className="w-4 h-4 text-red-500" />
-          )}
-          {isRejected && (
-            <RejectedIcon className="w-4 h-4" />
-          )}
+          {desktopStateActions}
+          <div className={`file-card-state-badges flex items-center gap-2 ${staticStateBadges}`}>
+            {isFavorited && <HeartIcon className="favorite-badge-icon w-4 h-4 text-red-500" />}
+            {isRejected && <RejectedIcon className="rejected-badge-icon w-4 h-4" />}
+          </div>
           {selectionMode ? (
             <SelectionBadge
               isSelected={isSelected}
@@ -237,10 +337,14 @@ function FileCardComponent({
   }
 
   return (
-    <div className="file-card-grid-item flex flex-col gap-1">
+    <div
+      className="file-card-grid-item group flex flex-col gap-1"
+      onMouseLeave={() => setDesktopActionsDismissed(false)}
+    >
       <div
-        className={`relative aspect-square bg-slate-900/95 border border-white/10 overflow-hidden transition-all ${isSelected ? 'ring-4 ring-cyan-400 ring-offset-2 ring-offset-slate-950' : ''}`}
+        className={`relative aspect-square bg-slate-900/95 border border-white/10 overflow-hidden transition-all ${isSelected ? 'ring-4 ring-cyan-400 ring-offset-2 ring-offset-slate-950' : !selectionMode ? 'lg:group-hover:ring-4 lg:group-hover:ring-slate-300/40 lg:group-hover:ring-offset-2 lg:group-hover:ring-offset-slate-950' : ''}`}
         onClick={handleClick}
+        {...longPressHandlers}
         style={{"borderRadius":"9px"}}
       >
         {isFolder ? (
@@ -265,7 +369,7 @@ function FileCardComponent({
         ) : file.previewUrl && !previewError ? (
           <img
             src={file.previewUrl}
-            className="w-full h-full object-cover"
+            className="w-full h-full object-cover select-none"
             loading="lazy"
             onError={() => setPreviewError(true)}
           />
@@ -304,16 +408,66 @@ function FileCardComponent({
           </div>
         ) : null}
 
-        {isFavorited && (
-          <div className="favorite-badge-container absolute bottom-2 right-2 pointer-events-none">
-            <HeartIcon className="w-6 h-6 text-red-500 drop-shadow" />
+        {!selectionMode && onToggleFavorite && (
+          <div
+            className={`desktop-state-hover-actions absolute inset-x-2 bottom-2 hidden items-end justify-between transition-opacity lg:flex ${hoverActionsVisibility}`}
+            onClick={(event) => event.stopPropagation()}
+          >
+            {showRejectHover && onToggleRejected && (
+              <RejectButton
+                onClick={handleToggleRejected}
+                isRejected={isRejected}
+                isFavorited={false}
+              />
+            )}
+            {!showRejectHover && <span />}
+            {showFavoriteHover && (
+              <FavoriteButton
+                onClick={handleToggleFavorite}
+                isFavorited={isFavorited}
+                toggleable
+              />
+            )}
           </div>
         )}
-        {isRejected && (
-          <div className="rejected-badge-container absolute bottom-2 right-2 pointer-events-none">
-            <RejectedIcon className="w-6 h-6 drop-shadow" />
+        {!selectionMode && isFavorited && onToggleFavorite && (
+          <div
+            className={`persistent-state-action absolute bottom-2 right-2 hidden transition-opacity lg:block ${persistentStateVisibility}`}
+            onClick={(event) => event.stopPropagation()}
+          >
+            <FavoriteButton
+              onClick={handleToggleFavorite}
+              isFavorited
+              toggleable
+              bare
+            />
           </div>
         )}
+        {!selectionMode && isRejected && !isFolder && onToggleRejected && (
+          <div
+            className={`persistent-state-action absolute bottom-2 right-2 hidden transition-opacity lg:block ${persistentStateVisibility}`}
+            onClick={(event) => event.stopPropagation()}
+          >
+            <RejectButton
+              onClick={handleToggleRejected}
+              isRejected
+              isFavorited={false}
+              bare
+            />
+          </div>
+        )}
+        <div className={`file-card-state-badges ${staticStateBadges}`}>
+          {isFavorited && (
+            <div className="favorite-badge-container absolute bottom-2 right-2 pointer-events-none">
+              <HeartIcon className="w-6 h-6 text-red-500 drop-shadow" />
+            </div>
+          )}
+          {isRejected && (
+            <div className="rejected-badge-container absolute bottom-2 right-2 pointer-events-none">
+              <RejectedIcon className="w-6 h-6 drop-shadow" />
+            </div>
+          )}
+        </div>
 
         {/* Top-left badge stack. The hidden badge always claims the corner
             first, so other badges (e.g. video) sit to its right. */}
@@ -332,9 +486,21 @@ function FileCardComponent({
           </div>
         )}
 
-        {!isFolder && typeof file.size === 'number' && file.size > 0 && (
-          <div className="file-size-badge absolute bottom-1 left-1 bg-black/50 px-1 rounded text-[10px] text-white pointer-events-none">
-            {formatBytes(file.size)}
+        {!isFolder && (
+          (typeof file.size === 'number' && file.size > 0)
+          || (file.type === 'video' && typeof videoDurationSeconds === 'number' && videoDurationSeconds > 0)
+        ) && (
+          <div className="absolute bottom-1 left-1 flex items-center gap-1 pointer-events-none">
+            {typeof file.size === 'number' && file.size > 0 && (
+              <div className="file-size-badge bg-black/50 px-1 rounded text-[10px] text-white">
+                {formatBytes(file.size)}
+              </div>
+            )}
+            {file.type === 'video' && typeof videoDurationSeconds === 'number' && videoDurationSeconds > 0 && (
+              <div className="video-duration-badge bg-black/50 px-1 rounded text-[10px] text-white tabular-nums">
+                {formatVideoDuration(videoDurationSeconds)}
+              </div>
+            )}
           </div>
         )}
       </div>

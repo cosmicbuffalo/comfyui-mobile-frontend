@@ -145,13 +145,23 @@ export function buildNestedListFromLayout(
     visitedSubgraphs = new Set<string>()
   ): number => {
     let count = 0;
+    // Counted over the same visible set as countNodesInRefs: hidden nodes are
+    // excluded from both, so "all bypassed" can't be reached by nodes the list
+    // isn't showing (e.g. after "Hide bypassed nodes").
+    const isNodeHidden = (nodeId: number): boolean =>
+      hasFlag(
+        hiddenItems,
+        makeLocationPointer({ type: 'node', nodeId, subgraphId: currentSubgraphId })
+      );
     for (const ref of refs) {
       if (ref.type === 'node') {
+        if (isNodeHidden(ref.id)) continue;
         const node = resolveNode(ref.id, currentSubgraphId);
         if (node && node.mode === 4) count++;
       } else if (ref.type === 'hiddenBlock') {
         const blockNodes = layout.hiddenBlocks[ref.blockId] ?? [];
         for (const nodeId of blockNodes) {
+          if (isNodeHidden(nodeId)) continue;
           const node = resolveNode(nodeId, currentSubgraphId);
           if (node && node.mode === 4) count++;
         }
@@ -170,7 +180,17 @@ export function buildNestedListFromLayout(
         const instanceKey = ref.nodeId != null ? `${ref.id}#${ref.nodeId}` : ref.id;
         if (visitedSubgraphs.has(instanceKey)) continue;
         visitedSubgraphs.add(instanceKey);
-        // Count subgraph as 1 bypassed if all its inner nodes are bypassed
+        // The placeholder node carries this instance's bypass state — the same
+        // mode the card renders and that expandWorkflowSubgraphs propagates to
+        // the inner nodes at queue time. Reading the definition's nodes instead
+        // would tie every instance of a shared subgraph to the same state.
+        const placeholder =
+          ref.nodeId != null ? resolveNode(ref.nodeId, currentSubgraphId) : undefined;
+        if (placeholder) {
+          if (placeholder.mode === 4) count += 1;
+          continue;
+        }
+        // Legacy layouts carry no placeholder id: fall back to the definition.
         const subgraph = subgraphById.get(ref.id);
         const innerNodes = subgraph?.nodes ?? [];
         if (innerNodes.length > 0 && innerNodes.every((n) => n.mode === 4)) {

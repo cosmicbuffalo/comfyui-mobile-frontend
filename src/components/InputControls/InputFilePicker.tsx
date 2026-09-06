@@ -1,6 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { AssetSource, FileItem, SortMode } from "@/api/client";
-import { getUserImages, searchUserImagesByPrompt, uploadImageFile } from "@/api/client";
+import {
+  getScreenPreviewUrl,
+  getUserImages,
+  searchUserImagesByPrompt,
+  uploadImageFile,
+} from "@/api/client";
 import { resolveInputPathForFile } from "@/utils/filesystem";
 import { SearchBar } from "@/components/SearchBar";
 import { ContextMenuButton } from "@/components/buttons/ContextMenuButton";
@@ -11,7 +16,10 @@ import { OutputsFoldersSection } from "@/components/OutputsPanel/FoldersSection"
 import { useOutputsStore } from "@/hooks/useOutputs";
 import { t as globalT, useI18n } from "@/i18n";
 import { useWorkflowErrorsStore } from "@/hooks/useWorkflowErrors";
+import { useWorkflowStore } from "@/hooks/useWorkflow";
+import { useImageViewerStore } from "@/hooks/useImageViewer";
 import { useDismissOnOutsideClick } from "@/hooks/useDismissOnOutsideClick";
+import { getMediaType } from "@/utils/media";
 import {
   CheckIcon,
   DiceIcon,
@@ -21,11 +29,12 @@ import {
   HeartIcon,
 } from "@/components/icons";
 import {
-  getInputPickerValue,
+  getInputPickerSelectionLocation,
   projectInputSearchResults,
   sortInputPickerFiles,
 } from "./inputPickerUtils";
 import { isOutputFileSelectable } from "./outputPickerUtils";
+import { useShowHiddenStore } from "@/hooks/useShowHidden";
 
 interface InputFilePickerProps {
   open: boolean;
@@ -40,6 +49,9 @@ interface InputFilePickerProps {
   uploadFolder?: string;
   // When true the picker browses/selects videos instead of images.
   supportsVideoUpload?: boolean;
+  // The node's existing value. When it names a file, the picker starts in that
+  // file's folder and outlines it as the committed selection.
+  selectedValue?: unknown;
 }
 
 const noop = () => undefined;
@@ -74,18 +86,31 @@ export function InputFilePicker({
   defaultSource = "input",
   uploadFolder = "input",
   supportsVideoUpload = false,
+  selectedValue,
 }: InputFilePickerProps) {
   const { t } = useI18n();
   const favorites = useOutputsStore((state) => state.favorites);
   const toggleFavorite = useOutputsStore((state) => state.toggleFavorite);
   const setError = useWorkflowErrorsStore((state) => state.setError);
-  const [source, setSource] = useState<AssetSource>(defaultSource);
-  const [folder, setFolder] = useState<string | null>(null);
+  const setFollowQueue = useWorkflowStore((state) => state.setFollowQueue);
+  const viewerOpen = useImageViewerStore((state) => state.viewerOpen);
+  const setViewerState = useImageViewerStore((state) => state.setViewerState);
+  const selectionLocation = useMemo(
+    () => getInputPickerSelectionLocation(selectedValue, defaultSource),
+    [defaultSource, selectedValue],
+  );
+  const [source, setSource] = useState<AssetSource>(
+    () => selectionLocation?.source ?? defaultSource,
+  );
+  const [folder, setFolder] = useState<string | null>(
+    () => selectionLocation?.folder ?? null,
+  );
   const [files, setFiles] = useState<FileItem[]>([]);
   const [searchResults, setSearchResults] = useState<FileItem[] | null>(null);
   const [search, setSearch] = useState("");
   const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
-  const [showHidden, setShowHidden] = useState(false);
+  const showHidden = useShowHiddenStore((state) => state.showHidden);
+  const toggleShowHidden = useShowHiddenStore((state) => state.toggleShowHidden);
   const [favoritesOnly, setFavoritesOnly] = useState(false);
   const [sortMode, setSortMode] = useState<SortMode>("created");
   const [isLoading, setIsLoading] = useState(false);
@@ -153,13 +178,13 @@ export function InputFilePicker({
 
   useEffect(() => {
     if (open) return;
-    setSource(defaultSource);
-    setFolder(null);
+    setSource(selectionLocation?.source ?? defaultSource);
+    setFolder(selectionLocation?.folder ?? null);
     setSearch("");
     setSearchResults(null);
     setMenuOpen(false);
     setIsCopying(false);
-  }, [open, defaultSource]);
+  }, [open, defaultSource, selectionLocation]);
 
   // Switching tabs resets the folder/search context, which belongs to the
   // previous source.
@@ -173,7 +198,11 @@ export function InputFilePicker({
 
   const pickFile = async (file: FileItem) => {
     if (!isOutput) {
-      onPick(getInputPickerValue(file, source), source);
+      // Subfolder files (including files beneath a hidden folder) are not part
+      // of LoadImage's top-level object_info choices. Name the input directory
+      // explicitly so ComfyUI validates the existing file by path instead of
+      // the control later mistaking it for a missing combo option.
+      onPick(await resolveInputPathForFile(file, source), source);
       return;
     }
     // Output files live outside the input folder a LoadImage node reads from, so
@@ -263,9 +292,34 @@ export function InputFilePicker({
     setFolder((current) => current ? `${current}/${name}` : name);
   };
 
+  const openFileViewer = (file: FileItem) => {
+    const previewableFiles = nonFolders.filter((candidate) => candidate.fullUrl);
+    const index = previewableFiles.findIndex((candidate) => candidate.id === file.id);
+    if (index < 0) return;
+    const viewerImages = previewableFiles.map((candidate) => ({
+      src: candidate.fullUrl!,
+      displaySrc: candidate.type === "image"
+        ? getScreenPreviewUrl(candidate.fullUrl!)
+        : undefined,
+      alt: candidate.name,
+      mediaType: getMediaType(candidate.name),
+      filename: candidate.name,
+      file: candidate,
+    }));
+    // This is a fixed browse-list preview, not the queue-following gallery.
+    setFollowQueue(false);
+    setViewerState({
+      viewerImages,
+      viewerIndex: index,
+      viewerScale: 1,
+      viewerTranslate: { x: 0, y: 0 },
+      viewerOpen: true,
+    });
+  };
+
   const crumbs = useMemo(() => {
     const result: Array<{ name: string; path: string | null }> = [
-      { name: isOutput ? "Outputs" : "Inputs", path: null },
+      { name: isOutput ? t("Outputs") : t("Inputs"), path: null },
     ];
     if (folder) {
       const parts = folder.split("/");
@@ -275,11 +329,11 @@ export function InputFilePicker({
       }));
     }
     return result;
-  }, [folder, isOutput]);
+  }, [folder, isOutput, t]);
 
   const closeMenu = () => setMenuOpen(false);
   return (
-    <FullscreenWidgetModal isOpen={open} title={t('Select {noun}', { noun: t(noun) })} onClose={onClose} background="opaque">
+    <FullscreenWidgetModal isOpen={open && !viewerOpen} title={t('Select {noun}', { noun: t(noun) })} onClose={onClose} background="opaque">
         <div className="relative flex min-h-full flex-col gap-3" data-swipe-nav-ignore="true">
           {isCopying && (
             <div className="absolute inset-0 z-50 flex items-center justify-center bg-slate-950/70">
@@ -350,7 +404,7 @@ export function InputFilePicker({
                           ? <EyeOffIcon className="h-4 w-4" />
                           : <EyeIcon className="h-4 w-4" />,
                         onClick: () => {
-                          setShowHidden((current) => !current);
+                          toggleShowHidden();
                           closeMenu();
                         },
                       },
@@ -440,10 +494,11 @@ export function InputFilePicker({
             collapsedSections={collapsedSections}
             viewMode={viewMode}
             selectionMode={false}
-            selectedIds={[]}
+            selectedIds={selectionLocation ? [selectionLocation.fileId] : []}
             favorites={favorites}
             setCurrentFolder={navigateToFolder}
             handleOpen={(file) => void pickFile(file)}
+            handleLongPressOpen={openFileViewer}
             handleMenu={noop}
             toggleSelection={noop}
             toggleSectionCollapsed={(key) => setCollapsedSections((current) => ({
