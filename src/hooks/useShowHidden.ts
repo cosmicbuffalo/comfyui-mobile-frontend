@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { createJSONStorage, persist } from 'zustand/middleware';
+import type { StateStorage } from 'zustand/middleware';
 
 interface ShowHiddenState {
   showHidden: boolean;
@@ -28,6 +29,33 @@ function readLegacyOutputsPreference(): boolean {
   }
 }
 
+/**
+ * localStorage that drops a refused write instead of throwing it. `setItem`
+ * raises when the origin is over quota — and unconditionally on an iOS Safari
+ * whose private-browsing quota is zero — while this store commits its migrated
+ * value at module scope (below). Unguarded, that write would take the whole app
+ * down over a decluttering toggle; persistence is the expendable half, so the
+ * preference just stays in memory for the session. Same guard the workflow
+ * store's backend already uses (`utils/idbStorage`).
+ */
+function quotaSafeLocalStorage(): StateStorage {
+  // Read the property here so a browser that blocks storage outright still
+  // throws out of this factory, which is where createJSONStorage catches it and
+  // disables persistence for us.
+  const storage = localStorage;
+  return {
+    getItem: (name) => storage.getItem(name),
+    setItem: (name, value) => {
+      try {
+        storage.setItem(name, value);
+      } catch {
+        // No room to persist; the in-memory preference still holds.
+      }
+    },
+    removeItem: (name) => storage.removeItem(name),
+  };
+}
+
 /** One persisted visibility preference shared by every hidden-capable browser. */
 const hadPersistedPreference = hasPersistedPreference();
 const initialShowHidden = readLegacyOutputsPreference();
@@ -41,7 +69,7 @@ export const useShowHiddenStore = create<ShowHiddenState>()(
     }),
     {
       name: SHOW_HIDDEN_STORAGE_KEY,
-      storage: createJSONStorage(() => localStorage),
+      storage: createJSONStorage(quotaSafeLocalStorage),
       partialize: (state) => ({ showHidden: state.showHidden }),
     },
   ),
