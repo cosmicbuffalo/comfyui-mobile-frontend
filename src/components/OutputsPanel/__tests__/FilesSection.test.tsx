@@ -29,6 +29,7 @@ describe('OutputsFilesSection incremental rendering', () => {
       root.unmount();
     });
     container.remove();
+    vi.unstubAllGlobals();
   });
 
   function renderWith(
@@ -47,6 +48,8 @@ describe('OutputsFilesSection incremental rendering', () => {
           setCurrentFolder={() => {}}
           handleOpen={() => {}}
           handleMenu={() => {}}
+          toggleFavorite={() => {}}
+          toggleRejected={() => {}}
           toggleSelection={() => {}}
           toggleSectionCollapsed={() => {}}
           selectIds={() => {}}
@@ -96,5 +99,35 @@ describe('OutputsFilesSection incremental rendering', () => {
     // Section 2's "Select all" — only 'd' is rendered, but it must select both.
     selectAllButtons[1]?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     expect(selectIds).toHaveBeenCalledWith(['d', 'e']);
+  });
+
+  it('fetches and renders durations only for visible grid videos', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ durations: { 'clips/demo.mp4': 10.04 } }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const video: FileItem = {
+      id: 'output/clips/demo.mp4',
+      name: 'demo.mp4',
+      type: 'video',
+      cacheToken: 'video-v1',
+      size: 1024,
+    };
+
+    await renderWith(1, {
+      source: 'output',
+      fileSections: [{ key: 'videos', label: 'Videos', files: [video] }],
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith('/mobile/api/video-durations', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ source: 'output', paths: ['clips/demo.mp4'] }),
+    });
+    expect(container.querySelector('.video-duration-badge')?.textContent).toBe('10s');
   });
 });

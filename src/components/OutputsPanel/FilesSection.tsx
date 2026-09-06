@@ -1,5 +1,6 @@
 import { useMemo, type MouseEvent } from 'react';
-import type { FileItem, SortMode } from '@/api/client';
+import { type AssetSource, type FileItem, type SortMode } from '@/api/client';
+import { useVideoDurations } from '@/hooks/useVideoDurations';
 import { Collapsible } from '@/components/Collapsible';
 import { FoldIcon } from '@/components/FoldIcon';
 import { FileCard } from './FileCard';
@@ -7,6 +8,11 @@ import { useI18n } from '@/i18n';
 
 const OUTPUTS_GRID_TEMPLATE_COLUMNS =
   'repeat(auto-fill, minmax(min(200px, calc((100% - 1rem) / 2)), 1fr))';
+
+function videoDurationCacheKey(file: FileItem): string {
+  const identity = file.cacheToken ?? `${file.date ?? ''}-${file.size ?? ''}`;
+  return `${file.id}\0${identity}`;
+}
 
 interface OutputsFilesSectionProps {
   fileSections: Array<{ key: string; label: string; files: FileItem[] }>;
@@ -18,7 +24,10 @@ interface OutputsFilesSectionProps {
   rejected?: string[];
   setCurrentFolder: (folder: string) => void;
   handleOpen: (file: FileItem) => void;
+  handleLongPressOpen?: (file: FileItem) => void;
   handleMenu: (file: FileItem, event: MouseEvent) => void;
+  toggleFavorite?: (id: string) => void;
+  toggleRejected?: (id: string) => void;
   toggleSelection: (id: string, event: MouseEvent, options?: { range?: boolean }) => void;
   toggleSectionCollapsed: (key: string, sectionElement: HTMLElement | null) => void;
   selectIds: (ids: string[]) => void;
@@ -30,6 +39,7 @@ interface OutputsFilesSectionProps {
    *  huge folder doesn't mount thousands of cards at once. The parent grows this
    *  on scroll. Section headers/counts/select-all still reflect the full data. */
   maxRenderedFiles?: number;
+  source?: AssetSource;
 }
 
 export function OutputsFilesSection({
@@ -42,13 +52,17 @@ export function OutputsFilesSection({
   rejected = [],
   setCurrentFolder,
   handleOpen,
+  handleLongPressOpen,
   handleMenu,
+  toggleFavorite,
+  toggleRejected,
   toggleSelection,
   toggleSectionCollapsed,
   selectIds,
   showContextMenus = true,
   sortMode,
-  maxRenderedFiles
+  maxRenderedFiles,
+  source = 'output',
 }: OutputsFilesSectionProps) {
   const { t } = useI18n();
   // O(1) membership for the per-card selected/favorited checks, so rendering n
@@ -80,6 +94,20 @@ export function OutputsFilesSection({
     budget -= visibleFiles.length;
     sectionsToRender.push({ section, visibleFiles });
   }
+
+  const visibleVideos = sectionsToRender.flatMap(({ visibleFiles }) => (
+    visibleFiles.filter((file) => file.type === 'video')
+  ));
+  // Only the grid shows the badge, so the list view asks for nothing.
+  const videoDurations = useVideoDurations(
+    viewMode === 'grid'
+      ? visibleVideos.map((file) => ({
+        source,
+        path: file.id.startsWith(`${source}/`) ? file.id.slice(source.length + 1) : file.id,
+        key: videoDurationCacheKey(file),
+      }))
+      : [],
+  );
 
   return (
     <div id="outputs-files-section" className="flex flex-col gap-4">
@@ -129,10 +157,14 @@ export function OutputsFilesSection({
                     isRejected={rejectedIdSet.has(file.id)}
                     onNavigateFolder={setCurrentFolder}
                     onOpen={handleOpen}
+                    onLongPressOpen={handleLongPressOpen}
                     onMenu={handleMenu}
+                    onToggleFavorite={toggleFavorite}
+                    onToggleRejected={toggleRejected}
                     onToggleSelection={toggleSelection}
                     showContextMenu={showContextMenus}
                     sortMode={sortMode}
+                    videoDurationSeconds={videoDurations[videoDurationCacheKey(file)]}
                   />
                 ))}
               </div>
@@ -149,7 +181,10 @@ export function OutputsFilesSection({
                     isRejected={rejectedIdSet.has(file.id)}
                     onNavigateFolder={setCurrentFolder}
                     onOpen={handleOpen}
+                    onLongPressOpen={handleLongPressOpen}
                     onMenu={handleMenu}
+                    onToggleFavorite={toggleFavorite}
+                    onToggleRejected={toggleRejected}
                     onToggleSelection={toggleSelection}
                     showContextMenu={showContextMenus}
                     sortMode={sortMode}

@@ -31,7 +31,7 @@ import {
 } from '@/api/client';
 import {
   FolderIcon, BookmarkIconSvg, BookmarkOutlineIcon, DownloadDeviceIcon, EyeIcon, EyeOffIcon, TrashIcon,
-  PlusIcon, MinusIcon, CornerDownRightIcon, FunnelArrowsIcon, QueueStackIcon
+  PlusIcon, MinusIcon, XMarkIcon, CornerDownRightIcon, FunnelArrowsIcon, QueueStackIcon
 } from '@/components/icons';
 import { shareOrDownloadFile, shareOrDownloadBatch } from '@/utils/downloads';
 import { useDismissOnOutsideClick } from '@/hooks/useDismissOnOutsideClick';
@@ -39,7 +39,7 @@ import { useAnchoredMenuPosition } from '@/hooks/useAnchoredMenuPosition';
 import { FilterModal } from './OutputsPanel/FilterModal';
 import { resolveSelectionDownloadTargets } from './OutputsPanel/selectionDownload';
 import { SearchBar } from '@/components/SearchBar';
-import { MediaViewer } from '@/components/ImageViewer/MediaViewer';
+import { MediaViewer, MEDIA_VIEWER_Z_INDEX } from '@/components/ImageViewer/MediaViewer';
 import { UseImageModal } from '@/components/modals/UseImageModal';
 import { BulkProcessModal } from '@/components/modals/BulkProcessModal';
 import { useI18n } from '@/i18n';
@@ -50,17 +50,33 @@ import {
   resolveFilePath,
   resolveViewerItemWorkflowLoad,
 } from '@/utils/workflowOperations';
+import {
+  getCachedWorkflowAvailability,
+  probeWorkflowAvailability,
+} from '@/utils/workflowAvailability';
 import { resolveSelectionToggle, type SelectionAnchor } from '@/utils/selectionRange';
 import { getStickySectionScrollTarget } from '@/utils/stickySection';
 import { OutputsFoldersSection } from './OutputsPanel/FoldersSection';
 import { OutputsFilesSection } from './OutputsPanel/FilesSection';
 import { OutputsContextMenu } from './OutputsPanel/ContextMenu';
+import { usePanelSearchShortcut } from '@/hooks/usePanelSearchShortcut';
+import { useShowHiddenStore } from '@/hooks/useShowHidden';
 
 const FOLDERS_COLLAPSED_KEY = 'outputs-folders-collapsed';
 const STICKY_SECTION_TOP = -16;
 // How many output cards to render initially / add per scroll-growth step, so a
 // folder with thousands of files doesn't mount every card up front.
 const OUTPUTS_RENDER_PAGE = 60;
+
+/**
+ * Layer for anything reachable from the bulk selection sheet.
+ *
+ * Selection actions can now be started from inside the media viewer, which
+ * sits at 2100 — so the sheet and every confirmation or picker it opens has to
+ * clear it, or they appear behind the image. Derived from the viewer's own
+ * layer so the two cannot drift apart.
+ */
+const ABOVE_MEDIA_VIEWER_Z_INDEX = MEDIA_VIEWER_Z_INDEX + 100;
 
 export const OutputsPanel = memo(function OutputsPanel({ visible }: { visible: boolean }) {
   const { t } = useI18n();
@@ -77,7 +93,7 @@ export const OutputsPanel = memo(function OutputsPanel({ visible }: { visible: b
   const isLoading = useOutputsStore((s) => s.isLoading);
   const error = useOutputsStore((s) => s.error);
   const viewMode = useOutputsStore((s) => s.viewMode);
-  const showHidden = useOutputsStore((s) => s.showHidden);
+  const showHidden = useShowHiddenStore((s) => s.showHidden);
   const filter = useOutputsStore((s) => s.filter);
   const sort = useOutputsStore((s) => s.sort);
   const favorites = useOutputsStore((s) => s.favorites);
@@ -99,6 +115,7 @@ export const OutputsPanel = memo(function OutputsPanel({ visible }: { visible: b
   const toggleRejected = useOutputsStore((s) => s.toggleRejected);
   const rejected = useOutputsStore((s) => s.rejected);
   const toggleSelection = useOutputsStore((s) => s.toggleSelection);
+  const setOutputsViewerFileId = useOutputsStore((s) => s.setOutputsViewerFileId);
   const getDisplayedFiles = useOutputsStore((s) => s.getDisplayedFiles);
   const refresh = useOutputsStore((s) => s.refresh);
   const selectIds = useOutputsStore((s) => s.selectIds);
@@ -107,6 +124,7 @@ export const OutputsPanel = memo(function OutputsPanel({ visible }: { visible: b
   const setFilter = useOutputsStore((s) => s.setFilter);
   const cycleStatusFilter = useOutputsStore((s) => s.cycleStatusFilter);
   const setSort = useOutputsStore((s) => s.setSort);
+  const syncShowHidden = useOutputsStore((s) => s.syncShowHidden);
   const setItemHidden = useOutputsStore((s) => s.setItemHidden);
   const setItemsHidden = useOutputsStore((s) => s.setItemsHidden);
   const selectionActionOpen = useOutputsStore((s) => s.selectionActionOpen);
@@ -117,6 +135,7 @@ export const OutputsPanel = memo(function OutputsPanel({ visible }: { visible: b
   const setNewFolderModalOpen = useOutputsStore((s) => s.setNewFolderModalOpen);
   const setOutputsViewerOpen = useOutputsStore((s) => s.setOutputsViewerOpen);
   const searchOpen = useOutputsStore((s) => s.searchOpen);
+  const setSearchOpen = useOutputsStore((s) => s.setSearchOpen);
   const searchDraft = useOutputsStore((s) => s.searchDraft);
   const setSearchDraft = useOutputsStore((s) => s.setSearchDraft);
   const runPromptSearch = useOutputsStore((s) => s.runPromptSearch);
@@ -190,22 +209,59 @@ export const OutputsPanel = memo(function OutputsPanel({ visible }: { visible: b
   const [viewerOpen, setViewerOpen] = useState(false);
   const [viewerImages, setViewerImages] = useState<ViewerImage[]>([]);
   const [viewerIndex, setViewerIndex] = useState(0);
-  const pendingFolderNavigationRef = useRef<string | null>(null);
   // Incremental render budget for the file grid (grows on scroll).
   const [visibleCount, setVisibleCount] = useState(OUTPUTS_RENDER_PAGE);
   const menuRef = useRef<HTMLDivElement>(null);
   const menuButtonRef = useRef<HTMLButtonElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const outputsContentRef = useRef<HTMLDivElement>(null);
+  const appliedShowHiddenRef = useRef(showHidden);
+  usePanelSearchShortcut({
+    visible,
+    searchOpen,
+    setSearchOpen,
+    inputRef: searchInputRef,
+  });
+  useEffect(() => {
+    if (!visible || appliedShowHiddenRef.current === showHidden) return;
+    appliedShowHiddenRef.current = showHidden;
+    syncShowHidden(showHidden);
+  }, [showHidden, syncShowHidden, visible]);
   const hasFetchedRef = useRef(false);
   // Anchor for shift+click range ops. Carries the direction of the click that
   // set it (`select`) so a shift+click extends that same action across the
   // range: select-anchor → bulk select, deselect-anchor → bulk deselect.
   const selectionAnchorRef = useRef<SelectionAnchor | null>(null);
-  const completeSelectionOperation = useCallback(() => {
+  /** Leave selection mode without touching anything else. */
+  const cancelSelection = useCallback(() => {
     exitSelectionMode();
     selectionAnchorRef.current = null;
   }, [exitSelectionMode]);
+
+  /**
+   * Finish a bulk action.
+   *
+   * Distinct from `cancelSelection`: an action that included the image on
+   * screen has just changed or removed it, so staying there would show
+   * something stale or gone. Merely clearing the selection changes no files,
+   * so that path leaves the viewer alone. An action on other items also leaves
+   * it alone. Membership is read before the selection is cleared.
+   */
+  const completeSelectionOperation = useCallback(() => {
+    const viewedId = viewerOpen ? viewerImages[viewerIndex]?.file?.id : null;
+    if (viewedId && selectedIds.includes(viewedId)) {
+      setViewerOpen(false);
+      setOutputsViewerOpen(false);
+    }
+    cancelSelection();
+  }, [
+    cancelSelection,
+    viewerOpen,
+    viewerImages,
+    viewerIndex,
+    selectedIds,
+    setOutputsViewerOpen,
+  ]);
   const [foldersCollapsed, setFoldersCollapsed] = useState(() => {
     const saved = localStorage.getItem(FOLDERS_COLLAPSED_KEY);
     return saved === 'true';
@@ -238,11 +294,41 @@ export const OutputsPanel = memo(function OutputsPanel({ visible }: { visible: b
     setLoadNodePickerOpen(true);
   };
 
+  // A video's workflow lives in the sibling still saved beside it, which only
+  // the server can confirm — so the menu's Load workflow entry waits on a probe
+  // rather than being decided from the file type alone. Answers are shared with
+  // the full-screen viewer's cache, so a file just viewed answers instantly.
+  const [menuVideoWorkflowAvailable, setMenuVideoWorkflowAvailable] = useState(false);
+
+  useEffect(() => {
+    const file = menuTarget?.file;
+    if (!file || file.type !== 'video') {
+      setMenuVideoWorkflowAvailable(false);
+      return;
+    }
+    const cached = getCachedWorkflowAvailability(file, source);
+    if (cached !== undefined) {
+      setMenuVideoWorkflowAvailable(cached);
+      return;
+    }
+    setMenuVideoWorkflowAvailable(false);
+    const controller = new AbortController();
+    probeWorkflowAvailability(file, source, { signal: controller.signal })
+      .then((available) => setMenuVideoWorkflowAvailable(available))
+      .catch(() => {
+        // Aborted (menu closed) or failed (server blip): leave the entry out
+        // rather than offering an action that would only fail.
+      });
+    return () => controller.abort();
+  }, [menuTarget, source]);
+
   const { menuStyle, resetMenuPosition } = useAnchoredMenuPosition({
     open: !!menuTarget,
     buttonRef: menuButtonRef,
     menuRef,
-    repositionToken: menuTarget?.file.id,
+    // Re-anchor when the probe adds the Load workflow entry: the menu grows a
+    // row taller, and a menu opened near the bottom would otherwise overflow.
+    repositionToken: `${menuTarget?.file.id ?? ''}:${menuVideoWorkflowAvailable}`,
     menuWidth: 176,
     horizontalAnchorOffset: 160,
     viewportPadding: 8,
@@ -322,6 +408,13 @@ export const OutputsPanel = memo(function OutputsPanel({ visible }: { visible: b
     }
   };
 
+  // The viewer's index is local, but the bottom bar's selection button needs to
+  // know what is on screen to select it when entering select mode from here.
+  useEffect(() => {
+    const current = viewerOpen ? viewerImages[viewerIndex] : null;
+    setOutputsViewerFileId(current?.file?.id ?? null);
+  }, [viewerOpen, viewerImages, viewerIndex, setOutputsViewerFileId]);
+
   const handleOutputsViewerClose = () => {
     setViewerOpen(false);
     setOutputsViewerOpen(false);
@@ -351,15 +444,10 @@ export const OutputsPanel = memo(function OutputsPanel({ visible }: { visible: b
     });
   };
 
-  useEffect(() => {
-    pendingFolderNavigationRef.current = null;
-  }, [source, currentFolder, isLoading]);
-
   const handleNavigateFolder = useCallback((folder: string) => {
-    if (pendingFolderNavigationRef.current) return;
-    pendingFolderNavigationRef.current = folder;
+    if (isLoading) return;
     setCurrentFolder(folder);
-  }, [setCurrentFolder]);
+  }, [isLoading, setCurrentFolder]);
 
   const handleOutputsViewerLoadInWorkflow = (item: ViewerImage) => {
     if (!item.file || item.file.type !== 'image') return;
@@ -380,7 +468,10 @@ export const OutputsPanel = memo(function OutputsPanel({ visible }: { visible: b
       loadWorkflow(
         resolvedWorkflowLoad.workflow,
         resolvedWorkflowLoad.filename,
-        { source: resolvedWorkflowLoad.source },
+        {
+          source: resolvedWorkflowLoad.source,
+          executedPrompt: resolvedWorkflowLoad.executedPrompt,
+        },
       );
       setCurrentPanel('workflow');
       setViewerOpen(false);
@@ -541,6 +632,12 @@ export const OutputsPanel = memo(function OutputsPanel({ visible }: { visible: b
      if (!menuTarget) return;
      toggleFavorite(menuTarget.file.id);
      setMenuTarget(null);
+  };
+
+  const handleReject = () => {
+    if (!menuTarget || menuTarget.file.type === 'folder') return;
+    toggleRejected(menuTarget.file.id);
+    setMenuTarget(null);
   };
 
   const handleToggleHidden = () => {
@@ -1119,7 +1216,7 @@ export const OutputsPanel = memo(function OutputsPanel({ visible }: { visible: b
                     onClick={handleSelectionClear}
                     className="text-[10px] text-slate-400 hover:text-slate-100 underline uppercase font-bold"
                   >
-                    Clear
+                    {t('Clear')}
                   </button>
                 </div>
               )}
@@ -1266,7 +1363,7 @@ export const OutputsPanel = memo(function OutputsPanel({ visible }: { visible: b
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key !== 'Escape') return;
       event.preventDefault();
-      completeSelectionOperation();
+      cancelSelection();
     };
 
     document.addEventListener('keydown', handleKeyDown);
@@ -1285,11 +1382,11 @@ export const OutputsPanel = memo(function OutputsPanel({ visible }: { visible: b
     loadNodePickerOpen,
     outputsWorkflowConfirmFile,
     menuTarget,
-    completeSelectionOperation,
+    cancelSelection,
   ]);
 
   const handleSelectionClear = () => {
-    completeSelectionOperation();
+    cancelSelection();
   };
 
   const handleMoveFolderClick = (folderName: string) => () => {
@@ -1308,9 +1405,17 @@ export const OutputsPanel = memo(function OutputsPanel({ visible }: { visible: b
     >
       <div
         id="outputs-panel-root"
-        className="h-full bg-slate-950/88 text-slate-100 flex flex-col pt-4"
+        className="relative h-full bg-slate-950/88 text-slate-100 flex flex-col pt-4"
         style={{ paddingBottom: 'var(--bottom-bar-offset, 80px)' }}
+        aria-busy={isLoading}
       >
+       {isLoading && (
+         <div
+           id="outputs-loading-interaction-blocker"
+           className="absolute inset-0 z-30 cursor-wait bg-slate-950/25"
+           aria-hidden="true"
+         />
+       )}
        {/* The breadcrumb/tabs header. At the root with a single tab it only
            duplicates the top-bar source toggle, so it's hidden — but once there
            are multiple tabs we always keep it visible (even at root) so the tab
@@ -1341,14 +1446,14 @@ export const OutputsPanel = memo(function OutputsPanel({ visible }: { visible: b
                onClick={handleApplySearch}
                disabled={promptSearchLoading}
              >
-               Apply
+               {t('Apply')}
              </button>
            </form>
          </div>
        )}
 
-       <div ref={outputsContentRef} id="outputs-content-container" onScroll={handleOutputsScroll} className="flex-1 overflow-y-auto overflow-x-hidden p-4">
-          {promptSearchError && (
+       <div ref={outputsContentRef} id="outputs-content-container" onScroll={handleOutputsScroll} className="relative flex-1 overflow-y-auto overflow-x-hidden p-4">
+          {!isLoading && promptSearchError && (
             <div
               id="outputs-prompt-search-error"
               className="mb-4 rounded-lg border border-rose-400/30 bg-rose-950/40 px-3 py-2 text-sm text-rose-200"
@@ -1356,7 +1461,7 @@ export const OutputsPanel = memo(function OutputsPanel({ visible }: { visible: b
               Prompt search failed: {promptSearchError}
             </div>
           )}
-          {promptSearchActive && (
+          {!isLoading && promptSearchActive && (
             <div
               id="outputs-prompt-search-banner"
               className="mb-4 flex items-center justify-between gap-3 rounded-lg border border-white/10 bg-slate-900/95 px-3 py-2 text-sm text-slate-300"
@@ -1372,44 +1477,61 @@ export const OutputsPanel = memo(function OutputsPanel({ visible }: { visible: b
                 className="text-xs font-semibold text-cyan-300 hover:text-cyan-200"
                 onClick={clearPromptSearch}
               >
-                Clear
+                {t('Clear')}
               </button>
             </div>
           )}
-          <OutputsFoldersSection
-            folders={folders}
-            foldersCollapsed={foldersCollapsed}
-            toggleFoldersCollapsed={toggleFoldersCollapsed}
-            selectionMode={selectionMode}
-            selectedIds={selectedIds}
-            favorites={favorites}
-            setCurrentFolder={handleNavigateFolder}
-            handleOpen={handleOpen}
-            handleMenu={handleMenu}
-            toggleSelection={handleToggleSelection}
-            sortMode={sortMode}
-          />
+          {!isLoading && (
+            <>
+              <OutputsFoldersSection
+                folders={folders}
+                foldersCollapsed={foldersCollapsed}
+                toggleFoldersCollapsed={toggleFoldersCollapsed}
+                selectionMode={selectionMode}
+                selectedIds={selectedIds}
+                favorites={favorites}
+                setCurrentFolder={handleNavigateFolder}
+                handleOpen={handleOpen}
+                handleMenu={handleMenu}
+                toggleFavorite={toggleFavorite}
+                toggleSelection={handleToggleSelection}
+                sortMode={sortMode}
+              />
 
-          <OutputsFilesSection
-            fileSections={fileSections}
-            collapsedSections={collapsedSections}
-            viewMode={viewMode}
-            selectionMode={selectionMode}
-            selectedIds={selectedIds}
-            favorites={favorites}
-            rejected={rejected}
-            setCurrentFolder={handleNavigateFolder}
-            handleOpen={stableHandleOpen}
-            handleMenu={stableHandleMenu}
-            toggleSelection={stableToggleSelection}
-            toggleSectionCollapsed={toggleSectionCollapsed}
-            selectIds={selectIds}
-            sortMode={sortMode}
-            maxRenderedFiles={visibleCount}
-          />
+              <OutputsFilesSection
+                fileSections={fileSections}
+                collapsedSections={collapsedSections}
+                viewMode={viewMode}
+                selectionMode={selectionMode}
+                selectedIds={selectedIds}
+                favorites={favorites}
+                rejected={rejected}
+                setCurrentFolder={handleNavigateFolder}
+                handleOpen={stableHandleOpen}
+                handleMenu={stableHandleMenu}
+                toggleFavorite={toggleFavorite}
+                toggleRejected={toggleRejected}
+                toggleSelection={stableToggleSelection}
+                toggleSectionCollapsed={toggleSectionCollapsed}
+                selectIds={selectIds}
+                sortMode={sortMode}
+                maxRenderedFiles={visibleCount}
+                source={source}
+              />
+            </>
+          )}
 
           {isLoading && (
-            <div id="outputs-loading-indicator" className="py-4 flex justify-center">
+            <div
+              id="outputs-loading-indicator"
+              className="relative z-40 flex min-h-full flex-col items-center justify-center gap-3 py-8"
+              role="status"
+              aria-live="polite"
+            >
+              <span
+                className="h-8 w-8 rounded-full border-2 border-cyan-300/25 border-t-cyan-300 animate-spin"
+                aria-hidden="true"
+              />
               <span className="text-slate-400 text-sm">{t('Loading...')}</span>
             </div>
           )}
@@ -1439,26 +1561,51 @@ export const OutputsPanel = memo(function OutputsPanel({ visible }: { visible: b
        <OutputsContextMenu
          menuTarget={menuTarget}
          favorites={favorites}
+         rejected={rejected}
          setMenuTarget={setMenuTarget}
          menuRef={menuRef}
          menuStyle={menuStyle}
          handleFavorite={handleFavorite}
+         handleReject={handleReject}
          handleToggleHidden={handleToggleHidden}
          handleSelectSingle={handleSelectSingle}
          handleMoveSingle={handleMoveSingle}
          handleRenameRequest={handleRenameRequest}
          handleLoadWorkflow={handleLoadWorkflow}
          handleLoadInWorkflow={handleLoadInWorkflow}
+         videoWorkflowAvailable={menuVideoWorkflowAvailable}
          handleDownload={handleDownload}
          handleDeleteRequest={handleDeleteRequest}
        />
        {selectionActionOpen && (
         <ModalFrame
           onClose={() => setSelectionActionOpen(false)}
-          zIndex={1800}
+          zIndex={viewerOpen ? ABOVE_MEDIA_VIEWER_Z_INDEX : 1800}
         >
-             <div className="px-4 py-3 text-sm font-semibold text-slate-100 border-b border-white/10">
-               {t('{count} selected', { count: selectedIds.length })}
+             <div className="flex items-center gap-2 px-4 py-3 text-sm font-semibold text-slate-100 border-b border-white/10">
+               <span className="min-w-0 flex-1 truncate">
+                 {t('{count} selected', { count: selectedIds.length })}
+               </span>
+               {/* Same control as the tab bar's: drops the selection and
+                   leaves select mode. The sheet closes with it, because it
+                   already drops once nothing is selected. */}
+               <button
+                 type="button"
+                 onClick={handleSelectionClear}
+                 className="shrink-0 text-[10px] text-slate-400 hover:text-slate-100 underline uppercase font-bold"
+               >
+                 {t('Clear')}
+               </button>
+               {/* Dismisses the sheet only — the same thing Cancel does at the
+                   bottom — leaving the selection and the mode intact. */}
+               <button
+                 type="button"
+                 onClick={() => setSelectionActionOpen(false)}
+                 aria-label={t('Close menu')}
+                 className="shrink-0 w-6 h-6 flex items-center justify-center rounded-md text-slate-400 hover:text-slate-100 hover:bg-white/10"
+               >
+                 <XMarkIcon className="w-4 h-4" />
+               </button>
              </div>
              <button
                className="w-full text-left px-4 py-3 text-sm text-slate-200 hover:bg-white/10 flex items-center gap-2"
@@ -1514,7 +1661,7 @@ export const OutputsPanel = memo(function OutputsPanel({ visible }: { visible: b
                className="w-full text-left px-4 py-3 text-sm text-slate-400 hover:bg-white/10"
                onClick={() => setSelectionActionOpen(false)}
              >
-               Cancel
+               {t('Cancel')}
              </button>
          </ModalFrame>
        )}
@@ -1802,7 +1949,8 @@ export const OutputsPanel = memo(function OutputsPanel({ visible }: { visible: b
              }
              return t('This will permanently delete {target} from the server, including all contents of the selected folders. This cannot be undone.', { target });
            })()}
-           zIndex={1800}
+           fullscreen={viewerOpen}
+           zIndex={viewerOpen ? ABOVE_MEDIA_VIEWER_Z_INDEX : 1800}
            actions={[
              {
                label: t('Cancel'),
@@ -1844,7 +1992,7 @@ export const OutputsPanel = memo(function OutputsPanel({ visible }: { visible: b
                 className="px-3 py-2 rounded-lg text-sm font-medium text-slate-300 hover:bg-white/10"
                 onClick={closeRenameModal}
               >
-                Cancel
+                {t('Cancel')}
               </button>
               <button
                 className={`px-3 py-2 rounded-lg text-sm font-medium ${
@@ -1855,7 +2003,7 @@ export const OutputsPanel = memo(function OutputsPanel({ visible }: { visible: b
                 onClick={() => { void confirmRename(); }}
                 disabled={!renameValue.trim() || renameValue.trim() === renameTarget.name}
               >
-                Rename
+                {t('Rename')}
               </button>
             </div>
           </div>
@@ -1867,7 +2015,7 @@ export const OutputsPanel = memo(function OutputsPanel({ visible }: { visible: b
            zIndex={1850}
          >
            <div className="p-4">
-            <div className="text-slate-100 text-base font-semibold">New folder</div>
+            <div className="text-slate-100 text-base font-semibold">{t('New folder')}</div>
             <div className="text-slate-400 text-sm mt-1">
               Create a new folder in {currentFolder ? <><FolderIcon className="w-3.5 h-3.5 text-cyan-300 inline" /> {currentFolder}</> : 'root'}
             </div>
@@ -1885,14 +2033,14 @@ export const OutputsPanel = memo(function OutputsPanel({ visible }: { visible: b
                 className="px-3 py-2 rounded-lg text-sm font-medium text-slate-300 hover:bg-white/10"
                 onClick={() => { setNewFolderModalOpen(false); setCreateFolderName(''); }}
               >
-                Cancel
+                {t('Cancel')}
               </button>
               <button
                 className={`px-3 py-2 rounded-lg text-sm font-semibold ${createFolderName.trim() ? 'text-slate-950 bg-cyan-500 hover:bg-cyan-400' : 'text-slate-500 bg-slate-800 cursor-not-allowed'}`}
                 onClick={handleCreateNewFolder}
                 disabled={!createFolderName.trim()}
               >
-                Create
+                {t('Create')}
               </button>
             </div>
            </div>
@@ -1924,7 +2072,7 @@ export const OutputsPanel = memo(function OutputsPanel({ visible }: { visible: b
          onChangeFilter={movePickerOpen ? setMoveFilterPartial : setFilter}
          onCycleStatusFilter={movePickerOpen ? cycleMoveStatusFilter : cycleStatusFilter}
          onChangeSort={movePickerOpen ? setMoveSort : setSort}
-         zIndex={movePickerOpen ? 2500 : 1600}
+         zIndex={movePickerOpen ? 2500 : viewerOpen ? ABOVE_MEDIA_VIEWER_Z_INDEX : 1600}
          hideTypeFilter={movePickerOpen}
        />
        {outputsWorkflowConfirmFile && createPortal(
@@ -1971,6 +2119,10 @@ export const OutputsPanel = memo(function OutputsPanel({ visible }: { visible: b
            return shareOrDownloadFile(item.src, item.filename || item.file?.name || 'image.png');
          }}
          showMetadataToggle
+         selectionMode={selectionMode}
+         isSelected={(item) => Boolean(item.file && selectedIds.includes(item.file.id))}
+         onToggleSelection={(item) => { if (item.file) toggleSelection(item.file.id); }}
+         selectedCount={selectedIds.length}
         />
       </div>
     </div>

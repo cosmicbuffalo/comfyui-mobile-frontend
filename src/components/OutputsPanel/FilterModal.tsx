@@ -3,6 +3,7 @@ import type { SortMode } from '@/api/client';
 import { OptionSection } from './OptionSection';
 import { FavoritesSection } from './FavoritesSection';
 import { CloseButton } from '@/components/buttons/CloseButton';
+import { useEscapeKey } from '@/hooks/useEscapeKey';
 import { useI18n } from '@/i18n';
 
 interface FilterModalProps {
@@ -24,6 +25,11 @@ export function FilterModal({
   zIndex = 1600, hideTypeFilter = false
 }: FilterModalProps) {
   const { t } = useI18n();
+  // Escape closes it, like every other overlay in the app. Without this the
+  // sheet could only be dismissed by its × or a backdrop tap -- and since it
+  // covers the grid, a reader who reached for Escape was left with a panel
+  // whose cards no longer answered a tap.
+  useEscapeKey(open, onClose);
   if (!open) return null;
 
   // Derived state for UI - handle potential undefined mode from old persisted state
@@ -137,7 +143,7 @@ export function FilterModal({
              className="px-4 py-2 bg-cyan-500 text-slate-950 rounded-lg text-sm font-semibold hover:bg-cyan-400"
              onClick={onClose}
           >
-            Close
+            {t('Close')}
           </button>
         </div>
       </div>

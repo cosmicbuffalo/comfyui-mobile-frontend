@@ -85,4 +85,29 @@ describe('Outputs FilterModal', () => {
       container.querySelector('#favorites-toggle-button')?.getAttribute('aria-pressed'),
     ).toBe('true');
   });
+
+  it('closes on Escape', async () => {
+    // It covers the grid, so a sheet that ignores Escape leaves the panel
+    // looking present but unresponsive: cards underneath stop answering taps.
+    const onClose = vi.fn();
+    await act(async () => {
+      root.render(
+        <FilterModal
+          open
+          onClose={onClose}
+          filter={allOff}
+          sort={{ mode: 'modified' }}
+          onChangeFilter={() => {}}
+          onCycleStatusFilter={() => {}}
+          onChangeSort={() => {}}
+        />,
+      );
+    });
+
+    await act(async () => {
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+    });
+
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
 });

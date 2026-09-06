@@ -544,7 +544,11 @@ export function ImageViewer({ onClose }: ImageViewerProps) {
         loadWorkflow(
           resolvedWorkflowLoad.workflow,
           resolvedWorkflowLoad.filename,
-          { source: resolvedWorkflowLoad.source, navigate },
+          {
+            source: resolvedWorkflowLoad.source,
+            executedPrompt: resolvedWorkflowLoad.executedPrompt,
+            navigate,
+          },
         );
         if (navigate) {
           onClose();

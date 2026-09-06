@@ -14,19 +14,25 @@ import { classifySwipe } from './swipeGesture';
 import { compareClipPath, DEFAULT_COMPARE_CLIP } from './compareClip';
 import { MediaViewerActions } from './MediaViewer/Actions';
 import { MediaViewerMetadata } from './MediaViewer/Metadata';
+import { VideoPlaybackControls } from './MediaViewer/VideoPlaybackControls';
+import { PlaybackSpeedControls } from './MediaViewer/PlaybackSpeedControls';
 import { CloseButton } from '@/components/buttons/CloseButton';
-import { HeartIcon, RejectedIcon } from '@/components/icons';
+import { OverlayCircleButton } from '@/components/buttons/OverlayCircleButton';
+import { HeartIcon, RejectedIcon, SpeakerWaveIcon, SpeakerXIcon } from '@/components/icons';
 import { MenuIcon } from '@/components/icons/MenuIcon';
 import { extractMetadata } from '@/utils/metadata';
 import { isVideoFilename } from '@/utils/media';
 import { canSaveToPhotosInNativeApp } from '@/utils/nativeSave';
 import {
-  getFileWorkflowAvailability,
   getImageMetadata,
   getMediaThumbnailUrlFromAssetUrl,
   getPlayableVideoUrl,
 } from '@/api/client';
 import { resolveFilePath, resolveFileSource } from '@/utils/workflowOperations';
+import {
+  getCachedWorkflowAvailability,
+  probeWorkflowAvailability,
+} from '@/utils/workflowAvailability';
 import { reportVideoPlaybackIssue } from '@/utils/mediaDiagnostics';
 
 interface MediaViewerProps {
@@ -38,6 +44,15 @@ interface MediaViewerProps {
   onDelete: (item: ViewerImage) => void;
   onLoadWorkflow: (item: ViewerImage) => void;
   onLoadInWorkflow: (item: ViewerImage) => void;
+  /**
+   * Outputs select mode, driven from the panel behind the viewer. Strips the
+   * action row back, pins the chrome open, frames a selected image, and shows
+   * the running tally in the header.
+   */
+  selectionMode?: boolean;
+  isSelected?: (item: ViewerImage) => boolean;
+  onToggleSelection?: (item: ViewerImage) => void;
+  selectedCount?: number;
   // Favoriting is sticky: this fires for the `f` key and the heart button and
   // should *enter* the favorited state (never unfavorite). Unfavoriting is the
   // reject affordance's job (see onReject).
@@ -65,7 +80,12 @@ interface MediaViewerProps {
 }
 
 const DEFAULT_TRANSLATE = { x: 0, y: 0 };
-const MEDIA_VIEWER_Z_INDEX = 2100;
+/**
+ * Exported so overlays that must appear ABOVE the viewer can derive their own
+ * layer from it rather than hard-coding a number that silently stops clearing
+ * it if this one ever moves.
+ */
+export const MEDIA_VIEWER_Z_INDEX = 2100;
 const MEDIA_VIEWER_OVERLAY_Z_INDEX = MEDIA_VIEWER_Z_INDEX + 10;
 const PRELOAD_IMAGE_COUNT_PER_SIDE = 2;
 const PRELOAD_RETENTION_INDEX_BUFFER = 3;
@@ -73,24 +93,10 @@ const PRELOAD_RETENTION_INDEX_BUFFER = 3;
 // grow it unbounded. It only suppresses a spinner flash, so resetting on overflow
 // is harmless (at worst a brief spinner if a dropped image is revisited).
 const LOADED_SRCS_MAX = 256;
-const workflowAvailabilityCache = new Map<string, boolean>();
-
 // How long the viewer must rest on a file before its workflow-availability
 // probe fires. Long enough that flicking through a folder skips the files
 // passed over, short enough to feel immediate once the user stops.
 const WORKFLOW_PROBE_SETTLE_MS = 300;
-
-// Keyed by path *and* the file's modification stamp, so replacing a file at
-// the same path (e.g. re-saving an image without embedded workflow metadata)
-// invalidates the cached answer instead of leaving Load Workflow stale until
-// the next page reload.
-function makeWorkflowAvailabilityCacheKey(
-  source: string,
-  path: string,
-  file?: { modifiedDate?: number; size?: number } | null,
-): string {
-  return `${source}:${path}:${file?.modifiedDate ?? ''}:${file?.size ?? ''}`;
-}
 
 function isEditableElement(element: HTMLElement | null): boolean {
   if (!element) return false;
@@ -121,6 +127,10 @@ export function MediaViewer({
   onDelete,
   onLoadWorkflow,
   onLoadInWorkflow,
+  selectionMode = false,
+  isSelected,
+  onToggleSelection,
+  selectedCount = 0,
   onToggleFavorite,
   isFavorited,
   onReject,
@@ -171,6 +181,7 @@ export function MediaViewer({
     imagePoint?: { x: number; y: number };
   } | null>(null);
   const lastTapRef = useRef<{ time: number; x: number; y: number } | null>(null);
+  const transformGestureRef = useRef(false);
   const [baseSize, setBaseSize] = useState<{ width: number; height: number } | null>(null);
   const [containerSize, setContainerSize] = useState<{ width: number; height: number } | null>(null);
   const [isIdle, setIsIdle] = useState(false);
@@ -215,6 +226,11 @@ export function MediaViewer({
   const [metadataLoading, setMetadataLoading] = useState<Record<string, boolean>>({});
   const [workflowAvailableById, setWorkflowAvailableById] = useState<Record<string, boolean>>({});
   const [videoError, setVideoError] = useState(false);
+  const [videoPlaying, setVideoPlaying] = useState(true);
+  const [videoMuted, setVideoMuted] = useState(true);
+  const [videoCurrentTime, setVideoCurrentTime] = useState(0);
+  const [videoDuration, setVideoDuration] = useState(0);
+  const [playbackSpeedOpen, setPlaybackSpeedOpen] = useState(false);
   // Pixel resolution of the currently displayed media, shown under the filename.
   const [naturalSize, setNaturalSize] = useState<{ width: number; height: number } | null>(null);
   // Full-screen image srcs that have finished decoding at least once (current
@@ -234,8 +250,68 @@ export function MediaViewer({
       return { ...prev, [src]: true };
     });
   }, []);
+  // Items whose media is gone from disk, so navigation can step over them
+  // instead of parking the viewer on "Unable to load this image" — deleting an
+  // output leaves its history entry (and therefore its viewer slot) behind.
+  // Keyed by the item's canonical `src`, and only ever filled in by a probe
+  // that came back 404: a transient failure (offline, server restarting, 5xx)
+  // must leave the slot alone rather than silently hiding half the queue.
+  const [missingSrcs, setMissingSrcs] = useState<Record<string, true>>({});
+  const probedSrcsRef = useRef<Set<string>>(new Set());
+  const probeMissingMedia = useCallback((item: ViewerImage | null | undefined) => {
+    const key = item?.src;
+    if (!key || typeof fetch !== 'function') return;
+    if (probedSrcsRef.current.has(key)) return;
+    probedSrcsRef.current.add(key);
+    const probeUrl = isViewerVideo(item)
+      ? getPlayableVideoUrl(item.src)
+      : getFullScreenImageSrc(item);
+    void fetch(probeUrl, { method: 'HEAD', cache: 'no-store' })
+      .then((response) => {
+        if (response.status === 404 || response.status === 410) {
+          setMissingSrcs((prev) => (prev[key] ? prev : { ...prev, [key]: true }));
+          return;
+        }
+        // Still there (or an error that says nothing about the file) — forget the
+        // probe so a later failure on the same item can ask again.
+        probedSrcsRef.current.delete(key);
+      })
+      .catch(() => {
+        probedSrcsRef.current.delete(key);
+      });
+  }, []);
+  const isMissingItem = useCallback(
+    (item: ViewerImage | null | undefined) => Boolean(item?.src && missingSrcs[item.src]),
+    [missingSrcs],
+  );
+  // First index from `from` (inclusive) travelling in `direction` whose media
+  // still exists; -1 when there is nothing left to show that way.
+  const findViewableIndex = useCallback(
+    (from: number, direction: 1 | -1) => {
+      for (let i = from; i >= 0 && i < items.length; i += direction) {
+        if (!isMissingItem(items[i])) return i;
+      }
+      return -1;
+    },
+    [items, isMissingItem],
+  );
+  // Which way the user was last travelling, so an item that turns out to be
+  // deleted hands the viewer on in the same direction rather than bouncing back.
+  const lastStepDirectionRef = useRef<1 | -1>(1);
+  const stepIndex = useCallback(
+    (direction: 1 | -1) => {
+      lastStepDirectionRef.current = direction;
+      const target = findViewableIndex(index + direction, direction);
+      if (target < 0) return false;
+      onIndexChange(target);
+      return true;
+    },
+    [findViewableIndex, index, onIndexChange],
+  );
   const { isInputFocused } = useTextareaFocus();
   const setViewerState = useImageViewerStore((s) => s.setViewerState);
+  const videoPlaybackRate = useImageViewerStore((s) => s.videoPlaybackRate);
+  const setVideoPlaybackRate = useImageViewerStore((s) => s.setVideoPlaybackRate);
   const setFollowQueue = useWorkflowStore((s) => s.setFollowQueue);
   const followQueue = useWorkflowStore((s) => s.followQueue);
   const pinnedWidget = usePinnedWidgetStore((s) => s.pinnedWidget);
@@ -299,7 +375,15 @@ export function MediaViewer({
   const metadata = currentItem?.metadata ?? (fetchedMetadata === undefined ? undefined : fetchedMetadata);
   const durationLabel = formatDuration(currentItem?.durationSeconds);
   const displayName = currentItem?.filename || currentItem?.alt || t('Output');
-  const showMetadataOverlay = showMetadata && !isIdle;
+  /**
+   * Whether the chrome is faded out.
+   *
+   * Derived rather than forced into `isIdle`, so entering select mode while the
+   * chrome had already faded brings it straight back — and leaving select mode
+   * resumes wherever the timer had got to.
+   */
+  const chromeIdle = isIdle && !selectionMode;
+  const showMetadataOverlay = showMetadata && !chromeIdle;
   const canToggleMetadata = showMetadataToggle;
   const metadataIsLoading = fileId ? Boolean(metadataLoading[fileId]) : false;
   const workflowAvailabilityKnown = fileId ? Object.prototype.hasOwnProperty.call(workflowAvailableById, fileId) : false;
@@ -311,10 +395,23 @@ export function MediaViewer({
     if (idleTimerRef.current) {
       clearTimeout(idleTimerRef.current);
     }
+    // Select mode keeps the chrome up: the checkbox and the running tally are
+    // the point of being here, and fading them out mid-selection would hide
+    // the state the user is actively building.
+    if (selectionMode) return;
     idleTimerRef.current = setTimeout(() => {
+      setPlaybackSpeedOpen(false);
       setIsIdle(true);
     }, 3000);
-  }, []);
+  }, [selectionMode]);
+
+  const currentIsSelected = Boolean(currentItem && isSelected?.(currentItem));
+
+  const handleToggleSelectionClick = useCallback(() => {
+    if (!currentItem) return;
+    resetIdleTimer();
+    onToggleSelection?.(currentItem);
+  }, [currentItem, onToggleSelection, resetIdleTimer]);
 
   const handleToggleMetadata = useCallback(() => {
     resetIdleTimer();
@@ -420,6 +517,82 @@ export function MediaViewer({
     [resetIdleTimer, showDownloadToast, t],
   );
 
+  const handleToggleVideoPlayback = useCallback(() => {
+    const video = videoRef.current;
+    if (!video) return;
+    resetIdleTimer();
+    if (video.paused) {
+      void video.play().catch(() => setVideoPlaying(false));
+    } else {
+      video.pause();
+    }
+  }, [resetIdleTimer]);
+
+  const handleToggleVideoMuted = useCallback(() => {
+    const video = videoRef.current;
+    if (!video) return;
+    video.muted = !video.muted;
+    setVideoMuted(video.muted);
+    resetIdleTimer();
+  }, [resetIdleTimer]);
+
+  const handleVideoSeek = useCallback((seconds: number) => {
+    const video = videoRef.current;
+    if (!video || !Number.isFinite(seconds)) return;
+    const duration = Number.isFinite(video.duration) ? video.duration : seconds;
+    const nextTime = Math.max(0, Math.min(seconds, duration));
+    video.currentTime = nextTime;
+    setVideoCurrentTime(nextTime);
+  }, []);
+
+  const handleVideoPause = useCallback(() => {
+    setVideoPlaying(false);
+    // A paused video must leave its resume button reachable instead of hiding
+    // the custom controls on the normal three-second chrome timer.
+    setIsIdle(false);
+    if (idleTimerRef.current) {
+      clearTimeout(idleTimerRef.current);
+      idleTimerRef.current = null;
+    }
+  }, []);
+
+  const handleVideoPlay = useCallback(() => {
+    setVideoPlaying(true);
+    resetIdleTimer();
+  }, [resetIdleTimer]);
+
+  const handlePlaybackSpeedInteractionStart = useCallback(() => {
+    if (idleTimerRef.current) {
+      clearTimeout(idleTimerRef.current);
+      idleTimerRef.current = null;
+    }
+    setIsIdle(false);
+  }, []);
+
+  const handlePlaybackSpeedInteractionEnd = useCallback(() => {
+    // An expanded slider is an active control, so it pins the chrome open until
+    // the user explicitly clicks away. Releasing its thumb should hide only the
+    // floating percentage readout, not start the overlay's idle countdown.
+    if (playbackSpeedOpen) {
+      handlePlaybackSpeedInteractionStart();
+      return;
+    }
+    resetIdleTimer();
+  }, [handlePlaybackSpeedInteractionStart, playbackSpeedOpen, resetIdleTimer]);
+
+  const handlePlaybackSpeedOpenChange = useCallback((nextOpen: boolean) => {
+    setPlaybackSpeedOpen(nextOpen);
+    if (nextOpen) {
+      handlePlaybackSpeedInteractionStart();
+    } else {
+      resetIdleTimer();
+    }
+  }, [handlePlaybackSpeedInteractionStart, resetIdleTimer]);
+
+  const handlePlaybackRateChange = useCallback((rate: number) => {
+    setVideoPlaybackRate(rate);
+  }, [setVideoPlaybackRate]);
+
   const shouldIgnoreViewerKeyboard = useCallback(() => {
     const active = document.activeElement;
     if (!(active instanceof HTMLElement)) return false;
@@ -442,24 +615,45 @@ export function MediaViewer({
   // Mirrors getBaseOffset's centering, then offsets by the current pan/zoom, and
   // clamps to the visible container so the badges hug the image's bottom corners.
   const idleStateBadgePositions = useMemo(() => {
-    if (!baseSize || !containerSize) return null;
-    const scaledWidth = baseSize.width * scale;
-    const scaledHeight = baseSize.height * scale;
-    const offsetX =
-      (scaledWidth < containerSize.width ? (containerSize.width - scaledWidth) / 2 : 0) + translate.x;
-    const offsetY =
-      (scaledHeight < containerSize.height ? (containerSize.height - scaledHeight) / 2 : 0) + translate.y;
+    if (!containerSize) return null;
+
+    // Where the transformed media actually is on screen. Images and videos
+    // share the same base-size/scale/translate model.
+    let box: { left: number; top: number; width: number; height: number } | null = null;
+    if (baseSize) {
+      const width = baseSize.width * scale;
+      const height = baseSize.height * scale;
+      box = {
+        left: (width < containerSize.width ? (containerSize.width - width) / 2 : 0) + translate.x,
+        top: (height < containerSize.height ? (containerSize.height - height) / 2 : 0) + translate.y,
+        width,
+        height,
+      };
+    }
+    if (!box) return null;
+
     const PAD = 8;
     const ICON = 28; // w-7 / h-7
-    const left = Math.max(0, offsetX);
-    const right = Math.min(containerSize.width, offsetX + scaledWidth);
-    const bottom = Math.min(containerSize.height, offsetY + scaledHeight);
+    const left = Math.max(0, box.left);
+    const right = Math.min(containerSize.width, box.left + box.width);
+    const bottom = Math.min(containerSize.height, box.top + box.height);
     const top = Math.max(PAD, bottom - ICON - PAD);
     return {
       reject: { left: left + PAD, top },
       favorite: { left: Math.max(left + PAD, right - ICON - PAD), top },
     };
   }, [baseSize, containerSize, scale, translate]);
+
+  const renderedVideoWidth = useMemo(() => {
+    if (!isVideo || !containerSize || !naturalSize || naturalSize.width <= 0 || naturalSize.height <= 0) {
+      return undefined;
+    }
+    const fit = Math.min(
+      containerSize.width / naturalSize.width,
+      containerSize.height / naturalSize.height,
+    );
+    return naturalSize.width * fit;
+  }, [isVideo, containerSize, naturalSize]);
 
   // Re-centre the comparison wipe when navigating to a different item.
   useEffect(() => {
@@ -512,8 +706,8 @@ export function MediaViewer({
   // in sync with the viewer overlays. Treat a closed viewer as not-idle so the
   // bottom bar is fully visible again once the viewer leaves the screen.
   useEffect(() => {
-    setViewerState({ viewerIdle: open && isIdle });
-  }, [open, isIdle, setViewerState]);
+    setViewerState({ viewerIdle: open && chromeIdle });
+  }, [open, chromeIdle, setViewerState]);
 
   useEffect(() => {
     return () => {
@@ -528,7 +722,24 @@ export function MediaViewer({
     swipeRef.current = null;
     pinchRef.current = null;
     lastTapRef.current = null;
+    transformGestureRef.current = false;
   }, [open, index]);
+
+  // Leave a slot whose media has been deleted. Adjacent preloads usually mark
+  // one before the user reaches it (so the swipe steps straight over it), but
+  // the item the viewer opens on — or the first of a run longer than the
+  // preload window — is only found out once its own load fails. Keep going in
+  // the direction of travel, fall back to the other one, and stay put (showing
+  // the error) only when every remaining slot is dead.
+  useEffect(() => {
+    if (!open || index < 0) return;
+    if (!isMissingItem(items[index])) return;
+    const direction = lastStepDirectionRef.current;
+    const back: 1 | -1 = direction === 1 ? -1 : 1;
+    let target = findViewableIndex(index + direction, direction);
+    if (target < 0) target = findViewableIndex(index + back, back);
+    if (target >= 0 && target !== index) onIndexChange(target);
+  }, [open, index, items, isMissingItem, findViewableIndex, onIndexChange]);
 
   useEffect(() => {
     if (!open || index < 0 || items.length <= 1) {
@@ -548,6 +759,9 @@ export function MediaViewer({
       ) {
         const candidate = items[candidateIndex];
         if (!candidate || isViewerVideo(candidate)) continue;
+        // A slot already known to be deleted is one the user will be stepped
+        // over, so preload past it rather than spending a slot on it.
+        if (isMissingItem(candidate)) continue;
         preloadIndexes.add(candidateIndex);
         found += 1;
       }
@@ -589,12 +803,17 @@ export function MediaViewer({
       // Report into loadedSrcs so the spinner clears the instant the user swipes
       // onto a preloaded image. Treat error as settled too (don't hang a spinner).
       preload.onload = () => markLoaded(src);
-      preload.onerror = () => markLoaded(src);
+      preload.onerror = () => {
+        markLoaded(src);
+        // Find out ahead of the user whether this one is gone, so the swipe that
+        // reaches it steps over it instead of landing on the error frame.
+        probeMissingMedia(item);
+      };
       preload.src = src;
       nextPreloads.set(src, { image: preload, itemIndex });
     }
     adjacentPreloadsRef.current = nextPreloads;
-  }, [open, index, items, currentItem, markLoaded]);
+  }, [open, index, items, currentItem, markLoaded, isMissingItem, probeMissingMedia]);
 
   /* eslint-disable react-hooks/set-state-in-effect */
   useEffect(() => {
@@ -680,17 +899,25 @@ export function MediaViewer({
       setDisplayedItem(currentItem);
     };
 
+    // The failure half of both routes also probes: the swiped-to image being
+    // gone is what starts the hand-off to the next live slot, and starting it
+    // here rather than waiting for the visible <img> to fail shortens how long
+    // the dead frame is on screen.
+    const fail = () => {
+      probeMissingMedia(currentItem);
+      finish();
+    };
     if (typeof preload.decode === 'function') {
-      preload.decode().then(finish, finish);
+      preload.decode().then(finish, fail);
     } else {
       preload.onload = finish;
-      preload.onerror = finish;
+      preload.onerror = fail;
     }
 
     return () => {
       cancelled = true;
     };
-  }, [open, currentItem, markLoaded]);
+  }, [open, currentItem, markLoaded, probeMissingMedia]);
   /* eslint-enable react-hooks/set-state-in-effect */
 
   /* eslint-disable react-hooks/set-state-in-effect */
@@ -716,10 +943,7 @@ export function MediaViewer({
     if (!file || !id) return;
     if (workflowAvailabilityKnown) return;
 
-    const source = resolveFileSource(file);
-    const path = resolveFilePath(file, source);
-    const cacheKey = makeWorkflowAvailabilityCacheKey(source, path, file);
-    const cached = workflowAvailabilityCache.get(cacheKey);
+    const cached = getCachedWorkflowAvailability(file);
     if (cached !== undefined) {
       setWorkflowAvailableById((prev) => ({ ...prev, [id]: cached }));
       return;
@@ -731,9 +955,8 @@ export function MediaViewer({
     // past never issue a request at all — cleanup cancels the timer.
     const controller = new AbortController();
     const timer = window.setTimeout(() => {
-      getFileWorkflowAvailability(path, source, { signal: controller.signal })
+      probeWorkflowAvailability(file, undefined, { signal: controller.signal })
         .then((available) => {
-          workflowAvailabilityCache.set(cacheKey, available);
           setWorkflowAvailableById((prev) => ({ ...prev, [id]: available }));
         })
         .catch(() => {
@@ -753,10 +976,27 @@ export function MediaViewer({
   /* eslint-disable react-hooks/set-state-in-effect */
   useEffect(() => {
     setVideoError(false);
+    setVideoPlaying(true);
+    setVideoMuted(true);
+    setVideoCurrentTime(0);
+    setVideoDuration(0);
+    if (renderIsVideo) {
+      naturalSizeRef.current = null;
+      setBaseSize(null);
+    }
     // Clear the resolution subtitle until the new media reports its dimensions.
     setNaturalSize(null);
-  }, [renderItem?.src]);
+  }, [renderItem?.src, renderIsVideo]);
   /* eslint-enable react-hooks/set-state-in-effect */
+
+  // The playback rate lives in the viewer store rather than on an individual
+  // video element. Apply that one shared value to whichever clip is currently
+  // mounted, including immediately after a swipe replaces the element.
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video || !renderIsVideo) return;
+    video.playbackRate = videoPlaybackRate;
+  }, [renderIsVideo, renderItem?.src, videoPlaybackRate]);
 
   useBodyScrollLock(open);
 
@@ -785,14 +1025,20 @@ export function MediaViewer({
           if (index > 0) {
             event.preventDefault();
             resetIdleTimer();
-            onIndexChange(index - 1);
+            stepIndex(-1);
           }
           return;
         case 'ArrowRight':
           if (index < items.length - 1) {
             event.preventDefault();
             resetIdleTimer();
-            onIndexChange(index + 1);
+            stepIndex(1);
+          }
+          return;
+        case ' ':
+          if (isVideo) {
+            event.preventDefault();
+            handleToggleVideoPlayback();
           }
           return;
         case 'Delete':
@@ -891,7 +1137,7 @@ export function MediaViewer({
     shouldIgnoreViewerKeyboard,
     index,
     items.length,
-    onIndexChange,
+    stepIndex,
     currentItem,
     currentIsFavorited,
     isVideo,
@@ -909,6 +1155,7 @@ export function MediaViewer({
     handleToggleMetadata,
     canDownloadCurrent,
     handleDownloadClick,
+    handleToggleVideoPlayback,
     followQueue,
     setFollowQueue,
     pinnedWidget,
@@ -1035,6 +1282,9 @@ export function MediaViewer({
     const src = renderItem ? getFullScreenImageSrc(renderItem) : null;
     markLoaded(src);
     setFailedSrc(src ?? null);
+    // A deleted output answers 404 here; confirming that moves the viewer on
+    // instead of leaving the user parked on the error frame.
+    probeMissingMedia(renderItem);
   };
 
   const handleImageLoad = (event: React.SyntheticEvent<HTMLImageElement>) => {
@@ -1057,15 +1307,15 @@ export function MediaViewer({
   };
 
   useEffect(() => {
-    if (renderIsVideo) return;
     if (!open) return;
     const img = imageRef.current;
+    const media = renderIsVideo ? videoRef.current : img;
     const container = containerRef.current;
-    if (!img || !container) return;
+    if (!media || !container) return;
 
     // An already-cached image may be `complete` before React attaches onLoad, so
     // handleImageLoad never fires — mark it loaded here so the spinner clears.
-    if (renderFullSrc && img.complete && img.naturalWidth > 0) {
+    if (!renderIsVideo && img && renderFullSrc && img.complete && img.naturalWidth > 0) {
       // eslint-disable-next-line react-hooks/set-state-in-effect -- recording an already-decoded image into loadedSrcs
       markLoaded(renderFullSrc);
       setNaturalSize({ width: img.naturalWidth, height: img.naturalHeight });
@@ -1092,10 +1342,9 @@ export function MediaViewer({
   }, [open, renderFullSrc, renderItem?.src, renderIsVideo, markLoaded]);
 
   useEffect(() => {
-    if (renderIsVideo) return;
     if (!open || !baseSize || !containerSize) return;
     applyZoomModeRef.current(targetZoomModeRef.current);
-  }, [open, renderItem?.src, baseSize, containerSize, renderIsVideo]);
+  }, [open, renderItem?.src, baseSize, containerSize]);
 
   useEffect(() => {
     if (!open) return;
@@ -1104,13 +1353,13 @@ export function MediaViewer({
   }, [open, zoomResetKey]);
 
   const applyTransformToDOM = () => {
-    const img = imageRef.current;
-    if (!img) return;
+    const media = imageRef.current ?? videoRef.current;
+    if (!media) return;
     const s = scaleRef.current;
     const t = translateRef.current;
     const offset = getBaseOffset(s);
     const transform = `translate3d(${offset.x + t.x}px, ${offset.y + t.y}px, 0) scale(${s})`;
-    img.style.transform = transform;
+    media.style.transform = transform;
     // In comparison mode, drive the A overlay with the same transform so both
     // images zoom/pan together. Its clip tracks the screen-fixed divider, so it
     // must be recomputed here too — otherwise the wipe boundary drifts off the
@@ -1128,30 +1377,21 @@ export function MediaViewer({
   };
 
   const handlePointerDown = (event: React.PointerEvent) => {
-    if (isVideo) {
-      const videoEl = videoRef.current;
-      if (videoEl && event.target === videoEl) {
-        const rect = videoEl.getBoundingClientRect();
-        if (event.clientY > rect.bottom - 60) {
-          return;
-        }
-      }
-    }
     (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
 
     const pointers = getActivePointers(containerRef.current);
     pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
 
     if (pointers.size === 1) {
+      transformGestureRef.current = false;
       swipeRef.current = { x: event.clientX, y: event.clientY, time: Date.now() };
-      if (!isVideo) {
-        dragRef.current = { x: event.clientX - translateRef.current.x, y: event.clientY - translateRef.current.y };
+      dragRef.current = { x: event.clientX - translateRef.current.x, y: event.clientY - translateRef.current.y };
 
-        const img = imageRef.current;
-        if (img) img.style.transition = 'none';
-        if (compareImageRef.current) compareImageRef.current.style.transition = 'none';
-      }
-    } else if (pointers.size === 2 && !isVideo) {
+      const media = imageRef.current ?? videoRef.current;
+      if (media) media.style.transition = 'none';
+      if (compareImageRef.current) compareImageRef.current.style.transition = 'none';
+    } else if (pointers.size === 2) {
+      transformGestureRef.current = true;
       const [a, b] = Array.from(pointers.values());
       const distance = Math.hypot(b.x - a.x, b.y - a.y);
       const centerX = (a.x + b.x) / 2;
@@ -1175,12 +1415,13 @@ export function MediaViewer({
     if (!pointers.has(event.pointerId)) return;
     pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
 
-    if (pointers.size === 2 && pinchRef.current && !isVideo) {
+    if (pointers.size === 2 && pinchRef.current) {
       const pinch = pinchRef.current;
       const [a, b] = Array.from(pointers.values());
       const nextDistance = Math.hypot(b.x - a.x, b.y - a.y);
       const minScale = fitScale;
       const nextScale = Math.max(minScale, Math.min(5, pinch.scale * (nextDistance / pinch.distance)));
+      if (Math.abs(nextScale - pinch.scale) > 0.001) transformGestureRef.current = true;
       scaleRef.current = nextScale;
       const rect = containerRef.current?.getBoundingClientRect();
       const centerX = (a.x + b.x) / 2;
@@ -1199,11 +1440,18 @@ export function MediaViewer({
       return;
     }
 
-    if (pointers.size === 1 && !isVideo) {
+    if (pointers.size === 1) {
       const s = scaleRef.current;
       const canPan = s > 1 || (baseSize && containerRef.current && baseSize.height * s > containerRef.current.clientHeight + 1);
       if (canPan && dragRef.current) {
-        translateRef.current = clampTranslate({ x: event.clientX - dragRef.current.x, y: event.clientY - dragRef.current.y }, s);
+        const nextTranslate = clampTranslate({ x: event.clientX - dragRef.current.x, y: event.clientY - dragRef.current.y }, s);
+        if (
+          Math.abs(nextTranslate.x - translateRef.current.x) > 0.5
+          || Math.abs(nextTranslate.y - translateRef.current.y) > 0.5
+        ) {
+          transformGestureRef.current = true;
+        }
+        translateRef.current = nextTranslate;
         applyTransformToDOM();
       }
     }
@@ -1225,9 +1473,18 @@ export function MediaViewer({
     if (pointers.size === 0) {
       // Restore CSS transition before state updates so double-tap animates
 
-      const img = imageRef.current;
-      if (img) img.style.transition = 'transform 0.05s linear';
+      const media = imageRef.current ?? videoRef.current;
+      if (media) media.style.transition = 'transform 0.05s linear';
       if (compareImageRef.current) compareImageRef.current.style.transition = 'transform 0.05s linear';
+
+      if (transformGestureRef.current) {
+        transformGestureRef.current = false;
+        lastTapRef.current = null;
+        setScale(scaleRef.current);
+        setTranslate(translateRef.current);
+        dragRef.current = null;
+        return;
+      }
 
       const now = Date.now();
       const lastTap = lastTapRef.current;
@@ -1239,7 +1496,7 @@ export function MediaViewer({
         Math.hypot(dxTap, dyTap) < 24
       );
 
-      if (!isVideo && isDoubleTap) {
+      if (isDoubleTap) {
         lastTapRef.current = null;
         const currentMode = targetZoomModeRef.current;
         applyZoomMode(currentMode === 'fit' ? 'cover' : 'fit');
@@ -1260,13 +1517,21 @@ export function MediaViewer({
             ),
           });
           if (gesture === 'next') {
-            if (index < items.length - 1) onIndexChange(index + 1);
+            if (index < items.length - 1) stepIndex(1);
           } else if (gesture === 'previous') {
-            if (index > 0) onIndexChange(index - 1);
+            if (index > 0) stepIndex(-1);
           } else if (gesture === 'close') {
             onClose();
           } else if (gesture === 'tap') {
-            resetIdleTimer();
+            if (chromeIdle) {
+              resetIdleTimer();
+            } else if (!selectionMode) {
+              if (idleTimerRef.current) {
+                clearTimeout(idleTimerRef.current);
+                idleTimerRef.current = null;
+              }
+              setIsIdle(true);
+            }
           }
         }
         // Sync gesture state to React for rendering
@@ -1279,8 +1544,6 @@ export function MediaViewer({
   };
 
   const handleWheel = useCallback((event: WheelEvent) => {
-    if (isVideo) return;
-
     // No modifier: pan with the scroll wheel / trackpad (desktop). clampTranslate
     // keeps a fit image centered, so this only moves the image when zoomed in.
     if (!event.ctrlKey) {
@@ -1343,7 +1606,7 @@ export function MediaViewer({
     const clamped = clampTranslate(nextTranslate, nextScale);
     translateRef.current = clamped;
     setTranslate(clamped);
-  }, [clampTranslate, fitScale, isVideo, baseSize, containerSize]);
+  }, [clampTranslate, fitScale, baseSize, containerSize]);
 
   useEffect(() => {
     const overlay = overlayRef.current;
@@ -1370,7 +1633,7 @@ export function MediaViewer({
           iconSize={6}
           zIndex={MEDIA_VIEWER_OVERLAY_Z_INDEX}
         />
-        <p className="text-slate-300 mb-2">No images to display</p>
+        <p className="text-slate-300 mb-2">{t('No images to display')}</p>
         <p className="text-slate-500 text-sm">images: {items.length}, index: {index}</p>
       </div>,
       document.body
@@ -1403,7 +1666,7 @@ export function MediaViewer({
     >
       <div
         ref={containerRef}
-        className={`absolute inset-x-0 top-0 overflow-hidden ${isVideo ? '' : 'touch-none'}`}
+        className="absolute inset-x-0 top-0 overflow-hidden touch-none"
         style={{ overscrollBehavior: 'contain', height: 'calc(100vh - var(--bottom-bar-offset, 0px))', zIndex: 1 }}
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
@@ -1453,27 +1716,54 @@ export function MediaViewer({
                   ref={videoRef}
                   src={getPlayableVideoUrl(renderItem.src)}
                   poster={getMediaThumbnailUrlFromAssetUrl(renderItem.src)}
-                  controls
                   autoPlay
                   loop
-                  muted
+                  muted={videoMuted}
                   playsInline
                   preload="auto"
-                  className="w-full h-full object-contain select-none"
+                  className="w-full h-auto block select-none relative"
+                  style={{
+                    transform: imageTransform,
+                    transformOrigin: 'top left',
+                    willChange: 'transform',
+                    backfaceVisibility: 'hidden',
+                    WebkitBackfaceVisibility: 'hidden',
+                  }}
                   onDragStart={(event) => event.preventDefault()}
                   onError={(event) => {
                     reportVideoPlaybackIssue('media viewer', 'error', event.currentTarget);
                     setVideoError(true);
+                    probeMissingMedia(renderItem);
                   }}
                   onStalled={(event) => {
                     reportVideoPlaybackIssue('media viewer', 'stalled', event.currentTarget);
                   }}
                   onLoadedMetadata={(event) => {
-                    const { videoWidth, videoHeight } = event.currentTarget;
+                    const { videoWidth, videoHeight, duration, currentTime } = event.currentTarget;
+                    event.currentTarget.playbackRate = videoPlaybackRate;
                     if (videoWidth > 0 && videoHeight > 0) {
+                      naturalSizeRef.current = { width: videoWidth, height: videoHeight };
                       setNaturalSize({ width: videoWidth, height: videoHeight });
+                      const container = containerRef.current;
+                      if (container) {
+                        const containerWidth = container.clientWidth;
+                        const containerHeight = container.clientHeight;
+                        const ratio = containerWidth / videoWidth;
+                        setBaseSize({ width: containerWidth, height: videoHeight * ratio });
+                        setContainerSize({ width: containerWidth, height: containerHeight });
+                      }
                     }
+                    setVideoDuration(Number.isFinite(duration) ? duration : 0);
+                    setVideoCurrentTime(Number.isFinite(currentTime) ? currentTime : 0);
                   }}
+                  onDurationChange={(event) => {
+                    const duration = event.currentTarget.duration;
+                    setVideoDuration(Number.isFinite(duration) ? duration : 0);
+                  }}
+                  onTimeUpdate={(event) => setVideoCurrentTime(event.currentTarget.currentTime)}
+                  onPlay={handleVideoPlay}
+                  onPause={handleVideoPause}
+                  onVolumeChange={(event) => setVideoMuted(event.currentTarget.muted)}
                 />
                 {videoError && (
                   <div className="absolute inset-0 flex items-center justify-center text-white text-sm bg-black/60">
@@ -1583,9 +1873,23 @@ export function MediaViewer({
         onClick={onClose}
         buttonSize={9}
         iconSize={6}
-        isIdle={isIdle}
+        isIdle={chromeIdle}
         zIndex={MEDIA_VIEWER_OVERLAY_Z_INDEX}
       />
+
+      {currentItem && !isComparisonMode && isVideo && (
+        <PlaybackSpeedControls
+          rate={videoPlaybackRate}
+          open={playbackSpeedOpen}
+          isIdle={chromeIdle}
+          zIndex={MEDIA_VIEWER_OVERLAY_Z_INDEX + 2}
+          rightInset={rightControlsInset}
+          onOpenChange={handlePlaybackSpeedOpenChange}
+          onRateChange={handlePlaybackRateChange}
+          onInteractionStart={handlePlaybackSpeedInteractionStart}
+          onInteractionEnd={handlePlaybackSpeedInteractionEnd}
+        />
+      )}
 
       {/* Idle state badges: when the controls fade out, keep the favorite/reject
           state visible by parking a bare icon in the image's bottom corners —
@@ -1594,7 +1898,7 @@ export function MediaViewer({
       {idleStateBadgePositions && (currentIsRejected || currentIsFavorited) && (
         <div
           className={`absolute inset-x-0 top-0 pointer-events-none transition-opacity duration-300 ${
-            isIdle ? 'opacity-100' : 'opacity-0'
+            chromeIdle ? 'opacity-100' : 'opacity-0'
           }`}
           style={{
             height: 'calc(100vh - var(--bottom-bar-offset, 0px))',
@@ -1622,7 +1926,7 @@ export function MediaViewer({
 
       <div
         className={`absolute inset-0 pointer-events-none transition-opacity duration-300 ${
-          isIdle ? 'opacity-0' : 'opacity-100'
+          chromeIdle ? 'opacity-0' : 'opacity-100'
         }`}
         style={{ zIndex: MEDIA_VIEWER_OVERLAY_Z_INDEX }}
       >
@@ -1630,12 +1934,29 @@ export function MediaViewer({
             separately above) — no header/actions/metadata. */}
         {currentItem && !isComparisonMode && (
           <>
+            {isVideo && (
+              <div
+                className="video-mute-toggle-container absolute top-14"
+                style={{ right: rightControlsInset ? `calc(0.75rem + ${rightControlsInset})` : '0.75rem' }}
+              >
+                <OverlayCircleButton
+                  onClick={handleToggleVideoMuted}
+                  ariaLabel={videoMuted ? t('Unmute') : t('Mute')}
+                  ariaPressed={videoMuted}
+                  className="text-white"
+                  icon={videoMuted
+                    ? <SpeakerXIcon className="h-5 w-5" />
+                    : <SpeakerWaveIcon className="h-5 w-5" />}
+                />
+              </div>
+            )}
             <MediaViewerHeader
               index={index}
               total={items.length}
               displayName={displayName}
               resolution={naturalSize}
               rightInset={rightControlsInset}
+              selectionCount={selectionMode ? selectedCount : null}
             />
             <MediaViewerActions
               isVideo={isVideo}
@@ -1661,7 +1982,23 @@ export function MediaViewer({
               downloadFileId={fileId}
               onDownloadLoadingChange={handleDownloadLoadingChange}
               rightInset={rightControlsInset}
+              selectionMode={selectionMode}
+              isSelected={currentIsSelected}
+              onToggleSelection={onToggleSelection ? handleToggleSelectionClick : undefined}
             />
+            {isVideo && (
+              <VideoPlaybackControls
+                playing={videoPlaying}
+                currentTime={videoCurrentTime}
+                duration={videoDuration}
+                videoWidth={renderedVideoWidth}
+                isIdle={chromeIdle}
+                onTogglePlayback={handleToggleVideoPlayback}
+                onSeek={handleVideoSeek}
+                onInteractionStart={handlePlaybackSpeedInteractionStart}
+                onInteractionEnd={resetIdleTimer}
+              />
+            )}
             <MediaViewerMetadata
               isVideo={isVideo}
               showMetadataToggle={showMetadataToggle}
@@ -1673,6 +2010,31 @@ export function MediaViewer({
           </>
         )}
       </div>
+      {/* Selected-item frame. Rendered last and one layer above the rest of the
+          overlay so it reads as a frame AROUND the controls rather than
+          something they sit on top of.
+
+          The inner element's huge box-shadow spread paints everything outside
+          it, and the clipping parent trims that — so the outer edge meets the
+          viewer's corners squarely while the inner edge stays rounded, like the
+          ring on an outputs card. A plain border would round both. Height stops
+          at the bottom bar, since that is chrome outside the viewer. */}
+      {selectionMode && currentIsSelected && (
+        <div
+          className="media-viewer-selected-frame pointer-events-none absolute inset-x-0 top-0 overflow-hidden"
+          style={{
+            height: 'calc(100% - var(--bottom-bar-offset, 0px))',
+            zIndex: MEDIA_VIEWER_OVERLAY_Z_INDEX + 1,
+          }}
+          aria-hidden="true"
+        >
+          <div
+            className="absolute inset-[3px] rounded-lg"
+            style={{ boxShadow: '0 0 0 100vmax rgb(34 211 238)' }}
+          />
+        </div>
+      )}
+
       {/* Download toast — anchored just above the action-button row so a tap
           on Download sees its feedback right where the eye is. Created
           inside the viewer's overlay portal so it auto-unmounts when the
