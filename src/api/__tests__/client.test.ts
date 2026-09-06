@@ -1,5 +1,63 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { deleteHistoryItems, getHistory, getQueue, searchUserImagesByPrompt } from '@/api/client';
+import {
+  deleteHistoryItems,
+  getCoreWorkflowTemplates,
+  getFileWorkflowMetadata,
+  getHistory,
+  getQueue,
+  getTemplateThumbnailUrl,
+  loadTemplateWorkflow,
+  searchUserImagesByPrompt,
+} from '@/api/client';
+
+describe('getFileWorkflowMetadata', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('returns the executed prompt beside the embedded workflow', async () => {
+    const workflow = { nodes: [], links: [] };
+    const prompt = { '7': { class_type: 'KSampler', inputs: { seed: 123 } } };
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      ok: true,
+      json: async () => ({ workflow, prompt }),
+    } as Response)));
+
+    await expect(getFileWorkflowMetadata('folder/output.png', 'output'))
+      .resolves.toEqual({ workflow, prompt });
+  });
+
+  it('omits prompt entirely when the file carries only a workflow', async () => {
+    const workflow = { nodes: [], links: [] };
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      ok: true,
+      json: async () => ({ workflow }),
+    } as Response)));
+
+    await expect(getFileWorkflowMetadata('folder/output.png', 'output'))
+      .resolves.toEqual({ workflow });
+  });
+
+  it('surfaces the server error message when the request fails', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      ok: false,
+      json: async () => ({ error: 'file not found' }),
+    } as Response)));
+
+    await expect(getFileWorkflowMetadata('missing.png', 'output'))
+      .rejects.toThrow('file not found');
+  });
+
+  it('rejects a response that carries no workflow', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      ok: true,
+      json: async () => ({ prompt: {} }),
+    } as Response)));
+
+    await expect(getFileWorkflowMetadata('folder/output.png', 'output'))
+      .rejects.toThrow('No workflow metadata found');
+  });
+});
 
 describe('searchUserImagesByPrompt', () => {
   afterEach(() => {
@@ -87,5 +145,106 @@ describe('queue bootstrap requests', () => {
 
     await expect(deleteHistoryItems(['prompt-with-deleted-video']))
       .rejects.toThrow('Failed to delete history items');
+  });
+});
+
+describe('core workflow templates', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  const jsonResponse = (data: unknown) => ({
+    ok: true,
+    headers: { get: () => 'application/json' },
+    json: async () => data,
+  } as unknown as Response);
+
+  const index = [
+    { moduleName: 'default', title: 'Image', templates: [{ name: 'image_flux', title: 'Flux' }] },
+  ];
+
+  it('reads the catalog from the templates package index', async () => {
+    const fetchMock = vi.fn(async () => jsonResponse(index));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(getCoreWorkflowTemplates()).resolves.toEqual(index);
+    expect(fetchMock).toHaveBeenCalledWith('/templates/index.json');
+  });
+
+  it('asks for the localized index of the current locale', async () => {
+    const fetchMock = vi.fn(async () => jsonResponse(index));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await getCoreWorkflowTemplates('zh-CN');
+    expect(fetchMock).toHaveBeenCalledWith('/templates/index.zh.json');
+  });
+
+  it('falls back to the English index when the locale has none', async () => {
+    const fetchMock = vi.fn(async (path: string) =>
+      path === '/templates/index.json'
+        ? jsonResponse(index)
+        : ({ ok: false, headers: { get: () => 'text/plain' } } as unknown as Response),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(getCoreWorkflowTemplates('ja')).resolves.toEqual(index);
+    expect(fetchMock).toHaveBeenCalledWith('/templates/index.ja.json');
+    expect(fetchMock).toHaveBeenCalledWith('/templates/index.json');
+  });
+
+  it('ignores an HTML answer from a server without the templates package', async () => {
+    // A missing /templates mount can fall through to the app's own index.html.
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      ok: true,
+      headers: { get: () => 'text/html' },
+      json: async () => index,
+    } as unknown as Response)));
+
+    await expect(getCoreWorkflowTemplates()).resolves.toEqual([]);
+  });
+
+  it('resolves empty rather than throwing when the request fails', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('offline'); }));
+
+    await expect(getCoreWorkflowTemplates()).resolves.toEqual([]);
+  });
+
+  it('drops entries that are not template categories', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => jsonResponse([...index, { title: 'Broken' }, null])));
+
+    await expect(getCoreWorkflowTemplates()).resolves.toEqual(index);
+  });
+
+  it('loads a core template from the flat templates path', async () => {
+    const workflow = { nodes: [] };
+    const fetchMock = vi.fn(async () => ({ ok: true, json: async () => workflow } as Response));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(loadTemplateWorkflow('default', 'image_flux')).resolves.toEqual(workflow);
+    expect(fetchMock).toHaveBeenCalledWith('/templates/image_flux.json');
+  });
+
+  it('still loads a custom node template from its module path', async () => {
+    const workflow = { nodes: [] };
+    const fetchMock = vi.fn(async () => ({ ok: true, json: async () => workflow } as Response));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await loadTemplateWorkflow('some-pack', 'example');
+    expect(fetchMock).toHaveBeenCalledWith('/api/workflow_templates/some-pack/example.json');
+  });
+
+  it('builds thumbnail urls per source', () => {
+    expect(getTemplateThumbnailUrl('default', { name: 'image_flux', mediaSubtype: 'webp' }))
+      .toBe('/templates/image_flux-1.webp');
+    expect(getTemplateThumbnailUrl('some-pack', { name: 'example' }))
+      .toBe('/api/workflow_templates/some-pack/example.jpg');
+  });
+
+  it('has no thumbnail for an audio template', () => {
+    expect(getTemplateThumbnailUrl('default', {
+      name: 'audio_ace',
+      mediaType: 'audio',
+      mediaSubtype: 'mp3',
+    })).toBeNull();
   });
 });

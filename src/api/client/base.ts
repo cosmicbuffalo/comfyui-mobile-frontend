@@ -223,3 +223,35 @@ export function connectWebSocket(
 
   return ws;
 }
+
+/** Connect to the extension's cached-aware, whole-prompt progress stream. */
+export function connectProgressWebSocket(
+  onMessage: (msg: unknown) => void,
+  onOpen?: () => void,
+  onClose?: () => void,
+  onError?: (error: Event) => void,
+): WebSocket {
+  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const ws = new WebSocket(`${protocol}//${window.location.host}/mobile/ws/progress`);
+
+  ws.onopen = () => {
+    // The registry is sampled every 100ms. A 200ms latest-value cadence keeps
+    // rendering light while retaining the trailing/most-recent sampler tick.
+    ws.send(JSON.stringify({ type: 'hello', min_interval_ms: 200 }));
+    onOpen?.();
+  };
+  ws.onmessage = (event) => {
+    if (typeof event.data !== 'string') return;
+    try {
+      onMessage(JSON.parse(event.data));
+    } catch (error) {
+      console.error('[Progress WS] Failed to parse message:', error);
+    }
+  };
+  ws.onclose = () => onClose?.();
+  ws.onerror = (error) => {
+    console.error('[Progress WS] Error:', error);
+    onError?.(error);
+  };
+  return ws;
+}

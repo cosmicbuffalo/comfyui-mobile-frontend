@@ -68,11 +68,11 @@ export interface WorkflowSubgraphDefinition {
   itemKey?: string;
   name?: string;
   version?: number;
-  state?: Record<string, unknown>;
+  state?: WorkflowGraphState;
   revision?: number;
   config?: Record<string, unknown>;
-  inputNode?: Record<string, unknown>;
-  outputNode?: Record<string, unknown>;
+  inputNode?: { id?: number; bounding?: [number, number, number, number]; pinned?: boolean };
+  outputNode?: { id?: number; bounding?: [number, number, number, number]; pinned?: boolean };
   inputs?: Array<{
     id?: string;
     name?: string;
@@ -92,10 +92,26 @@ export interface WorkflowSubgraphDefinition {
     pos?: [number, number];
   }>;
   widgets?: unknown[];
+  definitions?: {
+    subgraphs?: WorkflowSubgraphDefinition[];
+  };
   nodes: WorkflowNode[];
   groups?: WorkflowGroup[];
   links: WorkflowSubgraphLink[];
   extra?: Record<string, unknown>;
+}
+
+/**
+ * LiteGraph's id allocators, shared by the root graph and every subgraph.
+ * Open-ended because a subgraph definition's `state` also carries this app's
+ * own item colour (see `updateWorkflowItemColor`).
+ */
+export interface WorkflowGraphState {
+  lastGroupId?: number;
+  lastNodeId?: number;
+  lastLinkId?: number;
+  lastRerouteId?: number;
+  [key: string]: unknown;
 }
 
 export interface Workflow {
@@ -103,6 +119,7 @@ export interface Workflow {
   revision?: number;
   last_node_id: number;
   last_link_id: number;
+  state?: WorkflowGraphState;
   nodes: WorkflowNode[];
   links: WorkflowLink[];
   groups: WorkflowGroup[];

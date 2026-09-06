@@ -54,9 +54,7 @@ interface ModelListResponse {
 }
 
 // Our built-in standalone backend. Always present (it ships with this app) and
-// is both a display provider AND the engine behind on-demand metadata refresh —
-// the refresh path uses this directly even when Lora Manager is the display
-// provider, since it's our own Civitai fetcher writing shared sidecars.
+// provides the on-demand metadata refresh when Lora Manager is not installed.
 const STANDALONE_BASE = "/mobile/api/models";
 
 async function probeHealth(base: string): Promise<boolean> {
@@ -156,12 +154,41 @@ export async function fetchAllModels(
   return fetchModelsFrom(provider.base, prefix);
 }
 
-// Fetch models from our standalone backend specifically (used after an on-demand
-// refresh so the picker reflects the sidecars we just wrote, even under LM).
-export async function fetchStandaloneModels(
+// Ask Lora Manager to discover newly-added files before fetching metadata for
+// its refreshed catalog. Keeping these as one operation prevents a metadata
+// pass from missing models that have not reached LM's cache yet.
+export async function refreshLoraManagerModels(
   prefix: LoraManagerPrefix,
-): Promise<LoraManagerModel[]> {
-  return fetchModelsFrom(STANDALONE_BASE, prefix);
+): Promise<boolean> {
+  try {
+    const scanResponse = await fetch(
+      `/api/lm/${prefix}/scan?full_rebuild=false`,
+      { cache: "no-store" },
+    );
+    if (!scanResponse.ok) return false;
+
+    const scanResult = (await scanResponse.json()) as {
+      status?: string;
+      error?: string;
+    };
+    if (scanResult.status === "cancelled" || scanResult.error) return false;
+
+    const metadataResponse = await fetch(
+      `/api/lm/${prefix}/fetch-all-civitai`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      },
+    );
+    if (!metadataResponse.ok) return false;
+    const metadataResult = (await metadataResponse.json()) as {
+      success?: boolean;
+    };
+    return metadataResult.success !== false;
+  } catch {
+    return false;
+  }
 }
 
 export interface PopulateStatus {
@@ -172,9 +199,8 @@ export interface PopulateStatus {
 }
 
 // Kick off a Civitai metadata population pass on our standalone backend. With
-// `force`, re-fetches every model; otherwise only those missing metadata. Always
-// targets the standalone engine (this is our fetcher), regardless of which
-// provider feeds the picker. Returns null if the backend isn't reachable.
+// `force`, re-fetches every model; otherwise only those missing metadata.
+// Returns null if the backend isn't reachable.
 export async function triggerPopulate(
   prefix: LoraManagerPrefix,
   force = false,
