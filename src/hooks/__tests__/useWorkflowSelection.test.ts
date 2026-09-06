@@ -24,17 +24,15 @@ describe('useWorkflowSelection', () => {
     expect(s.actionMenuOpen).toBe(false);
   });
 
-  it('toggleKey adds companion keys only when turning a key ON', () => {
+  it('toggleKey selects only the requested group', () => {
     const store = useWorkflowSelectionStore.getState();
-    // Selecting a group also selects its members (companions).
-    store.toggleKey('group', ['n1', 'n2']);
-    expect(useWorkflowSelectionStore.getState().selectedKeys).toEqual(['group', 'n1', 'n2']);
+    store.toggleKey('group');
+    expect(useWorkflowSelectionStore.getState().selectedKeys).toEqual(['group']);
   });
 
   it('toggling a group OFF removes only the group, leaving members as-is', () => {
     useWorkflowSelectionStore.setState({ selectedKeys: ['group', 'n1', 'n2'] });
-    // Turning the group off must NOT pull its members back out.
-    useWorkflowSelectionStore.getState().toggleKey('group', ['n1', 'n2']);
+    useWorkflowSelectionStore.getState().toggleKey('group');
     expect(useWorkflowSelectionStore.getState().selectedKeys).toEqual(['n1', 'n2']);
   });
 

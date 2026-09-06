@@ -4,7 +4,9 @@ import { useWorkflowErrorsStore } from '../useWorkflowErrors';
 beforeEach(() => {
   useWorkflowErrorsStore.setState({
     error: null,
+    errorKind: null,
     nodeErrors: {},
+    nodeErrorsByItemKey: {},
     nodeErrorsFromRun: false,
     errorCycleIndex: 0,
     errorsDismissed: false,
@@ -105,6 +107,62 @@ describe('useWorkflowErrorsStore', () => {
       );
       useWorkflowErrorsStore.getState().clearNodeErrors();
       expect(useWorkflowErrorsStore.getState().nodeErrorsFromRun).toBe(false);
+    });
+  });
+
+  describe('clearNodeError', () => {
+    it('clears the workflow-load message after the final node error is fixed', () => {
+      const nodeError = { type: 'workflow_load', message: 'Missing value', details: '' };
+      useWorkflowErrorsStore.getState().setNodeErrors(
+        { '1': [nodeError] },
+        false,
+        { 'root/node:1': [nodeError] },
+      );
+      useWorkflowErrorsStore.getState().setError(
+        'Workflow load error: 1 input references missing options.',
+        'workflow-load',
+      );
+
+      useWorkflowErrorsStore.getState().clearNodeError(1, 'root/node:1');
+
+      const state = useWorkflowErrorsStore.getState();
+      expect(state.nodeErrors).toEqual({});
+      expect(state.nodeErrorsByItemKey).toEqual({});
+      expect(state.error).toBeNull();
+      expect(state.errorKind).toBeNull();
+    });
+
+    it('updates the workflow-load message when other node errors remain', () => {
+      const firstError = { type: 'workflow_load', message: 'Missing first', details: '' };
+      const secondError = { type: 'workflow_load', message: 'Missing second', details: '' };
+      useWorkflowErrorsStore.getState().setNodeErrors({
+        '1': [firstError],
+        '2': [secondError],
+      });
+      useWorkflowErrorsStore.getState().setError(
+        'Workflow load error: 2 inputs reference missing options.',
+        'workflow-load',
+      );
+
+      useWorkflowErrorsStore.getState().clearNodeError(1);
+
+      const state = useWorkflowErrorsStore.getState();
+      expect(state.nodeErrors).toEqual({ '2': [secondError] });
+      expect(state.error).toBe(
+        'Workflow load error: 1 input references missing options.',
+      );
+      expect(state.errorKind).toBe('workflow-load');
+    });
+
+    it('does not clear an independent prompt error', () => {
+      useWorkflowErrorsStore.getState().setNodeErrors({
+        '1': [{ type: 'prompt', message: 'Bad value', details: '' }],
+      });
+      useWorkflowErrorsStore.getState().setError('Prompt rejected', 'prompt');
+
+      useWorkflowErrorsStore.getState().clearNodeError(1);
+
+      expect(useWorkflowErrorsStore.getState().error).toBe('Prompt rejected');
     });
   });
 });

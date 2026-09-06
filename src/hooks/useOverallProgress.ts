@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { Workflow } from '@/api/types';
 import { getWorkflowSignature } from '@/hooks/useWorkflow';
 import { useConnectionStatusStore } from '@/hooks/useConnectionStatus';
+import { useLiveProgressStore } from '@/hooks/useLiveProgress';
 
 interface OverallProgressInput {
   workflow: Workflow | null;
@@ -19,6 +20,11 @@ export function useOverallProgress({
   holdCompleteWhileIdle = false,
 }: OverallProgressInput): number | null {
   const isConnected = useConnectionStatusStore((s) => s.isConnected);
+  const liveOverallProgress = useLiveProgressStore((s) => (
+    runKey && s.snapshot?.promptId === runKey
+      ? s.snapshot.overallProgressPercent
+      : null
+  ));
   const [percent, setPercent] = useState<number | null>(null);
   const startTimeRef = useRef<number | null>(null);
   const lastRunKeyRef = useRef<string | null>(null);
@@ -27,13 +33,14 @@ export function useOverallProgress({
   const queuedRunKeyRef = useRef<string | null>(null);
   const lastPercentRef = useRef(0);
   const lastEmittedRef = useRef<number | null>(null);
+  const disconnectedAtRef = useRef<number | null>(null);
 
   useEffect(() => {
     let timeoutId: ReturnType<typeof setTimeout> | null = null;
     let intervalId: ReturnType<typeof setInterval> | null = null;
 
     const update = () => {
-      if (!workflow || !isConnected) {
+      if (!workflow) {
         if (lastEmittedRef.current !== null) {
           lastEmittedRef.current = null;
           setPercent(null);
@@ -44,11 +51,51 @@ export function useOverallProgress({
         startTimeRef.current = null;
         lastPercentRef.current = 0;
         lastRunKeyRef.current = null;
+        disconnectedAtRef.current = null;
         return;
       }
 
-      const holdMs = 250;
       const currentTime = Date.now();
+      if (!isConnected) {
+        // Preserve the last displayed estimate while the websocket is down.
+        // The UI replaces it with a reconnecting state, and keeping the timing
+        // refs intact lets progress resume from the same point afterwards.
+        if (disconnectedAtRef.current === null) {
+          disconnectedAtRef.current = currentTime;
+        }
+        return;
+      }
+
+      if (disconnectedAtRef.current !== null) {
+        const disconnectedForMs = currentTime - disconnectedAtRef.current;
+        const runChangedWhileDisconnected =
+          lastRunKeyRef.current !== null && runKey !== lastRunKeyRef.current;
+        if (runChangedWhileDisconnected) {
+          // Queue reconciliation may reveal that the old prompt finished (or a
+          // different one started) while we were offline. Do not animate the
+          // stale run to completion: discard it so the reconciled prompt and
+          // fresh websocket progress become authoritative immediately.
+          startTimeRef.current = null;
+          lastRunKeyRef.current = null;
+          holdUntilRef.current = null;
+          pendingRunKeyRef.current = null;
+          queuedRunKeyRef.current = null;
+          lastPercentRef.current = 0;
+        } else {
+          // Same run: exclude backend downtime from both the estimate and its
+          // brief completion hold; otherwise reconnecting would make progress
+          // jump as though the disconnected time were confirmed execution.
+          if (startTimeRef.current !== null) {
+            startTimeRef.current += disconnectedForMs;
+          }
+          if (holdUntilRef.current !== null) {
+            holdUntilRef.current += disconnectedForMs;
+          }
+        }
+        disconnectedAtRef.current = null;
+      }
+
+      const holdMs = 250;
       let nextValue: number | null = null;
 
       if (!runKey) {
@@ -152,5 +199,6 @@ export function useOverallProgress({
     };
   }, [workflow, runKey, isRunning, workflowDurationStats, holdCompleteWhileIdle, isConnected]);
 
+  if (liveOverallProgress !== null) return liveOverallProgress;
   return percent;
 }

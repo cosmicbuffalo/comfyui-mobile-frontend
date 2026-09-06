@@ -3,11 +3,12 @@ import { createRoot, type Root } from 'react-dom/client';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { connectWebSocket, getHistory, getQueue } from '@/api/client';
+import { connectProgressWebSocket, connectWebSocket, getHistory, getQueue } from '@/api/client';
 import { useQueueStore } from '@/hooks/useQueue';
 import { useWorkflowErrorsStore } from '@/hooks/useWorkflowErrors';
 import { useWorkflowStore } from '@/hooks/useWorkflow';
 import { useGenerationSettingsStore } from '@/hooks/useGenerationSettings';
+import { useLiveProgressStore } from '@/hooks/useLiveProgress';
 import type { Workflow } from '@/api/types';
 import {
   BACKEND_LOST_NOTICE_MIN_DOWNTIME_MS,
@@ -22,6 +23,7 @@ import {
 
 vi.mock('@/api/client', () => ({
   clientId: 'test-client',
+  connectProgressWebSocket: vi.fn(),
   connectWebSocket: vi.fn(),
   getQueue: vi.fn(),
   getHistory: vi.fn(),
@@ -42,10 +44,28 @@ interface WebSocketCallbacks {
 }
 
 const mockConnectWebSocket = vi.mocked(connectWebSocket);
+const mockConnectProgressWebSocket = vi.mocked(connectProgressWebSocket);
 const mockGetQueue = vi.mocked(getQueue);
 const mockGetHistory = vi.mocked(getHistory);
 const callbacks: WebSocketCallbacks[] = [];
 const sockets: WebSocket[] = [];
+const progressCallbacks: Array<{
+  onMessage: (message: unknown) => void;
+  onOpen?: () => void;
+  onClose?: () => void;
+  onError?: (error: Event) => void;
+}> = [];
+
+function mockProgressSocket() {
+  mockConnectProgressWebSocket.mockReset();
+  mockConnectProgressWebSocket.mockImplementation((onMessage, onOpen, onClose, onError) => {
+    progressCallbacks.push({ onMessage, onOpen, onClose, onError });
+    return {
+      readyState: WebSocket.OPEN,
+      close: vi.fn(),
+    } as unknown as WebSocket;
+  });
+}
 
 function setSocketReadyState(socket: WebSocket, readyState: number) {
   (socket as unknown as { readyState: number }).readyState = readyState;
@@ -64,6 +84,9 @@ describe('backend reconnect notices', () => {
     vi.useFakeTimers();
     callbacks.length = 0;
     sockets.length = 0;
+    progressCallbacks.length = 0;
+    mockProgressSocket();
+    useLiveProgressStore.getState().reset();
     mockConnectWebSocket.mockReset();
     mockGetQueue.mockResolvedValue({ queue_running: [], queue_pending: [] });
     mockGetHistory.mockResolvedValue({});
@@ -239,6 +262,96 @@ describe('backend reconnect notices', () => {
       progress: 0,
     });
     expect(useWorkflowErrorsStore.getState().error).toBeNull();
+  });
+
+  it('feeds the cached-aware mobile progress socket into one atomic snapshot', async () => {
+    await act(async () => {
+      root.render(createElement(WebSocketHarness));
+    });
+    await act(async () => {
+      progressCallbacks[0].onOpen?.();
+      progressCallbacks[0].onMessage({
+        prompt_id: 'p1',
+        value: 10,
+        max: 20,
+        nodes_total: 10,
+        nodes_done: 4,
+        node_name: 'KSampler',
+      });
+    });
+
+    expect(useLiveProgressStore.getState()).toMatchObject({
+      isConnected: true,
+      snapshot: {
+        promptId: 'p1',
+        nodeName: 'KSampler',
+        nodeProgressPercent: 50,
+        overallProgressPercent: 45,
+      },
+    });
+    expect(useWorkflowStore.getState()).toMatchObject({
+      isExecuting: true,
+      executingPromptId: 'p1',
+      progress: 50,
+    });
+  });
+
+  it('replaces a stale prompt id when the server-wide progress stream advances', async () => {
+    useWorkflowStore.setState({
+      isExecuting: true,
+      executingPromptId: 'old-prompt',
+      progress: 90,
+    });
+    await act(async () => {
+      root.render(createElement(WebSocketHarness));
+    });
+    await act(async () => {
+      progressCallbacks[0].onMessage({
+        prompt_id: 'next-prompt',
+        value: 3,
+        max: 10,
+        nodes_total: 8,
+        nodes_done: 2,
+        node_name: 'KSampler',
+      });
+    });
+
+    expect(useWorkflowStore.getState()).toMatchObject({
+      isExecuting: true,
+      executingPromptId: 'next-prompt',
+      progress: 30,
+    });
+    expect(useLiveProgressStore.getState().snapshot).toMatchObject({
+      promptId: 'next-prompt',
+      overallProgressPercent: 29,
+    });
+  });
+
+  it('ignores the finished-run snapshot the server sends on connect', async () => {
+    useWorkflowStore.setState({ isExecuting: false, executingPromptId: null, progress: 0 });
+    await act(async () => {
+      root.render(createElement(WebSocketHarness));
+    });
+    // The backend registry still names the last prompt once it has finished,
+    // and every new client is handed that snapshot the moment it connects. It
+    // reports no running node, so a page refresh over an idle server must not
+    // resurrect the run as a live one (which flashed the progress card).
+    await act(async () => {
+      progressCallbacks[0].onOpen?.();
+      progressCallbacks[0].onMessage({
+        prompt_id: 'finished-prompt',
+        value: 0,
+        max: 0,
+        nodes_total: 6,
+        nodes_done: 6,
+        node_name: null,
+      });
+    });
+
+    expect(useWorkflowStore.getState()).toMatchObject({
+      isExecuting: false,
+      executingPromptId: null,
+    });
   });
 
   it('resumes a restored infinite loop when its session has no live prompt', async () => {
@@ -762,8 +875,11 @@ describe('orphaned closed-tab run routing', () => {
   beforeEach(() => {
     callbacks.length = 0;
     sockets.length = 0;
+    progressCallbacks.length = 0;
     onMessage = undefined;
     onBinaryMessage = undefined;
+    mockProgressSocket();
+    useLiveProgressStore.getState().reset();
     mockConnectWebSocket.mockReset();
     mockGetQueue.mockResolvedValue({ queue_running: [], queue_pending: [] });
     mockGetHistory.mockResolvedValue({});
@@ -1304,5 +1420,235 @@ describe('orphaned closed-tab run routing', () => {
       data: { prompt_id: 'desktop-prompt', exception_message: 'boom', node_id: '5' },
     });
     expect(useWorkflowErrorsStore.getState().error).not.toBeNull();
+  });
+});
+
+describe('progress-socket terminal frames vs. core-socket completion', () => {
+  // The core socket and the progress socket are separate connections with no
+  // ordering guarantee between them. A run that has already ended on the core
+  // socket could be re-asserted as "executing" by a trailing progress snapshot,
+  // and the progress socket's own `finished` frame did not clear it — leaving
+  // the workflow panel showing "Running" at 100% over an empty queue.
+  let container: HTMLDivElement;
+  let root: Root;
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    callbacks.length = 0;
+    sockets.length = 0;
+    progressCallbacks.length = 0;
+    mockProgressSocket();
+    useLiveProgressStore.getState().reset();
+    mockConnectWebSocket.mockReset();
+    mockGetQueue.mockResolvedValue({ queue_running: [], queue_pending: [] });
+    mockGetHistory.mockResolvedValue({});
+    mockConnectWebSocket.mockImplementation(
+      (_clientId, _handleMessage, onOpen, onClose, onError) => {
+        const socket = { readyState: WebSocket.OPEN, close: vi.fn() } as unknown as WebSocket;
+        callbacks.push({ onOpen, onClose, onError });
+        sockets.push(socket);
+        return socket;
+      },
+    );
+    useQueueStore.setState({
+      running: [], pending: [], completing: [], isLoading: false,
+      lastExecutedId: null, localPromptOrder: {}, nextLocalPromptOrder: 1,
+      livePromptOutputs: {}, queueItemExpanded: {}, queueItemUserToggled: {},
+      queueItemHideImages: {}, showQueueMetadata: false, previewVisibility: {},
+      previewVisibilityDefault: false, shadowQueueJobs: {}, recoverableJobIds: [],
+    });
+    useWorkflowErrorsStore.setState({
+      error: null, nodeErrors: {}, errorCycleIndex: 0, errorsDismissed: false,
+    });
+    useGenerationSettingsStore.setState({ infiniteModeEnabled: false });
+    container = document.createElement('div');
+    document.body.appendChild(container);
+    root = createRoot(container);
+  });
+
+  afterEach(async () => {
+    await act(async () => { root.unmount(); });
+    container.remove();
+    vi.useRealTimers();
+  });
+
+  const runningSnapshot = (promptId: string) => ({
+    prompt_id: promptId,
+    nodes_done: 3,
+    nodes_total: 4,
+    node_name: 'KSampler',
+    value: 8,
+    max: 10,
+  });
+
+  const queueItem = (promptId: string) => ({
+    number: 1,
+    prompt_id: promptId,
+    prompt: {},
+    extra: {},
+    outputs_to_execute: [],
+  });
+
+  async function mount() {
+    await act(async () => { root.render(createElement(WebSocketHarness)); });
+    await act(async () => { await callbacks[0].onOpen?.(); });
+  }
+
+  async function fireProgress(msg: unknown) {
+    await act(async () => {
+      progressCallbacks[0]?.onMessage(msg);
+      await Promise.resolve();
+    });
+  }
+
+  function setExecutionState(promptId: string | null) {
+    useWorkflowStore.setState({
+      activeSessionId: null,
+      promptToSession: {},
+      parkedSessions: {},
+      isExecuting: promptId !== null,
+      executingNodeId: null,
+      executingNodeHierarchicalKey: null,
+      executingNodePath: null,
+      executingPromptId: promptId,
+      progress: promptId === null ? 0 : 80,
+    });
+  }
+
+  it('clears execution when a trailing snapshot lands after the core socket finished', async () => {
+    await mount();
+    // Post `executing(null)`: the core socket has already ended the run.
+    setExecutionState(null);
+
+    // The progress socket has no idea, and re-asserts the run.
+    await fireProgress(runningSnapshot('p1'));
+    expect(useWorkflowStore.getState()).toMatchObject({
+      isExecuting: true,
+      executingPromptId: 'p1',
+    });
+    await act(async () => {
+      useQueueStore.setState({
+        running: [queueItem('p1')],
+      });
+      useWorkflowStore.setState({
+        latentPreviews: { 'root/node:1': 'blob:stale-preview' },
+      });
+    });
+
+    // Its own terminal frame must now undo that.
+    await fireProgress({ type: 'finished', prompt_id: 'p1' });
+    expect(useWorkflowStore.getState()).toMatchObject({
+      isExecuting: false,
+      executingPromptId: null,
+    });
+    // The 100% snapshot is still recorded for display; it just no longer has a
+    // retained prompt id selecting it as a live run.
+    expect(useLiveProgressStore.getState().snapshot).toMatchObject({
+      promptId: 'p1',
+      finished: true,
+      overallProgressPercent: 100,
+      nodeName: null,
+    });
+    // The overlay's queue fallback must be gone too. Keeping this entry was a
+    // second way to continue selecting the finished 100% snapshot after the
+    // workflow execution fields had been cleared.
+    expect(useQueueStore.getState().running).toEqual([]);
+    expect(useQueueStore.getState().completing).toMatchObject([
+      { prompt_id: 'p1' },
+    ]);
+    expect(useWorkflowStore.getState().latentPreviews).toEqual({});
+    const overlayRunKey = useWorkflowStore.getState().executingPromptId
+      || useQueueStore.getState().running[0]?.prompt_id
+      || null;
+    expect(overlayRunKey).toBeNull();
+  });
+
+  it('ignores a snapshot that arrives after that prompt already finished', async () => {
+    await mount();
+    setExecutionState('p1');
+    await fireProgress(runningSnapshot('p1'));
+    await fireProgress({ type: 'finished', prompt_id: 'p1' });
+    expect(useWorkflowStore.getState().isExecuting).toBe(false);
+
+    // The reverse ordering: the straggler comes last.
+    await fireProgress(runningSnapshot('p1'));
+
+    expect(useWorkflowStore.getState()).toMatchObject({
+      isExecuting: false,
+      executingPromptId: null,
+    });
+    // The display must not fall back to a running snapshot either.
+    expect(useLiveProgressStore.getState().snapshot).toMatchObject({
+      finished: true,
+      overallProgressPercent: 100,
+    });
+  });
+
+  it('leaves a live run alone when an earlier prompt reports finished', async () => {
+    await mount();
+    setExecutionState('p2');
+    await act(async () => {
+      useQueueStore.setState({
+        running: [queueItem('p2')],
+      });
+    });
+
+    await fireProgress({ type: 'finished', prompt_id: 'p1' });
+
+    expect(useWorkflowStore.getState()).toMatchObject({
+      isExecuting: true,
+      executingPromptId: 'p2',
+    });
+    expect(useQueueStore.getState().running).toMatchObject([
+      { prompt_id: 'p2' },
+    ]);
+  });
+
+  it('sweeps a stuck execution state once the queue has been idle for two ticks', async () => {
+    await mount();
+    // Whatever sequence got us here, nothing is queued and nothing is running.
+    setExecutionState('p1');
+
+    await act(async () => { await vi.advanceTimersByTimeAsync(2000); });
+    // One tick is not enough: a just-submitted prompt is briefly absent from
+    // every queue bucket, and clearing then would blank a legitimate run.
+    expect(useWorkflowStore.getState().isExecuting).toBe(true);
+
+    await act(async () => { await vi.advanceTimersByTimeAsync(2000); });
+    expect(useWorkflowStore.getState()).toMatchObject({
+      isExecuting: false,
+      executingPromptId: null,
+    });
+  });
+
+  it('treats completing-only cards as idle for execution reconciliation', async () => {
+    await mount();
+    setExecutionState('p1');
+    await act(async () => {
+      useQueueStore.setState({
+        completing: [queueItem('p1')],
+      });
+    });
+
+    await act(async () => { await vi.advanceTimersByTimeAsync(4000); });
+
+    expect(useWorkflowStore.getState()).toMatchObject({
+      isExecuting: false,
+      executingPromptId: null,
+    });
+  });
+
+  it('does not sweep while the queue still has work', async () => {
+    await mount();
+    setExecutionState('p1');
+    await act(async () => {
+      useQueueStore.setState({
+        pending: [queueItem('p1')],
+      });
+    });
+
+    await act(async () => { await vi.advanceTimersByTimeAsync(6000); });
+
+    expect(useWorkflowStore.getState().isExecuting).toBe(true);
   });
 });

@@ -3,6 +3,7 @@ import { createJSONStorage, persist } from 'zustand/middleware';
 import type { Workflow, WorkflowNode } from '@/api/types';
 import { useWorkflowStore, type SeedMode } from '@/hooks/useWorkflow';
 import { useSeedStore } from '@/hooks/useSeed';
+import { useWorkflowLineageStore } from '@/hooks/useWorkflowLineage';
 
 interface SavedNodeState {
   mode?: number;
@@ -22,14 +23,26 @@ interface BookmarksState {
   bookmarkedItems: string[];
   bookmarkBarSide: 'left' | 'right';
   bookmarkBarTop: number | null;
+  /** Shrunk to a single button, so the gutter is out of the way of the list. */
+  bookmarkBarCollapsed: boolean;
+  /**
+   * Where the collapsed button sits, kept apart from the expanded bar's offset.
+   * A full-height bar often cannot open where a 40px button was parked, so
+   * expanding moves it — and the button must still come back to where it was
+   * left. The SIDE stays shared: the two are one gutter, on one edge.
+   */
+  bookmarkBarCollapsedTop: number | null;
   bookmarkRepositioningActive: boolean;
   toggleBookmark: (itemKey: string) => void;
   clearBookmarks: () => void;
-  setBookmarkBarPosition: (position: { side?: 'left' | 'right'; top?: number | null }) => void;
+  setBookmarkBarPosition: (position: {
+    side?: 'left' | 'right';
+    top?: number | null;
+    collapsedTop?: number | null;
+  }) => void;
+  setBookmarkBarCollapsed: (collapsed: boolean) => void;
   setBookmarkRepositioningActive: (active: boolean) => void;
 }
-
-const MAX_BOOKMARKS = 5;
 
 function buildSavedNodeStates(nodes: WorkflowNode[]): Record<number, SavedNodeState> {
   const nodeStates: Record<number, SavedNodeState> = {};
@@ -102,6 +115,8 @@ export const useBookmarksStore = create<BookmarksState>()(
       bookmarkedItems: [],
       bookmarkBarSide: 'right',
       bookmarkBarTop: null,
+      bookmarkBarCollapsed: false,
+      bookmarkBarCollapsedTop: null,
       bookmarkRepositioningActive: false,
       toggleBookmark: (itemKey) => {
         if (!itemKey) return;
@@ -118,9 +133,7 @@ export const useBookmarksStore = create<BookmarksState>()(
         const exists = bookmarkedItems.includes(itemKey);
         const nextBookmarkedItems = exists
           ? bookmarkedItems.filter((key) => key !== itemKey)
-          : bookmarkedItems.length >= MAX_BOOKMARKS
-            ? bookmarkedItems
-            : [...bookmarkedItems, itemKey];
+          : [...bookmarkedItems, itemKey];
 
         if (nextBookmarkedItems === bookmarkedItems) return;
 
@@ -148,6 +161,26 @@ export const useBookmarksStore = create<BookmarksState>()(
           }
         }
 
+        // The lineage is the durable, roaming copy; savedWorkflowStates above
+        // stays as the local mirror so bookmarks still work offline and before
+        // the registry has synced.
+        const lineageId = useWorkflowStore.getState().currentLineageId;
+        if (lineageId) {
+          const lineageStore = useWorkflowLineageStore.getState();
+          // Apply the toggle to the family's own set rather than overwriting
+          // it with `nextBookmarkedItems`. That is the *display* set —
+          // filtered to nodes this variant has — so a full rewrite would drop
+          // a mark another variant carries: invisible here, it could never be
+          // re-added. (`display ⊆ lineage`, so the add/remove both hold.)
+          const familySet = lineageStore.getBookmarks(lineageId);
+          lineageStore.setBookmarks(
+            lineageId,
+            exists
+              ? familySet.filter((key) => key !== itemKey)
+              : Array.from(new Set([...familySet, itemKey])),
+          );
+        }
+
         set({ bookmarkedItems: nextBookmarkedItems });
       },
       clearBookmarks: () => {
@@ -164,13 +197,22 @@ export const useBookmarksStore = create<BookmarksState>()(
             }
           });
         }
+        const lineageId = useWorkflowStore.getState().currentLineageId;
+        if (lineageId) {
+          useWorkflowLineageStore.getState().setBookmarks(lineageId, []);
+        }
         set({ bookmarkedItems: [] });
       },
       setBookmarkBarPosition: (position) => {
         set((state) => ({
           bookmarkBarSide: position.side ?? state.bookmarkBarSide,
-          bookmarkBarTop: position.top ?? state.bookmarkBarTop
+          bookmarkBarTop: position.top ?? state.bookmarkBarTop,
+          bookmarkBarCollapsedTop:
+            position.collapsedTop ?? state.bookmarkBarCollapsedTop,
         }));
+      },
+      setBookmarkBarCollapsed: (collapsed) => {
+        set({ bookmarkBarCollapsed: collapsed });
       },
       setBookmarkRepositioningActive: (active) => {
         set({ bookmarkRepositioningActive: active });
@@ -182,13 +224,42 @@ export const useBookmarksStore = create<BookmarksState>()(
       partialize: (state) => ({
         bookmarkBarSide: state.bookmarkBarSide,
         bookmarkBarTop: state.bookmarkBarTop,
+        bookmarkBarCollapsed: state.bookmarkBarCollapsed,
+        bookmarkBarCollapsedTop: state.bookmarkBarCollapsedTop,
       }),
     }
   )
 );
 
+/**
+ * Where this workflow's bookmarks come from.
+ *
+ * The lineage — the workflow *family*, shared by every descendant — is the
+ * source of truth when one is resolved, which is what lets bookmarks survive
+ * the tweak-and-save-as-a-new-name loop that changes the structural cache key
+ * and orphans everything attached to it. `savedWorkflowStates` remains the
+ * local mirror, used before the registry has resolved and when it is
+ * unreachable.
+ */
+function resolveBookmarkSource(): string[] {
+  const { currentWorkflowKey, currentLineageId, savedWorkflowStates } =
+    useWorkflowStore.getState();
+  if (currentLineageId) {
+    const lineageStore = useWorkflowLineageStore.getState();
+    const lineage = lineageStore.registry.lineages.find(
+      (entry) => entry.id === currentLineageId,
+    );
+    if (lineage) return lineage.bookmarks;
+  }
+  if (!currentWorkflowKey) return [];
+  const savedState = savedWorkflowStates[currentWorkflowKey] as
+    | SavedWorkflowState
+    | undefined;
+  return savedState?.bookmarkedItems ?? [];
+}
+
 function syncBookmarksFromWorkflowState(): void {
-  const { workflow, currentWorkflowKey, savedWorkflowStates } = useWorkflowStore.getState();
+  const { workflow, currentWorkflowKey, currentLineageId } = useWorkflowStore.getState();
   const { bookmarkedItems } = useBookmarksStore.getState();
 
   if (!workflow) {
@@ -198,7 +269,7 @@ function syncBookmarksFromWorkflowState(): void {
     return;
   }
 
-  if (!currentWorkflowKey) {
+  if (!currentWorkflowKey && !currentLineageId) {
     const validBookmarks = getValidStableBookmarks(bookmarkedItems);
     if (!areStringArraysEqual(bookmarkedItems, validBookmarks)) {
       useBookmarksStore.setState({ bookmarkedItems: validBookmarks });
@@ -206,13 +277,21 @@ function syncBookmarksFromWorkflowState(): void {
     return;
   }
 
-  const savedState = savedWorkflowStates[currentWorkflowKey] as SavedWorkflowState | undefined;
-  const validBookmarks = getValidStableBookmarks(savedState?.bookmarkedItems ?? []);
+  // Marks on nodes this variant does not have are filtered for display but
+  // left on the lineage: a sibling further along the family may still have
+  // that node, and dropping them here would delete them for everyone.
+  const validBookmarks = getValidStableBookmarks(resolveBookmarkSource());
   if (!areStringArraysEqual(bookmarkedItems, validBookmarks)) {
     useBookmarksStore.setState({ bookmarkedItems: validBookmarks });
   }
 }
 
 useWorkflowStore.subscribe(() => {
+  syncBookmarksFromWorkflowState();
+});
+
+// A bookmark added on another tab or device lands in the registry, not the
+// workflow store, so the lineage needs its own subscription to surface it.
+useWorkflowLineageStore.subscribe(() => {
   syncBookmarksFromWorkflowState();
 });

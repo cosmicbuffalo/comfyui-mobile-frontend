@@ -12,6 +12,8 @@ import { useWorkflowHiddenStore } from '@/hooks/useWorkflowHidden';
 import { HIDDEN_WORKFLOW_EXTRA_DATA_KEY } from '@/utils/workflowHidden';
 import { useGenerationSettingsStore } from '@/hooks/useGenerationSettings';
 import { QUEUE_WORKFLOW_LABEL_EXTRA_DATA_KEY } from '@/utils/queueWorkflowLabel';
+import { useWorkflowLineageStore } from '@/hooks/useWorkflowLineage';
+import { createEmptyRegistry, readLineageStamp } from '@/utils/workflowLineage';
 
 function loadFixtureWorkflow(): Workflow {
   const fixturePath = resolve(
@@ -43,6 +45,12 @@ beforeEach(() => {
     promptOutputs: {},
   });
   useBookmarksStore.setState({ bookmarkedItems: [] });
+  useWorkflowLineageStore.setState({
+    registry: createEmptyRegistry(),
+    serverSynced: false,
+    serverDirty: false,
+    registryReady: true,
+  });
   useWorkflowHiddenStore.setState({ hidden: [], serverSynced: false, serverDirty: false });
   useWorkflowErrorsStore.setState({
     error: null,
@@ -59,6 +67,70 @@ afterEach(() => {
 });
 
 describe('embed workflow metadata', () => {
+  it('loads concrete executed seed values from output prompt metadata', () => {
+    const seedNodeTypes: NodeTypes = {
+      KSampler: {
+        input: { required: { seed: ['INT', {}], steps: ['INT', {}] } },
+        input_order: { required: ['seed', 'steps'] },
+        output: [],
+        name: 'KSampler',
+        display_name: 'KSampler',
+        description: '',
+        python_module: '',
+        category: 'sampling',
+      },
+    };
+    const workflow: Workflow = {
+      last_node_id: 7,
+      last_link_id: 0,
+      nodes: [{
+        id: 7,
+        type: 'KSampler',
+        pos: [0, 0],
+        size: [200, 100],
+        flags: {},
+        order: 0,
+        mode: 0,
+        inputs: [],
+        outputs: [],
+        properties: {},
+        widgets_values: [-1, 'randomize', 20],
+      }],
+      links: [],
+      groups: [],
+      config: {},
+      version: 0.4,
+    };
+    useWorkflowStore.getState().setNodeTypes(seedNodeTypes);
+
+    useWorkflowStore.getState().loadWorkflow(workflow, 'history-prompt.json', {
+      fresh: true,
+      executedPrompt: {
+        '7': { class_type: 'KSampler', inputs: { seed: 424242, steps: 20 } },
+      },
+    });
+
+    expect(useWorkflowStore.getState().workflow?.nodes[0].widgets_values)
+      .toEqual([424242, 'randomize', 20]);
+    expect(useWorkflowStore.getState().originalWorkflow?.nodes[0].widgets_values)
+      .toEqual([424242, 'randomize', 20]);
+  });
+
+  it('carries the lineage stamp into the embedded workflow', async () => {
+    const workflow = loadFixtureWorkflow();
+    useWorkflowStore.getState().setNodeTypes({} as NodeTypes);
+    useWorkflowStore.getState().loadWorkflow(workflow, 'complex_i2v_example_workflow.json', { fresh: true });
+
+    const lineageId = useWorkflowStore.getState().currentLineageId;
+    expect(lineageId).toBeTruthy();
+
+    // The stamp has to survive stripWorkflowClientMetadata and
+    // validateAndNormalizeWorkflow to reach the PNG. That is what lets an
+    // output name its own parent when it is opened months later.
+    const embedded = await queueAndGetEmbeddedWorkflow();
+    expect(readLineageStamp(embedded)?.lineage).toBe(lineageId);
+  });
+
   it('keeps unsaved widgets_values changes synced into queued extra_pnginfo workflow', async () => {
     const workflow = loadFixtureWorkflow();
     useWorkflowStore.getState().setNodeTypes({} as NodeTypes);

@@ -97,6 +97,56 @@ describe('scrollToNode arrival behavior', () => {
     expect(card.classList.contains('highlight-pulse')).toBe(true);
   });
 
+  it('reveals the ancestors of the target rather than trusting the caller to', () => {
+    const reveal = vi.fn();
+    useWorkflowStore.setState({ revealNodeWithParents: reveal as never });
+    mountScrollFixture(0, 400, 200);
+
+    useWorkflowStore.getState().scrollToNode(nodeKey);
+
+    // There is no case for scrolling to something still buried in a collapsed
+    // group, so the reveal is not a step a caller can omit.
+    expect(reveal).toHaveBeenCalledWith(nodeKey);
+  });
+
+  it('travels to the scope the target lives in before looking for it', () => {
+    const inner = makeLocationPointer({ type: 'node', nodeId: 9, subgraphId: 'sg-a' });
+    useWorkflowStore.setState({
+      workflow: {
+        ...workflow,
+        nodes: [
+          ...workflow.nodes,
+          { ...workflow.nodes[0], id: 5, type: 'sg-a', itemKey: 'root/node:5' },
+        ],
+        definitions: {
+          subgraphs: [
+            {
+              id: 'sg-a',
+              name: 'Inner',
+              inputs: [],
+              outputs: [],
+              links: [],
+              nodes: [{ ...workflow.nodes[0], id: 9, itemKey: inner }],
+            },
+          ],
+        },
+      } as Workflow,
+      scopeStack: [{ type: 'root' }],
+      itemKeyByPointer: { [inner]: inner },
+      pointerByHierarchicalKey: { [inner]: inner },
+    });
+    mountScrollFixture(0, 400, 200);
+
+    useWorkflowStore.getState().scrollToNode(inner);
+
+    // Scrolling to a node in a subgraph you are not standing in is the same
+    // request, so the scope moves rather than the jump finding nothing.
+    expect(useWorkflowStore.getState().scopeStack).toEqual([
+      { type: 'root' },
+      { type: 'subgraph', id: 'sg-a', placeholderNodeId: 5 },
+    ]);
+  });
+
   it('does not issue corrective scrolls when the container is already at its end', () => {
     const { card, scrollTo } = mountScrollFixture(50, 100, 100);
 

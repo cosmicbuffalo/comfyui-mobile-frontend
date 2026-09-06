@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { connectWebSocket, clientId } from '@/api/client';
+import { connectProgressWebSocket, connectWebSocket, clientId } from '@/api/client';
 import { useWorkflowStore } from './useWorkflow';
 import { useLoraManagerStore } from './useLoraManager';
 import { useQueueStore } from './useQueue';
@@ -7,10 +7,14 @@ import { useHistoryStore } from './useHistory';
 import { useWorkflowErrorsStore, type NodeError } from './useWorkflowErrors';
 import { useGenerationSettingsStore } from './useGenerationSettings';
 import { useConnectionStatusStore } from './useConnectionStatus';
+import { parseLiveProgressSnapshot, useLiveProgressStore } from './useLiveProgress';
 import { useNavigationStore } from './useNavigation';
 import { useOutputsStore } from './useOutputs';
 import { applyImpactNodeFeedback, parseImpactNodeFeedback } from '@/utils/impactNodeFeedback';
+import { runUndoTransaction } from '@/utils/undoTransaction';
+import { buildNodeErrorsByItemKey } from './useWorkflow/nodeErrors';
 import { appendOasisPreviewResults } from '@/utils/nodeFrontendPreviews';
+import { resolvePreviewExposureHostKeys } from '@/utils/subgraphPreviewExposures';
 import type { WSMessage, WSStatusMessage, WSProgressMessage, WSExecutingMessage, WSExecutedMessage, HistoryOutputImage } from '@/api/types';
 import {
   extractTextPreviewFromOutput,
@@ -54,6 +58,26 @@ function refreshOutputsPanelIfMatched(images: HistoryOutputImage[]): void {
 }
 
 
+/** prompt_id of a `{type:"finished"}` frame on the progress socket, else null. */
+function readFinishedPromptId(message: unknown): string | null {
+  if (!message || typeof message !== 'object' || Array.isArray(message)) return null;
+  const record = message as Record<string, unknown>;
+  if (record.type !== 'finished') return null;
+  return typeof record.prompt_id === 'string' && record.prompt_id ? record.prompt_id : null;
+}
+
+/**
+ * prompt_id of a registry snapshot frame, else null. Mirrors the shape guard in
+ * `useLiveProgressStore.applyMessage`: anything carrying a string `type` is a
+ * control frame (hello_ack / pong / rate_advice), not a snapshot.
+ */
+function readSnapshotPromptId(message: unknown): string | null {
+  if (!message || typeof message !== 'object' || Array.isArray(message)) return null;
+  const record = message as Record<string, unknown>;
+  if (typeof record.type === 'string') return null;
+  return typeof record.prompt_id === 'string' && record.prompt_id ? record.prompt_id : null;
+}
+
 function snapshotStoreActions() {
   return {
     setExecutionState: useWorkflowStore.getState().setExecutionState,
@@ -95,6 +119,8 @@ export function useWebSocket() {
   const completing = useQueueStore((s) => s.completing);
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const progressWsRef = useRef<WebSocket | null>(null);
+  const progressReconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingOutputsRef = useRef<Record<string, HistoryOutputImage[]>>({});
   const hasConnectedRef = useRef(false);
   const reconnectingSinceRef = useRef<number | null>(null);
@@ -128,6 +154,15 @@ export function useWebSocket() {
   // Guards refresh/reconnect recovery while a newly-submitted prompt has not
   // appeared in ComfyUI's queue endpoint yet.
   const resumeAttemptedSessionRef = useRef<string | null>(null);
+  // Prompts the progress socket has reported finished. The core socket and the
+  // progress socket are separate connections with no ordering between them, so
+  // a snapshot for an already-finished prompt can still arrive after its
+  // `finished` frame; without this it would reassert "executing" on a run that
+  // is over. Bounded — only the tail matters, and a prompt id never recurs.
+  const finishedPromptIdsRef = useRef<string[]>([]);
+  // Consecutive idle poll ticks observed while the workflow still claims to be
+  // executing. See reconcileIdleExecution.
+  const idleReconcileTicksRef = useRef(0);
   // Caches the resolved canonical key/path for the node a `progress` event
   // targets. KSampler emits one progress event per step; the node only changes
   // between nodes, so caching avoids walking the workflow on every step.
@@ -197,6 +232,101 @@ export function useWebSocket() {
       };
     };
 
+    /** Cap on remembered finished prompt ids — only the recent tail can race. */
+    const FINISHED_PROMPT_MEMORY = 32;
+
+    const rememberFinishedPrompt = (promptId: string) => {
+      const ids = finishedPromptIdsRef.current;
+      if (ids.includes(promptId)) return;
+      ids.push(promptId);
+      if (ids.length > FINISHED_PROMPT_MEMORY) {
+        ids.splice(0, ids.length - FINISHED_PROMPT_MEMORY);
+      }
+    };
+
+    const isPromptFinished = (promptId: string) =>
+      finishedPromptIdsRef.current.includes(promptId);
+
+    /**
+     * Clear the execution flags of whichever session owns a just-finished
+     * prompt. Idempotent, and scoped: a session that has already moved on to
+     * the next prompt keeps its state, so a late `finished` for the previous
+     * run cannot blank a live one.
+     */
+    const clearExecutionForFinishedPrompt = (promptId: string): SessionContext | null => {
+      const ctx = getSessionContext(promptId);
+      if (ctx.orphaned) return null;
+      const ws = useWorkflowStore.getState();
+      const owner = ctx.sessionId && ctx.sessionId !== ws.activeSessionId
+        ? ws.parkedSessions[ctx.sessionId]
+        : ws;
+      if (!owner || owner.executingPromptId !== promptId) return null;
+      storeActionsRef.current.setExecutionState(
+        false,
+        null,
+        null,
+        0,
+        null,
+        ctx.sessionId,
+      );
+      return ctx;
+    };
+
+    /**
+     * Last-resort sweep for an execution state nothing else cleared.
+     *
+     * The `status` handler already clears on an empty queue, but it only fires
+     * when the backend broadcasts — so anything that re-asserts "executing"
+     * *after* the final broadcast sticks until the next run. This is the
+     * ordering-independent net under that: with the whole queue empty and the
+     * workflow still claiming to execute across two consecutive ticks, the run
+     * is over whatever sequence of frames got us here.
+     *
+     * Two ticks rather than one because a freshly submitted prompt is briefly
+     * absent from the backend queue; `pending` is included for the same reason,
+     * so a prompt waiting behind others is never mistaken for idle. `completing`
+     * is deliberately excluded: those cards are only waiting for their history
+     * handoff and no longer represent backend execution.
+     */
+    const reconcileIdleExecution = () => {
+      const queue = useQueueStore.getState();
+      const ws = useWorkflowStore.getState();
+      const queueIdle =
+        queue.running.length === 0
+        && queue.pending.length === 0;
+      const claimsExecution =
+        ws.isExecuting
+        || Object.values(ws.parkedSessions).some((session) => session.isExecuting);
+      if (!queueIdle || !claimsExecution) {
+        idleReconcileTicksRef.current = 0;
+        return;
+      }
+      idleReconcileTicksRef.current += 1;
+      if (idleReconcileTicksRef.current < 2) return;
+      idleReconcileTicksRef.current = 0;
+      // Confirm with a live read before force-clearing. Both counted ticks
+      // can be the same stale snapshot — fetchQueue fails quietly, and the
+      // poller skips fetching entirely while the store already looks idle —
+      // so acting on them alone blanked runs that were genuinely in flight
+      // when the submit-time queue read was missed. Clear only when a fetch
+      // SUCCEEDS and still shows nothing running or pending.
+      void (async () => {
+        const fetched = await useQueueStore.getState().fetchQueue();
+        if (!fetched) return;
+        const confirmedQueue = useQueueStore.getState();
+        if (confirmedQueue.running.length > 0 || confirmedQueue.pending.length > 0) return;
+        const confirmedWs = useWorkflowStore.getState();
+        const stillClaims =
+          confirmedWs.isExecuting
+          || Object.values(confirmedWs.parkedSessions).some((session) => session.isExecuting);
+        if (!stillClaims) return;
+        storeActionsRef.current.setExecutionState(false, null, null, 0);
+        for (const sid of Object.keys(confirmedWs.parkedSessions)) {
+          storeActionsRef.current.setExecutionState(false, null, null, 0, null, sid);
+        }
+      })();
+    };
+
     const resolveExecutionNodePath = (
       rawNodeId: number | string | null | undefined,
       ctx: SessionContext,
@@ -235,6 +365,14 @@ export function useWebSocket() {
             }
           }
         }
+      }
+
+      // A subgraph placeholder that adopted this node's preview
+      // (properties.previewExposures) mirrors the result onto its own card, so
+      // the collapsed card shows the output without entering the subgraph.
+      const promptPath = ctx.expandedNodePathMap[idStr] ?? idStr;
+      for (const hostKey of resolvePreviewExposureHostKeys(workflow, promptPath)) {
+        keys.add(hostKey);
       }
 
       return Array.from(keys);
@@ -844,7 +982,24 @@ export function useWebSocket() {
               // LOAD error, and BottomStatusOverlay suppresses its toast on
               // every panel except the workflow one — so a run that died while
               // the user watched the queue or outputs failed silently.
-              useWorkflowErrorsStore.getState().setNodeErrors(nodeErrors, true);
+              //
+              // `nodeId` arrives in whatever form the backend reports — a
+              // hierarchical `57:3` for a node inside a subgraph — so it is
+              // re-keyed by item key here for the same reason the queue-time
+              // path does it: otherwise nothing downstream can find the node.
+              const wsState = useWorkflowStore.getState();
+              useWorkflowErrorsStore.getState().setNodeErrors(
+                nodeErrors,
+                true,
+                wsState.workflow
+                  ? buildNodeErrorsByItemKey(
+                      wsState.workflow,
+                      wsState.itemKeyByPointer,
+                      wsState.expandedNodeIdMap,
+                      nodeErrors,
+                    )
+                  : {},
+              );
             }
           }
           console.error('Execution error:', {
@@ -922,7 +1077,15 @@ export function useWebSocket() {
           const { workflow, nodeTypes } = useWorkflowStore.getState();
           if (!workflow) break;
           const next = applyImpactNodeFeedback(workflow, nodeTypes, feedback);
-          if (next) useWorkflowStore.setState({ workflow: next });
+          // Named for the undo toast like any other edit: the rewrite replaces
+          // text the user wrote (the unresolved wildcard), so taking it back is
+          // a real thing to want.
+          if (next) {
+            runUndoTransaction(
+              () => useWorkflowStore.setState({ workflow: next }),
+              'Apply node feedback',
+            );
+          }
           break;
         }
 
@@ -993,6 +1156,112 @@ export function useWebSocket() {
       // sends only as many as the elapsed time allows), which is exactly what
       // made a single slot flicker between unrelated images.
       if (!sequence.timer) paintVhsLatentSequence(sequence);
+    };
+
+    const connectProgress = () => {
+      if (progressWsRef.current?.readyState === WebSocket.OPEN) return;
+      progressWsRef.current = connectProgressWebSocket(
+        (message) => {
+          // A prompt-scoped `finished` frame is the progress socket's own
+          // terminal signal. parseLiveProgressSnapshot returns null for it, so
+          // this used to fall out of the handler leaving isExecuting /
+          // executingPromptId set. The retained prompt id then kept selecting
+          // the finished 100% snapshot, whose cleared node name renders as
+          // "Running" — a full bar on an idle queue, forever.
+          const finishedPromptId = readFinishedPromptId(message);
+          if (finishedPromptId) {
+            rememberFinishedPrompt(finishedPromptId);
+            useLiveProgressStore.getState().applyMessage(message);
+
+            // Clear every source the workflow overlay can use to infer a live
+            // run. The prompt-scoped checks preserve a newer prompt that may
+            // already have started while this terminal frame was in flight.
+            const finishedCtx = clearExecutionForFinishedPrompt(finishedPromptId);
+            if (executingPromptIdRef.current === finishedPromptId) {
+              executingPromptIdRef.current = null;
+              progressNodeCacheRef.current = {
+                key: '',
+                hierarchicalKey: null,
+                path: null,
+              };
+            }
+
+            const startedAt = promptStartedAtRef.current[finishedPromptId];
+            const durationSeconds = startedAt === undefined
+              ? undefined
+              : Math.max(0, (Date.now() - startedAt) / 1000);
+            delete promptStartedAtRef.current[finishedPromptId];
+
+            // BottomStatusOverlay falls back to queue.running[0] when the
+            // workflow prompt id is absent. Move this exact prompt into the
+            // existing completion handoff before removing it, so the progress
+            // card disappears immediately without making the queue card flash
+            // out while its history record is fetched.
+            storeActionsRef.current.markPromptCompleting(
+              finishedPromptId,
+              durationSeconds,
+            );
+            storeActionsRef.current.removeRunning(finishedPromptId);
+
+            if (finishedCtx) {
+              if (finishedCtx.sessionId === useWorkflowStore.getState().activeSessionId) {
+                storeActionsRef.current.clearAllLatentPreviews();
+              }
+              clearVhsLatentSequences();
+            }
+            return;
+          }
+
+          // The other ordering: a trailing snapshot for a prompt already
+          // reported finished. Dropped outright — letting it through would
+          // resurrect both the store snapshot and the execution flags.
+          const promptId = readSnapshotPromptId(message);
+          if (promptId && isPromptFinished(promptId)) return;
+
+          useLiveProgressStore.getState().applyMessage(message);
+          const snapshot = parseLiveProgressSnapshot(message);
+          if (!snapshot) return;
+
+          // The backend registry keeps the LAST prompt's id after that prompt
+          // finishes (it is only replaced when a new one starts), and the
+          // server sends its current snapshot the moment a client connects.
+          // So an idle server answers every page load with a snapshot for a run
+          // that already ended. A snapshot only proves something is executing
+          // when it names a node that is actually running; without that check
+          // each refresh adopted the finished prompt, flashed the progress card
+          // and ran it to 100% before the queue poll cleared it again.
+          if (!snapshot.nodeName) return;
+
+          // Core execution/progress broadcasts may be scoped to the client
+          // that queued the prompt. The registry socket is server-wide, so use
+          // every authoritative snapshot to reconcile the owning workflow's
+          // prompt id and node percentage. Without this, a queue advancing from
+          // p1 to p2 can leave executingPromptId stuck on p1; the progress card
+          // then rejects p2's live snapshot and falls back to its 90%-capped
+          // elapsed-time estimate until a page refresh reconciles the queue.
+          const ctx = getSessionContext(snapshot.promptId);
+          if (ctx.orphaned) return;
+          storeActionsRef.current.setExecutionState(
+            true,
+            null,
+            snapshot.promptId,
+            snapshot.nodeProgressPercent ?? 0,
+            undefined,
+            ctx.sessionId,
+          );
+        },
+        // Mark connected on open, not on first frame: the server sends no
+        // snapshot until a node reports progress, so after a reconnect the
+        // flag otherwise stays false and the status bar shows a live socket
+        // as "progress stream unavailable" until the next progress frame.
+        () => useLiveProgressStore.getState().setConnected(true),
+        () => {
+          useLiveProgressStore.getState().setConnected(false);
+          if (unmountingRef.current) return;
+          progressReconnectTimeoutRef.current = setTimeout(connectProgress, 2000);
+        },
+        () => useLiveProgressStore.getState().setConnected(false),
+      );
     };
 
     const connect = () => {
@@ -1133,8 +1402,10 @@ export function useWebSocket() {
     };
 
     connect();
+    connectProgress();
     const pollInterval = setInterval(() => {
       const { fetchQueue, fetchHistory } = storeActionsRef.current;
+      reconcileIdleExecution();
       void runQueuePollTick(fetchQueue, fetchHistory);
     }, 2000);
 
@@ -1143,9 +1414,16 @@ export function useWebSocket() {
       if (reconnectTimeoutRef.current) {
         clearTimeout(reconnectTimeoutRef.current);
       }
+      if (progressReconnectTimeoutRef.current) {
+        clearTimeout(progressReconnectTimeoutRef.current);
+      }
       if (wsRef.current) {
         wsRef.current.close();
       }
+      if (progressWsRef.current) {
+        progressWsRef.current.close();
+      }
+      useLiveProgressStore.getState().setConnected(false);
       clearInterval(pollInterval);
       clearVhsLatentSequences();
     };

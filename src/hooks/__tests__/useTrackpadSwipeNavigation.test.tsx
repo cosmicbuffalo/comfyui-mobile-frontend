@@ -66,11 +66,68 @@ describe('useTrackpadSwipeNavigation', () => {
     const plain = document.createElement('div');
     document.body.appendChild(plain);
 
-    // Past TRIGGER_THRESHOLD (90px) of cumulative horizontal delta.
+    // Past TRIGGER_THRESHOLD (140px) of cumulative horizontal delta.
+    wheel(plain, 60);
     wheel(plain, 60);
     wheel(plain, 60);
 
     expect(onSwipeLeft).toHaveBeenCalledTimes(1);
+  });
+
+  /**
+   * Normal scrolling around the workflow panel must never switch panels, even
+   * when the fingers drift sideways mid-scroll. Once a gesture has scrolled
+   * vertically past the lock threshold it is a scroll for its whole lifetime.
+   */
+  it('does not navigate when a vertical scroll drifts sideways', () => {
+    const { onSwipeLeft, onSwipeRight } = render();
+    const plain = document.createElement('div');
+    document.body.appendChild(plain);
+
+    // A vertical scroll locks the gesture...
+    wheel(plain, 0, 120);
+    // ...so even heavy sideways drift in the same stream cannot navigate.
+    for (let i = 0; i < 8; i += 1) wheel(plain, 80, 0);
+
+    expect(onSwipeLeft).not.toHaveBeenCalled();
+    expect(onSwipeRight).not.toHaveBeenCalled();
+  });
+
+  it('does not navigate on a diagonal scroll that never becomes clearly horizontal', () => {
+    const { onSwipeLeft, onSwipeRight } = render();
+    const plain = document.createElement('div');
+    document.body.appendChild(plain);
+
+    // dx never reaches 2x dominance over dy; the growing dy locks it as a
+    // scroll before the horizontal total could matter.
+    for (let i = 0; i < 8; i += 1) wheel(plain, 50, 40);
+
+    expect(onSwipeLeft).not.toHaveBeenCalled();
+    expect(onSwipeRight).not.toHaveBeenCalled();
+  });
+
+  it('re-arms after an idle gap so a deliberate swipe still works post-scroll', () => {
+    vi.useFakeTimers();
+    try {
+      const { onSwipeLeft } = render();
+      const plain = document.createElement('div');
+      document.body.appendChild(plain);
+
+      // Scroll locks the current gesture.
+      wheel(plain, 0, 120);
+      wheel(plain, 80, 0);
+      expect(onSwipeLeft).not.toHaveBeenCalled();
+
+      // The idle gap ends the gesture; a fresh horizontal swipe navigates.
+      act(() => {
+        vi.advanceTimersByTime(300);
+      });
+      wheel(plain, 80);
+      wheel(plain, 80);
+      expect(onSwipeLeft).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   /**
@@ -116,6 +173,7 @@ describe('useTrackpadSwipeNavigation', () => {
     for (let i = 0; i < 6; i += 1) wheel(strip, 60);
     expect(onSwipeLeft).not.toHaveBeenCalled();
 
+    wheel(plain, 60);
     wheel(plain, 60);
     wheel(plain, 60);
     expect(onSwipeLeft).toHaveBeenCalledTimes(1);

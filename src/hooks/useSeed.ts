@@ -16,7 +16,11 @@ interface SeedModeContext {
   workflow: Workflow | null;
   nodeTypes: NodeTypes | null;
   updateNodeWidgets: (nodeId: number, updates: Record<number, unknown>) => void;
+  /** Explicit target for a promoted seed whose owning placeholder is nested. */
+  node?: Workflow['nodes'][number];
   seedWidgetIndex?: number | null;
+  /** Null explicitly means this seed has no persisted companion control. */
+  controlWidgetIndex?: number | null;
 }
 
 interface SeedState {
@@ -38,22 +42,24 @@ export const useSeedStore = create<SeedState>()(
         const { seedModes, seedLastValues } = get();
         if (context?.workflow && context.nodeTypes) {
           const { workflow, nodeTypes, updateNodeWidgets } = context;
-          const node = workflow.nodes.find((n) => n.id === nodeId);
+          const node = context.node ?? workflow.nodes.find((n) => n.id === nodeId);
           if (node) {
             const seedWidgetIndex =
               typeof context.seedWidgetIndex === 'number'
                 ? context.seedWidgetIndex
                 : findSeedWidgetIndex(workflow, nodeTypes, node);
             if (seedWidgetIndex !== null && Array.isArray(node.widgets_values)) {
-              const controlWidgetIndex = seedWidgetIndex + 1;
-              const hasControlWidget = hasSeedControlWidget(
+              const controlWidgetIndex = context.controlWidgetIndex === undefined
+                ? seedWidgetIndex + 1
+                : context.controlWidgetIndex;
+              const hasControlWidget = controlWidgetIndex !== null && hasSeedControlWidget(
                 node,
                 node.widgets_values[controlWidgetIndex],
               );
               const updates: Record<number, unknown> = {};
 
               if (hasControlWidget) {
-                updates[controlWidgetIndex] = mode;
+                updates[controlWidgetIndex!] = mode;
               } else {
                 const specialValue = getSpecialSeedValueForMode(mode);
                 if (specialValue !== null && mode !== 'fixed') {

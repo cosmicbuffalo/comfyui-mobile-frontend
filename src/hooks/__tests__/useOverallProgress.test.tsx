@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Workflow } from '@/api/types';
 import { useOverallProgress } from '@/hooks/useOverallProgress';
 import { useConnectionStatusStore } from '@/hooks/useConnectionStatus';
+import { useLiveProgressStore } from '@/hooks/useLiveProgress';
 
 function makeWorkflow(): Workflow {
   return {
@@ -39,6 +40,7 @@ describe('useOverallProgress completion hold', () => {
   beforeEach(() => {
     vi.useFakeTimers();
     useConnectionStatusStore.setState({ isConnected: true, hasEverConnected: true });
+    useLiveProgressStore.getState().reset();
     container = document.createElement('div');
     root = createRoot(container);
   });
@@ -46,6 +48,7 @@ describe('useOverallProgress completion hold', () => {
   afterEach(() => {
     act(() => root.unmount());
     useConnectionStatusStore.setState({ isConnected: false, hasEverConnected: false });
+    useLiveProgressStore.getState().reset();
     vi.useRealTimers();
   });
 
@@ -178,24 +181,81 @@ describe('useOverallProgress completion hold', () => {
     expect(getProgress()).toBeNull();
   });
 
-  it('clears progress while disconnected instead of advancing the estimate', async () => {
+  it('freezes progress while disconnected and excludes the outage after reconnecting', async () => {
     const wf = makeWorkflow();
 
     await act(async () => {
       root.render(<Probe workflow={wf} runKey="p1" isRunning={true} />);
     });
     await act(async () => {
-      await vi.advanceTimersByTimeAsync(20);
+      await vi.advanceTimersByTimeAsync(10_020);
     });
-    expect(getProgress()).not.toBeNull();
+    const beforeDisconnect = getProgress();
+    expect(beforeDisconnect).toBe(10);
 
     await act(async () => {
       useConnectionStatusStore.setState({ isConnected: false });
     });
     await act(async () => {
+      await vi.advanceTimersByTimeAsync(30_000);
+    });
+    expect(getProgress()).toBe(beforeDisconnect);
+
+    await act(async () => {
+      useConnectionStatusStore.setState({ isConnected: true });
+      await vi.advanceTimersByTimeAsync(20);
+    });
+    expect(getProgress()).toBe(beforeDisconnect);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1_000);
+    });
+    expect(getProgress()).toBe(11);
+  });
+
+  it('abandons stale progress when queue reconciliation finds a different run', async () => {
+    const wf = makeWorkflow();
+
+    await act(async () => {
+      root.render(<Probe workflow={wf} runKey="p1" isRunning={true} />);
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(10_020);
+    });
+    expect(getProgress()).toBe(10);
+
+    await act(async () => {
+      useConnectionStatusStore.setState({ isConnected: false });
+      await vi.advanceTimersByTimeAsync(20);
+      root.render(<Probe workflow={wf} runKey="p2" isRunning={true} />);
+      await vi.advanceTimersByTimeAsync(5_000);
+    });
+    expect(getProgress()).toBe(10);
+
+    await act(async () => {
+      useConnectionStatusStore.setState({ isConnected: true });
       await vi.advanceTimersByTimeAsync(20);
     });
 
-    expect(getProgress()).toBeNull();
+    // The old run does not get a synthetic 100% completion hold. The newly
+    // reconciled prompt starts its own estimate and websocket node progress.
+    expect(getProgress()).toBe(0);
+  });
+
+  it('prefers cached-aware backend node counts over the elapsed-time estimate', async () => {
+    const wf = makeWorkflow();
+    await act(async () => {
+      root.render(<Probe workflow={wf} runKey="p1" isRunning={true} />);
+      useLiveProgressStore.getState().applyMessage({
+        prompt_id: 'p1',
+        value: 10,
+        max: 20,
+        nodes_total: 10,
+        nodes_done: 4,
+        node_name: 'KSampler',
+      });
+    });
+
+    expect(getProgress()).toBe(45);
   });
 });

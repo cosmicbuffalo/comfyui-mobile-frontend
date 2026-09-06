@@ -1,6 +1,8 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { flushFileStateMutations, useOutputsStore } from '../useOutputs';
+import { useShowHiddenStore } from '../useShowHidden';
 import {
+  getUserImages,
   loadFileState,
   searchUserImagesByPrompt,
   setFileState,
@@ -22,6 +24,7 @@ vi.mock('@/api/client', async (importOriginal) => {
 });
 
 const mockLoadFileState = vi.mocked(loadFileState);
+const mockGetUserImages = vi.mocked(getUserImages);
 const mockSearchUserImagesByPrompt = vi.mocked(searchUserImagesByPrompt);
 const mockSetFileState = vi.mocked(setFileState);
 
@@ -42,6 +45,9 @@ beforeEach(async () => {
   mockSearchUserImagesByPrompt.mockResolvedValue([]);
   mockSetFileState.mockClear();
   mockSetFileState.mockResolvedValue(undefined);
+  mockGetUserImages.mockClear();
+  mockGetUserImages.mockResolvedValue([]);
+  useShowHiddenStore.setState({ showHidden: false });
   useOutputsStore.setState({
     source: 'output',
     currentFolder: null,
@@ -51,14 +57,58 @@ beforeEach(async () => {
     favorites: [],
     rejected: [],
     migratedFavoriteSources: [],
-    showHidden: false,
     promptSearchActive: false,
     promptSearchResults: [],
     promptSearchQuery: '',
     promptSearchLoading: false,
     selectionMode: false,
     selectedIds: [],
-    selectionActionOpen: false
+    selectionActionOpen: false,
+    isLoading: false,
+    error: null,
+  });
+});
+
+describe('outputs navigation loading lock', () => {
+  it('ignores a second folder click until the first destination finishes loading', async () => {
+    let resolveListing!: (files: FileItem[]) => void;
+    mockGetUserImages.mockReturnValueOnce(new Promise((resolve) => {
+      resolveListing = resolve;
+    }));
+
+    useOutputsStore.getState().setCurrentFolder('album');
+    expect(useOutputsStore.getState()).toMatchObject({
+      currentFolder: 'album',
+      isLoading: true,
+    });
+
+    // This is the second click of a double-click. It must not append the stale
+    // source-folder card name to the destination path as `album/album`.
+    useOutputsStore.getState().setCurrentFolder('album');
+    expect(useOutputsStore.getState().currentFolder).toBe('album');
+    await vi.waitFor(() => {
+      expect(mockGetUserImages).toHaveBeenCalledTimes(1);
+    });
+
+    resolveListing([]);
+    await vi.waitFor(() => {
+      expect(useOutputsStore.getState().isLoading).toBe(false);
+    });
+  });
+
+  it('blocks every path-changing action while a folder request is active', () => {
+    useOutputsStore.setState({ currentFolder: 'album', isLoading: true });
+
+    useOutputsStore.getState().navigateToPath(null);
+    useOutputsStore.getState().navigateUp();
+    useOutputsStore.getState().setSource('input');
+    useOutputsStore.getState().switchToTab('otab-initial', 'other');
+
+    expect(useOutputsStore.getState()).toMatchObject({
+      source: 'output',
+      currentFolder: 'album',
+      isLoading: true,
+    });
   });
 });
 
@@ -78,7 +128,8 @@ describe('getDisplayedFiles', () => {
   });
 
   it('includes hidden files when showHidden is true', () => {
-    useOutputsStore.setState({ files, showHidden: true });
+    useShowHiddenStore.setState({ showHidden: true });
+    useOutputsStore.setState({ files });
     const result = useOutputsStore.getState().getDisplayedFiles();
     expect(result).toHaveLength(4);
   });
@@ -156,12 +207,12 @@ describe('getDisplayedFiles', () => {
       // parent would open onto an empty grid.
       useOutputsStore.setState({
         files: listing,
-        favorites: ['output/album/.private/secret.png'],
+        favorites: ['output/album/.hidden/fixture.png'],
         filter: { search: '', favoritesMode: 'only', rejectsMode: 'off', type: 'all' },
       });
       expect(useOutputsStore.getState().getDisplayedFiles()).toHaveLength(0);
 
-      useOutputsStore.setState({ showHidden: true });
+      useShowHiddenStore.setState({ showHidden: true });
       const shown = useOutputsStore.getState().getDisplayedFiles();
       expect(shown.map((f) => f.id)).toEqual(['output/album']);
       expect(shown[0].favoriteCount).toBe(1);
@@ -377,9 +428,9 @@ describe('getDisplayedFiles', () => {
 
 describe('markItemHiddenLocally', () => {
   it('removes a newly hidden file from a visible-only output listing', () => {
+    useShowHiddenStore.setState({ showHidden: false });
     useOutputsStore.setState({
       files: [makeFile({ id: 'output/private.png' })],
-      showHidden: false,
     });
 
     useOutputsStore.getState().markItemHiddenLocally('output/private.png');
@@ -388,9 +439,9 @@ describe('markItemHiddenLocally', () => {
   });
 
   it('keeps and marks a newly hidden file when hidden files are shown', () => {
+    useShowHiddenStore.setState({ showHidden: true });
     useOutputsStore.setState({
       files: [makeFile({ id: 'output/private.png' })],
-      showHidden: true,
     });
 
     useOutputsStore.getState().markItemHiddenLocally('output/private.png');
@@ -612,48 +663,48 @@ describe('getDisplayedFiles with promptSearchActive', () => {
   }
 
   it('at root: projects hidden-folder matches as a synthetic top-level folder when showHidden=true', () => {
+    useShowHiddenStore.setState({ showHidden: true });
     useOutputsStore.setState({
       source: 'output',
       currentFolder: null,
-      showHidden: true,
       promptSearchActive: true,
       promptSearchQuery: 'needle',
       promptSearchResults: [
-        mkMatch('.hidden-folder/inner-folder/file-a.png'),
-        mkMatch('.hidden-folder/inner-folder/file-b.png'),
-        mkMatch('.hidden-folder/inner-folder/file-c.png'),
+        mkMatch('.hidden/inner-folder/file-a.png'),
+        mkMatch('.hidden/inner-folder/file-b.png'),
+        mkMatch('.hidden/inner-folder/file-c.png'),
       ],
     });
     const result = useOutputsStore.getState().getDisplayedFiles();
     expect(result).toHaveLength(1);
     expect(result[0].type).toBe('folder');
-    expect(result[0].name).toBe('.hidden-folder');
-    expect(result[0].id).toBe('output/.hidden-folder');
+    expect(result[0].name).toBe('.hidden');
+    expect(result[0].id).toBe('output/.hidden');
     expect(result[0].matchCount).toBe(3);
   });
 
   it('at root: hides hidden-folder synthetic when showHidden=false', () => {
+    useShowHiddenStore.setState({ showHidden: false });
     useOutputsStore.setState({
       source: 'output',
       currentFolder: null,
-      showHidden: false,
       promptSearchActive: true,
       promptSearchQuery: 'needle',
-      promptSearchResults: [mkMatch('.hidden-folder/inner-folder/file-a.png')],
+      promptSearchResults: [mkMatch('.hidden/inner-folder/file-a.png')],
     });
     const result = useOutputsStore.getState().getDisplayedFiles();
     expect(result).toHaveLength(0);
   });
 
   it('hides prompt matches inside hidden descendant folders when showHidden=false', () => {
+    useShowHiddenStore.setState({ showHidden: false });
     useOutputsStore.setState({
       source: 'output',
       currentFolder: 'visible-folder',
-      showHidden: false,
       promptSearchActive: true,
       promptSearchQuery: 'needle',
       promptSearchResults: [
-        mkMatch('visible-folder/.hidden-child/file-a.png'),
+        mkMatch('visible-folder/.hidden/file-a.png'),
         mkMatch('visible-folder/public-child/file-b.png'),
       ],
     });
@@ -662,16 +713,16 @@ describe('getDisplayedFiles with promptSearchActive', () => {
   });
 
   it('one level deep: synthetic for child folder shows when navigated into hidden parent', () => {
+    useShowHiddenStore.setState({ showHidden: true });
     useOutputsStore.setState({
       source: 'output',
-      currentFolder: '.hidden-folder',
-      showHidden: true,
+      currentFolder: '.hidden',
       promptSearchActive: true,
       promptSearchQuery: 'needle',
       promptSearchResults: [
-        mkMatch('.hidden-folder/inner-folder/file-a.png'),
-        mkMatch('.hidden-folder/inner-folder/file-b.png'),
-        mkMatch('.hidden-folder/other-folder/file-c.png'),
+        mkMatch('.hidden/inner-folder/file-a.png'),
+        mkMatch('.hidden/inner-folder/file-b.png'),
+        mkMatch('.hidden/other-folder/file-c.png'),
       ],
     });
     const result = useOutputsStore.getState().getDisplayedFiles();
@@ -680,16 +731,16 @@ describe('getDisplayedFiles with promptSearchActive', () => {
   });
 
   it('leaf folder: returns direct matching files only', () => {
+    useShowHiddenStore.setState({ showHidden: true });
     useOutputsStore.setState({
       source: 'output',
-      currentFolder: '.hidden-folder/inner-folder',
-      showHidden: true,
+      currentFolder: '.hidden/inner-folder',
       promptSearchActive: true,
       promptSearchQuery: 'needle',
       promptSearchResults: [
-        mkMatch('.hidden-folder/inner-folder/file-a.png'),
-        mkMatch('.hidden-folder/inner-folder/file-b.png'),
-        mkMatch('.hidden-folder/other-folder/file-c.png'), // sibling — should be excluded
+        mkMatch('.hidden/inner-folder/file-a.png'),
+        mkMatch('.hidden/inner-folder/file-b.png'),
+        mkMatch('.hidden/other-folder/file-c.png'), // sibling — should be excluded
       ],
     });
     const result = useOutputsStore.getState().getDisplayedFiles();
@@ -697,10 +748,10 @@ describe('getDisplayedFiles with promptSearchActive', () => {
   });
 
   it('does NOT include the regular files array when promptSearchActive', () => {
+    useShowHiddenStore.setState({ showHidden: false });
     useOutputsStore.setState({
       source: 'output',
       currentFolder: null,
-      showHidden: false,
       files: [
         { id: 'output/regular1.png', name: 'regular1.png', type: 'image', date: 1 },
         { id: 'output/regular2.png', name: 'regular2.png', type: 'image', date: 2 },
@@ -716,10 +767,10 @@ describe('getDisplayedFiles with promptSearchActive', () => {
   });
 
   it('ignores folder entries returned by a prompt-search API response', () => {
+    useShowHiddenStore.setState({ showHidden: true });
     useOutputsStore.setState({
       source: 'output',
       currentFolder: null,
-      showHidden: true,
       files: [],
       promptSearchActive: true,
       promptSearchQuery: 'needle',
@@ -829,6 +880,17 @@ describe('persistence', () => {
     await useOutputsStore.persist.rehydrate();
 
     expect(useOutputsStore.getState().sort).toEqual({ mode: 'created' });
+  });
+
+  it('drops the legacy Outputs-only show-hidden preference', async () => {
+    localStorage.setItem('outputs-storage', JSON.stringify({
+      version: 6,
+      state: { showHidden: true },
+    }));
+
+    await useOutputsStore.persist.rehydrate();
+
+    expect('showHidden' in useOutputsStore.getState()).toBe(false);
   });
 
   it('carries the oldest {field, order} sort through the same default change', async () => {

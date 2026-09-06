@@ -5,6 +5,7 @@ import { useWorkflowStore } from "@/hooks/useWorkflow";
 import { getWidgetIndexForInput } from "@/utils/seedUtils";
 import { getNodeWidgetIndexMap, resolveComboOption, resolveSource, isComboType, getComboOptions } from "@/utils/workflowInputs";
 import { collectScopedWorkflowNodes } from "@/utils/workflowNodes";
+import { runUndoTransaction } from "@/utils/undoTransaction";
 import type { ScopedNode } from "@/utils/workflowNodes";
 import {
   getLinkId,
@@ -91,7 +92,10 @@ function updateScopedNodeWidgets(
     n.id === node.id ? { ...n, widgets_values: newValues } : n,
   );
   const nextWorkflow = scope.applyPatch(workflow, { nodes: nextNodes });
-  useWorkflowStore.setState({ workflow: nextWorkflow });
+  runUndoTransaction(
+    () => useWorkflowStore.setState({ workflow: nextWorkflow }),
+    'Edit LoRAs',
+  );
 }
 
 function updateScopedNodeWidget(

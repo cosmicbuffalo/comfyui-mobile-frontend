@@ -8,8 +8,15 @@ interface UseTrackpadSwipeNavigationOptions {
 }
 
 // Cumulative horizontal delta (px) a gesture must reach before it navigates.
-const TRIGGER_THRESHOLD = 90;
-const HORIZONTAL_INTENT_RATIO = 1.35;
+const TRIGGER_THRESHOLD = 140;
+// A deliberate two-finger horizontal swipe on a trackpad is nearly pure
+// horizontal; diagonal drift while scrolling is not. Demanding 2x dominance
+// keeps sloppy scroll starts from reading as navigation.
+const HORIZONTAL_INTENT_RATIO = 2;
+// Cumulative vertical delta past which a non-horizontal gesture is locked in
+// as a scroll for its whole lifetime — sideways drift later in the same
+// stream can no longer turn it into a navigation.
+const SCROLL_LOCK_THRESHOLD = 60;
 // Gap with no wheel events that ends the current gesture, re-arming the next.
 const GESTURE_IDLE_MS = 250;
 
@@ -75,12 +82,14 @@ export function useTrackpadSwipeNavigation({
     let accumX = 0;
     let accumY = 0;
     let fired = false;
+    let lockedToScroll = false;
     let idleTimer = 0;
 
     const endGesture = () => {
       accumX = 0;
       accumY = 0;
       fired = false;
+      lockedToScroll = false;
     };
 
     const handleWheel = (event: WheelEvent) => {
@@ -104,7 +113,15 @@ export function useTrackpadSwipeNavigation({
 
       accumX += event.deltaX;
       accumY += event.deltaY;
+      // A gesture locked in as a scroll stays a scroll until the idle gap
+      // re-arms — mirrors the touch handler, where a scroll that opened
+      // sideways can no longer switch panels.
+      if (lockedToScroll) return;
       const horizontal = Math.abs(accumX) >= Math.abs(accumY) * HORIZONTAL_INTENT_RATIO;
+      if (!horizontal && Math.abs(accumY) > SCROLL_LOCK_THRESHOLD) {
+        lockedToScroll = true;
+        return;
+      }
 
       // Once the gesture is clearly horizontal, claim it (suppresses history
       // swipe) even before it reaches the navigation threshold.
