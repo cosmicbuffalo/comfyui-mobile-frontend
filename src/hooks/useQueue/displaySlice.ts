@@ -16,6 +16,7 @@ export type QueueDisplaySlice = Pick<
   | 'showQueueTimestamps'
   | 'showPromptPreview'
   | 'queueOutputLayout'
+  | 'pendingCollapsedOverride'
   | 'previewVisibility'
   | 'previewVisibilityDefault'
   | 'setQueueItemExpanded'
@@ -31,6 +32,8 @@ export type QueueDisplaySlice = Pick<
   | 'toggleShowPromptPreview'
   | 'setQueueOutputLayout'
   | 'toggleQueueOutputLayout'
+  | 'setPendingCollapsed'
+  | 'clearPendingCollapsedOverride'
   | 'setPreviewVisibility'
   | 'togglePreviewVisibility'
   | 'setPreviewVisibilityDefault'
@@ -56,6 +59,7 @@ export const createQueueDisplaySlice: StateCreator<
   showQueueTimestamps: false,
   showPromptPreview: false,
   queueOutputLayout: 'tabbed',
+  pendingCollapsedOverride: null,
   previewVisibility: {},
   previewVisibilityDefault: false,
 
@@ -145,6 +149,16 @@ export const createQueueDisplaySlice: StateCreator<
     set((state) => ({
       queueOutputLayout: state.queueOutputLayout === 'tabbed' ? 'stacked' : 'tabbed',
     }));
+  },
+
+  setPendingCollapsed: (collapsed) => {
+    set({ pendingCollapsedOverride: collapsed });
+  },
+
+  clearPendingCollapsedOverride: () => {
+    set((state) => (
+      state.pendingCollapsedOverride === null ? {} : { pendingCollapsedOverride: null }
+    ));
   },
 
   setPreviewVisibility: (promptId, visible) => {

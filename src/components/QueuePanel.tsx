@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useShallow } from 'zustand/shallow';
 import { useQueueStore } from '@/hooks/useQueue';
 import { useHistoryStore } from '@/hooks/useHistory';
@@ -13,7 +13,13 @@ import { buildOutputPreferredViewerImages, buildViewerImages } from '@/utils/vie
 import type { ItemStatus, UnifiedItem, ViewerImage } from './QueuePanel/types';
 import { QueueImageMenu } from './QueuePanel/QueueImageMenu';
 import { QueueToast } from './QueuePanel/QueueToast';
-import { compareUnifiedQueueItems, getBatchSources } from './QueuePanel/queueUtils';
+import {
+  compareUnifiedQueueItems,
+  getBatchSources,
+  isQueueItemHidden,
+  isPendingSectionCollapsed,
+  shouldLatchPendingAutoCollapse,
+} from './QueuePanel/queueUtils';
 import { downloadBatch, downloadImage, filenameFromSrc } from '@/utils/downloads';
 import { copyTextToClipboard } from '@/utils/clipboard';
 import { QueueList } from './QueuePanel/QueueList';
@@ -24,6 +30,7 @@ import { useI18n } from '@/i18n';
 import { CloseIcon } from './icons';
 import * as api from '@/api/client';
 import { buildReenqueueRequest } from './QueuePanel/queueReenqueue';
+import { useShowHiddenStore } from '@/hooks/useShowHidden';
 
 interface QueuePanelProps {
   visible: boolean;
@@ -103,6 +110,9 @@ export const QueuePanel = memo(function QueuePanel({ visible, onImageClick }: Qu
   const discardRecoverableJobs = useQueueStore((s) => s.discardRecoverableJobs);
   const fetchQueueMetadata = useQueueStore((s) => s.fetchQueueMetadata);
   const hydrateFileState = useOutputsStore((s) => s.hydrateFileState);
+  const pendingCollapsedOverride = useQueueStore((s) => s.pendingCollapsedOverride);
+  const setPendingCollapsed = useQueueStore((s) => s.setPendingCollapsed);
+  const clearPendingCollapsedOverride = useQueueStore((s) => s.clearPendingCollapsedOverride);
   const previewVisibility = useQueueStore((s) => s.previewVisibility);
   const previewVisibilityDefault = useQueueStore((s) => s.previewVisibilityDefault);
   const loadWorkflow = useWorkflowStore((s) => s.loadWorkflow);
@@ -111,6 +121,7 @@ export const QueuePanel = memo(function QueuePanel({ visible, onImageClick }: Qu
   const nodeTypes = useWorkflowStore((s) => s.nodeTypes);
   const workflowDurationStats = useWorkflowStore((s) => s.workflowDurationStats);
   const promptOutputs = useQueueStore((s) => s.livePromptOutputs);
+  const showHidden = useShowHiddenStore((s) => s.showHidden);
 
   const history = useHistoryStore((s) => s.history);
   const fetchHistory = useHistoryStore((s) => s.fetchHistory);
@@ -421,7 +432,7 @@ export const QueuePanel = memo(function QueuePanel({ visible, onImageClick }: Qu
     await downloadImage(src, filenameFromSrc(src));
   };
 
-  const unifiedList = useMemo(() => {
+  const allUnifiedList = useMemo(() => {
     const items: Record<string, UnifiedItem> = {};
 
     history.forEach(item => {
@@ -456,6 +467,57 @@ export const QueuePanel = memo(function QueuePanel({ visible, onImageClick }: Qu
     return list;
   }, [pending, running, completing, history, executingPromptId]);
 
+  const unifiedList = useMemo(
+    () => showHidden
+      ? allUnifiedList
+      : allUnifiedList.filter((item) => !isQueueItemHidden(item)),
+    [allUnifiedList, showHidden],
+  );
+
+  const pendingCount = useMemo(
+    () => unifiedList.filter((item) => item.status === 'pending').length,
+    [unifiedList],
+  );
+
+  const pendingCollapsed = isPendingSectionCollapsed(pendingCollapsedOverride, pendingCount);
+
+  // Write the automatic fold down as the standing choice the first time it
+  // applies, so folding is one-way. Read live, the count decides on every
+  // render and therefore unfolds again on the way back down: a batch that
+  // arrived folded would spring open the moment it drained past the threshold,
+  // dropping its last cards into the top of the list under a reader who is
+  // somewhere else entirely and never asked for them. Only a tap opens it now.
+  //
+  // In a layout effect, before paint, so the section is never briefly drawn in
+  // the state that is about to be corrected.
+  useLayoutEffect(() => {
+    if (shouldLatchPendingAutoCollapse(pendingCollapsedOverride, pendingCount)) {
+      setPendingCollapsed(true);
+    }
+  }, [pendingCollapsedOverride, pendingCount, setPendingCollapsed]);
+
+  // Forget the standing choice once the queue has drained: it was about that
+  // batch, and keeping it forever would mean no later batch ever arrives folded
+  // (or, for a fold, that a small queue is hidden for no reason).
+  useEffect(() => {
+    if (pendingCount === 0) clearPendingCollapsedOverride();
+  }, [pendingCount, clearPendingCollapsedOverride]);
+
+  const handleTogglePendingCollapsed = useCallback(
+    () => setPendingCollapsed(!pendingCollapsed),
+    [pendingCollapsed, setPendingCollapsed],
+  );
+
+  // What the list actually renders. Folding Pending drops those cards entirely
+  // rather than hiding them with CSS, so every count that drives progressive
+  // reveal (visibleCount, the media-ready gate, pagination) stays in step with
+  // what is on screen — a queue of 200 pending jobs would otherwise burn the
+  // whole reveal budget on cards nobody can see.
+  const displayList = useMemo(
+    () => (pendingCollapsed ? unifiedList.filter((item) => item.status !== 'pending') : unifiedList),
+    [unifiedList, pendingCollapsed],
+  );
+
   // Prune persisted per-card UI state for items that no longer exist anywhere.
   // Dropping unknown ids is only safe once the whole history is loaded, which
   // is what hasMoreHistory gates — but that stays true until the user pages
@@ -465,17 +527,17 @@ export const QueuePanel = memo(function QueuePanel({ visible, onImageClick }: Qu
   const pruneQueueItemUiState = useQueueStore((s) => s.pruneQueueItemUiState);
   useEffect(() => {
     if (hasMoreHistory || isLoadingHistory) return;
-    pruneQueueItemUiState(unifiedList.map((item) => item.id));
-  }, [hasMoreHistory, isLoadingHistory, pruneQueueItemUiState, unifiedList]);
+    pruneQueueItemUiState(allUnifiedList.map((item) => item.id));
+  }, [allUnifiedList, hasMoreHistory, isLoadingHistory, pruneQueueItemUiState]);
 
   const initialVisibleCount = useMemo(() => {
-    if (unifiedList.length === 0) return 0;
-    const pendingCount = unifiedList.filter((item) => item.status === 'pending').length;
-    const runningCount = unifiedList.filter((item) => item.status === 'running').length;
-    const doneCount = unifiedList.filter((item) => item.status === 'done').length;
+    if (displayList.length === 0) return 0;
+    const shownPending = displayList.filter((item) => item.status === 'pending').length;
+    const runningCount = displayList.filter((item) => item.status === 'running').length;
+    const doneCount = displayList.filter((item) => item.status === 'done').length;
     const topDone = doneCount > 0 ? 1 : 0;
-    return Math.min(unifiedList.length, pendingCount + runningCount + topDone);
-  }, [unifiedList]);
+    return Math.min(displayList.length, shownPending + runningCount + topDone);
+  }, [displayList]);
 
   const viewerImages = useMemo(() => {
     const doneItems = unifiedList.filter((item) => item.status === 'done').map((item) => item.data);
@@ -575,16 +637,16 @@ export const QueuePanel = memo(function QueuePanel({ visible, onImageClick }: Qu
 
   useEffect(() => {
     if (!visible || !hasLoadedOnce) return;
-    void fetchQueueMetadata(unifiedList.map((item) => item.id));
-  }, [fetchQueueMetadata, unifiedList, visible, hasLoadedOnce]);
+    void fetchQueueMetadata(allUnifiedList.map((item) => item.id));
+  }, [allUnifiedList, fetchQueueMetadata, visible, hasLoadedOnce]);
 
   useEffect(() => {
     if (!visible) return;
-    totalCountRef.current = unifiedList.length;
+    totalCountRef.current = displayList.length;
     queueMicrotask(() => {
       setVisibleCount((prev) => Math.max(prev, initialVisibleCount));
     });
-  }, [visible, unifiedList.length, initialVisibleCount]);
+  }, [visible, displayList.length, initialVisibleCount]);
 
   // Pull the next history page from the server, guarding against overlapping
   // loads. Local `loadingMore` drives the bottom spinner; the store guards the
@@ -599,12 +661,12 @@ export const QueuePanel = memo(function QueuePanel({ visible, onImageClick }: Qu
     if (!visible || !hasLoadedOnce) return;
     const el = listRef.current;
     if (!el) return;
-    const renderedCount = Math.min(visibleCount, unifiedList.length);
+    const renderedCount = Math.min(visibleCount, displayList.length);
     // The preceding effect seeds pending + running + one completed card. Do not
     // race its queued state update and accidentally reveal a second completed
     // card in the same turn.
-    if (renderedCount === 0 && unifiedList.length > 0) return;
-    const lastRenderedItem = renderedCount > 0 ? unifiedList[renderedCount - 1] : null;
+    if (renderedCount === 0 && displayList.length > 0) return;
+    const lastRenderedItem = renderedCount > 0 ? displayList[renderedCount - 1] : null;
     // Reveal history progressively: the last mounted card must either load its
     // first image/video or exhaust recovery before another card is introduced.
     //
@@ -632,7 +694,7 @@ export const QueuePanel = memo(function QueuePanel({ visible, onImageClick }: Qu
       window.clearTimeout(revealWaitTimerRef.current);
       revealWaitTimerRef.current = null;
     }
-    if (visibleCount >= unifiedList.length) {
+    if (visibleCount >= displayList.length) {
       // Everything loaded is rendered; if it doesn't fill the viewport and the
       // server has more, pull the next page so scrolling stays possible.
       if (el.scrollHeight <= el.clientHeight + 20) triggerLoadMore();
@@ -640,10 +702,10 @@ export const QueuePanel = memo(function QueuePanel({ visible, onImageClick }: Qu
     }
     if (el.scrollHeight <= el.clientHeight + 20) {
       queueMicrotask(() => {
-        setVisibleCount((prev) => Math.min(unifiedList.length, prev + 1));
+        setVisibleCount((prev) => Math.min(displayList.length, prev + 1));
       });
     }
-  }, [visible, hasLoadedOnce, visibleCount, unifiedList, mediaReadyVersion, triggerLoadMore, handleItemMediaReady]);
+  }, [visible, hasLoadedOnce, visibleCount, displayList, mediaReadyVersion, triggerLoadMore, handleItemMediaReady]);
 
   // The reveal wait timer outlives the effect run that armed it, so drop it on
   // unmount rather than letting it fire against a panel that is gone.
@@ -703,7 +765,7 @@ export const QueuePanel = memo(function QueuePanel({ visible, onImageClick }: Qu
       // preview work on memory-constrained mobile WebViews.
       setVisibleCount((prev) => Math.min(totalCountRef.current, prev + 2));
       // Near the end of what's loaded → fetch the next history page.
-      if (visibleCount >= unifiedList.length - 10) {
+      if (visibleCount >= displayList.length - 10) {
         triggerLoadMore();
       }
     }
@@ -838,7 +900,7 @@ export const QueuePanel = memo(function QueuePanel({ visible, onImageClick }: Qu
           {recoverableJobIds.length > 0 && (
             <div className={`mx-auto w-full ${wideStackedLayout ? 'max-w-full' : 'max-w-3xl'}`}>
               <div className="relative mx-4 mt-4 rounded-lg border border-cyan-400/30 bg-cyan-950/55 px-3 py-3 text-sm text-slate-100">
-                <div className="pr-8 font-semibold text-cyan-200">Lost queued jobs found</div>
+                <div className="pr-8 font-semibold text-cyan-200">{t('Lost queued jobs found')}</div>
                 {/* Dismissal discards the shadow records for these jobs (not just
                     this render's banner), so it can't come back for the same lost
                     jobs on the next reload. */}
@@ -866,8 +928,11 @@ export const QueuePanel = memo(function QueuePanel({ visible, onImageClick }: Qu
           )}
           <QueueList
             listRef={listRef}
-            unifiedList={unifiedList}
+            unifiedList={displayList}
             visibleCount={visibleCount}
+            pendingCount={pendingCount}
+            pendingCollapsed={pendingCollapsed}
+            onTogglePendingCollapsed={handleTogglePendingCollapsed}
             hasLoadedOnce={hasLoadedOnce}
             effectiveExecutingId={effectiveExecutingId}
             progress={progress}

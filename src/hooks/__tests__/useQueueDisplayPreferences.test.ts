@@ -15,4 +15,19 @@ describe('queue display preferences', () => {
     useQueueStore.getState().setShowQueueTimestamps(false);
     expect(useQueueStore.getState().showQueueTimestamps).toBe(false);
   });
+
+  it('records an explicit pending fold and forgets it on demand', () => {
+    // null means "no choice on record", which is what lets the count-based
+    // default apply again after the queue drains.
+    useQueueStore.setState({ pendingCollapsedOverride: null });
+
+    useQueueStore.getState().setPendingCollapsed(true);
+    expect(useQueueStore.getState().pendingCollapsedOverride).toBe(true);
+
+    useQueueStore.getState().setPendingCollapsed(false);
+    expect(useQueueStore.getState().pendingCollapsedOverride).toBe(false);
+
+    useQueueStore.getState().clearPendingCollapsedOverride();
+    expect(useQueueStore.getState().pendingCollapsedOverride).toBeNull();
+  });
 });

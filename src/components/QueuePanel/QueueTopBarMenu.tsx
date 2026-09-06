@@ -9,6 +9,7 @@ import { ContextMenuButton } from '@/components/buttons/ContextMenuButton';
 import { ContextMenuBuilder } from '@/components/menus/ContextMenuBuilder';
 import { appChromeIconButtonBareClassName } from '@/components/chromeStyles';
 import { useI18n } from '@/i18n';
+import { useShowHiddenStore } from '@/hooks/useShowHidden';
 
 interface QueueTopBarMenuProps {
   open: boolean;
@@ -34,6 +35,8 @@ export function QueueTopBarMenu({
   onOpenDeleteRejectedConfirm
 }: QueueTopBarMenuProps) {
   const { t } = useI18n();
+  const showHidden = useShowHiddenStore((s) => s.showHidden);
+  const toggleShowHidden = useShowHiddenStore((s) => s.toggleShowHidden);
   // Scoped to what the QUEUE shows — generated output/temp media. An input the
   // user rejected while browsing uploads is not this menu's to delete.
   const rejectedCount = useOutputsStore(
@@ -178,6 +181,11 @@ export function QueueTopBarMenu({
     onOpenDeleteRejectedConfirm();
   };
 
+  const handleToggleShowHidden = () => {
+    toggleShowHidden();
+    onClose();
+  };
+
   return (
     <div id="queue-menu-container" className="relative">
       <ContextMenuButton
@@ -255,6 +263,14 @@ export function QueueTopBarMenu({
                   : <EyeIcon className="w-4 h-4" />,
                 onClick: handleTogglePreviewClick,
                 hidden: !hasPreviewToggle
+              },
+              {
+                key: 'toggle-hidden-items',
+                label: showHidden ? t('Hide hidden') : t('Show hidden'),
+                icon: showHidden
+                  ? <EyeOffIcon className="w-4 h-4" />
+                  : <EyeIcon className="w-4 h-4" />,
+                onClick: handleToggleShowHidden
               },
               {
                 key: 'delete-rejected',

@@ -152,7 +152,7 @@ export function PromptPreview({
           {hasNodeChanges && diff && (
             <div className="space-y-2">
               <div className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">
-                Changes
+                {t('Changes')}
               </div>
               {diff.nodeChanges.map((node) => (
                 <FoldChunk
@@ -188,7 +188,7 @@ export function PromptPreview({
             <div className="space-y-2">
               {hasNodeChanges && (
                 <div className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">
-                  Prompts
+                  {t('Prompts')}
                 </div>
               )}
               {diff.prompts.map((prompt) => (
