@@ -1,9 +1,10 @@
-name: Custom node parity
+name: Upstream parity
 
-# This frontend reimplements behaviour that lives in other people's custom-node
-# packs (see scripts/node-parity/manifests.mjs). Those packs move; when they do,
-# our port silently diverges. Re-clone them weekly and re-verify every assumption
-# so drift surfaces as a named failure instead of a bug report months later.
+# Everything this frontend depends on that it does not own: other people's
+# custom-node packs, ComfyUI's own internals, and ComfyUI's official workflow
+# templates. All three move on their own schedule; when they do, we silently
+# diverge. Re-check them weekly so drift surfaces as a named failure instead of
+# a bug report months later.
 
 on:
   schedule:
@@ -14,6 +15,8 @@ on:
       - "scripts/node-parity/**"
       - "scripts/check-node-parity.mjs"
       - ".github/workflows/node_parity.yml"
+      - "src/utils/__tests__/stockFrontendCompatibility.test.ts"
+      - "src/utils/__tests__/templateCorpus.manifest.json"
 
 jobs:
   parity:
@@ -33,3 +36,47 @@ jobs:
           echo "Re-read the upstream source named in the failure, update our"
           echo "implementation, then update the assumption in"
           echo "scripts/node-parity/manifests.mjs (and bump verifiedVersion)."
+
+  # ComfyUI ships its official workflow templates as their own wheel, on their
+  # own release cadence. A template added upstream is a workflow our users will
+  # open, so it gets audited against the rules stock's loader enforces before
+  # anyone opens it on a phone. The suite skips itself when the corpus is
+  # missing, which is right locally and useless here — REQUIRE_TEMPLATE_CORPUS
+  # turns that skip into a failure so a green run always means it really ran.
+  templates:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22.12.0"
+          cache: npm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: npm ci
+
+      - name: Install ComfyUI's official templates
+        run: pip install --upgrade comfyui-workflow-templates
+
+      - name: Locate the template corpus
+        run: |
+          python - <<'PY' >> "$GITHUB_ENV"
+          import os
+          import comfyui_workflow_templates_json as pkg
+          print(f"COMFYUI_TEMPLATES_DIR={os.path.join(os.path.dirname(pkg.__file__), 'templates')}")
+          PY
+
+      - name: Audit the templates against stock's load rules
+        env:
+          REQUIRE_TEMPLATE_CORPUS: "1"
+        run: npx vitest run src/utils/__tests__/stockFrontendCompatibility.test.ts
+
+      - name: Explain a failure
+        if: failure()
+        run: |
+          echo "::warning::ComfyUI's official templates changed, or an edit we make to them no longer loads in the stock frontend."
+          echo "If only the corpus manifest case failed, upstream added or rewrote"
+          echo "templates and the rest of the suite already audited them: re-bless with"
+          echo "  UPDATE_TEMPLATE_MANIFEST=1 npx vitest run src/utils/__tests__/stockFrontendCompatibility.test.ts"
+          echo "If an audit case failed, a workflow we edit would break in stock ComfyUI."

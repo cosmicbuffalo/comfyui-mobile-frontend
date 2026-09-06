@@ -45,6 +45,367 @@
 /** @type {Manifest[]} */
 export const MANIFESTS = [
   // ---------------------------------------------------------------------
+  // ComfyUI core — the server half of the mask-editor contract, plus the
+  // execution internals the progress socket reads.
+  //
+  // ComfyUI does not store a mask as a file. It stores it as the ALPHA CHANNEL
+  // of a PNG in input/clipspace, and `/upload/mask` is what merges an uploaded
+  // alpha onto the original server-side. Our editor writes into that contract
+  // (src/utils/maskEditor/), and every assumption below is something the upload
+  // would silently corrupt if it changed: the merge would still return 200 and
+  // still produce a valid PNG, just of the wrong thing.
+  //
+  // `localDir` points one level above custom_nodes, so --local can check the
+  // running install.
+  // ---------------------------------------------------------------------
+  {
+    pack: 'comfyui',
+    repo: 'https://github.com/comfyanonymous/ComfyUI',
+    verifiedVersion: '0.34.2',
+    localDir: '..',
+    // cli_args.py carries no version; without a pattern the check reported no
+    // upstream version at all, so a stale verifiedVersion could sit unnoticed.
+    versionFile: 'comfyui_version.py',
+    versionPattern: /__version__\s*=\s*["']([^"']+)["']/,
+    assumptions: [
+      {
+        id: 'upload-mask-endpoint',
+        why: 'saveMaskEdit() posts the two mask layers to /upload/mask. Without this route the mask never merges and the node points at a transparent cut-out instead of the image.',
+        ours: 'src/api/client/assets.ts',
+        file: 'server.py',
+        contains: [/@routes\.post\("\/upload\/mask"\)/],
+      },
+      {
+        id: 'upload-mask-merge-shape',
+        why: 'The merge reads `original_ref` out of the multipart body and copies OUR alpha onto THAT file. This is why the final layer must reference the painted upload rather than the original: change the field name or the direction of the copy and every save silently masks the wrong picture.',
+        ours: 'src/utils/maskEditor/session.ts',
+        file: 'server.py',
+        contains: [
+          /original_ref\s*=\s*json\.loads\(post\.get\("original_ref"\)\)/,
+          /new_alpha\s*=\s*mask_pil\.getchannel\('A'\)/,
+          /original_pil\.putalpha\(new_alpha\)/,
+        ],
+      },
+      {
+        id: 'upload-mask-preserves-png-text',
+        why: 'We rely on masking an image NOT destroying its embedded workflow — that is what makes "load workflow from image" still work on a masked file.',
+        ours: 'src/utils/imageWorkflowMetadata.ts',
+        file: 'server.py',
+        contains: [/metadata\s*=\s*PngInfo\(\)[\s\S]{0,800}pnginfo=metadata/],
+      },
+      {
+        id: 'view-channel-extraction',
+        why: 'Loading an existing mask depends on /view?channel=rgb and channel=a splitting one PNG into its pixels and its alpha. There is no other way to read a stored mask back, so losing this makes every re-edit start from a blank mask.',
+        ours: 'src/utils/maskEditor/clipspace.ts',
+        file: 'server.py',
+        contains: [/["']channel["']\s*(?:not\s+)?in\s+request\.rel_url\.query/],
+      },
+      {
+        id: 'view-channel-a-is-alpha-not-greyscale',
+        why: 'channel=a returns transparent BLACK carrying the original alpha (Image.new RGBA then putalpha), NOT a greyscale picture. readMaskAlphaInPlace therefore samples the alpha channel; sampling RGB reads 0 everywhere and inverts to a fully masked canvas for every image opened. If upstream ever switched to greyscale, our read would silently invert.',
+        ours: 'src/utils/maskEditor/compose.ts',
+        file: 'server.py',
+        contains: [/alpha_img\s*=\s*Image\.new\('RGBA',\s*img\.size\)[\s\S]{0,120}alpha_img\.putalpha\(a\)/],
+      },
+      {
+        id: 'view-channel-a-synthesises-opaque',
+        why: 'An image with no alpha gets a=255 everywhere, which we rely on to open a plain photo with an EMPTY mask rather than a fully masked one.',
+        ours: 'src/utils/maskEditor/compose.ts',
+        file: 'server.py',
+        contains: [/a\s*=\s*Image\.new\('L',\s*img\.size,\s*255\)/],
+      },
+      {
+        id: 'queue-item-tuple-order',
+        why: 'A queue entry is a positional tuple, and useQueue.ts reads it by index: [0] number, [1] prompt_id, [2] prompt, [3] extra_data, [4] outputs_to_execute. Nothing names those fields on the wire, so inserting one earlier in the tuple does not error anywhere — it shifts every later read, and the app starts keying jobs by a prompt that is now an integer. This is the single most silently-destructive change upstream could make to the queue.',
+        ours: 'src/hooks/useQueue.ts',
+        file: 'server.py',
+        contains: [
+          /self\.prompt_queue\.put\(\(number,\s*prompt_id,\s*prompt,\s*extra_data,\s*outputs_to_execute/,
+        ],
+      },
+      {
+        id: 'queue-served-tuple-width',
+        why: 'The queue grew a sixth element (sensitive data) that is sliced back off before serving, so the API still hands out exactly the five fields we index. If that slice widens, data we never asked for reaches the client; if it narrows, outputs_to_execute goes missing.',
+        ours: 'src/hooks/useQueue.ts',
+        file: 'server.py',
+        contains: [/def _remove_sensitive_from_queue[\s\S]{0,200}item\[:5\]/],
+      },
+      {
+        id: 'queue-listing-keys',
+        why: 'The queue poll reads queue_running and queue_pending off the /queue response. Renaming either leaves the app permanently showing an empty queue while generations run.',
+        ours: 'src/api/client/queue.ts',
+        file: 'server.py',
+        contains: [
+          /queue_info\['queue_running'\]/,
+          /queue_info\['queue_pending'\]/,
+        ],
+      },
+      {
+        id: 'prompt-response-ids',
+        why: 'Queueing a workflow returns the prompt_id every later lookup is keyed by, plus node_errors, which is how a rejected prompt is reported. Without prompt_id the app cannot follow the job it just submitted.',
+        ours: 'src/api/client/queue.ts',
+        file: 'server.py',
+        contains: [/"prompt_id":\s*prompt_id,\s*"number":\s*number,\s*"node_errors"/],
+      },
+      {
+        id: 'object-info-node-shape',
+        why: 'Every widget the app renders is built from /object_info: input drives the controls, output and output_name drive the connection rows, and name/display_name label the card. A rename here does not error — nodes just render without their widgets.',
+        ours: 'src/utils/widgetDefinitions.ts',
+        file: 'server.py',
+        contains: [
+          /info\['input'\]/,
+          /info\['output'\]/,
+          /info\['output_name'\]/,
+          /info\['display_name'\]/,
+        ],
+      },
+      {
+        id: 'websocket-lifecycle-messages',
+        why: 'Live progress is driven entirely by these message types: execution_start opens a run, execution_cached marks nodes that will never report, execution_success closes it. Renaming one strands the UI mid-generation — the run never visibly ends.',
+        ours: 'src/hooks/useWorkflow/execution.ts',
+        file: 'execution.py',
+        contains: [
+          /add_message\("execution_start"/,
+          /add_message\("execution_cached"/,
+          /add_message\("execution_success"/,
+        ],
+      },
+      {
+        id: 'websocket-node-messages',
+        why: 'executing/executed carry which node is running and what it produced, and execution_error is the only signal that a run failed. The queue card and the output previews are driven from them.',
+        ours: 'src/hooks/useWorkflow/execution.ts',
+        file: 'execution.py',
+        contains: [
+          /send_sync\("executing"/,
+          /send_sync\("executed"/,
+          /send_sync\("execution_error"/,
+        ],
+      },
+      {
+        id: 'websocket-queue-status',
+        why: 'The status message carries the queue depth the app shows without polling, and is also what tells a reconnecting client the server is alive.',
+        ours: 'src/hooks/useWorkflow/execution.ts',
+        file: 'server.py',
+        contains: [/send_sync\("status"/],
+      },
+      {
+        id: 'progress-state-accessor',
+        why: 'The progress websocket reads ComfyUI\'s own progress registry through get_progress_state() every 0.1s tick. This is an internal API with no stability promise: if it moves, every connected phone shows a generation that never advances, and nothing in our logs says why.',
+        ours: 'mobile_progress_ws.py',
+        file: 'comfy_execution/progress.py',
+        contains: [/def get_progress_state\(/],
+      },
+      {
+        id: 'progress-node-state-running',
+        why: 'A node counts as in-flight when its state equals NodeState.Running, and the enum is compared by identity against the value stored in the registry. Rename the member or change the string and every node reads as not-running: the queue card shows 0 of N done for the whole generation.',
+        ours: 'mobile_progress_ws.py',
+        file: 'comfy_execution/progress.py',
+        contains: [/class NodeState\(Enum\)/, /Running\s*=\s*["']running["']/],
+      },
+      {
+        id: 'progress-registry-fields',
+        why: 'The snapshot reads prompt_id, nodes (node id to a dict carrying state/value/max) and dynprompt straight off the registry object. These are attributes, not a public accessor, so a rename is invisible until the socket serves zeros.',
+        ours: 'mobile_progress_ws.py',
+        file: 'comfy_execution/progress.py',
+        contains: [
+          /self\.prompt_id\s*=/,
+          /self\.dynprompt\s*=/,
+          /self\.nodes\s*:/,
+        ],
+      },
+      {
+        id: 'executing-context-ids',
+        why: 'Latent-shape reporting asks get_executing_context() which prompt and node are sampling right now, and reads .prompt_id and .node_id off it. It falls back to the server instance when the context is missing, so a change here degrades quietly rather than erroring — the live resolution badge just stops updating.',
+        ours: 'mobile_latent_shape.py',
+        file: 'comfy_execution/utils.py',
+        contains: [
+          /def get_executing_context\(/,
+          /prompt_id\s*:\s*str/,
+          /node_id\s*:\s*str/,
+        ],
+      },
+      {
+        id: 'loadimage-mask-inversion',
+        why: 'The single easiest thing to get backwards: LoadImage derives its MASK from `1.0 - alpha`, so the editor has to SAVE `255 - maskAlpha`. If upstream ever stopped inverting, every mask we write would come out as its own complement. Matched loosely around the operand because the inversion has been rewritten in place at least once (`1. - mask` became `1. - torch.from_numpy(mask)`, and a fast path added `1.0 - components.alpha[..., -1]`) without the semantics moving at all — what must hold is the subtraction from one, not the expression it wraps.',
+        ours: 'src/utils/maskEditor/compose.ts',
+        file: 'nodes.py',
+        contains: [/=\s*1\.0?\s*-\s*(?:torch\.from_numpy\()?(?:mask|components\.alpha)/],
+      },
+    ],
+  },
+
+  // ---------------------------------------------------------------------
+  // ComfyUI_frontend — the desktop mask editor our editor is a port of.
+  //
+  // NOTE ON LICENSING: that project is GPL-3 and this one is MIT, so nothing
+  // here is copied. What is ported is behaviour — filenames, layer semantics,
+  // and default values — reimplemented independently. These assumptions exist
+  // so a change in that behaviour is reported rather than silently diverging.
+  //
+  // It ships to users as a built wheel with no source tree, so `--local` skips
+  // it; the cloning path checks it.
+  // ---------------------------------------------------------------------
+  {
+    pack: 'comfyui-frontend',
+    repo: 'https://github.com/Comfy-Org/ComfyUI_frontend',
+    verifiedVersion: '1.54.1',
+    localDir: false,
+    versionFile: 'package.json',
+    versionPattern: /"version":\s*"([^"]+)"/,
+    assumptions: [
+      // ---------------------------------------------------------------
+      // The subgraph rules our stock-compatibility work is built on.
+      //
+      // src/utils/__tests__/stockFrontendCompatibility.test.ts replays these
+      // over ComfyUI's template corpus to decide whether a workflow we edited
+      // still opens in stock. They were transcribed out of the shipped
+      // bundle's sourcemaps, and until now were pinned nowhere: if stock
+      // changed them, that suite would carry on confidently checking rules
+      // nobody enforces any more, and report green while we shipped files
+      // stock could not open.
+      // ---------------------------------------------------------------
+      {
+        id: 'subgraph-io-configure-unguarded',
+        why: 'Loading a subgraph calls configure() on the boundary IO nodes with whatever the file holds, with NO guard for their absence. This is why a definition missing inputNode/outputNode does not merely warn — it throws mid-load, after the canvas has been cleared, so the workflow disappears rather than failing to open. ensureSubgraphDefinitionEnvelopes exists solely to keep us from ever writing such a file.',
+        ours: 'src/utils/subgraphDefinitionShape.ts',
+        file: 'src/lib/litegraph/src/LGraph.ts',
+        contains: [
+          /this\.inputNode\.configure\(data\.inputNode\)/,
+          /this\.outputNode\.configure\(data\.outputNode\)/,
+        ],
+      },
+      {
+        id: 'subgraph-io-bounding-required',
+        why: 'The throw itself: configure reads .bounding straight off its argument, so an absent IO node is a TypeError rather than a default. If upstream ever guards this, a whole class of file we refuse to write becomes survivable — worth knowing, though we would keep writing the complete shape.',
+        ours: 'src/utils/subgraphDefinitionShape.ts',
+        file: 'src/lib/litegraph/src/subgraph/SubgraphIONodeBase.ts',
+        contains: [/configure\([^)]*\)\s*:\s*void\s*\{\s*this\._boundingRect\.set\(data\.bounding\)/],
+      },
+      {
+        id: 'promoted-values-skip-undefined',
+        why: 'A placeholder\'s promoted values are applied positionally, one per widget-backed input, and ONLY when the value is not undefined. Both halves matter to us: the positional walk is why instanceWidgetValues.ts keeps that list in boundary order, and the undefined check is why it truncates a trailing empty rather than padding with null — an index past the end is skipped and the inner default stands, while a null is written into the widget store and overwrites it.',
+        ours: 'src/utils/instanceWidgetValues.ts',
+        file: 'src/lib/litegraph/src/subgraph/SubgraphNode.ts',
+        contains: [
+          /_applyPromotedWidgetValues\(/,
+          /widgetValues\?\.\[valueIndex\]/,
+          /if \(value !== undefined\)/,
+        ],
+      },
+      {
+        id: 'link-id-allocation',
+        why: 'New link ids come from incrementing state.lastLinkId, and a subgraph has no counter of its own — so a definition holding a link numbered past the root counter leaves stock ready to reissue an id that is already live, overwriting a connection. reconcileIdAllocators raises the counter past every interior link for exactly this reason. Upstream has since added observeLinkId, which raises the counter when a link is added at runtime; that narrows the hazard without removing our need to write a correct counter, and if it ever covered the load path too we would want to know rather than guess.',
+        ours: 'src/utils/subgraphDefinitionShape.ts',
+        file: 'src/lib/litegraph/src/idAllocation.ts',
+        contains: [
+          /export function mintLinkId[\s\S]{0,160}state\.lastLinkId\s*=/,
+          /export function observeLinkId[\s\S]{0,120}state\.lastLinkId\s*=\s*id/,
+        ],
+      },
+      {
+        id: 'clipspace-layer-filenames',
+        why: 'Our four output layers use these exact names. The desktop loader recognises one of its own saves by the clipspace-painted-masked- prefix and recovers the siblings by pattern; a different name means a mask made on mobile loses its paint layer when re-opened on a desktop.',
+        ours: 'src/utils/maskEditor/clipspace.ts',
+        file: 'src/composables/maskeditor/useMaskEditorSaver.ts',
+        contains: [
+          /clipspace-mask-\$\{timestamp\}\.png/,
+          /clipspace-paint-\$\{timestamp\}\.png/,
+          /clipspace-painted-\$\{timestamp\}\.png/,
+          /clipspace-painted-masked-\$\{timestamp\}\.png/,
+        ],
+      },
+      {
+        id: 'clipspace-reopen-prefix',
+        why: 'layerFilenamesForImage() keys off the same prefix to decide whether an image is a previous edit. If the desktop stops writing it, our re-open path stops restoring paint layers.',
+        ours: 'src/utils/maskEditor/clipspace.ts',
+        file: 'src/composables/maskeditor/useMaskEditorLoader.ts',
+        contains: [/paintedMaskedImagePrefix\s*=\s*'clipspace-painted-masked-'/],
+      },
+      {
+        id: 'mask-alpha-inversion',
+        why: 'The saved mask is 255 minus the painted alpha. Our applyMaskAlphaInPlace does the same; a change of direction upstream would mean the two frontends write opposite masks for the same strokes.',
+        ours: 'src/utils/maskEditor/compose.ts',
+        file: 'src/composables/maskeditor/useMaskEditorSaver.ts',
+        contains: [/255\s*-\s*maskData\.data\[i \+ 3\]/],
+      },
+      {
+        id: 'mask-restore-reads-alpha-channel',
+        why: 'prepareMask reads data[i + 3] -- the alpha -- when turning a channel=a render back into mask pixels, then inverts it. Ours does the same; reading any colour channel instead makes every image open fully masked.',
+        ours: 'src/utils/maskEditor/compose.ts',
+        file: 'src/composables/maskeditor/useCanvasManager.ts',
+        contains: [/const alpha = maskData\.data\[i \+ 3\][\s\S]{0,200}maskData\.data\[i \+ 3\] = 255 - alpha/],
+      },
+      {
+        id: 'load-splits-rgb-and-alpha',
+        why: 'We load the base pixels and the existing mask from the same file via channel=rgb / channel=a, because that is how the desktop does it and how the mask is stored.',
+        ours: 'src/utils/maskEditor/session.ts',
+        file: 'src/composables/maskeditor/useMaskEditorLoader.ts',
+        // Matched on the channel argument rather than the variable holding the
+        // url: upstream renamed it (baseImageUrl -> baseUrl) with no change in
+        // behaviour, and the literal pattern called that drift.
+        contains: [/loadImageLayer\(\s*\w+,\s*'rgb'\)/, /loadImageLayer\(\s*\w+,\s*'a'\)/],
+      },
+      {
+        id: 'widget-value-format',
+        why: 'After a save we write "subfolder/filename [type]" into the node\'s image widget. The bracketed type is what folder_paths.annotated_filepath reads to pick a root directory, and it is the half of this that is a real contract. Upstream has since stopped prefixing the subfolder and writes the filename alone, so this pins the annotation rather than the whole string. Our format stays valid either way: get_annotated_filepath strips the bracket and os.path.join()s the remainder onto the base directory, so a subfolder-prefixed name resolves and still passes the traversal check. Worth re-reading if it moves again — the two implementations now compose this value differently.',
+        ours: 'src/utils/maskEditor/clipspace.ts',
+        file: 'src/composables/maskeditor/useMaskEditorSaver.ts',
+        contains: [/filename \+ \([\s\S]{0,40}\[\$\{[\w.]*type\}\]`\s*:\s*''\)/],
+      },
+      {
+        id: 'tool-set',
+        why: 'Our toolbar offers exactly these five tools. A new upstream tool is a feature gap worth knowing about rather than a break.',
+        ours: 'src/components/MaskEditor/MaskEditorModal.tsx',
+        file: 'src/extensions/core/maskeditor/types.ts',
+        contains: [
+          /MaskPen\s*=\s*'pen'/,
+          /PaintPen\s*=\s*'rgbPaint'/,
+          /Eraser\s*=\s*'eraser'/,
+          /MaskBucket\s*=\s*'paintBucket'/,
+          /MaskColorFill\s*=\s*'colorSelect'/,
+        ],
+      },
+      {
+        id: 'brush-softness-scale',
+        why: 'getEffectiveBrushSize/Hardness reproduce the 1.5x softness scale that keeps a soft brush\'s hard core at the requested radius. A different scale means the same brush settings paint a different edge on each frontend.',
+        ours: 'src/utils/maskEditor/brush.ts',
+        file: 'src/composables/maskeditor/brushUtils.ts',
+        contains: [/MAX_SCALE\s*=\s*1\.5/, /\(size \* hardness\) \/ effectiveSize/],
+      },
+      {
+        id: 'color-comparison-methods',
+        why: 'Color select offers RGB / HSL / LAB matching, each normalized onto the same 0-255 tolerance scale so one slider means the same thing for all three.',
+        ours: 'src/utils/maskEditor/color.ts',
+        file: 'src/extensions/core/maskeditor/types.ts',
+        contains: [/Simple\s*=\s*'simple'/, /HSL\s*=\s*'hsl'/, /LAB\s*=\s*'lab'/],
+      },
+      {
+        id: 'paint-bucket-operates-on-mask-alpha',
+        why: 'Our bucket floods the MASK alpha, not the image colours — tapping a masked pixel clears instead of fills. That distinction (isFillMode) is the whole difference between the bucket and color select.',
+        ours: 'src/utils/maskEditor/fill.ts',
+        file: 'src/composables/maskeditor/useCanvasTools.ts',
+        contains: [/const isFillMode = targetAlpha !== 255/],
+      },
+      {
+        id: 'eraser-targets-active-layer',
+        why: 'The eraser rubs out the ACTIVE layer, not both. The active layer follows the last tool that set one, so erasing after painting removes paint and erasing after masking removes mask. Erasing both would silently destroy paint strokes a user only meant to unmask.',
+        ours: 'src/components/MaskEditor/maskCanvasEngine.ts',
+        file: 'src/composables/maskeditor/useBrushDrawing.ts',
+        contains: [
+          /isRgbLayer\s*&&[\s\S]{0,120}Tools\.Eraser\s*\|\|\s*currentTool === Tools\.PaintPen/,
+        ],
+      },
+      {
+        id: 'default-brush-settings',
+        why: 'A first-run mobile brush matches a first-run desktop brush. Purely cosmetic drift, but it is what makes the two feel like the same tool.',
+        ours: 'src/utils/maskEditor/types.ts',
+        file: 'src/stores/maskEditorStore.ts',
+        contains: [/size:\s*10/, /opacity:\s*0\.7/, /hardness:\s*1/, /stepSize:\s*10/],
+      },
+    ],
+  },
+
+  // ---------------------------------------------------------------------
   // cg-use-everywhere — "Anything Everywhere" broadcast nodes.
   // Ported in src/utils/useEverywhere.ts. The Python nodes are no-ops; every
   // behaviour we reproduce lives in the pack's js/ directory.
@@ -293,6 +654,47 @@ export const MANIFESTS = [
         ours: 'src/utils/nodeFrontendPreviews.ts',
         file: 'src_web/comfyui/image_comparer.ts',
         contains: [/selected/, /\burl\b/],
+      },
+      {
+        id: 'power-puter-empty-schema',
+        why: 'The whole reason powerPuter.ts exists: Power Puter declares no widgets in object_info, so our schema-driven prompt builder cannot see `code` or `outputs` and we inject them by hand. If upstream ever seeds FlexibleOptionalInputType with real data, the generic path would cover them and our injection could start fighting it.',
+        ours: 'src/utils/workflowInputs/promptInputs.ts',
+        file: 'py/power_puter.py',
+        contains: [/"optional":\s*FlexibleOptionalInputType\(any_type\)/],
+      },
+      {
+        id: 'power-puter-widget-names',
+        why: 'appendPowerPuterInputs() sends the expression under `code` and the output list under `outputs`. A rename upstream means the backend reads a missing key and the node raises again.',
+        ours: 'src/utils/powerPuter.ts',
+        file: 'src_web/comfyui/power_puter.ts',
+        contains: [
+          /new OutputsWidget\("outputs"/,
+          /ComfyWidgets\["STRING"\]\(\s*this,\s*"code"/,
+        ],
+      },
+      {
+        id: 'power-puter-outputs-envelope',
+        why: 'We serialize the outputs widget as {outputs: [...]}, which is exactly what main() unwraps. If the backend stops reading the nested key our value shape silently stops applying and every node falls back to a single STRING output.',
+        ours: 'src/utils/powerPuter.ts',
+        file: 'py/power_puter.py',
+        contains: [/get_dict_value\(kwargs,\s*'outputs\.outputs'/],
+      },
+      {
+        id: 'power-puter-bool-legacy-fixup',
+        why: 'parsePowerPuterOutputs() rewrites the legacy "BOOL" output type to "BOOLEAN", mirroring the compatibility fixup in the widget setter. Dropping it here while upstream still ships it would leave old workflows declaring a type nothing can connect to.',
+        ours: 'src/utils/powerPuter.ts',
+        file: 'src_web/comfyui/power_puter.ts',
+        contains: [/o === "BOOL"\s*\?\s*"BOOLEAN"/],
+      },
+      {
+        id: 'power-puter-output-types',
+        why: 'The mobile outputs editor offers exactly this list of types, and caps the row at ten chips like upstream does.',
+        ours: 'src/utils/powerPuter.ts',
+        file: 'src_web/comfyui/power_puter.ts',
+        contains: [
+          /OUTPUT_TYPES\s*=\s*\["STRING",\s*"INT",\s*"FLOAT",\s*"BOOLEAN",\s*"\*"\]/,
+          /this\.value\.outputs\.length\s*<\s*10/,
+        ],
       },
     ],
   },

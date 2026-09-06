@@ -49,7 +49,16 @@ function log(...parts) {
  * (ComfyUI-Autocomplete-Plus, not comfyui-autocomplete-plus), so an exact
  * lookup reports a pack that is sitting right there as "not installed".
  */
-function findLocalPack(pack) {
+function findLocalPack(manifest) {
+  const pack = manifest.pack;
+  // Not every manifest describes a custom-node pack. ComfyUI itself sits one
+  // level above custom_nodes, and its frontend ships as a built wheel with no
+  // source tree at all — `localDir` says where (or whether) to look.
+  if (manifest.localDir === false) return null;
+  if (manifest.localDir) {
+    const path = resolve(localRoot, manifest.localDir);
+    return existsSync(path) ? path : null;
+  }
   const exact = resolve(localRoot, pack);
   if (existsSync(exact)) return exact;
   const match = readdirSync(localRoot, { withFileTypes: true })
@@ -60,7 +69,8 @@ function findLocalPack(pack) {
 /** Shallow-clone (or reuse) a pack at its default branch, returning its path. */
 function fetchPack(manifest) {
   if (localRoot) {
-    const path = findLocalPack(manifest.pack);
+    if (manifest.localDir === false) return { path: null, ref: 'local', skipped: true };
+    const path = findLocalPack(manifest);
     if (!path) throw new Error(`not installed under ${localRoot}`);
     return { path, ref: 'local' };
   }
@@ -127,12 +137,19 @@ for (const manifest of MANIFESTS) {
 
   let packPath;
   let ref;
+  let skipped = false;
   try {
-    ({ path: packPath, ref } = fetchPack(manifest));
+    ({ path: packPath, ref, skipped = false } = fetchPack(manifest));
   } catch (error) {
     entry.error = String(error.message ?? error);
     failed += 1;
     log(`\n✗ ${manifest.pack}: could not fetch — ${entry.error}`);
+    continue;
+  }
+
+  if (skipped) {
+    entry.skipped = true;
+    log(`\n${manifest.pack}: skipped (no local source tree; run without --local to check it)`);
     continue;
   }
 

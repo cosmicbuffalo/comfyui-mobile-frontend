@@ -20,6 +20,12 @@ export default defineConfig({
         target: `http://${process.env.COMFY_HOST ?? 'localhost'}:8188`,
         changeOrigin: true
       },
+      // The core workflow-template catalog and its thumbnails are served from
+      // ComfyUI's templates package, outside /api.
+      '/templates': {
+        target: `http://${process.env.COMFY_HOST ?? 'localhost'}:8188`,
+        changeOrigin: true
+      },
       '/customnode': {
         target: `http://${process.env.COMFY_HOST ?? 'localhost'}:8188`,
         changeOrigin: true
