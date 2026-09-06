@@ -1,6 +1,7 @@
 import {create} from "zustand";
 import {persist} from "zustand/middleware";
 import {createThrottledPersistStorage} from "@/utils/idbStorage";
+import {withUndoActionLabels} from "@/utils/undoActionLabels";
 import {
   type SeedMode,
   SPECIAL_SEED_RANDOM,
@@ -53,6 +54,8 @@ import { generateSessionId, normalizeSessionInPlace, reconcileRehydratedSessions
 import type {SessionNormalizable} from "./useWorkflow/sessions";
 import {createNodeControlActions} from "./useWorkflow/nodeControl";
 import {createGraphEditActions} from "./useWorkflow/graphEdit";
+import {createBoundaryEditActions} from "./useWorkflow/boundaryEdit";
+import {createSubgraphTypeActions} from "./useWorkflow/subgraphTypes";
 import {createExecutionActions} from "./useWorkflow/execution";
 import {createSessionActions} from "./useWorkflow/sessionActions";
 import type {
@@ -112,12 +115,14 @@ export const useWorkflowStore = create<WorkflowState>()(
         updateNodeWidget,
         renameSetGetNode,
         updateNodeWidgets,
+        setPowerPuterOutputs,
         updateSubgraphInnerNodeWidget,
         updateNodeProperties,
         updateNodeTitle,
         convertImageOutputNode,
         toggleBypass,
         scrollToNode,
+        jumpToWorkflowItem,
         cycleConnectionHighlight,
         setConnectionHighlightMode,
         setItemHidden,
@@ -129,19 +134,38 @@ export const useWorkflowStore = create<WorkflowState>()(
         updateContainerTitle,
         updateWorkflowItemColor,
       } = createNodeControlActions(set, get);
-      const { deleteNode, collapseSetGetNodes, connectNodes, disconnectInput, addNode, duplicateNode, pasteClipboard, copyContainer, pasteIntoContainer, addGroupNearNode, copySelectedItems, deleteSelectedItems, createGroupFromItems, addNodeAndConnect, ensureWidgetInputSlot, popWidgetToPrimitive, enterSubgraph, exitSubgraph, exitToRoot, exitToDepth, navigateToSubgraphTrail } = createGraphEditActions(set, get);
+      const { setScopeInstance, setScopeTrail, deleteNode, collapseSetGetNodes, connectNodes, disconnectInput, addNode, duplicateNode, pasteClipboard, copyContainer, duplicateContainer, pasteIntoContainer, addGroupNearNode, copySelectedItems, deleteSelectedItems, createGroupFromItems, createSubgraphFromItems, moveItemsIntoSubgraph, removeHarvestedNodes, popNodeOutToRoot, addNodeAndConnect, ensureWidgetInputSlot, setWidgetLabel, popWidgetToPrimitive, enterSubgraph, exitSubgraph, exitToRoot, exitToDepth, navigateToSubgraphTrail } = createGraphEditActions(set, get);
+      const {
+        connectBoundaryInput,
+        connectBoundaryOutput,
+        disconnectBoundaryLink,
+        addBoundaryInput,
+        addBoundaryOutput,
+        promoteWidget,
+        setPromotedWidgetForm,
+        demoteWidget,
+        moveBoundarySlot,
+        removeBoundarySlot,
+        setBoundarySlotLabel,
+      } = createBoundaryEditActions(set, get);
+      const { setPromotedWidgetLabel, setInstanceWidgetLabel, forkSubgraphType, replaceSubgraphInstance, renameSubgraphType, deleteSubgraphType } = createSubgraphTypeActions(set, get);
       const { setExecutionState, setNodeOutput, setNodeComparerOutput, setNodeTextOutput, clearNodeOutputs, setLatentPreviewTiles, setLatentPreview, clearAllLatentPreviews, setQueueLatentPreviewTiles, setQueueLatentPreview, clearQueueLatentPreviews, addPromptOutputs, clearPromptOutputs, setRunCount, setInfiniteLoop, setIsStopping, setSavingSessionId, setFollowQueue, applyControlAfterGenerate, queueWorkflow } = createExecutionActions(set, get);
       const { setMobileLayout, commitRepositionLayout, switchToSession, closeSession, resolveCloseForNewWorkflow, cancelCloseForNewWorkflow, loadWorkflow, unloadWorkflow, setSavedWorkflow, setNodeTypes, addInputComboOption, saveCurrentWorkflowState, setSearchQuery, setSearchOpen, requestAddNodeModal, clearAddNodeModalRequest, clearEditContainerLabelRequest, prepareRepositionScrollTarget, toggleConnectionButtonsVisible, updateWorkflowDuration, clearWorkflowCache, ensureHierarchicalKeysAndRepair } = createSessionActions(set, get);
 
-      return {
+      // Wrapped so every undoable action names itself in the Undo/Redo toast
+      // (and commits as one undo step) — see utils/undoActionLabels.
+      return withUndoActionLabels({
         workflowSource: null,
         workflow: null,
         originalWorkflow: null,
         diffBaseWorkflow: null,
         lastEnqueuedWorkflow: null,
         scopeStack: [{ type: "root" as const }],
+        workflowPanelScrollTops: {},
         currentFilename: null,
+        filenameIsPlaceholder: false,
         currentWorkflowKey: null,
+        currentLineageId: null,
         nodeTypes: null,
         isLoading: false,
         savedWorkflowStates: {},
@@ -201,18 +225,41 @@ export const useWorkflowStore = create<WorkflowState>()(
         addNodeAndConnect,
         popWidgetToPrimitive,
         ensureWidgetInputSlot,
+        setWidgetLabel,
         deleteNode,
         collapseSetGetNodes,
         duplicateNode,
         pasteClipboard,
         copyContainer,
+        duplicateContainer,
         pasteIntoContainer,
         deleteContainer,
         copySelectedItems,
         createGroupFromItems,
+        createSubgraphFromItems,
+        moveItemsIntoSubgraph,
+        removeHarvestedNodes,
+        popNodeOutToRoot,
         deleteSelectedItems,
         connectNodes,
         disconnectInput,
+        connectBoundaryInput,
+        connectBoundaryOutput,
+        disconnectBoundaryLink,
+        addBoundaryInput,
+        addBoundaryOutput,
+        promoteWidget,
+        setPromotedWidgetForm,
+        demoteWidget,
+        moveBoundarySlot,
+        removeBoundarySlot,
+        setBoundarySlotLabel,
+        setPromotedWidgetLabel,
+        setInstanceWidgetLabel,
+        forkSubgraphType,
+        replaceSubgraphInstance,
+        renameSubgraphType,
+        deleteSubgraphType,
         setNodeOutput,
         setNodeComparerOutput,
         setNodeTextOutput,
@@ -230,6 +277,7 @@ export const useWorkflowStore = create<WorkflowState>()(
         bypassAllInContainer,
         updateNodeWidget,
         updateNodeWidgets,
+        setPowerPuterOutputs,
         renameSetGetNode,
         updateSubgraphInnerNodeWidget,
 
@@ -263,6 +311,7 @@ export const useWorkflowStore = create<WorkflowState>()(
         setSearchOpen,
         prepareRepositionScrollTarget,
         scrollToNode,
+        jumpToWorkflowItem,
 
         // Visibility
         setItemHidden,
@@ -288,10 +337,12 @@ export const useWorkflowStore = create<WorkflowState>()(
         // Scope navigation
         enterSubgraph,
         exitSubgraph,
+        setScopeInstance,
+        setScopeTrail,
         exitToRoot,
         exitToDepth,
         navigateToSubgraphTrail,
-      };
+      });
     },
     {
       name: "workflow-storage",
@@ -303,8 +354,17 @@ export const useWorkflowStore = create<WorkflowState>()(
         // parkedSessions (which by invariant never contains the active id).
         workflow: state.workflow,
         originalWorkflow: state.originalWorkflow,
+        scopeStack: state.scopeStack,
+        workflowPanelScrollTops: state.workflowPanelScrollTops,
         currentFilename: state.currentFilename,
+        filenameIsPlaceholder: state.filenameIsPlaceholder,
         currentWorkflowKey: state.currentWorkflowKey,
+        currentLineageId: state.currentLineageId,
+        // Stamps which workflow this tab is holding. Persisted so the undo
+        // history restored on the next load (see useWorkflowUndo) can tell it
+        // still belongs to the workflow on screen — parked sessions already
+        // carry their own in the snapshot.
+        workflowLoadedAt: state.workflowLoadedAt,
         savedWorkflowStates: state.savedWorkflowStates,
         runCount: state.runCount,
         hiddenItems: state.hiddenItems,
@@ -394,6 +454,8 @@ export const useWorkflowStore = create<WorkflowState>()(
           state.parkedSessions = state.parkedSessions ?? {};
           state.promptToSession = state.promptToSession ?? {};
           state.savedWorkflowStates = state.savedWorkflowStates ?? {};
+          state.workflowPanelScrollTops =
+            state.workflowPanelScrollTops ?? {};
         }
 
         // Defensive reconciliation against a corrupt or partially-written
@@ -420,4 +482,3 @@ export const useWorkflowStore = create<WorkflowState>()(
     },
   ),
 );
-

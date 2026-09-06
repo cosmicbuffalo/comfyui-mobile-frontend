@@ -1,5 +1,5 @@
 import type { NodeTypes, Workflow } from '@/api/types';
-import { expandWorkflowSubgraphs } from '@/utils/expandWorkflowSubgraphs';
+import { expandWorkflowSubgraphs, isInertMode } from '@/utils/expandWorkflowSubgraphs';
 import { buildWorkflowPromptInputs, getNodeWidgetIndexMap } from '@/utils/workflowInputs';
 import { isSetGetNode } from '@/utils/setGetNodes';
 import { isUseEverywhereNode, resolveUseEverywhereForPrompt } from '@/utils/useEverywhere';
@@ -40,7 +40,8 @@ export function buildPromptFromWorkflow(
   const classTypeById = new Map<number, string>();
 
   for (const node of expanded.nodes) {
-    if (node.mode === 4) continue; // bypassed
+    // Bypassed (4) and muted (2) nodes are both absent from ComfyUI's prompt.
+    if (isInertMode(node.mode)) continue;
     // SetNode/GetNode are virtual relays; consumers resolve through them to the
     // real source, so they never appear in the executed prompt.
     if (isSetGetNode(node)) continue;
@@ -64,7 +65,7 @@ export function buildPromptFromWorkflow(
   }
 
   for (const node of expanded.nodes) {
-    if (node.mode === 4) continue;
+    if (isInertMode(node.mode)) continue;
     const classType = classTypeById.get(node.id);
     if (!classType) continue;
     const inputs = buildWorkflowPromptInputs(

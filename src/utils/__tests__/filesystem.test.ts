@@ -17,10 +17,25 @@ describe('resolveInputPathForFile', () => {
     vi.unstubAllGlobals();
   });
 
-  it('returns input paths unchanged', async () => {
+  // object_info enumerates top-level input files only, so a subfolder pick can
+  // never be a combo choice and has to name its own directory to stay
+  // resolvable. A top-level pick IS a choice and stays bare.
+  it('names the directory on an input pick from a subfolder', async () => {
     await expect(
       resolveInputPathForFile(makeFile({ id: 'input/assets/a.png' }), 'input'),
-    ).resolves.toBe('assets/a.png');
+    ).resolves.toBe('assets/a.png [input]');
+  });
+
+  it('leaves a top-level input pick bare', async () => {
+    await expect(
+      resolveInputPathForFile(makeFile({ id: 'input/a.png' }), 'input'),
+    ).resolves.toBe('a.png');
+  });
+
+  it('does not annotate an input pick twice', async () => {
+    await expect(
+      resolveInputPathForFile(makeFile({ id: 'input/assets/a.png [input]' }), 'input'),
+    ).resolves.toBe('assets/a.png [input]');
   });
 
   it('uses server-side copy for output files', async () => {
@@ -53,9 +68,11 @@ describe('resolveInputPathForFile', () => {
 
     await expect(
       resolveInputPathForFile(makeFile(), 'output', { hideCopiedInput: true }),
-    ).resolves.toBe('batch/a.png');
+    ).resolves.toBe('batch/a.png [input]');
 
     expect(fetchMock).toHaveBeenCalledTimes(2);
+    // File state is keyed by the path on disk, so it must NOT carry the
+    // annotation the widget value gets.
     expect(fetchMock).toHaveBeenLastCalledWith(
       '/mobile/api/files/state',
       expect.objectContaining({

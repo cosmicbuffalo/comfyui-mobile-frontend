@@ -82,6 +82,81 @@ describe('grouping', () => {
     }
   });
 
+  it('counts bypassed nodes over the visible set only', () => {
+    // Group 1 holds one engaged visible node and one bypassed node the user has
+    // hidden (e.g. via "Hide bypassed nodes"). The hidden one must not push the
+    // group to a fully-bypassed count, which is what tints its card purple.
+    const visible = makeNode(1, 60);
+    const hiddenBypassed = { ...makeNode(2, 120), mode: 4 };
+    const wf = makeWorkflow([visible, hiddenBypassed]);
+    const groupKey = makeLocationPointer({ type: 'group', groupId: 1, subgraphId: null });
+    const layout: MobileLayout = {
+      root: [{ type: 'group', id: 1, subgraphId: null, itemKey: groupKey }],
+      groups: { [groupKey]: [{ type: 'node', id: 1 }, { type: 'node', id: 2 }] },
+      subgraphs: {},
+      hiddenBlocks: {}
+    };
+
+    const nested = buildNestedListFromLayout(
+      layout,
+      wf,
+      { [groupKey]: false },
+      { [makeLocationPointer({ type: 'node', nodeId: 2, subgraphId: null })]: true }
+    );
+    const group = nested.find((item) => item.type === 'group');
+    expect(group?.type).toBe('group');
+    if (group?.type === 'group') {
+      expect(group.nodeCount).toBe(1);
+      expect(group.bypassedNodeCount).toBe(0);
+    }
+  });
+
+  it('reads a group\'s subgraph bypass state from the placeholder, per instance', () => {
+    // Two groups hold placeholders of one shared definition. Bypassing one
+    // instance must not tint the other group, and the definition's inner nodes
+    // stay engaged (queue-time expansion applies the placeholder's mode).
+    const sgId = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
+    const bypassedPlaceholder = { ...makeNode(5, 60), type: sgId, mode: 4 };
+    const engagedPlaceholder = { ...makeNode(6, 360), type: sgId, mode: 0 };
+    const wf: Workflow = {
+      ...makeWorkflow([bypassedPlaceholder, engagedPlaceholder]),
+      definitions: {
+        subgraphs: [
+          { id: sgId, name: 'Shared', nodes: [makeNode(10, 0)], links: [], groups: [] }
+        ]
+      }
+    };
+    const groupOneKey = makeLocationPointer({ type: 'group', groupId: 1, subgraphId: null });
+    const groupTwoKey = makeLocationPointer({ type: 'group', groupId: 2, subgraphId: null });
+    const layout: MobileLayout = {
+      root: [
+        { type: 'group', id: 1, subgraphId: null, itemKey: groupOneKey },
+        { type: 'group', id: 2, subgraphId: null, itemKey: groupTwoKey }
+      ],
+      groups: {
+        [groupOneKey]: [{ type: 'subgraph', id: sgId, nodeId: 5 }],
+        [groupTwoKey]: [{ type: 'subgraph', id: sgId, nodeId: 6 }]
+      },
+      subgraphs: { [sgId]: [{ type: 'node', id: 10 }] },
+      hiddenBlocks: {}
+    };
+
+    const nested = buildNestedListFromLayout(
+      layout,
+      wf,
+      { [groupOneKey]: false, [groupTwoKey]: false },
+      {}
+    );
+    const groups = nested.filter((item) => item.type === 'group');
+    expect(groups).toHaveLength(2);
+    if (groups[0]?.type === 'group' && groups[1]?.type === 'group') {
+      expect(groups[0].nodeCount).toBe(1);
+      expect(groups[0].bypassedNodeCount).toBe(1);
+      expect(groups[1].nodeCount).toBe(1);
+      expect(groups[1].bypassedNodeCount).toBe(0);
+    }
+  });
+
   it('renders each placeholder instance of a shared subgraph definition', () => {
     const sgId = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
     const wf: Workflow = {

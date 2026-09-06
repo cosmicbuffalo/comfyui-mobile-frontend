@@ -1,8 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import {
-  extractWorkflowFromImageBytes,
+  extractWorkflowMetadataFromImageBytes,
+  extractWorkflowMetadataFromImageFile,
   isWorkflowImageFile,
 } from '../imageWorkflowMetadata';
+
+/** The workflow half of the metadata, which is all most of these cases assert on. */
+const workflowFromBytes = (bytes: Uint8Array) =>
+  extractWorkflowMetadataFromImageBytes(bytes)?.workflow ?? null;
 
 const SAMPLE_WORKFLOW = JSON.stringify({
   nodes: [{ id: 1, type: 'KSampler' }],
@@ -85,42 +90,54 @@ describe('isWorkflowImageFile', () => {
   });
 });
 
-describe('extractWorkflowFromImageBytes', () => {
+describe('extractWorkflowMetadataFromImageBytes', () => {
   it('extracts a workflow from a PNG tEXt chunk', () => {
     const png = makePng([
       { keyword: 'prompt', text: '{"foo":1}' },
       { keyword: 'workflow', text: SAMPLE_WORKFLOW },
     ]);
-    const wf = extractWorkflowFromImageBytes(png);
+    const wf = workflowFromBytes(png);
     expect(wf).not.toBeNull();
     expect(wf!.nodes[0].type).toBe('KSampler');
   });
 
+  it('extracts the executed prompt alongside a PNG workflow', () => {
+    const prompt = { '1': { class_type: 'KSampler', inputs: { seed: 123 } } };
+    const png = makePng([
+      { keyword: 'prompt', text: JSON.stringify(prompt) },
+      { keyword: 'workflow', text: SAMPLE_WORKFLOW },
+    ]);
+    expect(extractWorkflowMetadataFromImageBytes(png)).toEqual({
+      workflow: JSON.parse(SAMPLE_WORKFLOW),
+      prompt,
+    });
+  });
+
   it('returns null for a PNG with no workflow chunk', () => {
     const png = makePng([{ keyword: 'prompt', text: '{"foo":1}' }]);
-    expect(extractWorkflowFromImageBytes(png)).toBeNull();
+    expect(workflowFromBytes(png)).toBeNull();
   });
 
   it('returns null when the embedded value is not valid JSON', () => {
     const png = makePng([{ keyword: 'workflow', text: 'not json {{{' }]);
-    expect(extractWorkflowFromImageBytes(png)).toBeNull();
+    expect(workflowFromBytes(png)).toBeNull();
   });
 
   it('returns null when the JSON lacks a nodes array', () => {
     const png = makePng([{ keyword: 'workflow', text: '{"links":[]}' }]);
-    expect(extractWorkflowFromImageBytes(png)).toBeNull();
+    expect(workflowFromBytes(png)).toBeNull();
   });
 
   it('extracts a workflow from WEBP EXIF (Make = "workflow:{json}")', () => {
     const webp = makeWebp(makeExifWithMake(`workflow:${SAMPLE_WORKFLOW}`));
-    const wf = extractWorkflowFromImageBytes(webp);
+    const wf = workflowFromBytes(webp);
     expect(wf).not.toBeNull();
     expect(wf!.nodes[0].id).toBe(1);
   });
 
   it('extracts a workflow from JPEG EXIF (Make = "workflow:{json}")', () => {
     const jpeg = makeJpeg(makeExifWithMake(`workflow:${SAMPLE_WORKFLOW}`));
-    const wf = extractWorkflowFromImageBytes(jpeg);
+    const wf = workflowFromBytes(jpeg);
     expect(wf).not.toBeNull();
     expect(wf!.nodes[0].id).toBe(1);
   });
@@ -136,17 +153,49 @@ describe('extractWorkflowFromImageBytes', () => {
     });
     const bytes = Array.from(new TextEncoder().encode(`workflow:${wfWithEmoji}`));
     const webp = makeWebp(makeExifWithMakeBytes(bytes));
-    const wf = extractWorkflowFromImageBytes(webp);
+    const wf = workflowFromBytes(webp);
     expect(wf).not.toBeNull();
     expect((wf!.nodes[0] as { title?: string }).title).toBe('Sampler \u{1F7E2} \u65E5\u672C\u8A9E');
   });
 
   it('ignores EXIF that holds only a prompt (no workflow tag)', () => {
     const webp = makeWebp(makeExifWithMake(`prompt:${SAMPLE_WORKFLOW}`));
-    expect(extractWorkflowFromImageBytes(webp)).toBeNull();
+    expect(workflowFromBytes(webp)).toBeNull();
   });
 
   it('returns null for non-image bytes', () => {
-    expect(extractWorkflowFromImageBytes(Uint8Array.from(ascii('just text')))).toBeNull();
+    expect(workflowFromBytes(Uint8Array.from(ascii('just text')))).toBeNull();
+  });
+});
+
+describe('extractWorkflowMetadataFromImageFile', () => {
+  // The picked/dropped-file entry point: everything above works on bytes, this
+  // is the only path that reads a File first.
+  // jsdom's Blob has no arrayBuffer(), so the real File gets the one method
+  // this function calls patched on rather than being replaced by a bare stub.
+  const asFile = (bytes: Uint8Array, name = 'output.png') => {
+    const file = new File([bytes as BlobPart], name, { type: 'image/png' });
+    Object.defineProperty(file, 'arrayBuffer', {
+      value: async () => bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength),
+    });
+    return file;
+  };
+
+  it('reads a File and returns its workflow and executed prompt', async () => {
+    const prompt = { '1': { class_type: 'KSampler', inputs: { seed: 7 } } };
+    const png = makePng([
+      { keyword: 'prompt', text: JSON.stringify(prompt) },
+      { keyword: 'workflow', text: SAMPLE_WORKFLOW },
+    ]);
+
+    await expect(extractWorkflowMetadataFromImageFile(asFile(png))).resolves.toEqual({
+      workflow: JSON.parse(SAMPLE_WORKFLOW),
+      prompt,
+    });
+  });
+
+  it('resolves null for a File with no embedded workflow', async () => {
+    const png = makePng([{ keyword: 'prompt', text: '{"foo":1}' }]);
+    await expect(extractWorkflowMetadataFromImageFile(asFile(png))).resolves.toBeNull();
   });
 });

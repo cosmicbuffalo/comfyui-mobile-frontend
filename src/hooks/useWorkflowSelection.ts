@@ -2,9 +2,9 @@ import { create } from 'zustand';
 
 // Multi-select mode for the workflow panel — mirrors the outputs panel's select
 // mode but over workflow items (nodes, groups, subgraph placeholders). Selection
-// is an explicit set of item keys (HierarchicalKey strings): selecting a group
-// is a convenience that also adds its member node keys, but each item can then be
-// toggled independently. Selection is scoped to the current view and is cleared
+// is an explicit set of item keys (HierarchicalKey strings). Groups are atomic:
+// selecting one never implicitly changes the selection state of its contents.
+// Selection is scoped to the current view and is cleared
 // when the scope changes (entering/exiting a subgraph) — see WorkflowPanel.
 interface WorkflowSelectionState {
   selectionMode: boolean;
@@ -20,15 +20,14 @@ interface WorkflowSelectionState {
   setActionMenuOpen: (open: boolean) => void;
 
   isSelected: (key: string) => boolean;
-  // Add the given keys to the selection (deduped). Used for a group's
-  // member-node auto-select.
+  // Add the given keys to the selection (deduped). Used by the explicit group
+  // children / descendants controls.
   selectKeys: (keys: string[]) => void;
   // Remove the given keys from the selection.
   deselectKeys: (keys: string[]) => void;
-  // Toggle a single primary key, optionally also adding companion keys when (and
-  // only when) the primary is being turned ON — e.g. a group's members. On
-  // toggle-off only the primary key is removed (companions are left as-is).
-  toggleKey: (key: string, companionKeys?: string[]) => void;
+  // Toggle exactly one item. Container contents are selected explicitly through
+  // the group-level children / descendants actions in WorkflowPanel.
+  toggleKey: (key: string) => void;
   clearSelection: () => void;
 }
 
@@ -69,17 +68,12 @@ export const useWorkflowSelectionStore = create<WorkflowSelectionState>((set, ge
       return { selectedKeys: filtered };
     }),
 
-  toggleKey: (key, companionKeys = []) =>
+  toggleKey: (key) =>
     set((state) => {
       if (state.selectedKeys.includes(key)) {
-        // Turning OFF: remove only the primary key — companions stay as-is.
         return { selectedKeys: state.selectedKeys.filter((k) => k !== key) };
       }
-      // Turning ON: add the primary plus any companions, deduped.
-      const next = new Set(state.selectedKeys);
-      next.add(key);
-      for (const companion of companionKeys) next.add(companion);
-      return { selectedKeys: Array.from(next) };
+      return { selectedKeys: [...state.selectedKeys, key] };
     }),
 
   clearSelection: () => set({ selectedKeys: [], actionMenuOpen: false }),

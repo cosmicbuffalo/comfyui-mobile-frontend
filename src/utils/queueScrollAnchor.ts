@@ -118,10 +118,31 @@ export function restoreQueueScrollAnchor(
   const drift = currentOffsetTop - expectedOffsetTop;
   if (Math.abs(drift) < 0.5) return false;
 
+  const before = container.scrollTop;
   container.scrollTop += drift;
   // The shift grew/shrank the content above the anchor, moving the scroll
-  // coordinate baseline with it. Advance the captured reference past the shift
-  // so the pinned offset still holds for the next comparison.
+  // coordinate baseline with it. Re-baseline the captured reference past the
+  // shift so the pinned offset still holds for the next comparison.
+  //
+  // BOTH halves have to move together. `expectedOffsetTop` is read as
+  // "offsetTop, at scrollTop" — one line, not two independent numbers — so
+  // advancing the scroll half alone silently redefines the pinned offset from
+  // `offsetTop - voluntaryScroll` (where the item actually is) back to
+  // `offsetTop` (where it was when the anchor was captured). The next call then
+  // measures a drift of exactly -voluntaryScroll and scrolls the list by it:
+  // whatever the reader had covered since the last capture is undone in one
+  // frame. That is invisible while the anchor is re-captured on every scroll
+  // event, and it is not: `handleScroll` deliberately leaves the anchor alone
+  // while momentum coasts, and re-captures nothing at all for a scroll with no
+  // user intent behind it (a deep-link jump, a restored position). A fling
+  // followed by any involuntary shift is therefore enough to snap the list back
+  // hundreds of pixels.
+  //
+  // The write can also be clamped at either end of the scroll range, so the
+  // correction that landed is measured rather than assumed: scrolling down by
+  // `applied` moves the item up by exactly `applied`.
+  const applied = container.scrollTop - before;
   anchor.scrollTop = container.scrollTop;
+  anchor.offsetTop = currentOffsetTop - applied;
   return true;
 }

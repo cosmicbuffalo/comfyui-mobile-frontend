@@ -7,6 +7,8 @@ import {useNavigationStore} from "@/hooks/useNavigation";
 import {usePinnedWidgetStore} from "@/hooks/usePinnedWidget";
 import {useRecentWorkflowsStore} from "@/hooks/useRecentWorkflows";
 import {useWorkflowHiddenStore} from "@/hooks/useWorkflowHidden";
+import {useWorkflowLineageStore} from "@/hooks/useWorkflowLineage";
+import {readLineageStamp, withLineageStamp} from "@/utils/workflowLineage";
 import {useSeedStore} from "@/hooks/useSeed";
 import {hasRecognizedPathAliasShape, restoreWorkflowPathAliases} from "@/utils/inputPathAliases";
 import {buildWorkflowCacheKey} from "@/utils/workflowCacheKey";
@@ -15,15 +17,20 @@ import {computeTidyWorkflowGeometry} from "@/utils/tidyLayout";
 import {isMarketingNote} from "@/utils/marketingNote";
 import {collectOasisPreviewIoIds, ensureOasisPreviewIoIds} from "@/utils/nodeFrontendPreviews";
 import {maxNodeIdAcrossScopes, maxRootLinkId} from "@/utils/canonicalWorkflowOps";
+import {normalizeSubgraphPlaceholders} from "@/utils/normalizeSubgraphPlaceholders";
+import {materializeSubgraphTitles} from "@/utils/materializeSubgraphTitles";
 import {annotateWorkflowWithHierarchicalKeys, canonicalizeWorkflowHierarchicalKeys, collectGroupHierarchicalKeys, findSubgraphHierarchicalKey, hasLayoutGroupKeyMismatch, hasMissingHierarchicalKeys, layoutRecordFromPointerRecord, normalizeManuallyHiddenNodeKeys, normalizeMobileLayoutGroupKeys, normalizePointerBooleanRecord, normalizePointerCollapsedRecord, pointerCollapsedRecordFromLayoutRecord, pointerRecordFromLayoutRecord, reconcilePointerRegistry} from "@/utils/workflowHierarchy";
 import {isWorkflowHidden} from "@/utils/workflowHidden";
 import {findWorkflowShapeProblem, normalizeWorkflowNodes} from "./metadataNormalization";
 import {buildLayoutForWorkflow, findPathToRepositionTarget} from "./layoutOps";
 import {deriveSeedModes} from "./seedExpansion";
+import {clearPersistedMaskHistory} from "@/utils/maskEditor/historyStorage";
 import {collectWorkflowLoadErrors, normalizeWorkflowComboValues} from "./comboValues";
 import {MAX_WORKFLOW_SESSIONS, SESSION_STATE_FIELDS, clearedWorkflowContent, generateSessionId, type SavedNodeState, type WorkflowSessionSnapshot} from "./sessions";
 import type {WorkflowGet, WorkflowSet, WorkflowState} from "./state";
 import {createApplyNodeErrors} from "./nodeErrors";
+import {restoreExecutedSeedWidgets} from "@/utils/seedRestore";
+import { closeAnyRowMenu } from "@/hooks/useRowMenuStore";
 
 let addNodeModalRequestId = 0;
 
@@ -148,6 +155,8 @@ const flatFieldsFromSnapshot = (
 };
 
 const switchToSession: WorkflowState["switchToSession"] = (id) => {
+  // A row menu names a row in the workflow being left behind.
+  closeAnyRowMenu();
   const state = get();
   if (id === state.activeSessionId) return;
   const target = state.parkedSessions[id];
@@ -191,6 +200,10 @@ const switchToSession: WorkflowState["switchToSession"] = (id) => {
 const closeSession: WorkflowState["closeSession"] = (id) => {
   const state = get();
   if (!state.sessions.some((s) => s.id === id)) return;
+  // Mask editor undo history is persisted so it survives a refresh, which means
+  // nothing else would ever delete it. Scoped to the owning session, so closing
+  // one tab cannot discard another tab's history.
+  void clearPersistedMaskHistory({ sessionId: id });
   // Revoke the closing session's latent-preview object URLs. They live in
   // the active flat field or the parked snapshot and are otherwise dropped
   // (snapshot discarded / flat field overwritten) without revoking.
@@ -336,6 +349,8 @@ const loadWorkflow: WorkflowState["loadWorkflow"] = (
   filename,
   options,
 ) => {
+  // A row menu names a row in the workflow being left behind.
+  closeAnyRowMenu();
   // Reject junk-but-JSON-parseable payloads BEFORE any session
   // bookkeeping: throwing later (normalization, key annotation) used to
   // park the active session first and strand the user on a broken
@@ -348,6 +363,16 @@ const loadWorkflow: WorkflowState["loadWorkflow"] = (
         `Couldn't load${filename ? ` "${filename}"` : " the workflow"}: the file is ${shapeProblem}.`,
       );
     return;
+  }
+  // Output metadata stores the authored workflow and the concrete API prompt
+  // separately. Restore random (-1) seed widgets from the latter before any
+  // cache keys, dirty baselines, seed modes, or layouts are derived.
+  if (options?.executedPrompt !== undefined) {
+    workflow = restoreExecutedSeedWidgets(
+      workflow,
+      options.executedPrompt,
+      get().nodeTypes,
+    );
   }
   const aliasNodeTypes = get().nodeTypes;
   if (
@@ -422,6 +447,7 @@ const loadWorkflow: WorkflowState["loadWorkflow"] = (
         latentPreviewTiles: {},
         promptOutputs: {},
         currentFilename: null,
+        filenameIsPlaceholder: false,
         currentWorkflowKey: null,
         isExecuting: false,
         executingNodeId: null,
@@ -451,6 +477,11 @@ const loadWorkflow: WorkflowState["loadWorkflow"] = (
   } = get();
   const fresh = options?.fresh ?? false;
   const source = options?.source ?? { type: "other" as const };
+  // History entries and output/image files name themselves ("history-<id>.json",
+  // an image path); callers that mint their own stand-in name (paste, dropped
+  // image) say so explicitly.
+  const filenameIsPlaceholder = options?.filenameIsPlaceholder
+    ?? (source.type === "history" || source.type === "file");
   // Always reset workflow error/popover state when switching workflows.
   useWorkflowErrorsStore.getState().clearNodeErrors();
 
@@ -463,10 +494,22 @@ const loadWorkflow: WorkflowState["loadWorkflow"] = (
     (node) => !isMarketingNote(node),
   );
 
+  // Rebuild subgraph placeholder slots from their definitions before anything
+  // derives cache keys, layouts or the dirty baseline from them — ComfyUI does
+  // the same in SubgraphNode.configure, and a serialized placeholder is
+  // routinely a stale subset of its boundary.
+  const placeholderNormalized = materializeSubgraphTitles(
+    normalizeSubgraphPlaceholders({
+      ...workflow,
+      nodes: normalizedNodes,
+      links: workflow.links ?? [],
+    } as Workflow),
+  );
+
   const normalizedWorkflow: Workflow = {
-    ...workflow,
-    nodes: normalizedNodes,
-    links: workflow.links ?? [],
+    ...placeholderNormalized,
+    nodes: placeholderNormalized.nodes,
+    links: placeholderNormalized.links ?? [],
     groups: workflow.groups ?? [],
     config: workflow.config ?? {},
     last_node_id: Math.max(
@@ -509,7 +552,16 @@ const loadWorkflow: WorkflowState["loadWorkflow"] = (
     get().saveCurrentWorkflowState();
   }
 
-  // If loading fresh, clear any saved state for this workflow
+  // If loading fresh, clear any saved state for this workflow. Bookmarks are
+  // held back from the wipe and re-seeded once the load settles (below):
+  // `fresh` means "load the file pristine, discarding the cached widget/fold
+  // state from the last edit", but a bookmark is the user's own navigation
+  // mark on the workflow rather than cached edit state. They rode along in
+  // the same record, so opening a workflow from the workflows list — or
+  // hitting Reload — silently dropped every bookmark on it.
+  const preservedBookmarks = fresh
+    ? savedWorkflowStates[workflowKey]?.bookmarkedItems ?? []
+    : [];
   if (fresh && savedWorkflowStates[workflowKey]) {
     const newSavedStates = { ...savedWorkflowStates };
     delete newSavedStates[workflowKey];
@@ -608,7 +660,9 @@ const loadWorkflow: WorkflowState["loadWorkflow"] = (
       diffBaseWorkflow: null,
       lastEnqueuedWorkflow: null,
       scopeStack: [{ type: "root" as const }],
+      workflowPanelScrollTops: {},
       currentFilename: filename || null,
+      filenameIsPlaceholder: filename ? filenameIsPlaceholder : false,
       currentWorkflowKey: workflowKey,
       collapsedItems: {
         ...defaultCollapsedItems,
@@ -693,7 +747,9 @@ const loadWorkflow: WorkflowState["loadWorkflow"] = (
       diffBaseWorkflow: null,
       lastEnqueuedWorkflow: null,
       scopeStack: [{ type: "root" as const }],
+      workflowPanelScrollTops: {},
       currentFilename: filename || null,
+      filenameIsPlaceholder: filename ? filenameIsPlaceholder : false,
       currentWorkflowKey: workflowKey,
       collapsedItems: {
         ...defaultCollapsedItems,
@@ -727,6 +783,69 @@ const loadWorkflow: WorkflowState["loadWorkflow"] = (
       viewerScale: 1,
       viewerTranslate: { x: 0, y: 0 },
     });
+  }
+
+  // Re-seed the bookmarks held back from the `fresh` wipe above. Done here,
+  // after both load branches, so the pristine-load path is untouched: it still
+  // sees no saved state and builds its layout from scratch. The store
+  // subscription in useBookmarks then filters these against the workflow that
+  // actually loaded, so marks on nodes this version no longer has fall away.
+  if (fresh && preservedBookmarks.length > 0) {
+    const currentSavedStates = get().savedWorkflowStates;
+    const existing = currentSavedStates[workflowKey];
+    set({
+      savedWorkflowStates: {
+        ...currentSavedStates,
+        [workflowKey]: {
+          ...(existing ?? { nodes: {}, seedModes: {} }),
+          bookmarkedItems: [...preservedBookmarks],
+        },
+      },
+    });
+  }
+
+  // Resolve — and, for a never-before-seen structure, mint — the lineage this
+  // workflow belongs to, then stamp it onto the in-app copy so that saving it
+  // under a new name carries the family forward instead of leaving the next
+  // open to the fuzzy matcher.
+  //
+  // Runs here, after both load branches, so it fingerprints the workflow that
+  // actually settled: post-normalization, post marketing-note strip. Anything
+  // earlier (raw JSON off disk, or straight out of a PNG) carries the credit
+  // note that execution injects and load strips, so fingerprinting it would
+  // fork the lineage on every single opened output.
+  const settledWorkflow = get().workflow;
+  if (settledWorkflow) {
+    const stamp = useWorkflowLineageStore.getState().resolveLineage(settledWorkflow);
+    const stampedWorkflow = stamp
+      ? withLineageStamp(settledWorkflow, stamp)
+      : settledWorkflow;
+    const settledOriginal = get().originalWorkflow;
+    // A family founded right now starts from whatever bookmarks this device
+    // already had for the workflow, so upgrading to lineages does not read as
+    // losing them. Only ever done for a brand-new lineage — seeding an
+    // existing one would resurrect bookmarks another device had cleared.
+    if (stamp?.createdLineage) {
+      const localBookmarks =
+        get().savedWorkflowStates[workflowKey]?.bookmarkedItems ?? [];
+      if (localBookmarks.length > 0) {
+        useWorkflowLineageStore
+          .getState()
+          .setBookmarks(stamp.lineage, localBookmarks);
+      }
+    }
+    set({
+      currentLineageId: stamp?.lineage ?? null,
+      ...(stampedWorkflow !== settledWorkflow ? { workflow: stampedWorkflow } : {}),
+      // The baseline gets the same stamp. The dirty signature is a full
+      // JSON.stringify, so stamping only the live copy would make every
+      // freshly loaded workflow read as having unsaved changes.
+      ...(stamp && settledOriginal
+        ? { originalWorkflow: withLineageStamp(settledOriginal, stamp) }
+        : {}),
+    });
+  } else {
+    set({ currentLineageId: null });
   }
 
   if (nodeTypes) {
@@ -764,6 +883,8 @@ const loadWorkflow: WorkflowState["loadWorkflow"] = (
 // emptying the store when it was the last tab).
 
 const unloadWorkflow: WorkflowState["unloadWorkflow"] = () => {
+  // A row menu names a row in the workflow being left behind.
+  closeAnyRowMenu();
   const { activeSessionId } = get();
   if (activeSessionId) {
     get().closeSession(activeSessionId);
@@ -819,11 +940,15 @@ const setSavedWorkflow: WorkflowState["setSavedWorkflow"] = (
     diffBaseWorkflow: null,
     lastEnqueuedWorkflow: null,
     currentFilename: filename,
+    filenameIsPlaceholder: false,
     currentWorkflowKey: workflowKey,
     workflowSource: { type: 'user', filename },
     mobileLayout: nextLayout,
     itemKeyByPointer: reconciled.layoutToStable,
     pointerByHierarchicalKey: reconciled.stableToLayout,
+    // The saved copy was stamped before it was written (see performSave), so
+    // the tab just follows whatever it now carries.
+    currentLineageId: readLineageStamp(workflow)?.lineage ?? get().currentLineageId,
   });
   // Persist hidden provenance onto the saved file's path (no-op if it's
   // already hidden, e.g. saved into a hidden folder or a dot path).

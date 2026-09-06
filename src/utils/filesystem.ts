@@ -1,13 +1,16 @@
 import { copyFileToInput, setFileState, type AssetSource, type FileItem } from '@/api/client';
 import { resolveFilePath } from './workflowOperations';
+import { annotateInputPath } from './annotatedPath';
 
 export async function resolveInputPathForFile(
   file: FileItem,
   source: AssetSource,
   options?: { hideCopiedInput?: boolean },
 ): Promise<string> {
+  // Annotated so a pick out of an input SUBFOLDER stays resolvable: it can
+  // never be one of LoadImage's combo choices. See annotateInputPath.
   if (source === 'input') {
-    return resolveFilePath(file, source);
+    return annotateInputPath(resolveFilePath(file, source));
   }
   const filePath = resolveFilePath(file, source);
   if (source === 'output' || source === 'temp') {
@@ -24,7 +27,7 @@ export async function resolveInputPathForFile(
         console.warn('Could not hide the copied input file:', err);
       });
     }
-    return inputPath;
+    return annotateInputPath(inputPath);
   }
   throw new Error(`Cannot load ${source} files into nodes.`);
 }

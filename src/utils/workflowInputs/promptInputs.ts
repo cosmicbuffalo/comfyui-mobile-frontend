@@ -1,11 +1,81 @@
 import type { Workflow, WorkflowNode, NodeTypes } from '@/api/types';
 import { ueSlotKey, type UeLinkMap } from '@/utils/useEverywhere';
 import { extractLoraList, findLoraListIndex, isLoraList, isPowerLoraLoaderNodeType } from '@/utils/loraManager';
+import { isPowerPuterNodeType, readPowerPuterWidgets, toPowerPuterOutputsValue, POWER_PUTER_CODE_WIDGET, POWER_PUTER_OUTPUTS_WIDGET } from '@/utils/powerPuter';
 import { extractTriggerWordList, extractTriggerWordListLoose, isTriggerWordList, extractTriggerWordMessage, findTriggerWordListIndex, findTriggerWordMessageIndex, isTriggerWordToggleNodeType } from '@/utils/triggerWordToggle';
 import { getComboOptions, isComboType, isMultiSelectCombo, normalizeComboValue, normalizeWidgetValue } from './comboValues';
 import { getActiveNodeInputDefinitions } from './dynamicComboRebuild';
 import { finalizeInputValue } from './textReplacements';
 import { getPrimitiveInlineValue, getWidgetValue, isRecord } from './widgetSlots';
+
+/** ComfyUI treats `*` and the empty type as matching anything. */
+function typesConnect(a: string, b: string): boolean {
+  const left = a.toUpperCase();
+  const right = b.toUpperCase();
+  if (left === '' || left === '*' || right === '' || right === '*') return true;
+  return left === right;
+}
+
+/**
+ * Which input slot does a bypassed node forward an output slot from?
+ *
+ * Ports ExecutableNodeDTO._getBypassSlotIndex: prefer the input at the SAME
+ * index as the output, then an exact type match, then the first compatible
+ * input. Matching only on type — as this used to — sends every output of a
+ * multi-slot node (an image/latent switch, a two-image batcher) back to input
+ * 0 when it is bypassed.
+ *
+ * Unlike stock we still require the chosen input to be connected: stock resolves
+ * the slot first and yields nothing if it is empty, whereas returning null here
+ * would drop an input that today resolves fine.
+ */
+function findBypassInputSlot(
+  sourceNode: WorkflowNode,
+  outputSlotIndex: number,
+  outputType: string,
+  targetType: string,
+): number | null {
+  const inputs = sourceNode.inputs ?? [];
+  const connected = (index: number) => inputs[index]?.link != null;
+
+  // Any-type short circuit: match slot index, else fall back to the first
+  // slot. The consumer not declaring a type does not make the forwarded
+  // value shapeless — the input still has to carry what the bypassed
+  // node's output would have produced (a LATENT must not ride through a
+  // bypassed VAEDecode into a `*` socket as if it were the IMAGE).
+  if (targetType === '' || targetType === '*') {
+    const compatibleWithOutput = (index: number) =>
+      typesConnect(String(inputs[index]?.type ?? ''), outputType);
+    if (connected(outputSlotIndex) && compatibleWithOutput(outputSlotIndex)) {
+      return outputSlotIndex;
+    }
+    if (connected(0) && compatibleWithOutput(0)) return 0;
+  }
+
+  const sameSlot = inputs[outputSlotIndex];
+  if (
+    sameSlot &&
+    connected(outputSlotIndex) &&
+    typesConnect(String(sameSlot.type), outputType) &&
+    typesConnect(String(sameSlot.type), targetType)
+  ) {
+    return outputSlotIndex;
+  }
+
+  const exact = inputs.findIndex(
+    (input, index) =>
+      connected(index) && String(input.type).toUpperCase() === targetType.toUpperCase(),
+  );
+  if (exact !== -1) return exact;
+
+  const compatible = inputs.findIndex(
+    (input, index) =>
+      connected(index) &&
+      typesConnect(String(input.type), outputType) &&
+      typesConnect(String(input.type), targetType),
+  );
+  return compatible === -1 ? null : compatible;
+}
 
 export function resolveSource(
   workflow: Workflow,
@@ -43,19 +113,24 @@ export function resolveSource(
     return resolveSource(workflow, setterInputLink, visitedLinkIds, promptKeyMap);
   }
 
+  // A muted node produces no output at all — ComfyUI's ExecutableNodeDTO
+  // .resolveOutput returns early on LGraphEventMode.NEVER, and the consuming
+  // input is simply left out of the prompt.
+  if (sourceNode.mode === 2) return null;
+
   if (sourceNode.mode === 4 || sourceNode.type === 'Reroute') {
     const outputDef = sourceNode.outputs[sourceSlotIndex];
     if (!outputDef) return null;
 
-    const matchingInput = sourceNode.inputs.find((input) => {
-      if (input.link === null) return false;
-      const inType = String(input.type).toUpperCase();
-      const outType = String(outputDef.type).toUpperCase();
-      return inType === outType || inType === '*' || outType === '*';
-    });
-
-    if (matchingInput?.link != null) {
-      return resolveSource(workflow, matchingInput.link, visitedLinkIds, promptKeyMap);
+    const bypassSlot = findBypassInputSlot(
+      sourceNode,
+      sourceSlotIndex,
+      String(outputDef.type),
+      String(link[5] ?? ''),
+    );
+    const bypassLink = bypassSlot === null ? null : sourceNode.inputs[bypassSlot]?.link;
+    if (bypassLink != null) {
+      return resolveSource(workflow, bypassLink, visitedLinkIds, promptKeyMap);
     }
     return null;
   }
@@ -151,6 +226,9 @@ export function buildWorkflowPromptInputs(
 
   const typeDef = nodeTypes[classType];
   if (!typeDef?.input) {
+    // Power Puter's widgets are invisible to the schema walk below, so they are
+    // appended unconditionally rather than being lost to this early return.
+    appendPowerPuterInputs(node, classType, inputs);
     return inputs;
   }
 
@@ -253,8 +331,43 @@ export function buildWorkflowPromptInputs(
 
   appendLoraManagerInputs(node, inputs, widgetValuesArray, widgetIndexMap);
   appendTriggerWordToggleInputs(node, inputs, widgetValuesArray, widgetIndexMap);
+  appendPowerPuterInputs(node, classType, inputs);
 
   return inputs;
+}
+
+/**
+ * rgthree's Power Puter declares an empty input schema — `object_info` reports
+ * neither of its two widgets, because both are added client-side and its
+ * `optional` is a bare `FlexibleOptionalInputType(any_type)`. The schema walk
+ * above therefore contributes nothing for this node, and the widget-index
+ * fallback only fires when a `widget_idx_map` happens to be present, which it
+ * is not for a workflow saved by the desktop frontend.
+ *
+ * Without this the prompt reaches the backend carrying only the node's wired
+ * `a`/`b`/... inputs, and `main()` raises on `kwargs['code']` — the whole run
+ * fails (rgthree-comfy#758). Both names and the nested `{outputs: [...]}`
+ * envelope are exactly what `main()` reads back out
+ * (`get_dict_value(kwargs, 'outputs.outputs')`).
+ */
+function appendPowerPuterInputs(
+  node: WorkflowNode,
+  classType: string,
+  inputs: Record<string, unknown>
+) {
+  if (!isPowerPuterNodeType(classType) && !isPowerPuterNodeType(node.type)) return;
+
+  const { outputs, code } = readPowerPuterWidgets(node);
+
+  // A wired input always wins: `a`-style sockets are named by upstream from a
+  // fixed alphabet that excludes both names, but a future rename upstream must
+  // not have us clobber a real link with a widget value.
+  if (!(POWER_PUTER_CODE_WIDGET in inputs)) {
+    inputs[POWER_PUTER_CODE_WIDGET] = code;
+  }
+  if (!(POWER_PUTER_OUTPUTS_WIDGET in inputs)) {
+    inputs[POWER_PUTER_OUTPUTS_WIDGET] = toPowerPuterOutputsValue(outputs);
+  }
 }
 
 /**

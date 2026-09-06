@@ -7,6 +7,7 @@ import type {
   WorkflowSubgraphLink,
 } from '@/api/types';
 import {
+  MOBILE_INSTANCE_NUMBER_PROPERTY,
   getLinkId,
   getLinkOriginId,
   getLinkOriginSlot,
@@ -19,13 +20,18 @@ import {
   resolveCurrentScope,
   resolveNodeByHierarchicalKey,
   resolveScopeForHierarchicalKey,
+  stripMobileDefMeta,
+  withMobileDefMeta,
   type ScopeFrame,
 } from '@/utils/canonicalWorkflowOps';
+import { numberSubgraphInstances } from '@/utils/subgraphInstanceNumbers';
 import {
   cloneSubgraphDefinition,
   generateUniqueSubgraphId,
+  uniquifySubgraphName,
 } from '@/utils/duplicateNode';
 import { expandGroupToFitNodes, getBottomPlacementForScope } from '@/utils/nodePositioning';
+import { computeGroupParentsFor, computeNodeGroupsFor } from '@/utils/nodeGroups';
 import type {
   ClipboardLink,
   WorkflowClipboardPayload,
@@ -106,7 +112,6 @@ export function buildGroupClipboardPayload(
   subgraphId: string | null,
   memberNodeIds: number[],
 ): WorkflowClipboardPayload | null {
-  if (memberNodeIds.length === 0) return null;
   const scopeStack: ScopeFrame[] =
     subgraphId == null
       ? [{ type: 'root' }]
@@ -114,7 +119,6 @@ export function buildGroupClipboardPayload(
   const scope = resolveCurrentScope(scopeStack, workflow);
   const idSet = new Set(memberNodeIds);
   const nodes = scope.nodes.filter((n) => idSet.has(n.id)).map((n) => structuredClone(n));
-  if (nodes.length === 0) return null;
   const links = collectInternalLinks(scope.links as ScopeLink[], idSet);
   const subgraphs = collectReferencedSubgraphs(workflow, nodes);
   return {
@@ -175,7 +179,7 @@ export function applyClipboardPaste(
   payload: WorkflowClipboardPayload,
   targetSubgraphId: string | null,
 ): PasteResult | null {
-  if (payload.nodes.length === 0) return null;
+  if (payload.nodes.length === 0 && !payload.group) return null;
   let nextWorkflow = workflow;
 
   // 1. Allocate node ids (workflow-global space).
@@ -183,26 +187,79 @@ export function applyClipboardPaste(
   const nodeIdMap = new Map<number, number>();
   for (const n of payload.nodes) nodeIdMap.set(n.id, nextNodeId++);
 
-  // 2. Clone carried subgraph definitions under fresh ids + inner node ids.
-  //    Allocate every new definition id up front: payload.subgraphs lists
-  //    parents before their nested definitions, and a parent's inner
-  //    placeholder nodes need the nested definition's NEW id at clone time.
-  const subgraphIdMap = new Map<string, string>();
+  // 2. Materialize carried subgraph definitions.
+  //    A definition already present in the target (matched by id) is the same
+  //    type: pasted placeholders keep pointing at it and no clone is made —
+  //    the target's version of the definition is authoritative.
+  //    Everything else is cloned under a fresh id + fresh inner node ids
+  //    (nested placeholders following the id map), with a uniquified name; a
+  //    def transplanted into a workflow that lacks its type arrives as a new
+  //    type there, with no instance lineage to carry over.
+  //    Defs reachable only through a shared type are skipped entirely — the
+  //    target's copy of that type already references its own nested defs.
   const existingDefs = nextWorkflow.definitions?.subgraphs ?? [];
-  const allDefs = [...existingDefs];
+  const payloadDefById = new Map(payload.subgraphs.map((d) => [d.id, d]));
+  const sharedTypeIds = new Set<string>();
+  for (const def of payload.subgraphs) {
+    // The same definition id on both sides means the same type: paste makes
+    // another instance of the target's copy rather than a second definition
+    // that drifts away from it.
+    if (existingDefs.some((d) => d.id === def.id)) sharedTypeIds.add(def.id);
+  }
+  // Defs that actually need clones: walk from the pasted nodes' types, stopping
+  // at shared types.
+  const defsToClone: WorkflowSubgraphDefinition[] = [];
+  {
+    const visited = new Set<string>();
+    const queue = payload.nodes.map((n) => n.type).filter((t) => payloadDefById.has(t));
+    while (queue.length > 0) {
+      const id = queue.shift() as string;
+      if (visited.has(id)) continue;
+      visited.add(id);
+      if (sharedTypeIds.has(id)) continue;
+      const def = payloadDefById.get(id) as WorkflowSubgraphDefinition;
+      defsToClone.push(def);
+      for (const inner of def.nodes ?? []) {
+        if (payloadDefById.has(inner.type)) queue.push(inner.type);
+      }
+    }
+  }
+  // Instances already in the target may never have been numbered — a subgraph
+  // that came from desktop has no numbers at all. Number them before minting
+  // one for the paste, so the copy does not land as "Layer 2" beside a "Layer".
+  for (const defId of sharedTypeIds) {
+    nextWorkflow = numberSubgraphInstances(nextWorkflow, defId).workflow;
+  }
+
+  const subgraphIdMap = new Map<string, string>();
+  const allDefs = [...(nextWorkflow.definitions?.subgraphs ?? [])];
   const newDefs: WorkflowSubgraphDefinition[] = [];
   const takenSgIds = [...allDefs];
-  for (const def of payload.subgraphs) {
+  for (const def of defsToClone) {
     const newSgId = generateUniqueSubgraphId(takenSgIds);
     subgraphIdMap.set(def.id, newSgId);
     takenSgIds.push({ id: newSgId } as WorkflowSubgraphDefinition);
   }
-  for (const def of payload.subgraphs) {
+  // Inner-node renumbering, kept per cloned type. A placeholder's
+  // `properties.proxyWidgets` addresses inner nodes by id, so a clone whose
+  // interior was renumbered leaves those entries naming nodes that no longer
+  // exist anywhere. Stock cannot resolve them: `classify` quarantines each one
+  // as `missingSourceNode` and only rescues entries written against the `-1`
+  // boundary sentinel, so the pasted instance silently drops back to the
+  // definition's baked values and carries a `proxyWidgetErrorQuarantine`
+  // property from then on.
+  const innerIdMapBySgId = new Map<string, Map<number, number>>();
+  for (const def of defsToClone) {
     const newSgId = subgraphIdMap.get(def.id) as string;
     const cloned = cloneSubgraphDefinition(def, newSgId, nextNodeId, subgraphIdMap);
+    innerIdMapBySgId.set(newSgId, cloned.nodeIdMap);
     nextNodeId = cloned.nextNodeId;
-    allDefs.push(cloned.def);
-    newDefs.push(cloned.def);
+    const forked = stripMobileDefMeta({
+      ...cloned.def,
+      name: uniquifySubgraphName(cloned.def.name, allDefs),
+    });
+    allDefs.push(forked);
+    newDefs.push(forked);
   }
 
   // 3. Position the whole payload below everything already in the target scope,
@@ -236,6 +293,18 @@ export function applyClipboardPaste(
     clone.id = nodeIdMap.get(n.id) as number;
     clone.type = subgraphIdMap.get(n.type) ?? n.type;
     clone.itemKey = undefined;
+    // Follow the interior renumbering for a placeholder whose type was cloned.
+    // Boundary entries (`-1`) address by name and are left alone.
+    const innerIdMap = innerIdMapBySgId.get(clone.type);
+    const proxyWidgets = (clone.properties as Record<string, unknown> | undefined)?.proxyWidgets;
+    if (innerIdMap && Array.isArray(proxyWidgets)) {
+      (clone.properties as Record<string, unknown>).proxyWidgets = proxyWidgets.map((entry) => {
+        if (!Array.isArray(entry) || entry.length < 2) return entry;
+        const sourceId = Number(entry[0]);
+        const mapped = Number.isFinite(sourceId) ? innerIdMap.get(sourceId) : undefined;
+        return mapped == null ? entry : [String(mapped), ...entry.slice(1)];
+      });
+    }
     const dx = (n.pos?.[0] ?? 0) - anchor[0];
     const dy = (n.pos?.[1] ?? 0) - anchor[1];
     clone.pos = [basePos[0] + dx, basePos[1] + dy];
@@ -245,12 +314,39 @@ export function applyClipboardPaste(
   });
   const nodeById = new Map(newNodes.map((n) => [n.id, n]));
 
-  // 4. Add cloned defs before resolving the target scope (so the scope's
-  //    applyPatch sees the new definitions list).
-  if (newDefs.length > 0) {
+  // 3b. Instance-number bookkeeping. Pasted placeholders of a shared type get
+  //     a fresh instance number from that type's counter; placeholders whose
+  //     definition was forked shed any stale number carried from the source.
+  let countersChanged = false;
+  const nextCounterByDefId = new Map<string, number>();
+  for (const clone of newNodes) {
+    if (sharedTypeIds.has(clone.type)) {
+      const def = allDefs.find((d) => d.id === clone.type);
+      if (!def) continue;
+      const next = nextCounterByDefId.get(clone.type)
+        ?? numberSubgraphInstances(nextWorkflow, clone.type).next;
+      clone.properties = { ...(clone.properties ?? {}), [MOBILE_INSTANCE_NUMBER_PROPERTY]: next };
+      nextCounterByDefId.set(clone.type, next + 1);
+      countersChanged = true;
+    } else if (clone.properties && MOBILE_INSTANCE_NUMBER_PROPERTY in clone.properties) {
+      const rest = { ...clone.properties };
+      delete rest[MOBILE_INSTANCE_NUMBER_PROPERTY];
+      clone.properties = rest;
+    }
+  }
+  const finalDefs = countersChanged
+    ? allDefs.map((d) => {
+        const counter = nextCounterByDefId.get(d.id);
+        return counter != null ? withMobileDefMeta(d, { nextInstanceNumber: counter }) : d;
+      })
+    : allDefs;
+
+  // 4. Add cloned defs / updated counters before resolving the target scope
+  //    (so the scope's applyPatch sees the new definitions list).
+  if (newDefs.length > 0 || countersChanged) {
     nextWorkflow = {
       ...nextWorkflow,
-      definitions: { ...(nextWorkflow.definitions ?? {}), subgraphs: allDefs },
+      definitions: { ...(nextWorkflow.definitions ?? {}), subgraphs: finalDefs },
     };
   }
 
@@ -330,6 +426,192 @@ export function applyClipboardPaste(
   };
 
   return { workflow: nextWorkflow, newNodeIds: newNodes.map((n) => n.id), newGroupId };
+}
+
+export interface GroupMoveSelection {
+  rootGroupIds: number[];
+  groupIds: Set<number>;
+  nodeIds: Set<number>;
+}
+
+/**
+ * Expand selected group ids into the complete group subtrees that must travel
+ * with them. Nested selected groups collapse under their selected ancestor so
+ * a subtree is translated exactly once. Nodes are scoped to this graph only;
+ * subgraph placeholders travel as nodes, while their definitions do not.
+ */
+export function collectGroupMoveSelection(
+  workflow: Workflow,
+  subgraphId: string | null,
+  selectedGroupIds: number[],
+): GroupMoveSelection {
+  const scopeStack: ScopeFrame[] =
+    subgraphId == null
+      ? [{ type: 'root' }]
+      : [{ type: 'root' }, { type: 'subgraph', id: subgraphId, placeholderNodeId: -1 }];
+  const scope = resolveCurrentScope(scopeStack, workflow);
+  const groupById = new Map(scope.groups.map((group) => [group.id, group]));
+  const selected = new Set(selectedGroupIds.filter((id) => groupById.has(id)));
+  const parentById = computeGroupParentsFor(scope.groups);
+
+  const hasSelectedAncestor = (groupId: number): boolean => {
+    const seen = new Set<number>([groupId]);
+    let parentId = parentById.get(groupId) ?? null;
+    while (parentId != null && !seen.has(parentId)) {
+      if (selected.has(parentId)) return true;
+      seen.add(parentId);
+      parentId = parentById.get(parentId) ?? null;
+    }
+    return false;
+  };
+  const rootGroupIds = selectedGroupIds.filter(
+    (id, index) =>
+      selected.has(id)
+      && selectedGroupIds.indexOf(id) === index
+      && !hasSelectedAncestor(id),
+  );
+
+  const childrenByParent = new Map<number, number[]>();
+  for (const [childId, parentId] of parentById) {
+    if (parentId == null) continue;
+    const children = childrenByParent.get(parentId) ?? [];
+    children.push(childId);
+    childrenByParent.set(parentId, children);
+  }
+
+  const groupIds = new Set<number>();
+  const visitGroup = (groupId: number) => {
+    if (groupIds.has(groupId)) return;
+    groupIds.add(groupId);
+    for (const childId of childrenByParent.get(groupId) ?? []) visitGroup(childId);
+  };
+  for (const rootGroupId of rootGroupIds) visitGroup(rootGroupId);
+
+  const nodeIds = new Set<number>();
+  const nodeToGroup = computeNodeGroupsFor(scope.nodes, scope.groups);
+  for (const node of scope.nodes) {
+    const groupId = nodeToGroup.get(node.id);
+    if (groupId != null && groupIds.has(groupId)) nodeIds.add(node.id);
+  }
+
+  return { rootGroupIds, groupIds, nodeIds };
+}
+
+/**
+ * Relocate whole existing group subtrees into a target group. Every nested
+ * group rect and every node assigned anywhere in the subtree moves by the same
+ * delta, preserving all relative geometry. Top-level selected subtrees are
+ * stacked below the target's current contents, then the target grows around
+ * every moved group rect. Returns the workflow unchanged when nothing applies.
+ */
+export function placeGroupsIntoGroup(
+  workflow: Workflow,
+  targetGroupId: number,
+  subgraphId: string | null,
+  groupIds: number[],
+): Workflow {
+  if (groupIds.length === 0) return workflow;
+  const scopeStack: ScopeFrame[] =
+    subgraphId == null
+      ? [{ type: 'root' }]
+      : [{ type: 'root' }, { type: 'subgraph', id: subgraphId, placeholderNodeId: -1 }];
+  const scope = resolveCurrentScope(scopeStack, workflow);
+  const target = scope.groups.find((g) => g.id === targetGroupId);
+  if (!target) return workflow;
+  const moveSelection = collectGroupMoveSelection(workflow, subgraphId, groupIds);
+  if (moveSelection.rootGroupIds.length === 0) return workflow;
+
+  const groupById = new Map(scope.groups.map((group) => [group.id, group]));
+  const parentById = computeGroupParentsFor(scope.groups);
+  const rootByGroupId = new Map<number, number>();
+  for (const movedGroupId of moveSelection.groupIds) {
+    const seen = new Set<number>([movedGroupId]);
+    let current = movedGroupId;
+    while (true) {
+      const parentId = parentById.get(current) ?? null;
+      if (
+        parentId == null
+        || seen.has(parentId)
+        || !moveSelection.groupIds.has(parentId)
+      ) {
+        rootByGroupId.set(movedGroupId, current);
+        break;
+      }
+      seen.add(parentId);
+      current = parentId;
+    }
+  }
+  const nodeToGroup = computeNodeGroupsFor(scope.nodes, scope.groups);
+
+  const padding = 24;
+  const gap = 16;
+  const x = target.bounding[0] + padding;
+  let y = target.bounding[1] + target.bounding[3]; // just past the current bottom
+
+  const groupBoundingById = new Map<number, [number, number, number, number]>();
+  const nodePosById = new Map<number, [number, number]>();
+  for (const rootGroupId of moveSelection.rootGroupIds) {
+    const group = groupById.get(rootGroupId);
+    if (!group || rootGroupId === targetGroupId) continue;
+    const [bx, by] = group.bounding;
+    const dx = x - bx;
+    const dy = y - by;
+
+    let subtreeBottom = group.bounding[1] + group.bounding[3];
+    for (const movedGroupId of moveSelection.groupIds) {
+      if (rootByGroupId.get(movedGroupId) !== rootGroupId) continue;
+      const movedGroup = groupById.get(movedGroupId);
+      if (!movedGroup) continue;
+      const [gx, gy, gw, gh] = movedGroup.bounding;
+      groupBoundingById.set(movedGroupId, [gx + dx, gy + dy, gw, gh]);
+      subtreeBottom = Math.max(subtreeBottom, gy + gh);
+    }
+    for (const node of scope.nodes) {
+      if (!moveSelection.nodeIds.has(node.id)) continue;
+      const assignedGroupId = nodeToGroup.get(node.id);
+      if (assignedGroupId == null || rootByGroupId.get(assignedGroupId) !== rootGroupId) {
+        continue;
+      }
+      nodePosById.set(node.id, [node.pos[0] + dx, node.pos[1] + dy]);
+    }
+    y += subtreeBottom - by + gap;
+  }
+  if (groupBoundingById.size === 0) return workflow;
+
+  // Grow the target box around the moved rects (each rect as a pseudo-node).
+  const movedRects = [...groupBoundingById.values()].map(([px, py, pw, ph], index) => ({
+    id: -(index + 1),
+    pos: [px, py] as [number, number],
+    size: [pw, ph] as [number, number],
+  }));
+  const expandedTarget = expandGroupToFitNodes(target, movedRects);
+
+  const patchGroups = (groups: WorkflowGroup[]): WorkflowGroup[] =>
+    groups.map((g) => {
+      if (g.id === targetGroupId) return expandedTarget;
+      const bounding = groupBoundingById.get(g.id);
+      return bounding ? { ...g, bounding } : g;
+    });
+
+  let next = scope.applyPatch(workflow, {
+    nodes: scope.nodes.map((n) =>
+      nodePosById.has(n.id) ? { ...n, pos: nodePosById.get(n.id) as [number, number] } : n,
+    ),
+  });
+  if (subgraphId == null) {
+    next = { ...next, groups: patchGroups(next.groups ?? []) };
+  } else {
+    next = {
+      ...next,
+      definitions: {
+        ...(next.definitions ?? {}),
+        subgraphs: (next.definitions?.subgraphs ?? []).map((sg) =>
+          sg.id === subgraphId ? { ...sg, groups: patchGroups(sg.groups ?? []) } : sg,
+        ),
+      },
+    };
+  }
+  return next;
 }
 
 /**

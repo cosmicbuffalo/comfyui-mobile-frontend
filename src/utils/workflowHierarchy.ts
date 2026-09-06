@@ -20,7 +20,7 @@ import {
   makeLocationPointer,
   parseLocationPointer,
 } from "@/utils/mobileLayout";
-import { computeNodeGroupsFor } from "@/utils/nodeGroups";
+import { computeGroupParentsFor, computeNodeGroupsFor } from "@/utils/nodeGroups";
 import type { ScopeFrame } from "@/utils/canonicalWorkflowOps";
 
 export type HierarchicalKey = string;
@@ -272,6 +272,7 @@ function collectScopedNodeIdentitiesFromLayoutRefs(
   currentSubgraphId: string | null = null,
   visitedGroups = new Set<string>(),
   visitedSubgraphs = new Set<string>(),
+  descendIntoSubgraphs = true,
 ): ScopedNodeIdentity[] {
   const identities: ScopedNodeIdentity[] = [];
   for (const ref of refs) {
@@ -294,11 +295,21 @@ function collectScopedNodeIdentitiesFromLayoutRefs(
         currentSubgraphId,
         visitedGroups,
         visitedSubgraphs,
+        descendIntoSubgraphs,
       );
       identities.push(...nestedNodeIds);
       visitedGroups.delete(getGroupKey(ref.id, ref.subgraphId));
       continue;
     }
+    // A subgraph layout ref represents both the placeholder node in the
+    // current scope and the definition whose contents follow. Group deletion
+    // must remove that placeholder itself, not only the nodes it contains.
+    // Record it before the visited check so multiple instances of one shared
+    // definition are still independent deletion targets.
+    if (ref.nodeId != null) {
+      identities.push({ nodeId: ref.nodeId, subgraphId: currentSubgraphId });
+    }
+    if (!descendIntoSubgraphs) continue;
     if (visitedSubgraphs.has(ref.id)) continue;
     visitedSubgraphs.add(ref.id);
     const nestedNodeIds = collectScopedNodeIdentitiesFromLayoutRefs(
@@ -307,6 +318,7 @@ function collectScopedNodeIdentitiesFromLayoutRefs(
       ref.id,
       visitedGroups,
       visitedSubgraphs,
+      descendIntoSubgraphs,
     );
     identities.push(...nestedNodeIds);
     visitedSubgraphs.delete(ref.id);
@@ -607,9 +619,18 @@ export function getNodePointerFromWorkflowNode(node: WorkflowNode): string {
   return makeLocationPointer({ type: "node", nodeId: node.id, subgraphId: null });
 }
 
+/**
+ * Build a scope stack entering the given definition ids in order. Several
+ * placeholders may share one definition; `preferredPlaceholderIds` (parallel
+ * to `subgraphIds`, entries optional) picks the intended instance at each
+ * level, falling back to the first placeholder of that type — an acceptable
+ * default for callers that only know the definition (bookmarks, execution
+ * follower), since inner content is shared across instances.
+ */
 export function buildScopeStackForSubgraphTrail(
   workflow: Workflow,
   subgraphIds: string[],
+  preferredPlaceholderIds?: Array<number | undefined>,
 ): ScopeFrame[] | null {
   const subgraphById = new Map(
     (workflow.definitions?.subgraphs ?? []).map((subgraph) => [subgraph.id, subgraph]),
@@ -617,8 +638,13 @@ export function buildScopeStackForSubgraphTrail(
   const scopeStack: ScopeFrame[] = [{ type: "root" }];
   let currentNodes = workflow.nodes;
 
-  for (const subgraphId of subgraphIds) {
-    const placeholderNode = currentNodes.find((node) => node.type === subgraphId);
+  for (let level = 0; level < subgraphIds.length; level += 1) {
+    const subgraphId = subgraphIds[level];
+    const preferredId = preferredPlaceholderIds?.[level];
+    const placeholderNode =
+      (preferredId != null
+        ? currentNodes.find((node) => node.id === preferredId && node.type === subgraphId)
+        : undefined) ?? currentNodes.find((node) => node.type === subgraphId);
     const subgraph = subgraphById.get(subgraphId);
     if (!placeholderNode || !subgraph) return null;
     scopeStack.push({
@@ -892,6 +918,11 @@ export function collectBypassGroupTargetNodes(
   workflow: Workflow,
   groupId: number,
   subgraphId: string | null = null,
+  // Nodes resolve to their smallest containing group. Callers implementing a
+  // container-wide bypass can opt into the geometrically nested groups in the
+  // same scope; callers that need only direct membership (such as clipboard
+  // assembly) retain the original behavior.
+  options: { includeDescendantGroups?: boolean } = {},
 ): ScopedNodeIdentity[] {
   const groups = workflow.groups ?? [];
   const subgraphs = workflow.definitions?.subgraphs ?? [];
@@ -917,6 +948,31 @@ export function collectBypassGroupTargetNodes(
 
   const targetNodes: ScopedNodeIdentity[] = [];
 
+  const targetGroupIdsFor = (scopeGroups: WorkflowGroup[]) => {
+    const targetGroupIds = new Set([groupId]);
+    if (!options.includeDescendantGroups) return targetGroupIds;
+
+    const childIdsByParent = new Map<number, number[]>();
+    for (const [childId, parentId] of computeGroupParentsFor(scopeGroups)) {
+      if (parentId == null) continue;
+      const childIds = childIdsByParent.get(parentId) ?? [];
+      childIds.push(childId);
+      childIdsByParent.set(parentId, childIds);
+    }
+
+    const pending = [groupId];
+    while (pending.length > 0) {
+      const parentId = pending.pop();
+      if (parentId == null) continue;
+      for (const childId of childIdsByParent.get(parentId) ?? []) {
+        if (targetGroupIds.has(childId)) continue;
+        targetGroupIds.add(childId);
+        pending.push(childId);
+      }
+    }
+    return targetGroupIds;
+  };
+
   if (subgraphId) {
     const subgraph = subgraphById.get(subgraphId);
     if (!subgraph) return [];
@@ -926,11 +982,12 @@ export function collectBypassGroupTargetNodes(
 
     const subgraphNodes = subgraph.nodes ?? [];
     const nodeToGroup = computeNodeGroupsFor(subgraphNodes, subgraphGroups);
+    const targetGroupIds = targetGroupIdsFor(subgraphGroups);
     const nestedSubgraphIds = new Set<string>();
     const directNodeOriginIds = new Set<number>();
 
     for (const node of subgraphNodes) {
-      if (nodeToGroup.get(node.id) !== groupId) continue;
+      if (!targetGroupIds.has(nodeToGroup.get(node.id) ?? -1)) continue;
       // The placeholder node is a target in its own right (mirrors the root
       // branch below, where every group member — placeholders included — is
       // pushed); its nested definition's inner nodes are collected separately.
@@ -961,8 +1018,9 @@ export function collectBypassGroupTargetNodes(
     if (!group) return [];
 
     const nodeToGroup = computeNodeGroupsFor(rootNodes, groups);
+    const targetGroupIds = targetGroupIdsFor(groups);
     for (const node of rootNodes) {
-      if (nodeToGroup.get(node.id) === groupId) {
+      if (targetGroupIds.has(nodeToGroup.get(node.id) ?? -1)) {
         targetNodes.push({ nodeId: node.id, subgraphId: null });
       }
     }
@@ -971,7 +1029,10 @@ export function collectBypassGroupTargetNodes(
     // identify which subgraphs are directly contained in this group.
     const directSubgraphIds = new Set<string>();
     for (const node of rootNodes) {
-      if (nodeToGroup.get(node.id) === groupId && subgraphIds.has(node.type)) {
+      if (
+        targetGroupIds.has(nodeToGroup.get(node.id) ?? -1)
+        && subgraphIds.has(node.type)
+      ) {
         directSubgraphIds.add(node.type);
       }
     }
@@ -999,7 +1060,9 @@ export function collectBypassContainerTargetNodesFromLayout(
   workflow: Workflow,
   layout: MobileLayout,
   itemKey: HierarchicalKey,
+  options: { descendIntoSubgraphs?: boolean } = {},
 ): ScopedNodeIdentity[] {
+  const descendIntoSubgraphs = options.descendIntoSubgraphs ?? true;
   const identity = resolveContainerIdentityFromHierarchicalKey(workflow, itemKey);
   if (!identity) return [];
 
@@ -1015,6 +1078,9 @@ export function collectBypassContainerTargetNodesFromLayout(
         layout,
         layout.groups[groupHierarchicalKey] ?? [],
         identity.subgraphId,
+        new Set<string>(),
+        new Set<string>(),
+        descendIntoSubgraphs,
       );
       nodeIdentities.push(...nestedNodeIds);
     }
@@ -1026,6 +1092,9 @@ export function collectBypassContainerTargetNodesFromLayout(
     layout,
     subgraphRefs,
     identity.subgraphId,
+    new Set<string>(),
+    new Set<string>(),
+    descendIntoSubgraphs,
   );
 }
 
@@ -1076,4 +1145,3 @@ export function getParentSubgraphIdFromContainer(
   if (containerId.scope === "root") return null;
   return findGroupSubgraphIdByHierarchicalKey(layout, containerId.groupKey);
 }
-

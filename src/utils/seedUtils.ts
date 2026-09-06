@@ -8,6 +8,8 @@ import {
 export type SeedMode = 'fixed' | 'randomize' | 'increment' | 'decrement';
 export interface SeedWidgetDescriptor {
   name: string;
+  /** Canonical widget/input identity when `name` is only a display label. */
+  inputName?: string;
   type: string;
   widgetIndex: number;
 }
@@ -182,15 +184,19 @@ export function findSeedWidgetIndex(
     widgetDescriptors?: SeedWidgetDescriptor[];
   }
 ): number | null {
-  const descriptorSeedIndex = options?.widgetDescriptors
-    ?.find(
-      (entry) =>
-        String(entry.type).toUpperCase() === 'INT' &&
-        (entry.name === 'seed' ||
-          entry.name === 'noise_seed' ||
-          entry.name.toLowerCase().includes('seed'))
-    )
-    ?.widgetIndex;
+  const descriptors = options?.widgetDescriptors?.filter(
+    (entry) => String(entry.type).toUpperCase() === 'INT',
+  );
+  // A promoted widget's `name` is its editable display label. Keep seed
+  // recognition tied to its canonical input identity so renaming it neither
+  // hides the specialized controls nor makes an unrelated "...seed..." label
+  // win first. The broad name match remains as a legacy fallback for
+  // descriptors that predate inputName.
+  const descriptorSeed = descriptors?.find((entry) => {
+    const identity = entry.inputName ?? entry.name;
+    return identity === 'seed' || identity === 'noise_seed';
+  }) ?? descriptors?.find((entry) => entry.name.toLowerCase().includes('seed'));
+  const descriptorSeedIndex = descriptorSeed?.widgetIndex;
   if (typeof descriptorSeedIndex === 'number') {
     return descriptorSeedIndex;
   }
@@ -306,12 +312,15 @@ export function generateSeedFromNode(nodeTypes: NodeTypes, node: WorkflowNode): 
   const typeBounds = getSeedInputTypeBounds(nodeTypes, node);
   const min = typeBounds?.min !== undefined ? Math.max(bounds.min, typeBounds.min) : bounds.min;
   const max = typeBounds?.max !== undefined ? Math.min(bounds.max, typeBounds.max) : bounds.max;
-  const scaledStep = step > 0 ? step / 10 : 1;
+  // object_info carries the input's REAL step (the ×10 litegraph scaling is a
+  // desktop widget-layer convention that never reaches the API). Dividing by
+  // 10 here turned the default step of 1 into 0.1 and queued fractional seeds
+  // like 1370518175.6 — the server's int() coercion hid it, but the widget
+  // displayed it and increment kept the fraction forever.
+  const scaledStep = step > 0 ? step : 1;
   const range = Math.max(0, max - min);
   let seed = min + Math.random() * range;
-  if (scaledStep > 0) {
-    seed = Math.round((seed - min) / scaledStep) * scaledStep + min;
-  }
+  seed = Math.round((seed - min) / scaledStep) * scaledStep + min;
   if (seed > max) seed = max;
   if (seed < min) seed = min;
   if (SPECIAL_SEED_VALUES.has(seed)) {

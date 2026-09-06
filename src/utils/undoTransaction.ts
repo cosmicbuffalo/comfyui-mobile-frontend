@@ -7,6 +7,7 @@
 
 let depth = 0;
 let recorded = false;
+let actionLabel: string | null = null;
 
 export function inUndoTransaction(): boolean {
   return depth > 0;
@@ -21,13 +22,25 @@ export function markUndoTransactionRecorded(): void {
   recorded = true;
 }
 
-export function runUndoTransaction<T>(fn: () => T): T {
+export function getUndoTransactionActionLabel(): string | null {
+  return actionLabel;
+}
+
+export function runUndoTransaction<T>(fn: () => T, label?: string): T {
   depth++;
-  if (depth === 1) recorded = false;
+  if (depth === 1) {
+    recorded = false;
+    actionLabel = label ?? null;
+  } else if (!actionLabel && label) {
+    actionLabel = label;
+  }
   try {
     return fn();
   } finally {
     depth--;
-    if (depth === 0) recorded = false;
+    if (depth === 0) {
+      recorded = false;
+      actionLabel = null;
+    }
   }
 }

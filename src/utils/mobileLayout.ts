@@ -1,5 +1,5 @@
 import type { Workflow, WorkflowNode } from '@/api/types';
-import { computeNodeGroupsFor } from '@/utils/nodeGroups';
+import { computeGroupParentsFor, computeNodeGroupsFor } from '@/utils/nodeGroups';
 import { compareNodesByPosition } from '@/utils/nodeOrdering';
 
 // --- Types ---
@@ -84,6 +84,19 @@ export function collectScopedMembership(
         visit(layout.groups[groupKey] ?? [], subgraphId, groupKey);
         visitingGroups.delete(groupKey);
         continue;
+      }
+      // A placeholder is BOTH a member of the scope it sits in and a container
+      // to descend into. Only descending left it belonging to nothing, so a
+      // caller asking which group holds it — to unfold the way to it — was told
+      // none, and a placeholder inside a folded group stayed unreachable.
+      // Recorded before the cycle guard, so the second instance of a shared
+      // type is placed even though its contents are only walked once.
+      if (ref.nodeId != null) {
+        membership.set(scopedNodeKey(ref.nodeId, subgraphId), {
+          scope,
+          subgraphId,
+          groupKey: currentGroupKey,
+        });
       }
       if (visitingSubgraphs.has(ref.id)) continue;
       visitingSubgraphs.add(ref.id);
@@ -225,45 +238,6 @@ export function buildDefaultLayout(
     layout.subgraphs[sg.id] = [];
   }
 
-  const getGroupParentMap = (
-    scopeGroups: Array<{ id: number; bounding: [number, number, number, number] }>
-  ): Map<number, number | null> => {
-    const parentMap = new Map<number, number | null>();
-    for (const child of scopeGroups) {
-      const [cx, cy, cw, ch] = child.bounding;
-      const centerX = cx + cw / 2;
-      const centerY = cy + ch / 2;
-      const childArea = cw * ch;
-      let parentId: number | null = null;
-      let parentArea = Number.POSITIVE_INFINITY;
-      for (const candidate of scopeGroups) {
-        if (candidate.id === child.id) continue;
-        const [px, py, pw, ph] = candidate.bounding;
-        const candidateArea = pw * ph;
-        if (candidateArea <= childArea) continue;
-        const fullyContainsChild =
-          cx >= px &&
-          cy >= py &&
-          cx + cw <= px + pw &&
-          cy + ch <= py + ph;
-        const containsChildCenter =
-          centerX >= px &&
-          centerX <= px + pw &&
-          centerY >= py &&
-          centerY <= py + ph;
-        if (!fullyContainsChild && !containsChildCenter) {
-          continue;
-        }
-        if (candidateArea < parentArea) {
-          parentArea = candidateArea;
-          parentId = candidate.id;
-        }
-      }
-      parentMap.set(child.id, parentId);
-    }
-    return parentMap;
-  };
-
   // Helper to group consecutive hidden nodes into blocks within a list
   function groupHiddenNodes(
     items: ItemRef[],
@@ -308,7 +282,7 @@ export function buildDefaultLayout(
   for (const sg of subgraphs) {
     const sgNodes = [...(sg.nodes ?? [])].sort(compareNodesByPosition);
     const sgGroups = sg.groups ?? [];
-    const sgGroupParentMap = getGroupParentMap(sgGroups);
+    const sgGroupParentMap = computeGroupParentsFor(sgGroups);
     const sgEmittedGroups = new Set<number>();
     const sgRootItems: ItemRef[] = [];
     const groupKey = (groupId: number) => getGroupKey(groupId, sg.id);
@@ -343,13 +317,20 @@ export function buildDefaultLayout(
     const sgNodeToGroupForSg = subgraphNodeToGroup.get(sg.id);
     for (const node of sgNodes) {
       const assignedGroupId = sgNodeToGroupForSg?.get(node.id);
+      // A placeholder nested inside this definition is a subgraph item here
+      // just as it is at root. Emitting it as a plain node left its card with
+      // no way in: the enter action is wired only where the layout says the
+      // item IS a subgraph, so a subgraph two levels down was unreachable.
+      const item: ItemRef = subgraphIds.has(node.type)
+        ? { type: 'subgraph', id: node.type, nodeId: node.id }
+        : { type: 'node', id: node.id };
       if (assignedGroupId === undefined) {
-        sgRootItems.push({ type: 'node', id: node.id });
+        sgRootItems.push(item);
         continue;
       }
       emitGroupChain(assignedGroupId);
       layout.groups[groupKey(assignedGroupId)] ??= [];
-      layout.groups[groupKey(assignedGroupId)].push({ type: 'node', id: node.id });
+      layout.groups[groupKey(assignedGroupId)].push(item);
     }
 
     for (const g of sgGroups) {
@@ -367,7 +348,7 @@ export function buildDefaultLayout(
   // Build root contents with nested group hierarchy.
   // orderedNodes = root-level nodes; placeholder nodes (subgraphIds.has(node.type)) become
   // { type: 'subgraph' } items at the position the placeholder occupies in the root order.
-  const rootGroupParentMap = getGroupParentMap(groups);
+  const rootGroupParentMap = computeGroupParentsFor(groups);
   const rootEmittedGroups = new Set<number>();
   const rootItems: ItemRef[] = [];
   const rootGroupKey = (groupId: number) => getGroupKey(groupId, null);
@@ -848,4 +829,38 @@ export function findItemInLayout(
   }
 
   return null;
+}
+
+/**
+ * Find the first matching item in the rendered depth-first mobile-list order,
+ * starting at one scope container and descending through groups. Subgraph
+ * placeholder refs are leaves so traversal never crosses a scope boundary.
+ */
+export function findTopmostMatchingItemInLayout(
+  layout: MobileLayout,
+  startContainerId: ContainerId,
+  matches: (item: ItemRef) => boolean,
+): { item: ItemRef; containerId: ContainerId; index: number } | null {
+  const visitingGroups = new Set<string>();
+
+  const visit = (
+    containerId: ContainerId,
+  ): { item: ItemRef; containerId: ContainerId; index: number } | null => {
+    const items = getContainerItems(layout, containerId);
+    for (let index = 0; index < items.length; index += 1) {
+      const item = items[index];
+      if (matches(item)) return { item, containerId, index };
+      if (item.type !== 'group') continue;
+
+      const groupKey = getGroupKey(item.id, item.subgraphId);
+      if (visitingGroups.has(groupKey)) continue;
+      visitingGroups.add(groupKey);
+      const nested = visit({ scope: 'group', groupKey });
+      visitingGroups.delete(groupKey);
+      if (nested) return nested;
+    }
+    return null;
+  };
+
+  return visit(startContainerId);
 }

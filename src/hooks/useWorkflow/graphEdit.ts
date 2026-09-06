@@ -1,24 +1,104 @@
-import type {Workflow, WorkflowGroup, WorkflowInput, WorkflowLink, WorkflowNode, WorkflowSubgraphLink} from "@/api/types";
+import type {NodeTypes, Workflow, WorkflowGroup, WorkflowInput, WorkflowLink, WorkflowNode, WorkflowSubgraphLink} from "@/api/types";
 import {runUndoTransaction} from "@/utils/undoTransaction";
+import {closeAnyRowMenu} from "@/hooks/useRowMenuStore";
 import {useConnectionSectionFoldsStore} from "@/hooks/useConnectionSectionFolds";
 import {useParameterSectionFoldsStore} from "@/hooks/useParameterSectionFolds";
 import {useWorkflowClipboardStore, type WorkflowClipboardPayload} from "@/hooks/useWorkflowClipboard";
-import {applyClipboardPaste, buildGroupClipboardPayload, buildNodeClipboardPayload, buildMultiNodeClipboardPayload, placePastedNodesIntoGroup} from "@/utils/workflowClipboard";
+import {applyClipboardPaste, buildGroupClipboardPayload, buildNodeClipboardPayload, buildMultiNodeClipboardPayload, collectGroupMoveSelection, placeGroupsIntoGroup, placePastedNodesIntoGroup} from "@/utils/workflowClipboard";
 import {isComboType, buildDefaultConnectionInputs, buildDefaultWidgetValues} from "@/utils/workflowInputs";
 import {collectAllWorkflowGroups} from "@/utils/workflowNodes";
+import {collectMoveIntoSubgraphTargets} from "@/utils/moveIntoSubgraphTargets";
 import {nodeTypeStripsSeedControl} from "@/utils/seedUtils";
 import {areTypesCompatible} from "@/utils/connectionUtils";
-import {type ItemRef, type MobileLayout, type ContainerId, makeLocationPointer, findItemInLayout, removeNodeFromLayout, addNodeToLayout, placeLayoutItemAfter, placeLayoutItemBefore} from "@/utils/mobileLayout";
+import {type ItemRef, type MobileLayout, type ContainerId, makeLocationPointer, findItemInLayout, findTopmostMatchingItemInLayout, moveItemInLayout, removeNodeFromLayout, addNodeToLayout, placeLayoutItemAfter, placeLayoutItemBefore} from "@/utils/mobileLayout";
 import {clampPositionToGroup, getBottomPlacement, getBottomPlacementForScope, getPositionNearNode} from "@/utils/nodePositioning";
-import {resolveCurrentScope, resolveScopeForHierarchicalKey, resolveNodeByHierarchicalKey, getLinkId, getLinkOriginId, getLinkOriginSlot, getLinkTargetId, getLinkTargetSlot, getLinkType, makeScopeLink, maxNodeIdAcrossScopes} from "@/utils/canonicalWorkflowOps";
+import {resolveCurrentScope, resolveScopeForHierarchicalKey, resolveNodeByHierarchicalKey, getLinkId, getLinkOriginId, getLinkOriginSlot, getLinkTargetId, getLinkTargetSlot, getLinkType, isSubgraphPlaceholder, makeScopeLink, maxNodeIdAcrossScopes, updateNodeInScope, type ScopeContext} from "@/utils/canonicalWorkflowOps";
 import {collapseSetGetNodes as collapseSetGetNodesPure} from "@/utils/collapseSetGetNodes";
+import {getPrimitiveInlineValue} from "@/utils/workflowInputs/widgetSlots";
+import {getWidgetIndexForInput} from "@/utils/seedUtils";
+import {getPlaceholderWidgetIndexForInput} from "@/utils/widgetDefinitions";
 import {duplicateWorkflowNode} from "@/utils/duplicateNode";
-import {type HierarchicalKey, annotateWorkflowWithHierarchicalKeys, buildScopeStackForSubgraphTrail, collectBypassGroupTargetNodes, collectNodeHierarchicalKeys, collectNodeStateKeys, layoutRecordFromPointerRecord, reconcilePointerRegistry, resolveContainerIdentityFromHierarchicalKey, resolveNodeIdentityFromHierarchicalKey} from "@/utils/workflowHierarchy";
+import {type ContainerIdentity, type HierarchicalKey, annotateWorkflowWithHierarchicalKeys, buildScopeStackForSubgraphTrail, collectBypassGroupTargetNodes, collectNodeHierarchicalKeys, collectNodeStateKeys, layoutRecordFromPointerRecord, normalizeMobileLayoutGroupKeys, reconcilePointerRegistry, resolveContainerIdentityFromHierarchicalKey, resolveNodeIdentityFromHierarchicalKey} from "@/utils/workflowHierarchy";
+import {findScopeTrailForPlaceholder} from "@/utils/subgraphInstanceNavigation";
+import {createSubgraphFromSelection} from "@/utils/createSubgraphFromSelection";
+import {moveNodesIntoSubgraph} from "@/utils/moveIntoSubgraph";
+import {autoPromoteMovedWidgets} from "@/utils/autoPromoteMovedWidgets";
+import {harvestSiblingInstanceValues} from "@/utils/harvestSiblingInstanceValues";
+import {popNodeOutOfSubgraph} from "@/utils/popNodeOutOfSubgraph";
+import {normalizeSubgraphPlaceholders} from "@/utils/normalizeSubgraphPlaceholders";
+import {boundaryWidgetNames, reconcileInstanceWidgetValues} from "@/utils/instanceWidgetValues";
+import {pruneOrphanedBoundarySlots} from "@/utils/pruneOrphanedBoundarySlots";
 import {themeColors} from "@/theme/colors";
+import {computeTidyWorkflowGeometry} from "@/utils/tidyLayout";
 import {buildLayoutForWorkflow} from "./layoutOps";
 import type {WorkflowGet, WorkflowSet, WorkflowState} from "./state";
 
 let editContainerLabelRequestId = 0;
+
+interface WidgetWriteBack {
+  widgetIndex: number;
+  widgetName: string | undefined;
+  value: unknown;
+}
+
+// Removing a primitive node's feed (delete or disconnect) un-hides the target's
+// widget control, which would otherwise resurface whatever stale value sat in
+// widgets_values from before the connection. Collect the primitive's current
+// value for every widget-backed input the given links feed, so the caller can
+// bake it in during the same state update. Boundary sentinels, pure connection
+// slots, and slots the caller re-feeds (bridges) are excluded via the inputs.
+function collectPrimitiveWriteBacks(
+  workflow: Workflow,
+  scope: ScopeContext,
+  nodeTypes: WorkflowState["nodeTypes"],
+  sourceNode: WorkflowNode,
+  links: Array<WorkflowLink | WorkflowSubgraphLink>,
+  skipTargetKeys?: Map<string, number> | Set<string>,
+): Map<number, WidgetWriteBack[]> {
+  const writeBacks = new Map<number, WidgetWriteBack[]>();
+  const value = getPrimitiveInlineValue(sourceNode);
+  if (value === undefined) return writeBacks;
+
+  for (const link of links) {
+    if (getLinkOriginId(link) !== sourceNode.id) continue;
+    const targetId = getLinkTargetId(link);
+    if (targetId < 0) continue; // boundary sentinel, not a node
+    const targetSlot = getLinkTargetSlot(link);
+    if (skipTargetKeys?.has(`${targetId}:${targetSlot}`)) continue;
+    const targetNode = scope.nodes.find((n) => n.id === targetId);
+    const targetInput = targetNode?.inputs?.[targetSlot];
+    if (!targetNode || !targetInput || targetInput.widget == null) continue;
+
+    const widgetIndex = isSubgraphPlaceholder(targetNode, workflow)
+      ? getPlaceholderWidgetIndexForInput(targetNode, targetSlot, workflow)
+      : getWidgetIndexForInput(workflow, nodeTypes, targetNode, targetInput.name);
+    if (widgetIndex == null) continue;
+
+    const adds = writeBacks.get(targetId) ?? [];
+    adds.push({ widgetIndex, widgetName: targetInput.widget.name ?? targetInput.name, value });
+    writeBacks.set(targetId, adds);
+  }
+  return writeBacks;
+}
+
+// Set widgets_values[widgetIndex] (array form, padding sparse gaps with null so
+// the value lands at the right index) or widgets_values[widgetName] (record form).
+function applyWidgetWriteBacks(node: WorkflowNode, adds: WidgetWriteBack[]): WorkflowNode {
+  const values = node.widgets_values;
+  if (values && !Array.isArray(values) && typeof values === "object") {
+    const record = { ...(values as Record<string, unknown>) };
+    for (const wb of adds) {
+      if (wb.widgetName) record[wb.widgetName] = wb.value;
+    }
+    return { ...node, widgets_values: record };
+  }
+  const arr = Array.isArray(values) ? [...values] : [];
+  for (const wb of adds) {
+    while (arr.length < wb.widgetIndex) arr.push(null);
+    arr[wb.widgetIndex] = wb.value;
+  }
+  return { ...node, widgets_values: arr };
+}
 
 export function createGraphEditActions(set: WorkflowSet, get: WorkflowGet) {
 
@@ -28,6 +108,7 @@ const deleteNode: WorkflowState["deleteNode"] = (
 ) => {
   const {
     workflow,
+    nodeTypes,
     hiddenItems,
     connectionHighlightModes,
     mobileLayout,
@@ -100,6 +181,18 @@ const deleteNode: WorkflowState["deleteNode"] = (
     ...bridgeLinks,
   ];
 
+  // Deleting a primitive bakes its current value into every widget-backed
+  // input it fed (except slots a bridge re-feeds), so the resurfacing widget
+  // control shows what the primitive held, not the stale pre-pop-out value.
+  const writeBacks = collectPrimitiveWriteBacks(
+    workflow,
+    scope,
+    nodeTypes,
+    node,
+    outgoingLinks,
+    bridgeInputLinks,
+  );
+
   const newNodes = scope.nodes
     .filter((n) => n.id !== nodeId)
     .map((n) => {
@@ -129,7 +222,9 @@ const deleteNode: WorkflowState["deleteNode"] = (
         };
       });
 
-      return { ...n, inputs: nextInputs, outputs: nextOutputs };
+      const withLinks = { ...n, inputs: nextInputs, outputs: nextOutputs };
+      const adds = writeBacks.get(n.id);
+      return adds ? applyWidgetWriteBacks(withLinks, adds) : withLinks;
     });
 
   // Clean up UI state
@@ -174,8 +269,13 @@ const deleteNode: WorkflowState["deleteNode"] = (
       : (newLinks as WorkflowSubgraphLink[]),
     last_link_id: nextLastLinkId,
   });
+  // A delete inside a subgraph can orphan the boundary slot whose interior
+  // link the node carried; the slot goes with it, values carried by name.
+  const prunedWorkflow = subgraphId == null
+    ? patchedWorkflow
+    : pruneOrphanedBoundarySlots(workflow, patchedWorkflow, nodeTypes, subgraphId);
   const nextWorkflowWithHierarchicalKeys = annotateWorkflowWithHierarchicalKeys(
-    patchedWorkflow,
+    prunedWorkflow,
     reconciled.layoutToStable,
   );
 
@@ -248,7 +348,7 @@ const connectNodes: WorkflowState["connectNodes"] = (
   tgtSlot,
   type,
 ) => {
-  const { workflow } = get();
+  const { workflow, nodeTypes } = get();
   if (!workflow) return;
   // Both endpoints must live in the source key's scope.
   const scope = resolveScopeForHierarchicalKey(workflow, srcHierarchicalKey);
@@ -323,7 +423,11 @@ const connectNodes: WorkflowState["connectNodes"] = (
     last_link_id: nextLastLinkId,
   });
   set({
-    workflow: nextWorkflow,
+    // Replacing an input's existing link can displace a boundary link and
+    // orphan its slot — same sweep as delete/disconnect.
+    workflow: scope.subgraphId == null
+      ? nextWorkflow
+      : pruneOrphanedBoundarySlots(workflow, nextWorkflow, nodeTypes, scope.subgraphId),
   });
 };
 
@@ -331,7 +435,7 @@ const disconnectInput: WorkflowState["disconnectInput"] = (
   itemKey,
   inputIndex,
 ) => {
-  const { workflow } = get();
+  const { workflow, nodeTypes } = get();
   if (!workflow) return;
   const scope = resolveScopeForHierarchicalKey(workflow, itemKey);
   const node = resolveNodeByHierarchicalKey(scope.nodes, itemKey);
@@ -341,12 +445,24 @@ const disconnectInput: WorkflowState["disconnectInput"] = (
   const linkId = node.inputs[inputIndex]?.link;
   if (linkId == null) return;
 
+  // Unplugging a primitive leaves the same stale-value hole as deleting it —
+  // bake its current value into the widget the severed link fed.
+  const severedLink = scope.links.find((l) => getLinkId(l) === linkId);
+  const sourceNode = severedLink
+    ? scope.nodes.find((n) => n.id === getLinkOriginId(severedLink))
+    : undefined;
+  const writeBacks = severedLink && sourceNode
+    ? collectPrimitiveWriteBacks(workflow, scope, nodeTypes, sourceNode, [severedLink])
+    : new Map<number, WidgetWriteBack[]>();
+
   const newLinks = scope.links.filter((l) => getLinkId(l) !== linkId);
   const newNodes = scope.nodes.map((n) => {
     if (n.id === nodeId) {
       const newInputs = [...n.inputs];
       newInputs[inputIndex] = { ...newInputs[inputIndex], link: null };
-      return { ...n, inputs: newInputs };
+      const adds = writeBacks.get(n.id);
+      const next = { ...n, inputs: newInputs };
+      return adds ? applyWidgetWriteBacks(next, adds) : next;
     }
     // Clean up source node's output links
     const hadLink = n.outputs.some((o) => o.links?.includes(linkId));
@@ -370,7 +486,11 @@ const disconnectInput: WorkflowState["disconnectInput"] = (
       : (newLinks as WorkflowSubgraphLink[]),
   });
   set({
-    workflow: nextWorkflow,
+    // Disconnecting a boundary link (origin -10 / target -20) can orphan its
+    // slot the same way a delete does; same sweep, same by-name value carry.
+    workflow: scope.subgraphId == null
+      ? nextWorkflow
+      : pruneOrphanedBoundarySlots(workflow, nextWorkflow, nodeTypes, scope.subgraphId),
   });
 };
 
@@ -614,16 +734,10 @@ const pasteClipboard: WorkflowState["pasteClipboard"] = (belowNodeKey) => {
   return result.newNodeIds;
 };
 
-const copyContainer: WorkflowState["copyContainer"] = (itemKey) => {
-  const { workflow, pointerByHierarchicalKey } = get();
-  if (!workflow) return;
-  const identity = resolveContainerIdentityFromHierarchicalKey(
-    workflow,
-    itemKey,
-    pointerByHierarchicalKey,
-  );
-  if (!identity) return;
-
+function buildContainerPayload(
+  workflow: Workflow,
+  identity: ContainerIdentity,
+): WorkflowClipboardPayload | null {
   let payload: WorkflowClipboardPayload | null = null;
   if (identity.type === "group") {
     const groups =
@@ -631,7 +745,7 @@ const copyContainer: WorkflowState["copyContainer"] = (itemKey) => {
         ? workflow.groups ?? []
         : workflow.definitions?.subgraphs?.find((sg) => sg.id === identity.subgraphId)?.groups ?? [];
     const group = groups.find((g) => g.id === identity.groupId);
-    if (!group) return;
+    if (!group) return null;
     // Direct members in the group's own scope (placeholder nodes ride along;
     // their definitions are gathered by buildGroupClipboardPayload).
     const memberNodeIds = collectBypassGroupTargetNodes(
@@ -644,12 +758,63 @@ const copyContainer: WorkflowState["copyContainer"] = (itemKey) => {
     payload = buildGroupClipboardPayload(workflow, group, identity.subgraphId, memberNodeIds);
   } else {
     // Copy the subgraph by copying its placeholder node (+ its definition).
+    // Root-only, first-placeholder-of-type: dead for subgraphs in the current
+    // UI (placeholders render as NodeCards and copy via buildNodeClipboardPayload
+    // with their own key). If a subgraph container ever gets a Copy action,
+    // this must resolve the specific instance by node id, not by type.
     const placeholder = (workflow.nodes ?? []).find((n) => n.type === identity.subgraphId);
     if (placeholder?.itemKey) {
       payload = buildNodeClipboardPayload(workflow, placeholder.itemKey);
     }
   }
+  return payload;
+}
+
+const copyContainer: WorkflowState["copyContainer"] = (itemKey) => {
+  const { workflow, pointerByHierarchicalKey } = get();
+  if (!workflow) return;
+  const identity = resolveContainerIdentityFromHierarchicalKey(
+    workflow,
+    itemKey,
+    pointerByHierarchicalKey,
+  );
+  if (!identity) return;
+  const payload = buildContainerPayload(workflow, identity);
   if (payload) useWorkflowClipboardStore.getState().setPayload(payload);
+};
+
+const duplicateContainer: WorkflowState["duplicateContainer"] = (itemKey) => {
+  const { workflow, hiddenItems, itemKeyByPointer, pointerByHierarchicalKey } = get();
+  if (!workflow) return null;
+  const identity = resolveContainerIdentityFromHierarchicalKey(
+    workflow,
+    itemKey,
+    pointerByHierarchicalKey,
+  );
+  // Subgraph instances duplicate through duplicateNode; this operation exists
+  // for actual group containers.
+  if (!identity || identity.type !== "group") return null;
+  const payload = buildContainerPayload(workflow, identity);
+  if (!payload) return null;
+  const result = applyClipboardPaste(workflow, payload, identity.subgraphId);
+  if (!result) return null;
+
+  const nextLayout = buildLayoutForWorkflow(
+    result.workflow,
+    layoutRecordFromPointerRecord(hiddenItems, pointerByHierarchicalKey),
+  );
+  const reconciled = reconcilePointerRegistry(
+    nextLayout,
+    itemKeyByPointer,
+    pointerByHierarchicalKey,
+  );
+  set({
+    workflow: annotateWorkflowWithHierarchicalKeys(result.workflow, reconciled.layoutToStable),
+    mobileLayout: nextLayout,
+    itemKeyByPointer: reconciled.layoutToStable,
+    pointerByHierarchicalKey: reconciled.stableToLayout,
+  });
+  return result.newNodeIds;
 };
 
 const pasteIntoContainer: WorkflowState["pasteIntoContainer"] = (itemKey) => {
@@ -973,8 +1138,382 @@ const deleteSelectedItems: WorkflowState["deleteSelectedItems"] = (itemKeys) => 
   });
 };
 
-const createGroupFromItems: WorkflowState["createGroupFromItems"] = (itemKeys) => {
+
+/**
+ * Wrap the selection in a new subgraph.
+ *
+ * The boundary comes from the selection's existing wiring rather than from the
+ * user: whatever the selected nodes were connected to is what the new subgraph
+ * exposes. `createSubgraphFromSelection` owns that decision and the graph
+ * surgery; this resolves the selection to node and group ids in the current
+ * scope, and rebuilds what the panel needs after the shape changes.
+ */
+
+/**
+ * Reconcile instance widgets_values for every definition whose widget-backed
+ * boundary changed between `before` and `after` — the same by-name carry each
+ * boundaryEdit action ends with, applied after structural moves (into a
+ * subgraph, out of one) that can add or drop boundary slots on more than one
+ * definition at once. Values are matched by name against the pre-move order,
+ * so a placeholder carrying a proxyWidgets list keeps every surviving value.
+ */
+const reconcileChangedBoundaries = (
+  before: Workflow,
+  after: Workflow,
+  nodeTypes: NodeTypes | null,
+): Workflow => {
+  const previousByDef = new Map(
+    (before.definitions?.subgraphs ?? []).map((sg) => [sg.id, boundaryWidgetNames(sg)]),
+  );
+  let next = after;
+  for (const sg of after.definitions?.subgraphs ?? []) {
+    const previous = previousByDef.get(sg.id) ?? [];
+    const current = boundaryWidgetNames(sg);
+    const unchanged =
+      previous.length === current.length &&
+      previous.every((name, index) => name === current[index]);
+    if (unchanged) continue;
+    next = reconcileInstanceWidgetValues(next, sg.id, nodeTypes, previous);
+  }
+  return next;
+};
+
+/**
+ * Move the selection into a subgraph sitting in the same scope.
+ *
+ * The graph surgery is `moveNodesIntoSubgraph`; this resolves keys to ids,
+ * refuses a cross-scope selection, and rebuilds the panel's view of a shape
+ * that has changed on both sides of the boundary.
+ */
+const moveItemsIntoSubgraph: WorkflowState["moveItemsIntoSubgraph"] = (
+  itemKeys,
+  placeholderItemKey,
+) => {
   const { workflow, hiddenItems, itemKeyByPointer, pointerByHierarchicalKey } = get();
+  if (!workflow) return null;
+  const subgraphId = currentScopeSubgraphId();
+
+  const placeholder = resolveNodeIdentityFromHierarchicalKey(workflow, placeholderItemKey);
+  if (!placeholder || (placeholder.subgraphId ?? null) !== subgraphId) return null;
+
+  // The picker already declines a destination that would nest a subgraph inside
+  // itself; refuse it here too, so no other caller can build a definition cycle
+  // that expansion then leaves in the prompt as an unexpandable node.
+  const legalDestinations = collectMoveIntoSubgraphTargets(workflow, get().scopeStack, itemKeys);
+  if (!legalDestinations.some((candidate) => candidate.id === placeholder.nodeId)) return null;
+
+  const nodeIds = new Set<number>();
+  const selectedGroupIds: number[] = [];
+  for (const key of itemKeys) {
+    const identity = resolveNodeIdentityFromHierarchicalKey(workflow, key);
+    if (identity && (identity.subgraphId ?? null) === subgraphId) {
+      nodeIds.add(identity.nodeId);
+      continue;
+    }
+    const container = resolveContainerIdentityFromHierarchicalKey(workflow, key);
+    if (
+      container?.type === "group"
+      && (container.subgraphId ?? null) === subgraphId
+    ) {
+      selectedGroupIds.push(container.groupId);
+    }
+  }
+
+  const groupMoveSelection = collectGroupMoveSelection(
+    workflow,
+    subgraphId,
+    selectedGroupIds,
+  );
+  for (const nodeId of groupMoveSelection.nodeIds) nodeIds.add(nodeId);
+
+  let harvestedFrom: number[] = [];
+  const moved = moveNodesIntoSubgraph(
+    workflow,
+    subgraphId,
+    placeholder.nodeId,
+    [...nodeIds],
+    [...groupMoveSelection.groupIds],
+  );
+  if (!moved) return null;
+
+  runUndoTransaction(() => {
+    // Placeholder slot lists are rebuilt from the definition the way load does,
+    // so every instance picks up the boundary as it now stands — and every
+    // instance's values are then re-seated by name, since the move can add or
+    // drop widget-backed boundary slots.
+    // A move should not take controls away: widgets the user had set on the
+    // moved nodes are promoted onto the placeholder so they stay reachable from
+    // where they were. Inside the same transaction, so one undo puts it back.
+    const destinationType = workflow.nodes.find((node) => node.id === placeholder.nodeId)?.type ?? "";
+    const withPromotions = autoPromoteMovedWidgets(
+      moved.workflow,
+      destinationType,
+      moved.movedInnerNodeIds,
+      get().nodeTypes,
+    );
+    const reconciledBoundaries = reconcileChangedBoundaries(
+      workflow,
+      normalizeSubgraphPlaceholders(withPromotions.workflow),
+      get().nodeTypes,
+    );
+    // The boundary belongs to the type, so a slot this move retired is retired
+    // for every instance — leaving each sibling's feed stranded and its value
+    // about to be replaced by the one that moved in. Bring those values inside
+    // before that happens; the nodes they came from are only reported, since
+    // deleting one is the caller's call.
+    const harvest = harvestSiblingInstanceValues(
+      workflow,
+      reconciledBoundaries,
+      destinationType,
+      placeholder.nodeId,
+      [...nodeIds],
+      get().nodeTypes,
+    );
+    harvestedFrom = harvest.removable;
+    const normalized = harvest.workflow;
+    const nextLayout = buildLayoutForWorkflow(
+      normalized,
+      layoutRecordFromPointerRecord(hiddenItems, pointerByHierarchicalKey),
+    );
+    const reconciled = reconcilePointerRegistry(
+      nextLayout,
+      itemKeyByPointer,
+      pointerByHierarchicalKey,
+    );
+    set({
+      workflow: annotateWorkflowWithHierarchicalKeys(normalized, reconciled.layoutToStable),
+      mobileLayout: nextLayout,
+      itemKeyByPointer: reconciled.layoutToStable,
+      pointerByHierarchicalKey: reconciled.stableToLayout,
+    });
+  });
+
+  return {
+    removedInputs: moved.removedInputs,
+    removedOutputs: moved.removedOutputs,
+    addedInputs: moved.addedInputs,
+    addedOutputs: moved.addedOutputs,
+    // Sibling instances whose value has been brought inside and which are now
+    // feeding nothing. Offered to the caller to confirm removing; a node still
+    // feeding something else never appears here.
+    harvestedFrom,
+  };
+};
+
+/**
+ * Remove root nodes whose value has already been carried into a subgraph.
+ *
+ * Offered after a move that retired a boundary slot: each of these fed one
+ * instance through that slot and nothing else, so the value now lives on the
+ * placeholder and the node itself has no remaining purpose. Deliberately NOT
+ * automatic — a node is a thing the user put there, and the move already
+ * changed enough on its own.
+ *
+ * Refuses anything still feeding something. The caller is handed only safe
+ * candidates, but this is the operation that actually deletes, so it checks
+ * again rather than trusting the list it was given.
+ */
+const removeHarvestedNodes: WorkflowState["removeHarvestedNodes"] = (nodeIds) => {
+  const { workflow, hiddenItems, itemKeyByPointer, pointerByHierarchicalKey } = get();
+  if (!workflow || nodeIds.length === 0) return 0;
+
+  const links = workflow.links ?? [];
+  const doomed = new Set(
+    nodeIds.filter((id) => {
+      const node = (workflow.nodes ?? []).find((candidate) => candidate.id === id);
+      if (!node) return false;
+      return !links.some((link) => link[1] === id);
+    }),
+  );
+  if (doomed.size === 0) return 0;
+
+  const survivingLinks = links.filter((link) => !doomed.has(link[1]) && !doomed.has(link[3]));
+  // Slot caches name link ids, so the nodes that FED the removed ones are left
+  // citing links that no longer exist — an output reading as connected to
+  // nothing. Rebuild them from the link table rather than trusting what the
+  // nodes carried in.
+  const next: Workflow = {
+    ...workflow,
+    nodes: (workflow.nodes ?? [])
+      .filter((node) => !doomed.has(node.id))
+      .map((node) => ({
+        ...node,
+        inputs: (node.inputs ?? []).map((input, index) => ({
+          ...input,
+          link: survivingLinks.find(
+            (link) => link[3] === node.id && link[4] === index,
+          )?.[0] ?? null,
+        })),
+        outputs: (node.outputs ?? []).map((output, index) => {
+          const found = survivingLinks
+            .filter((link) => link[1] === node.id && link[2] === index)
+            .map((link) => link[0]);
+          return {
+            ...output,
+            links: found.length > 0 ? found : Array.isArray(output.links) ? [] : null,
+          };
+        }),
+      })),
+    links: survivingLinks,
+  };
+
+  runUndoTransaction(() => {
+    const nextLayout = buildLayoutForWorkflow(
+      next,
+      layoutRecordFromPointerRecord(hiddenItems, pointerByHierarchicalKey),
+    );
+    const reconciled = reconcilePointerRegistry(
+      nextLayout,
+      itemKeyByPointer,
+      pointerByHierarchicalKey,
+    );
+    set({
+      workflow: annotateWorkflowWithHierarchicalKeys(next, reconciled.layoutToStable),
+      mobileLayout: nextLayout,
+      itemKeyByPointer: reconciled.layoutToStable,
+      pointerByHierarchicalKey: reconciled.stableToLayout,
+    });
+  });
+  return doomed.size;
+};
+
+const popNodeOutToRoot: WorkflowState["popNodeOutToRoot"] = (itemKey) => {
+  const {
+    workflow,
+    hiddenItems,
+    connectionHighlightModes,
+    itemKeyByPointer,
+    pointerByHierarchicalKey,
+  } = get();
+  if (!workflow) return null;
+  const identity = resolveNodeIdentityFromHierarchicalKey(workflow, itemKey);
+  if (!identity?.subgraphId) return null;
+
+  const popped = popNodeOutOfSubgraph(workflow, identity.subgraphId, identity.nodeId);
+  if (!popped) return null;
+  // Popping out can add boundary slots to every definition the node climbed
+  // through; re-seat each instance's values by name against the boundary as
+  // it stood before.
+  const poppedWorkflow = reconcileChangedBoundaries(
+    workflow,
+    popped.workflow,
+    get().nodeTypes,
+  );
+
+  const nextHiddenItems = { ...hiddenItems };
+  const nextHighlightModes = { ...connectionHighlightModes };
+  delete nextHiddenItems[itemKey];
+  delete nextHighlightModes[itemKey];
+  const nextLayout = buildLayoutForWorkflow(
+    poppedWorkflow,
+    layoutRecordFromPointerRecord(nextHiddenItems, pointerByHierarchicalKey),
+  );
+  const reconciled = reconcilePointerRegistry(
+    nextLayout,
+    itemKeyByPointer,
+    pointerByHierarchicalKey,
+  );
+  const annotated = annotateWorkflowWithHierarchicalKeys(
+    poppedWorkflow,
+    reconciled.layoutToStable,
+  );
+
+  set({
+    workflow: annotated,
+    scopeStack: [{ type: "root" }],
+    hiddenItems: nextHiddenItems,
+    connectionHighlightModes: nextHighlightModes,
+    mobileLayout: nextLayout,
+    itemKeyByPointer: reconciled.layoutToStable,
+    pointerByHierarchicalKey: reconciled.stableToLayout,
+  });
+
+  const firstRootNode = annotated.nodes.find((node) => node.id === popped.rootNodeIds[0]);
+  if (firstRootNode?.itemKey) {
+    const rootItemKey = firstRootNode.itemKey;
+    setTimeout(() => get().scrollToNode(rootItemKey), 50);
+  }
+  return { kind: popped.kind, rootNodeIds: popped.rootNodeIds };
+};
+
+const createSubgraphFromItems: WorkflowState["createSubgraphFromItems"] = (
+  itemKeys,
+  name,
+) => {
+  const { workflow, hiddenItems, itemKeyByPointer, pointerByHierarchicalKey } = get();
+  if (!workflow) return null;
+  const subgraphId = currentScopeSubgraphId();
+
+  const nodeIds: number[] = [];
+  const groupIds: number[] = [];
+  for (const key of itemKeys) {
+    const container = resolveContainerIdentityFromHierarchicalKey(
+      workflow,
+      key,
+      pointerByHierarchicalKey,
+    );
+    if (container?.type === "group") {
+      if ((container.subgraphId ?? null) === subgraphId) groupIds.push(container.groupId);
+      continue;
+    }
+    const identity = resolveNodeIdentityFromHierarchicalKey(workflow, key);
+    // Only this scope: a selection cannot span scopes, and a stray key from
+    // another one would silently pull a node out of a subgraph it belongs to.
+    if (identity && (identity.subgraphId ?? null) === subgraphId) nodeIds.push(identity.nodeId);
+  }
+
+  const created = createSubgraphFromSelection(
+    workflow,
+    subgraphId,
+    { nodeIds, groupIds },
+    name,
+  );
+  if (!created) return null;
+
+  let result: ReturnType<WorkflowState["createSubgraphFromItems"]> = null;
+  runUndoTransaction(() => {
+    const nextLayout = buildLayoutForWorkflow(
+      created.workflow,
+      layoutRecordFromPointerRecord(hiddenItems, pointerByHierarchicalKey),
+    );
+    const reconciled = reconcilePointerRegistry(
+      nextLayout,
+      itemKeyByPointer,
+      pointerByHierarchicalKey,
+    );
+    const annotated = annotateWorkflowWithHierarchicalKeys(
+      created.workflow,
+      reconciled.layoutToStable,
+    );
+    set({
+      workflow: annotated,
+      mobileLayout: nextLayout,
+      itemKeyByPointer: reconciled.layoutToStable,
+      pointerByHierarchicalKey: reconciled.stableToLayout,
+    });
+    const placeholder = (subgraphId
+      ? annotated.definitions?.subgraphs?.find((sg) => sg.id === subgraphId)?.nodes
+      : annotated.nodes
+    )?.find((node) => node.id === created.placeholderNodeId);
+    result = {
+      subgraphId: created.subgraphId,
+      placeholderItemKey: placeholder?.itemKey ?? null,
+      inputCount: created.inputCount,
+      outputCount: created.outputCount,
+    };
+  });
+  return result;
+};
+
+const createGroupFromItems: WorkflowState["createGroupFromItems"] = (itemKeys) => {
+  const {
+    workflow,
+    hiddenItems,
+    itemKeyByPointer,
+    mobileLayout,
+    pointerByHierarchicalKey,
+    nodeTypes,
+  } = get();
   if (!workflow) return;
   const subgraphId = currentScopeSubgraphId();
   const subgraphDefs = workflow.definitions?.subgraphs ?? [];
@@ -983,14 +1522,60 @@ const createGroupFromItems: WorkflowState["createGroupFromItems"] = (itemKeys) =
       ? workflow.nodes
       : subgraphDefs.find((sg) => sg.id === subgraphId)?.nodes ?? [];
 
-  // Selected nodes in this scope (subgraph placeholders included).
+  // Selected GROUPS move into the new group as intact units — their members
+  // travel with them instead of being pulled out into the new group directly
+  // (which left the old group behind as an empty shell).
+  const selectedGroupIds: number[] = [];
+  for (const key of itemKeys) {
+    const container = resolveContainerIdentityFromHierarchicalKey(
+      workflow,
+      key,
+      get().pointerByHierarchicalKey,
+    );
+    if (!container || container.type !== "group") continue;
+    if ((container.subgraphId ?? null) !== subgraphId) continue;
+    if (selectedGroupIds.includes(container.groupId)) continue;
+    selectedGroupIds.push(container.groupId);
+  }
+  const groupMoveSelection = collectGroupMoveSelection(
+    workflow,
+    subgraphId,
+    selectedGroupIds,
+  );
+
+  // Selected loose nodes in this scope (subgraph placeholders included) —
+  // minus nodes that already travel with a selected group.
   const idSet = new Set<number>();
   for (const key of itemKeys) {
     const identity = resolveNodeIdentityFromHierarchicalKey(workflow, key);
     if (identity && identity.subgraphId === subgraphId) idSet.add(identity.nodeId);
   }
-  const memberIds = scopeNodes.filter((n) => idSet.has(n.id)).map((n) => n.id);
-  if (memberIds.length === 0) return;
+  const memberIds = scopeNodes
+    .filter((n) => idSet.has(n.id) && !groupMoveSelection.nodeIds.has(n.id))
+    .map((n) => n.id);
+  if (memberIds.length === 0 && selectedGroupIds.length === 0) return;
+
+  // Capture the selected item's current rendered position before staging moves
+  // any graph geometry. This is where the replacement group belongs in the
+  // mobile hierarchy, including when the first selected item is nested.
+  const selectionStart = findTopmostMatchingItemInLayout(
+    mobileLayout,
+    subgraphId == null
+      ? { scope: "root" }
+      : { scope: "subgraph", subgraphId },
+    (item) => {
+      if (item.type === "node") return idSet.has(item.id);
+      if (item.type === "subgraph") {
+        const placeholderNodeId = item.nodeId
+          ?? scopeNodes.find((node) => node.type === item.id)?.id;
+        return placeholderNodeId != null && idSet.has(placeholderNodeId);
+      }
+      if (item.type === "group") return selectedGroupIds.includes(item.id);
+      return (mobileLayout.hiddenBlocks[item.blockId] ?? []).some((nodeId) =>
+        idSet.has(nodeId),
+      );
+    },
+  );
 
   // Create the group in a FRESH empty area at the bottom of the scope, then
   // RELOCATE exactly the selected nodes into it. Drawing the group's box
@@ -1034,13 +1619,20 @@ const createGroupFromItems: WorkflowState["createGroupFromItems"] = (itemKeys) =
           },
         };
 
-  // Reposition the selected nodes into the new (empty) group and grow its
-  // box to fit exactly them.
-  const nextWorkflow = placePastedNodesIntoGroup(
+  // Reposition the selected loose nodes into the new (empty) group and grow
+  // its box to fit them, then relocate selected groups below them as intact
+  // units (rect + members together, relative geometry preserved).
+  let nextWorkflow = placePastedNodesIntoGroup(
     workflowWithGroup,
     newGroupId,
     subgraphId,
     memberIds,
+  );
+  nextWorkflow = placeGroupsIntoGroup(
+    nextWorkflow,
+    newGroupId,
+    subgraphId,
+    selectedGroupIds,
   );
 
   // Rebuild the layout; with the group sitting in a clean area containing
@@ -1049,19 +1641,54 @@ const createGroupFromItems: WorkflowState["createGroupFromItems"] = (itemKeys) =
     nextWorkflow,
     layoutRecordFromPointerRecord(hiddenItems, pointerByHierarchicalKey),
   );
+  let normalizedLayout = normalizeMobileLayoutGroupKeys(rebuiltLayout);
+  if (selectionStart) {
+    const newGroupRef: ItemRef = {
+      type: "group",
+      id: newGroupId,
+      subgraphId,
+      itemKey: newGroupHierarchicalKey,
+    };
+    const stagedLocation = findItemInLayout(normalizedLayout, newGroupRef);
+    if (stagedLocation) {
+      normalizedLayout = moveItemInLayout(
+        normalizedLayout,
+        newGroupRef,
+        stagedLocation.containerId,
+        stagedLocation.index,
+        selectionStart.containerId,
+        selectionStart.index,
+      );
+    }
+  }
   const reconciled = reconcilePointerRegistry(
-    rebuiltLayout,
+    normalizedLayout,
     itemKeyByPointer,
     pointerByHierarchicalKey,
   );
-  const nextWorkflowWithHierarchicalKeys = annotateWorkflowWithHierarchicalKeys(
+
+  // Group assembly uses a temporary empty area so geometric membership cannot
+  // accidentally capture unselected nodes. Do not persist those staging
+  // coordinates: a normal reposition commit immediately recalculates the whole
+  // graph from this mobile hierarchy. Run that same pass here so creation is
+  // already geometry-stable and does not need a move-away/move-back repair.
+  const workflowWithHierarchicalKeys = annotateWorkflowWithHierarchicalKeys(
     nextWorkflow,
+    reconciled.layoutToStable,
+  );
+  const tidiedWorkflow = computeTidyWorkflowGeometry(
+    workflowWithHierarchicalKeys,
+    normalizedLayout,
+    nodeTypes,
+  );
+  const nextWorkflowWithHierarchicalKeys = annotateWorkflowWithHierarchicalKeys(
+    tidiedWorkflow,
     reconciled.layoutToStable,
   );
 
   set({
     workflow: nextWorkflowWithHierarchicalKeys,
-    mobileLayout: rebuiltLayout,
+    mobileLayout: normalizedLayout,
     itemKeyByPointer: reconciled.layoutToStable,
     pointerByHierarchicalKey: reconciled.stableToLayout,
     editContainerLabelRequest: {
@@ -1141,6 +1768,71 @@ const PRIMITIVE_NODE_TYPE_BY_VALUE_TYPE: Record<string, string> = {
   INT: "PrimitiveInt",
   FLOAT: "PrimitiveFloat",
   BOOLEAN: "PrimitiveBoolean",
+};
+
+/**
+ * Rename one widget's label, the way the desktop frontend does: the override
+ * lives on the node's input slot as `label`, so it survives a round trip and
+ * shows up there too.
+ *
+ * A widget with no serialized slot gets one first — stock's own rename has a
+ * documented gap for exactly that case (a socketless widget has nowhere to put
+ * the label), and materializing the slot closes it. Passing a blank label
+ * clears the override and returns the widget to its plain name.
+ */
+const setWidgetLabel: WorkflowState["setWidgetLabel"] = (
+  targetHierarchicalKey,
+  inputName,
+  label,
+) => {
+  const { workflow, pointerByHierarchicalKey } = get();
+  if (!workflow) return false;
+  const identity = resolveNodeIdentityFromHierarchicalKey(
+    workflow,
+    targetHierarchicalKey,
+    pointerByHierarchicalKey,
+  );
+  if (!identity) return false;
+  const scope = resolveScopeForHierarchicalKey(workflow, targetHierarchicalKey);
+  const node = scope.nodes.find((candidate) => candidate.id === identity.nodeId);
+  if (!node) return false;
+
+  const trimmed = label.trim();
+  const slot = node.inputs.findIndex(
+    (input) => input.widget?.name === inputName || input.name === inputName,
+  );
+
+  const nextInputs = slot >= 0
+    ? node.inputs.map((input, index) => {
+        if (index !== slot) return input;
+        if (!trimmed) {
+          const rest = { ...input };
+          delete rest.label;
+          return rest;
+        }
+        return { ...input, label: trimmed };
+      })
+    : trimmed
+      ? [
+          ...node.inputs,
+          {
+            name: inputName,
+            type: "*",
+            widget: { name: inputName },
+            link: null,
+            label: trimmed,
+          } as WorkflowInput,
+        ]
+      : node.inputs;
+
+  if (nextInputs === node.inputs) return false;
+  set({
+    workflow: updateNodeInScope(workflow, scope, identity.nodeId, (candidate: WorkflowNode) => ({
+      ...candidate,
+      inputs: nextInputs,
+    })),
+  });
+  return true;
 };
 
 const ensureWidgetInputSlot: WorkflowState["ensureWidgetInputSlot"] = (
@@ -1342,6 +2034,7 @@ const popWidgetToPrimitive: WorkflowState["popWidgetToPrimitive"] = (
 });
 
 const enterSubgraph: WorkflowState["enterSubgraph"] = (placeholderNodeId) => {
+  closeAnyRowMenu();
   const { scopeStack, workflow } = get();
   if (!workflow) return;
   const scope = resolveCurrentScope(scopeStack, workflow);
@@ -1356,24 +2049,117 @@ const enterSubgraph: WorkflowState["enterSubgraph"] = (placeholderNodeId) => {
 };
 
 const exitSubgraph: WorkflowState["exitSubgraph"] = () => {
-  const { scopeStack } = get();
+  closeAnyRowMenu();
+  const { scopeStack, workflow } = get();
   if (scopeStack.length <= 1) return;
+  const top = scopeStack[scopeStack.length - 1];
   set({ scopeStack: scopeStack.slice(0, -1) });
+
+  // Having switched instances while inside, the user's attention is on the
+  // instance they switched TO, not the one they came in by — and the scroll
+  // memory would put them back at the latter. Land on the former instead.
+  if (
+    top?.type === "subgraph" &&
+    top.enteredPlaceholderNodeId != null &&
+    top.enteredPlaceholderNodeId !== top.placeholderNodeId
+  ) {
+    const parentScope = resolveCurrentScope(scopeStack.slice(0, -1), workflow as Workflow);
+    const landing = parentScope.nodes.find((n) => n.id === top.placeholderNodeId);
+    if (landing?.itemKey) {
+      const itemKey = landing.itemKey;
+      // After the scope change has rendered, so the card exists to scroll to.
+      setTimeout(() => get().scrollToNode(itemKey), 50);
+    }
+  }
+};
+
+// Switch which instance the current subgraph scope is read through. The nodes
+// on screen do not change — they belong to the type — but the boundary's outer
+// connections and per-instance labels do.
+const setScopeInstance: WorkflowState["setScopeInstance"] = (placeholderNodeId) => {
+  closeAnyRowMenu();
+  const { scopeStack, workflow } = get();
+  if (!workflow) return;
+  const top = scopeStack[scopeStack.length - 1];
+  if (top?.type !== "subgraph" || top.placeholderNodeId === placeholderNodeId) return;
+
+  // Constrain by type: an unrelated same-numbered node in another scope would
+  // otherwise win the search and the type check below would bail the switch.
+  const parentTrail = findScopeTrailForPlaceholder(workflow, placeholderNodeId, {
+    expectedType: top.id,
+  });
+  if (!parentTrail) return;
+  const parentScope = resolveCurrentScope(parentTrail, workflow);
+  const placeholder = parentScope.nodes.find((n) => n.id === placeholderNodeId);
+  // Only another instance of the SAME type: anything else would be a different
+  // subgraph wearing this scope's nodes.
+  if (placeholder?.type !== top.id) return;
+
+  set({
+    scopeStack: [
+      ...parentTrail,
+      {
+        type: "subgraph",
+        id: top.id,
+        placeholderNodeId,
+        enteredPlaceholderNodeId: top.enteredPlaceholderNodeId ?? top.placeholderNodeId,
+      },
+    ],
+  });
 };
 
 const exitToRoot: WorkflowState["exitToRoot"] = () => {
+  closeAnyRowMenu();
   set({ scopeStack: [{ type: "root" }] });
 };
 
 const exitToDepth: WorkflowState["exitToDepth"] = (depth) => {
+  closeAnyRowMenu();
   const { scopeStack } = get();
   if (scopeStack.length <= depth) return;
   set({ scopeStack: scopeStack.slice(0, depth) });
 };
 
+const setScopeTrail: WorkflowState["setScopeTrail"] = (trail) => {
+  closeAnyRowMenu();
+  const { workflow, scopeStack } = get();
+  if (!workflow || trail.length === 0 || trail[0].type !== "root") return;
+  // Every frame must still name a live placeholder of its own type: a trail
+  // built before an edit could otherwise strand the panel in a scope that no
+  // longer exists.
+  let nodes = workflow.nodes ?? [];
+  for (const frame of trail.slice(1)) {
+    if (frame.type !== "subgraph") return;
+    const placeholder = nodes.find(
+      (n) => n.id === frame.placeholderNodeId && n.type === frame.id,
+    );
+    const definition = (workflow.definitions?.subgraphs ?? []).find((sg) => sg.id === frame.id);
+    if (!placeholder || !definition) return;
+    nodes = definition.nodes ?? [];
+  }
+  const unchanged =
+    scopeStack.length === trail.length &&
+    scopeStack.every((frame, index) => {
+      const next = trail[index];
+      if (frame.type !== next.type) return false;
+      if (frame.type === "root") return true;
+      const nextFrame = next as { id: string; placeholderNodeId: number };
+      // The instance matters, not just the definition: two placeholders of
+      // one type share nodes but not outer wiring, so a trail naming the
+      // other instance is a real change, not a no-op.
+      return (
+        frame.id === nextFrame.id &&
+        frame.placeholderNodeId === nextFrame.placeholderNodeId
+      );
+    });
+  if (unchanged) return;
+  set({ scopeStack: trail });
+};
+
 const navigateToSubgraphTrail: WorkflowState["navigateToSubgraphTrail"] = (
   subgraphIds,
 ) => {
+  closeAnyRowMenu();
   const { workflow, scopeStack } = get();
   if (!workflow) return false;
   const nextScopeStack = buildScopeStackForSubgraphTrail(workflow, subgraphIds);
@@ -1391,5 +2177,5 @@ const navigateToSubgraphTrail: WorkflowState["navigateToSubgraphTrail"] = (
   return true;
 };
 
-  return { deleteNode, collapseSetGetNodes, connectNodes, disconnectInput, addNode, duplicateNode, pasteClipboard, copyContainer, pasteIntoContainer, addGroupNearNode, copySelectedItems, deleteSelectedItems, createGroupFromItems, addNodeAndConnect, ensureWidgetInputSlot, popWidgetToPrimitive, enterSubgraph, exitSubgraph, exitToRoot, exitToDepth, navigateToSubgraphTrail };
+  return { setScopeInstance, setScopeTrail, deleteNode, collapseSetGetNodes, connectNodes, disconnectInput, addNode, duplicateNode, pasteClipboard, copyContainer, duplicateContainer, pasteIntoContainer, addGroupNearNode, copySelectedItems, deleteSelectedItems, createGroupFromItems, createSubgraphFromItems, moveItemsIntoSubgraph, removeHarvestedNodes, popNodeOutToRoot, addNodeAndConnect, ensureWidgetInputSlot, setWidgetLabel, popWidgetToPrimitive, enterSubgraph, exitSubgraph, exitToRoot, exitToDepth, navigateToSubgraphTrail };
 }

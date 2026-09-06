@@ -96,6 +96,31 @@ describe('seed bounds respect the node input max', () => {
       expect(seed).toBeLessThanOrEqual(4294967295);
     }
   });
+
+  it('generates whole-number seeds', () => {
+    // object_info carries the input's real step (default 1); the old /10
+    // scaling snapped randomized seeds to multiples of 0.1 and queued values
+    // like 1370518175.6 — hidden by the server's int() coercion, but shown in
+    // the widget and kept forever by increment.
+    const node = makeSeedNode('CappedSeedNode', [0, 'randomize']);
+    for (let i = 0; i < 200; i += 1) {
+      expect(Number.isInteger(generateSeedFromNode(cappedSeedNodeTypes, node))).toBe(true);
+    }
+  });
+
+  it('snaps generated seeds to a declared whole-number step', () => {
+    const steppedTypes = {
+      SteppedSeedNode: {
+        input: { required: { seed: ['INT', { min: 0, max: 4294967295, step: 8 }] } },
+        output: [], output_name: [], name: 'SteppedSeedNode', display_name: 'SteppedSeedNode',
+        description: '', python_module: '', category: 'test',
+      },
+    } as unknown as NodeTypes;
+    const node = makeSeedNode('SteppedSeedNode', [0, 'randomize']);
+    for (let i = 0; i < 200; i += 1) {
+      expect(generateSeedFromNode(steppedTypes, node) % 8).toBe(0);
+    }
+  });
 });
 
 describe('isSpecialSeedValue', () => {
@@ -283,5 +308,38 @@ describe('findSeedWidgetIndex', () => {
     );
 
     expect(seedIndex).toBe(3);
+  });
+
+  it('uses canonical input identity after a promoted seed is relabelled', () => {
+    const workflow = {
+      last_node_id: 1,
+      last_link_id: 0,
+      nodes: [{
+        id: 1,
+        type: 'subgraph-placeholder',
+        pos: [0, 0] as [number, number],
+        size: [200, 100] as [number, number],
+        flags: {},
+        order: 0,
+        mode: 0,
+        inputs: [],
+        outputs: [],
+        properties: {},
+        widgets_values: [123],
+      }],
+      links: [],
+      groups: [],
+      config: {},
+      version: 1,
+    };
+
+    expect(findSeedWidgetIndex(workflow, null, workflow.nodes[0], {
+      widgetDescriptors: [{
+        name: 'Interpolation seed',
+        inputName: 'seed',
+        type: 'INT',
+        widgetIndex: 0,
+      }],
+    })).toBe(0);
   });
 });

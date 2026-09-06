@@ -4,7 +4,8 @@ import type {
   WorkflowNode,
   WorkflowSubgraphDefinition,
 } from '@/api/types';
-import { duplicateWorkflowNode } from '@/utils/duplicateNode';
+import { duplicateWorkflowNode, uniquifySubgraphName } from '@/utils/duplicateNode';
+import { getInstanceNumber, getMobileDefMeta } from '@/utils/canonicalWorkflowOps';
 
 function node(partial: Partial<WorkflowNode> & { id: number; type: string }): WorkflowNode {
   return {
@@ -145,40 +146,84 @@ describe('duplicateWorkflowNode — subgraph placeholder', () => {
     definitions: { subgraphs: [sgDef] },
   });
 
-  it('deep-copies the definition with fresh inner ids and a new placeholder', () => {
+  it('makes another instance of the definition rather than forking it', () => {
+    // The copy is a copy: the type is shared, so the two stay the same shape
+    // and an edit inside reaches both. Forking is a separate, deliberate act.
     const result = duplicateWorkflowNode(workflow, 'root/node:7');
     expect(result).not.toBeNull();
     const { workflow: next, newNodeId } = result!;
 
-    // A second definition exists, with a distinct id.
-    const subgraphs = next.definitions!.subgraphs!;
-    expect(subgraphs).toHaveLength(2);
-    const newDef = subgraphs.find((sg) => sg.id !== 'SG')!;
-    expect(newDef.id).not.toBe('SG');
-
-    // Inner nodes were re-id'd above the workflow max (101); originals untouched.
-    const innerIds = newDef.nodes.map((n) => n.id).sort((a, b) => a - b);
-    expect(innerIds).toEqual([102, 103]);
+    expect(next.definitions!.subgraphs!).toHaveLength(1);
+    const copy = next.nodes.find((n) => n.id === newNodeId)!;
+    expect(copy.type).toBe('SG');
+    // The original inner nodes are untouched — nothing was cloned.
     expect(sgDef.nodes.map((n) => n.id)).toEqual([100, 101]);
 
-    // Inner links remap endpoints but keep boundary sentinels.
-    const boundaryIn = newDef.links.find((l) => l.origin_id === -10)!;
-    expect(boundaryIn.target_id).toBe(102);
-    const boundaryOut = newDef.links.find((l) => l.target_id === -20)!;
-    expect(boundaryOut.origin_id).toBe(103);
-    const innerLink = newDef.links.find((l) => l.origin_id > 0 && l.target_id > 0)!;
-    expect(innerLink.origin_id).toBe(102);
-    expect(innerLink.target_id).toBe(103);
-
-    // The new placeholder points at the new definition, keeps values, copies the
-    // input connection, and drops the external output.
-    const copy = next.nodes.find((n) => n.id === newNodeId)!;
-    expect(copy.type).toBe(newDef.id);
+    // Per-instance widget values are copied, not aliased.
     expect(copy.widgets_values).toEqual(['promoted']);
-    expect(copy.outputs[0].links).toBeNull();
+    expect(copy.widgets_values).not.toBe(workflow.nodes[1].widgets_values);
+    // Incoming connection recreated; external output dropped.
     expect(copy.inputs[0].link).not.toBeNull();
+    expect(copy.outputs[0].links).toBeNull();
     const newInputLink = next.links.find((l) => l[0] === copy.inputs[0].link)!;
     expect(newInputLink[1]).toBe(1); // from source node
     expect(newInputLink[3]).toBe(newNodeId);
+  });
+
+  it('numbers both instances when the definition had never been numbered', () => {
+    // A subgraph that arrived from desktop has no instance numbers at all.
+    // They are handed out here, at the first moment a number means anything.
+    const { workflow: next, newNodeId } = duplicateWorkflowNode(workflow, 'root/node:7')!;
+
+    expect(getInstanceNumber(next.nodes.find((n) => n.id === 7)!)).toBe(1);
+    expect(getInstanceNumber(next.nodes.find((n) => n.id === newNodeId)!)).toBe(2);
+    expect(getMobileDefMeta(next.definitions!.subgraphs![0]).nextInstanceNumber).toBe(3);
+  });
+
+  it('takes the next instance number from the definition counter', () => {
+    const promoted = {
+      ...workflow,
+      definitions: {
+        subgraphs: [
+          {
+            ...sgDef,
+            name: 'Upscale',
+            extra: { 'comfyui-mobile': { promoted: true, nextInstanceNumber: 2 } },
+          },
+        ],
+      },
+    };
+    const result = duplicateWorkflowNode(promoted, 'root/node:7');
+    expect(result).not.toBeNull();
+    const { workflow: next, newNodeId } = result!;
+
+    const copy = next.nodes.find((n) => n.id === newNodeId)!;
+    // The counter is what hands out the number, not the instance count — a
+    // deleted instance must not have its number reused by the next one.
+    expect(getInstanceNumber(copy)).toBe(2);
+    expect(getMobileDefMeta(next.definitions!.subgraphs![0]).nextInstanceNumber).toBe(3);
+  });
+});
+
+describe('uniquifySubgraphName', () => {
+  const defs = (...names: Array<string | undefined>) =>
+    names.map((name, i) => ({ id: `d${i}`, name, nodes: [], links: [] }));
+
+  it('returns the base unchanged when free', () => {
+    expect(uniquifySubgraphName('Foo', defs('Bar'))).toBe('Foo');
+  });
+
+  it('appends the lowest free suffix when taken', () => {
+    expect(uniquifySubgraphName('Foo', defs('Foo'))).toBe('Foo 2');
+    expect(uniquifySubgraphName('Foo', defs('Foo', 'Foo 2'))).toBe('Foo 3');
+  });
+
+  it('strips an existing numeric suffix before counting up', () => {
+    expect(uniquifySubgraphName('Foo 2', defs('Foo', 'Foo 2'))).toBe('Foo 3');
+  });
+
+  it('falls back to "Subgraph" for unnamed definitions', () => {
+    expect(uniquifySubgraphName(undefined, defs('Bar'))).toBe('Subgraph');
+    expect(uniquifySubgraphName(undefined, defs('Subgraph'))).toBe('Subgraph 2');
   });
 });

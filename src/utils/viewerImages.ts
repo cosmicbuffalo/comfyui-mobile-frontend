@@ -13,6 +13,8 @@ export interface ViewerImage {
   mediaType?: MediaType;
   metadata?: ReturnType<typeof extractMetadata>;
   workflow?: Workflow;
+  /** Concrete API prompt stored beside an output workflow in ComfyUI metadata. */
+  executedPrompt?: unknown;
   promptId?: string;
   durationSeconds?: number;
   success?: boolean;
@@ -116,6 +118,7 @@ export function buildViewerImages(
         mediaType,
         metadata,
         workflow: item.workflow,
+        executedPrompt: item.prompt,
         promptId: item.prompt_id,
         durationSeconds,
         success,

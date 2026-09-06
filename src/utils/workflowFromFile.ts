@@ -1,11 +1,19 @@
 import type { Workflow } from '@/api/types';
 import {
-  extractWorkflowFromImageFile,
+  extractWorkflowMetadataFromImageFile,
   isWorkflowImageFile,
 } from '@/utils/imageWorkflowMetadata';
 
 type WorkflowFileResult =
-  | { kind: 'workflow'; workflow: Workflow; filename: string }
+  | {
+      kind: 'workflow';
+      workflow: Workflow;
+      filename: string;
+      executedPrompt?: unknown;
+      // The filename names the file it came out of (an image), not a workflow
+      // the user named — Save must ask for a real name.
+      filenameIsPlaceholder?: boolean;
+    }
   // A recognized image that simply carries no embedded workflow (user-facing
   // "this image has no workflow" modal).
   | { kind: 'no-workflow'; filename: string }
@@ -35,14 +43,22 @@ function validateWorkflowShape(data: unknown): data is Workflow {
  */
 export async function readWorkflowFromFile(file: File): Promise<WorkflowFileResult> {
   if (isWorkflowImageFile(file)) {
-    let workflow: Workflow | null = null;
+    let metadata: Awaited<ReturnType<typeof extractWorkflowMetadataFromImageFile>> = null;
     try {
-      workflow = await extractWorkflowFromImageFile(file);
+      metadata = await extractWorkflowMetadataFromImageFile(file);
     } catch {
-      workflow = null;
+      metadata = null;
     }
-    return workflow
-      ? { kind: 'workflow', workflow, filename: file.name }
+    return metadata
+      ? {
+          kind: 'workflow',
+          workflow: metadata.workflow,
+          filename: file.name,
+          filenameIsPlaceholder: true,
+          ...(metadata.prompt !== undefined
+            ? { executedPrompt: metadata.prompt }
+            : {}),
+        }
       : { kind: 'no-workflow', filename: file.name };
   }
 

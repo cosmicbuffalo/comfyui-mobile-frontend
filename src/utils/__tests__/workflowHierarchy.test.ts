@@ -88,4 +88,34 @@ describe('collectBypassGroupTargetNodes', () => {
     expect(rootIds.sort()).toEqual([1, 2]);
     expect(targets).toContainEqual({ nodeId: 400, subgraphId: rootDef.id });
   });
+
+  it('optionally includes nodes assigned to descendant groups in the same scope', () => {
+    const wf = baseWorkflow({
+      nodes: [
+        node({ id: 1, type: 'OuterDirect', pos: [450, 40] }),
+        node({ id: 2, type: 'NestedMember', pos: [10, 40] }),
+        node({ id: 3, type: 'Outside', pos: [900, 900] }),
+      ],
+      groups: [
+        { id: 5, title: 'Outer', color: '#444', bounding: [0, 0, 700, 400] },
+        { id: 6, title: 'Inner', color: '#555', bounding: [0, 0, 300, 300] },
+      ],
+    });
+
+    const directIds = collectBypassGroupTargetNodes(wf, 5, null)
+      .filter((target) => target.subgraphId == null)
+      .map((target) => target.nodeId);
+    expect(directIds).toEqual([1]);
+
+    const recursiveIds = collectBypassGroupTargetNodes(
+      wf,
+      5,
+      null,
+      { includeDescendantGroups: true },
+    )
+      .filter((target) => target.subgraphId == null)
+      .map((target) => target.nodeId)
+      .sort();
+    expect(recursiveIds).toEqual([1, 2]);
+  });
 });

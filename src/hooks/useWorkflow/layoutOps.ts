@@ -213,11 +213,12 @@ export function updateNodeWidgetValues(
   }
 
   let newWidgetValues = [...node.widgets_values];
-  if (widgetIndex >= newWidgetValues.length) {
-    newWidgetValues.push(value);
-  } else {
-    newWidgetValues[widgetIndex] = value;
-  }
+  // Pad, never push: widgetIndex is a fixed slot in the node's widget order, so
+  // appending would silently retarget the write. Subgraph placeholders routinely
+  // ship `widgets_values: []` while exposing widgets at boundary index 3, 6, …,
+  // and a pushed value would then be read back as the FIRST widget's value.
+  while (newWidgetValues.length < widgetIndex) newWidgetValues.push(null);
+  newWidgetValues[widgetIndex] = value;
 
   if (isPowerLoraLoaderNodeType(node.type)) {
     newWidgetValues = newWidgetValues.filter((v) => v !== null);
