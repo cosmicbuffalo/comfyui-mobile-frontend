@@ -7,10 +7,22 @@ import type {
   WorkflowSubgraphLink
 } from '@/api/types';
 import { getNodePropertyWidgetIndexMap } from '@/utils/workflowInputs';
-import { getWidgetDefinitions, getInputWidgetDefinitions } from '@/utils/widgetDefinitions';
+import {
+  getWidgetDefinitions,
+  getInputWidgetDefinitions,
+  getPlaceholderValueIndexForBoundarySlot,
+} from '@/utils/widgetDefinitions';
 
 type RawLink = Omit<WorkflowSubgraphLink, 'id'>;
 const MOBILE_SUBGRAPH_GROUP_MAP_KEY = '__mobile_subgraph_group_map';
+
+/** LGraphEventMode.NEVER (mute) and .BYPASS — neither reaches the prompt. */
+export const MODE_MUTED = 2;
+export const MODE_BYPASS = 4;
+
+export function isInertMode(mode: number | undefined): boolean {
+  return mode === MODE_MUTED || mode === MODE_BYPASS;
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
@@ -18,24 +30,40 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 /**
  * Read a promoted input's value from the placeholder's own widgets_values.
- * Array form stores values in promoted-input order; record form by widget name.
+ * Array form stores values in full widget-typed subgraph-boundary order; record
+ * form stores them by widget name.
+ *
+ * `null` reads as "this instance holds no value here", the same as a missing
+ * entry. Every write path that has to land a value at a fixed index pads the
+ * gap below it (`updateNodeWidgetValues`, `applyWidgetWriteBacks`,
+ * `addPromotedValueToInstances`, `reconcileInstanceWidgetValues`), because the
+ * index IS the widget's identity and appending would retarget the write. Those
+ * pads are placeholders, not values — a template ships `widgets_values: []` and
+ * keeps the real values on its inner nodes, so editing ANY promoted widget
+ * above index 0 fills every slot beneath it with null. Returning those nulls
+ * pushed them into the inner nodes and overwrote real values: editing `steps`
+ * on a stock Text-to-Image subgraph blanked the sampler's seed, and ComfyUI
+ * rejected the branch with "Failed to convert an input value to a INT value:
+ * seed, None". null is not a legal widget value anywhere (litegraph's
+ * `isWidgetValue` rejects it), so nothing legitimate is lost by skipping it.
  */
 export function resolvePromotedInlineValue(
   placeholder: WorkflowNode,
   input: WorkflowNode['inputs'][number],
-  promotedIndex: number,
+  widgetIndex: number,
 ): unknown {
   const values = placeholder.widgets_values;
   if (Array.isArray(values)) {
-    return promotedIndex >= 0 && promotedIndex < values.length
-      ? values[promotedIndex]
+    const value = widgetIndex >= 0 && widgetIndex < values.length
+      ? values[widgetIndex]
       : undefined;
+    return value === null ? undefined : value;
   }
   if (isRecord(values)) {
     const widgetName = input.widget?.name;
-    if (widgetName && values[widgetName] !== undefined) return values[widgetName];
-    if (values[input.name] !== undefined) return values[input.name];
-    if (input.localized_name && values[input.localized_name] !== undefined) {
+    if (widgetName && values[widgetName] != null) return values[widgetName];
+    if (values[input.name] != null) return values[input.name];
+    if (input.localized_name && values[input.localized_name] != null) {
       return values[input.localized_name];
     }
   }
@@ -70,9 +98,18 @@ export function applyPromotedValueToTarget(
   let index: number | undefined;
   if (subgraphMap.has(innerNode.type)) {
     if (!targetInput) return;
+    const nestedSubgraph = subgraphMap.get(innerNode.type);
     const promoted = (innerNode.inputs ?? []).filter((inp) => inp.widget != null);
     const promotedIndex = promoted.indexOf(targetInput);
-    index = promotedIndex === -1 ? undefined : promotedIndex;
+    const boundaryInputIndex = (nestedSubgraph?.inputs ?? []).findIndex(
+      (input) => input.name === targetInput.name,
+    );
+    const boundaryWidgetIndex = getPlaceholderValueIndexForBoundarySlot(
+      innerNode,
+      nestedSubgraph,
+      boundaryInputIndex,
+    );
+    index = boundaryWidgetIndex ?? (promotedIndex === -1 ? undefined : promotedIndex);
   } else {
     index =
       getNodePropertyWidgetIndexMap(innerNode)?.[widgetName] ??
@@ -81,8 +118,15 @@ export function applyPromotedValueToTarget(
         getInputWidgetDefinitions(nodeTypes, innerNode).find((def) => def.name === widgetName)
       )?.widgetIndex;
   }
-  if (index === undefined || index < 0 || index >= values.length) return;
+  if (index === undefined || index < 0) return;
+  // Grow rather than bail when the index is past the end. A nested placeholder
+  // usually serializes `widgets_values: []` (its values live on the inner
+  // nodes), so bailing would drop every value promoted from an outer boundary
+  // before the next expansion pass could push it further down. The gap is left
+  // sparse, not null-filled: the next pass reads `undefined` as "no promoted
+  // value here" and leaves the inner node's own default alone.
   const next = [...values];
+  if (next.length <= index) next.length = index + 1;
   next[index] = value;
   innerNode.widgets_values = next;
 }
@@ -126,26 +170,77 @@ function getGroupIdForNode(
   return null;
 }
 
+/**
+ * Map a placeholder's own slot indices onto the subgraph definition's boundary
+ * slot indices.
+ *
+ * The placeholder's serialized `inputs[]`/`outputs[]` can be a shorter, stale
+ * subset of the definition's boundary list, so the two are NOT positionally
+ * aligned. ComfyUI reconciles them in `SubgraphNode._rebindInputSubgraphSlots`:
+ * each slot claims the first still-unclaimed boundary slot matching its
+ * `name:type` signature, falling back to a name-only match. Stock then discards
+ * anything unmatched — we keep a positional last resort instead, because our
+ * model keeps the placeholder's own slot list rather than rebuilding it from the
+ * definition, so dropping here would silently delete the user's link.
+ *
+ * The claim bookkeeping is the part that matters: without it two placeholder
+ * slots can map onto one boundary slot and duplicate its wiring.
+ */
 export function buildSlotMap(
-  parentEntries: Array<{ name?: string }>,
-  subgraphEntries: Array<{ name?: string }>
+  parentEntries: Array<{ name?: string; type?: unknown }>,
+  subgraphEntries: Array<{ name?: string; type?: unknown }>
 ): Map<number, number> {
   const slotMap = new Map<number, number>();
-  const subgraphByName = new Map<string, number>();
+  const claimed = new Set<number>();
+
+  const bySignature = new Map<string, number[]>();
+  const byName = new Map<string, number[]>();
+  const push = (index: Map<string, number[]>, key: string, slot: number) => {
+    const existing = index.get(key);
+    if (existing) existing.push(slot);
+    else index.set(key, [slot]);
+  };
   subgraphEntries.forEach((entry, index) => {
-    if (entry?.name) subgraphByName.set(entry.name, index);
+    if (!entry?.name) return;
+    push(bySignature, `${entry.name}:${String(entry.type ?? '')}`, index);
+    push(byName, entry.name, index);
   });
 
+  const takeUnclaimed = (candidates: number[] | undefined): number | undefined =>
+    candidates?.find((index) => !claimed.has(index));
+
+  // Every exact match first, across the whole list, before anyone falls back to
+  // position. Claiming greedily in one pass let a slot that no longer exists
+  // take the position of one that does: delete `positive` from the middle of a
+  // boundary and the old `positive` entry would claim index 1 — now
+  // `clip_vision_start_image` — before the real `clip_vision_start_image` entry
+  // reached its own name match, moving a live connection onto an unrelated
+  // input.
+  const unmatched: number[] = [];
   parentEntries.forEach((entry, index) => {
     const name = entry?.name;
-    if (name && subgraphByName.has(name)) {
-      slotMap.set(index, subgraphByName.get(name)!);
+    const signature = name === undefined ? undefined : `${name}:${String(entry?.type ?? '')}`;
+    const matched =
+      (signature === undefined ? undefined : takeUnclaimed(bySignature.get(signature))) ??
+      (name === undefined ? undefined : takeUnclaimed(byName.get(name)));
+    if (matched === undefined) {
+      unmatched.push(index);
       return;
     }
-    if (index < subgraphEntries.length) {
-      slotMap.set(index, index);
-    }
+    claimed.add(matched);
+    slotMap.set(index, matched);
   });
+
+  // Only then, position — which is what carries a RENAMED slot, where the old
+  // entry names something the definition no longer has and the definition's
+  // slot at that index is still going spare. A deleted slot finds its position
+  // already claimed by the entry that legitimately matched it, and maps to
+  // nothing, which is what drops its links rather than moving them.
+  for (const index of unmatched) {
+    if (index >= subgraphEntries.length || claimed.has(index)) continue;
+    claimed.add(index);
+    slotMap.set(index, index);
+  }
 
   return slotMap;
 }
@@ -188,7 +283,16 @@ function expandWorkflowSubgraphsOnce(
   previousPromptKeyMap: Map<number, string>,
   nodeTypes: NodeTypes | null
 ): { workflow: Workflow; changed: boolean; promptKeyMap: Map<number, string> } {
-  const placeholderNodes = workflow.nodes.filter((node) => subgraphMap.has(node.type));
+  // A bypassed or muted subgraph placeholder is never expanded. ComfyUI skips it
+  // in graphToPrompt before `getInnerNodes()` runs, so none of its inner nodes
+  // reach the prompt; a bypassed one instead passes values through at its OWN
+  // boundary, matching an output slot to an input slot on the placeholder card
+  // (ExecutableNodeDTO._getBypassSlotIndex). Leaving the placeholder in place as
+  // an unexpanded mode-4/mode-2 node gives exactly that: resolveSource applies
+  // the same slot matching to it, and the prompt builder drops it.
+  const placeholderNodes = workflow.nodes.filter(
+    (node) => subgraphMap.has(node.type) && !isInertMode(node.mode),
+  );
   if (placeholderNodes.length === 0) {
     return { workflow, changed: false, promptKeyMap: previousPromptKeyMap };
   }
@@ -254,9 +358,6 @@ function expandWorkflowSubgraphsOnce(
       const mappedId = nextNodeId++;
       nodeIdMap.set(subNode.id, mappedId);
       const expandedNode = cloneNode(subNode, mappedId);
-      if (node.mode === 4) {
-        expandedNode.mode = 4;
-      }
       newNodes.push(expandedNode);
       clonedById.set(mappedId, expandedNode);
       // Hierarchical key: placeholderKey:innerNodeId
@@ -312,24 +413,35 @@ function expandWorkflowSubgraphsOnce(
       }
     }
 
-    // Promoted widget values: the placeholder's own widgets_values are the
-    // authoritative values for its promoted inputs (matching desktop execution
-    // semantics, and per-instance when several placeholders share a definition).
-    // Push them into this instance's cloned inner nodes so prompt building
-    // reads what the user sees on the placeholder card.
-    const promotedInputs = (node.inputs ?? []).filter((inp) => inp.widget != null);
-    promotedInputs.forEach((inp, promotedIndex) => {
-      if (inp.link != null) return; // connected: the link supplies the value
-      const value = resolvePromotedInlineValue(node, inp, promotedIndex);
+    // The placeholder's widgets_values are authoritative for every widget-typed
+    // boundary input, including inputs omitted from the placeholder's shorter
+    // inputs[] list. Push the complete boundary set into this instance's cloned
+    // inner nodes. A visible boundary input with a live link is the exception:
+    // expansion rewires that link below, so its stale inline value must not win.
+    const parentSlotByBoundarySlot = new Map<number, number>();
+    for (const [parentSlot, boundarySlot] of inputSlotMap) {
+      parentSlotByBoundarySlot.set(boundarySlot, parentSlot);
+    }
+    (subgraph.inputs ?? []).forEach((boundaryInput, boundarySlot) => {
+      const widgetIndex = getPlaceholderValueIndexForBoundarySlot(node, subgraph, boundarySlot);
+      if (widgetIndex === null || !boundaryInput.name) return;
+      const parentSlot = parentSlotByBoundarySlot.get(boundarySlot);
+      const parentInput = parentSlot === undefined ? undefined : node.inputs?.[parentSlot];
+      if (parentInput?.link != null) return;
+      const valueInput = parentInput ?? {
+        name: boundaryInput.name,
+        type: String(boundaryInput.type ?? ''),
+        link: null,
+        label: boundaryInput.label,
+        localized_name: boundaryInput.localized_name,
+      };
+      const value = resolvePromotedInlineValue(node, valueInput, widgetIndex);
       if (value === undefined) return;
-      const parentSlot = (node.inputs ?? []).indexOf(inp);
-      const mappedSlot = inputSlotMap.get(parentSlot);
-      if (mappedSlot === undefined) return;
-      for (const target of inputTargets.get(mappedSlot) ?? []) {
+      for (const target of inputTargets.get(boundarySlot) ?? []) {
         applyPromotedValueToTarget(
           clonedById.get(target.target_id),
           target.target_slot,
-          inp.widget?.name,
+          parentInput?.widget?.name ?? boundaryInput.name,
           value,
           subgraphMap,
           nodeTypes,

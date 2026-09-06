@@ -12,6 +12,7 @@ import {
   buildSlotMap,
   resolvePromotedInlineValue,
 } from '@/utils/expandWorkflowSubgraphs';
+import { getPlaceholderValueIndexForBoundarySlot } from '@/utils/widgetDefinitions';
 import {
   getLinkId,
   getLinkOriginId,
@@ -191,21 +192,32 @@ export function dissolveSubgraph(
       });
     }
 
-    // Bake promoted widget values into the promoted nodes — the placeholder
-    // (whose widgets_values were authoritative) is about to disappear.
-    const promotedInputs = (placeholder.inputs ?? []).filter((inp) => inp.widget != null);
-    promotedInputs.forEach((inp, promotedIndex) => {
-      if (inp.link != null) return;
-      const value = resolvePromotedInlineValue(placeholder, inp, promotedIndex);
+    // Bake every widget-typed boundary value into the promoted nodes — including
+    // values whose boundary inputs are absent from the placeholder's inputs[].
+    const parentSlotByBoundarySlot = new Map<number, number>();
+    for (const [parentSlot, boundarySlot] of inputSlotMap) {
+      parentSlotByBoundarySlot.set(boundarySlot, parentSlot);
+    }
+    (target.inputs ?? []).forEach((boundaryInput, boundarySlot) => {
+      const widgetIndex = getPlaceholderValueIndexForBoundarySlot(placeholder, target, boundarySlot);
+      if (widgetIndex === null || !boundaryInput.name) return;
+      const parentSlot = parentSlotByBoundarySlot.get(boundarySlot);
+      const parentInput = parentSlot === undefined ? undefined : placeholder.inputs?.[parentSlot];
+      if (parentInput?.link != null) return;
+      const valueInput = parentInput ?? {
+        name: boundaryInput.name,
+        type: String(boundaryInput.type ?? ''),
+        link: null,
+        label: boundaryInput.label,
+        localized_name: boundaryInput.localized_name,
+      };
+      const value = resolvePromotedInlineValue(placeholder, valueInput, widgetIndex);
       if (value === undefined) return;
-      const parentSlot = (placeholder.inputs ?? []).indexOf(inp);
-      const mappedSlot = inputSlotMap.get(parentSlot);
-      if (mappedSlot === undefined) return;
-      for (const endpoint of inputTargets.get(mappedSlot) ?? []) {
+      for (const endpoint of inputTargets.get(boundarySlot) ?? []) {
         applyPromotedValueToTarget(
           clonesById.get(endpoint.nodeId),
           endpoint.slot,
-          inp.widget?.name,
+          parentInput?.widget?.name ?? boundaryInput.name,
           value,
           subgraphMap,
           nodeTypes,
