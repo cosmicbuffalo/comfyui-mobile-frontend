@@ -64,6 +64,71 @@ describe('NodeCardOutputPreview', () => {
     );
   });
 
+  it('shows Edit mask only after its still preview loads successfully', async () => {
+    const onEditMask = vi.fn();
+    await act(async () => {
+      root.render(
+        <NodeCardOutputPreview
+          show
+          previewImage={{ filename: 'source.png', subfolder: 'input', type: 'input' }}
+          displayName="Load Image"
+          onEditMask={onEditMask}
+          isExecuting={false}
+          overallProgress={null}
+          displayNodeProgress={0}
+        />,
+      );
+    });
+
+    const image = container.querySelector<HTMLImageElement>('img')!;
+    expect(container.querySelector('.node-card-edit-mask')).toBeNull();
+
+    await act(async () => {
+      image.dispatchEvent(new Event('load', { bubbles: true }));
+    });
+    expect(container.querySelector('.node-card-edit-mask')).toBeTruthy();
+
+    await act(async () => {
+      image.dispatchEvent(new Event('error', { bubbles: true }));
+    });
+    expect(container.querySelector('.node-card-edit-mask')).toBeNull();
+  });
+
+  it('withholds Edit mask again while a new still loads over a loaded one', async () => {
+    const onEditMask = vi.fn();
+    const render = async (filename: string) => {
+      await act(async () => {
+        root.render(
+          <NodeCardOutputPreview
+            show
+            previewImage={{ filename, subfolder: 'input', type: 'input' }}
+            displayName="Load Image"
+            onEditMask={onEditMask}
+            isExecuting={false}
+            overallProgress={null}
+            displayNodeProgress={0}
+          />,
+        );
+      });
+    };
+
+    await render('first.png');
+    await act(async () => {
+      container.querySelector('img')!.dispatchEvent(new Event('load', { bubbles: true }));
+    });
+    expect(container.querySelector('.node-card-edit-mask')).toBeTruthy();
+
+    // A different image in the same node: the previous load must not vouch for
+    // it, or the editor opens on an image that may not even exist.
+    await render('second.png');
+    expect(container.querySelector('.node-card-edit-mask')).toBeNull();
+
+    await act(async () => {
+      container.querySelector('img')!.dispatchEvent(new Event('load', { bubbles: true }));
+    });
+    expect(container.querySelector('.node-card-edit-mask')).toBeTruthy();
+  });
+
   it('tiles all batch outputs into a grid when given more than one image', async () => {
     const previewImages = [
       { displaySrc: 'blob:a', alt: 'n' },

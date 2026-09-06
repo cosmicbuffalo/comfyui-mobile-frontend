@@ -68,4 +68,16 @@ describe('standard controls honor widgetControlHasTopPadding', () => {
     const rendered = await renderWidget(type, value, options);
     expect(rendered?.className).toContain('pt-2');
   });
+
+  it.each([
+    { label: 'single-line STRING', type: 'STRING', value: 'text', options: undefined },
+    { label: 'multiline STRING', type: 'STRING', value: 'text', options: { multiline: true } },
+    { label: 'INT', type: 'INT', value: 4, options: undefined },
+    { label: 'FLOAT', type: 'FLOAT', value: 1.5, options: undefined },
+  ])('$label renders a visible inline focus ring', async ({ type, value, options }) => {
+    const rendered = await renderWidget(type, value, options);
+    const input = rendered?.querySelector('input, textarea');
+    expect(input?.classList).toContain('focus:ring-2');
+    expect(input?.classList).toContain('focus:ring-cyan-400');
+  });
 });

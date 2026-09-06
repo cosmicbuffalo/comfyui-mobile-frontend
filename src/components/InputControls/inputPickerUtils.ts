@@ -1,4 +1,34 @@
 import type { AssetSource, FileItem, SortMode } from "@/api/client";
+import { splitPathAnnotation } from "@/utils/annotatedPath";
+
+export interface InputPickerSelectionLocation {
+  source: AssetSource;
+  folder: string | null;
+  fileId: string;
+}
+
+/** Resolve a combo's current file value into the browser location that owns it. */
+export function getInputPickerSelectionLocation(
+  value: unknown,
+  defaultSource: AssetSource = "input",
+): InputPickerSelectionLocation | null {
+  const candidate = Array.isArray(value) ? value[0] : value;
+  if (typeof candidate !== "string" || !candidate.trim()) return null;
+
+  const annotated = splitPathAnnotation(candidate.trim());
+  const path = annotated.path
+    .replace(/\\/g, "/")
+    .replace(/^\/+|\/+$/g, "");
+  if (!path) return null;
+
+  const source = annotated.type ?? defaultSource;
+  const slashIndex = path.lastIndexOf("/");
+  return {
+    source,
+    folder: slashIndex >= 0 ? path.slice(0, slashIndex) : null,
+    fileId: `${source}/${path}`,
+  };
+}
 
 export function getInputPickerValue(
   file: FileItem,

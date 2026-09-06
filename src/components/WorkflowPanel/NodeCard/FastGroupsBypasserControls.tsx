@@ -228,7 +228,21 @@ export function FastGroupsBypasserControls({
         group.itemKey,
         `group ${group.id}${subgraphId ? ` in subgraph ${subgraphId}` : ' in root graph'}`
       );
-      const targetNodes = collectBypassGroupTargetNodes(workflow, group.id, subgraphId);
+      // Only the group's OWN scope, which is exactly what bypassAllInContainer
+      // writes. A group holding a subgraph is bypassed through its placeholder
+      // — pushing mode into the definition would drag every other instance of a
+      // shared type along — so the inner nodes keep mode 0 whatever the group's
+      // state. Reading them here left the switch stuck on: it never flipped,
+      // and since its state decides the direction of the next press, the group
+      // could be turned off and then never turned back on.
+      const containerScopeId = subgraphId ?? null;
+      const targetNodes = collectBypassGroupTargetNodes(
+        workflow,
+        group.id,
+        subgraphId,
+        { includeDescendantGroups: true },
+      )
+        .filter((target) => (target.subgraphId ?? null) === containerScopeId);
       let isEngaged = false;
       for (const target of targetNodes) {
         const targetNode = resolveNode(target.nodeId, target.subgraphId);
@@ -381,7 +395,7 @@ export function FastGroupsBypasserControls({
       {fastGroupToggles.length > 0 && (
         <div className="mb-4">
           <div className="text-xs text-slate-400 mb-1.5 uppercase tracking-wide">
-            Groups
+            {t('Groups')}
           </div>
           <div className="space-y-2">
             {fastGroupToggles.map((entry) => (

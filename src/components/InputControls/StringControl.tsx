@@ -9,7 +9,9 @@ import { themeColors } from '@/theme/colors';
 import {
   controlInputBaseClassName,
   controlInputDarkClassName,
+  controlInputFocusClassNameForState,
   controlLabelClassName,
+  controlLabelRowClassName,
   controlModalFocusClassName,
   controlModalInputBaseClassName,
   controlStateClassName,
@@ -83,6 +85,7 @@ interface StringControlProps {
   onChange: (value: unknown) => void;
   disabled?: boolean;
   hideLabel?: boolean;
+  displayLabel?: string;
   hasPin: boolean;
   isPinned?: boolean;
   onTogglePin?: () => void;
@@ -103,6 +106,7 @@ export function StringControl({
   onChange,
   disabled = false,
   hideLabel = false,
+  displayLabel,
   hasPin,
   isPinned = false,
   onTogglePin,
@@ -194,15 +198,15 @@ export function StringControl({
           <>
             <div className="string-control-label-container flex items-center justify-between mb-1 min-h-[18px]">
               {!hideLabel ? (
-                <label className={controlLabelClassName}>
-                  <span className="inline-flex items-center gap-1">
-                    <span>{name}</span>
-                    {labelAccessory}
+                <div className={controlLabelRowClassName}>
+            <label className="inline-flex min-w-0 items-center gap-1">
+              <span>{displayLabel ?? name}</span>
                     {isPromoted && (
                       <PromotedWidgetIcon className="w-3.5 h-3.5 text-pink-500" />
                     )}
-                  </span>
-                </label>
+            </label>
+            {labelAccessory}
+          </div>
               ) : (
                 <span className={controlLabelClassName} />
               )}
@@ -236,15 +240,15 @@ export function StringControl({
         ) : (
           <>
             {!hideLabel && (
-              <label className={`${controlLabelClassName} mb-1`}>
-                <span className="inline-flex items-center gap-1">
-                  <span>{name}</span>
-                  {labelAccessory}
+              <div className={`${controlLabelRowClassName} mb-1`}>
+            <label className="inline-flex min-w-0 items-center gap-1">
+              <span>{displayLabel ?? name}</span>
                   {isPromoted && (
                     <PromotedWidgetIcon className="w-3.5 h-3.5 text-pink-500" />
                   )}
-                </span>
-              </label>
+            </label>
+            {labelAccessory}
+          </div>
             )}
             <div
               className={`relative ${controlInputBaseClassName} min-h-[46px] flex items-center cursor-text ${hasPin ? 'pr-16' : 'pr-6'} ${controlStateClassName({ disabled, hasError, isPromoted })}`}
@@ -268,7 +272,7 @@ export function StringControl({
         )}
 
         <FullscreenWidgetModal
-          title={name}
+          title={displayLabel ?? name}
           isOpen={showModal}
           onClose={handleClose}
           viewerSidebar={forceModalOpen}
@@ -317,15 +321,15 @@ export function StringControl({
       <div className={`${containerClass} group ${!hideLabel ? 'pt-2' : ''}`} data-textarea-root="true">
         <div className="string-control-label-container flex items-center justify-between mb-1 min-h-[18px]" data-textarea-header="true">
           {!hideLabel && (
-            <label className={controlLabelClassName}>
-              <span className="inline-flex items-center gap-1">
-                <span>{name}</span>
-                {labelAccessory}
+            <div className={controlLabelRowClassName}>
+            <label className="inline-flex min-w-0 items-center gap-1">
+              <span>{displayLabel ?? name}</span>
                 {isPromoted && (
                   <PromotedWidgetIcon className="w-3.5 h-3.5 text-pink-500" />
                 )}
-              </span>
             </label>
+            {labelAccessory}
+          </div>
           )}
           <TextareaActions
             allowEdit={!disabled}
@@ -342,7 +346,7 @@ export function StringControl({
             onValueChange={handleDraftChange}
             onBlur={flush}
             placeholder={placeholder}
-            className={`${controlInputBaseClassName} min-h-[100px] resize-none overflow-hidden ${hasPin ? 'pr-10' : ''} ${controlStateClassName({ disabled, hasError, isPromoted })}`} // TODO - determine if overflow should be hidden or auto here
+            className={`${controlInputBaseClassName} min-h-[100px] resize-none overflow-hidden ${hasPin ? 'pr-10' : ''} ${controlInputFocusClassNameForState(isPromoted)} ${controlStateClassName({ disabled, hasError, isPromoted })}`} // TODO - determine if overflow should be hidden or auto here
             style={{ overflowAnchor: 'none' }}
             disabled={disabled}
           />
@@ -359,15 +363,15 @@ export function StringControl({
   return (
     <div className={`${containerClass} ${!hideLabel ? 'pt-2' : ''}`}>
       {!hideLabel && (
-        <label className={`${controlLabelClassName} mb-1`}>
-          <span className="inline-flex items-center gap-1">
-            <span>{name}</span>
-            {labelAccessory}
+        <div className={`${controlLabelRowClassName} mb-1`}>
+            <label className="inline-flex min-w-0 items-center gap-1">
+              <span>{displayLabel ?? name}</span>
             {isPromoted && (
               <PromotedWidgetIcon className="w-3.5 h-3.5 text-pink-500" />
             )}
-          </span>
-        </label>
+            </label>
+            {labelAccessory}
+          </div>
       )}
       <div className="relative">
         <input
@@ -377,7 +381,7 @@ export function StringControl({
           onBlur={flush}
           placeholder={placeholder}
           data-swipe-nav-ignore="true"
-          className={`${controlInputBaseClassName} ${controlInputDarkClassName} ${hasPin ? 'pr-16' : ''} ${controlStateClassName({ disabled, hasError, isPromoted })}`}
+          className={`${controlInputBaseClassName} ${controlInputDarkClassName} ${hasPin ? 'pr-16' : ''} ${controlInputFocusClassNameForState(isPromoted)} ${controlStateClassName({ disabled, hasError, isPromoted })}`}
           disabled={disabled}
         />
         {hasPin && (

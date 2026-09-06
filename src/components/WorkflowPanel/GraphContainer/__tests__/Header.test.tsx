@@ -3,6 +3,7 @@ import type { ComponentProps } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { GraphContainerHeader } from '@/components/WorkflowPanel/GraphContainer/Header';
+import { useWorkflowSelectionStore } from '@/hooks/useWorkflowSelection';
 
 function buildProps(
   overrides: Partial<ComponentProps<typeof GraphContainerHeader>> = {}
@@ -15,7 +16,6 @@ function buildProps(
     isCollapsed: false,
     hiddenNodeCount: 0,
     isBookmarked: false,
-    canShowBookmarkAction: true,
     canFoldAll: true,
     color: '#ffffff',
     onToggleCollapse: vi.fn(),
@@ -27,6 +27,8 @@ function buildProps(
     onDelete: vi.fn(),
     onShowHiddenNodes: vi.fn(),
     onMove: vi.fn(),
+    onMoveIntoSubgraph: vi.fn(),
+    onDuplicate: vi.fn(),
     onCopy: vi.fn(),
     onPaste: vi.fn(),
     pasteSummary: null,
@@ -40,6 +42,11 @@ describe('GraphContainerHeader menu bypass actions', () => {
   let root: Root;
 
   beforeEach(() => {
+    useWorkflowSelectionStore.setState({
+      selectionMode: false,
+      selectedKeys: [],
+      actionMenuOpen: false,
+    });
     container = document.createElement('div');
     document.body.appendChild(container);
     root = createRoot(container);
@@ -50,6 +57,7 @@ describe('GraphContainerHeader menu bypass actions', () => {
       root.unmount();
     });
     container.remove();
+    vi.unstubAllGlobals();
   });
 
   it('hides "Bypass all nodes" when showBypassAllAction is false', async () => {
@@ -96,6 +104,50 @@ describe('GraphContainerHeader menu bypass actions', () => {
     expect(document.body.textContent).not.toContain('Engage all nodes');
   });
 
+  it('puts common group capabilities in the action section and duplicates from it', async () => {
+    const onDuplicate = vi.fn();
+    await act(async () => {
+      root.render(
+        <GraphContainerHeader
+          {...buildProps({
+            selectionKey: 'stable-group-10',
+            onChangeColor: vi.fn(),
+            onDuplicate,
+          })}
+        />,
+      );
+    });
+    const menuButton = document.querySelector(
+      'button[aria-label="group options"]',
+    ) as HTMLButtonElement;
+    await act(async () => menuButton.click());
+
+    const labels = Array.from(document.querySelectorAll('button'))
+      .map((button) => button.textContent?.trim() ?? '');
+    const indexOf = (label: string) => labels.indexOf(label);
+    const ordered = [
+      'Edit label',
+      'Change color',
+      'Bookmark',
+      'Select',
+      'Bypass all nodes',
+      'Hide',
+      'Duplicate',
+      'Copy',
+      'Move',
+      'Move into subgraph',
+      'Add node',
+      'Delete',
+    ].map(indexOf);
+    expect(ordered.every((index) => index >= 0)).toBe(true);
+    expect(ordered).toEqual([...ordered].sort((left, right) => left - right));
+
+    const duplicateButton = Array.from(document.querySelectorAll('button'))
+      .find((button) => button.textContent?.trim() === 'Duplicate') as HTMLButtonElement;
+    await act(async () => duplicateButton.click());
+    expect(onDuplicate).toHaveBeenCalledTimes(1);
+  });
+
   it('dismisses the color popover on outside click', async () => {
     await act(async () => {
       root.render(
@@ -129,5 +181,56 @@ describe('GraphContainerHeader menu bypass actions', () => {
     });
 
     expect(document.querySelector('button[aria-label^="Set color:"]')).toBeNull();
+  });
+
+  it('selects only the group when its selection checkbox is clicked', async () => {
+    useWorkflowSelectionStore.setState({ selectionMode: true });
+    await act(async () => {
+      root.render(
+        <GraphContainerHeader
+          {...buildProps({ selectionKey: 'stable-group-10' })}
+        />
+      );
+    });
+
+    const selectButton = document.querySelector(
+      'button[aria-label="Select group"]',
+    ) as HTMLButtonElement | null;
+    expect(selectButton).toBeTruthy();
+    await act(async () => {
+      selectButton?.click();
+    });
+
+    expect(useWorkflowSelectionStore.getState().selectedKeys).toEqual([
+      'stable-group-10',
+    ]);
+  });
+
+  it('uses the persistent desktop bookmark shortcut without duplicating it in the menu', async () => {
+    vi.stubGlobal('matchMedia', vi.fn(() => ({
+      matches: true,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    })));
+    const onToggleBookmark = vi.fn();
+    await act(async () => {
+      root.render(<GraphContainerHeader {...buildProps({ onToggleBookmark })} />);
+    });
+
+    const bookmarkButton = document.querySelector(
+      'button[aria-label="Bookmark"]',
+    ) as HTMLButtonElement | null;
+    expect(bookmarkButton).toBeTruthy();
+    await act(async () => bookmarkButton?.click());
+    expect(onToggleBookmark).toHaveBeenCalledTimes(1);
+
+    const menuButton = document.querySelector(
+      'button[aria-label="group options"]',
+    ) as HTMLButtonElement | null;
+    await act(async () => menuButton?.click());
+    const menuBookmarkButton = Array.from(document.querySelectorAll('button'))
+      .find((button) => button.textContent?.trim() === 'Bookmark') as HTMLButtonElement | undefined;
+    expect(menuBookmarkButton).toBeUndefined();
+    expect(onToggleBookmark).toHaveBeenCalledTimes(1);
   });
 });

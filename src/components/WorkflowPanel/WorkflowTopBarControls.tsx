@@ -1,9 +1,11 @@
-import { useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { createPortal } from 'react-dom';
-import { saveUserWorkflow, loadTemplateWorkflow, loadUserWorkflow, getFileWorkflow } from '@/api/client';
+import { saveUserWorkflow, loadTemplateWorkflow, loadUserWorkflow, getFileWorkflowMetadata } from '@/api/client';
 import { isWorkflowModified, useWorkflowStore } from '@/hooks/useWorkflow';
 import { getWorkflowForPersistence } from '@/utils/workflowPersistence';
+import { useWorkflowLineageStore } from '@/hooks/useWorkflowLineage';
+import { withLineageStamp } from '@/utils/workflowLineage';
 import { useGenerationSettingsStore } from '@/hooks/useGenerationSettings';
 import { obfuscateWorkflowInputPaths } from '@/utils/inputPathAliases';
 import { useNavigationStore } from '@/hooks/useNavigation';
@@ -13,6 +15,7 @@ import { Dialog } from '@/components/modals/Dialog';
 import { WorkflowTopBarMenu } from './WorkflowTopBarControls/WorkflowTopBarMenu';
 import { SaveAsIcon, SaveDiskIcon, TrashIcon, LogoutIcon, ReloadIcon, XMarkIcon } from '@/components/icons';
 import { useI18n } from '@/i18n';
+import { useIsDesktop } from '@/hooks/useIsDesktop';
 
 type DirtyAction = 'unload' | 'clearWorkflowCache' | 'clearAllCache' | 'discardChanges' | 'reload';
 
@@ -53,6 +56,7 @@ function WorkflowActionButton({
 
 export function WorkflowTopBarControls() {
   const { t } = useI18n();
+  const isDesktop = useIsDesktop();
   const [menuOpenAt, setMenuOpenAt] = useState<number | null>(null);
   const [dirtyConfirmAction, setDirtyConfirmAction] = useState<DirtyAction | null>(null);
   const [actionsOpen, setActionsOpen] = useState(false);
@@ -64,6 +68,7 @@ export function WorkflowTopBarControls() {
   const workflow = useWorkflowStore((s) => s.workflow);
   const originalWorkflow = useWorkflowStore((s) => s.originalWorkflow);
   const currentFilename = useWorkflowStore((s) => s.currentFilename);
+  const filenameIsPlaceholder = useWorkflowStore((s) => s.filenameIsPlaceholder);
   const workflowSource = useWorkflowStore((s) => s.workflowSource);
   const loadWorkflow = useWorkflowStore((s) => s.loadWorkflow);
   const setSavedWorkflow = useWorkflowStore((s) => s.setSavedWorkflow);
@@ -82,6 +87,17 @@ export function WorkflowTopBarControls() {
     () => isWorkflowModified(workflow, originalWorkflow),
     [workflow, originalWorkflow]
   );
+
+  // A workflow the user never named — pasted, opened from history, pulled out
+  // of an image — carries an app-generated stand-in filename. Saving must ask
+  // for a real name rather than writing that stand-in to disk.
+  const needsFilename = !currentFilename || filenameIsPlaceholder;
+
+  const openSaveAs = useCallback(() => {
+    setSaveAsFilename(needsFilename ? '' : currentFilename ?? '');
+    setError(null);
+    setSaveAsOpen(true);
+  }, [currentFilename, needsFilename]);
 
   useDismissOnOutsideClick({
     open: menuOpen,
@@ -104,7 +120,7 @@ export function WorkflowTopBarControls() {
     window.location.reload();
   };
 
-  const performSave = async (filename: string) => {
+  const performSave = useCallback(async (filename: string) => {
     if (!workflow) return;
     const finalFilename = filename.endsWith('.json') ? filename : `${filename}.json`;
     const store = useWorkflowStore.getState();
@@ -112,7 +128,16 @@ export function WorkflowTopBarControls() {
     try {
       setLoading(true);
       store.setSavingSessionId(savingId);
-      let workflowForPersistence = getWorkflowForPersistence(workflow);
+      // Lineage minting point: a save whose graph changed since the current
+      // member mints a new one. Resolved before the write, not after, so the
+      // file on disk names its own member rather than its parent's. A save
+      // that changed only widget values — or a Save-As to a new name with the
+      // same graph — dedupes onto the existing member and does not fork.
+      const lineageStamp = useWorkflowLineageStore.getState().resolveLineage(workflow);
+      const workflowToSave = lineageStamp
+        ? withLineageStamp(workflow, lineageStamp)
+        : workflow;
+      let workflowForPersistence = getWorkflowForPersistence(workflowToSave);
       if (!workflowForPersistence) {
         throw new Error('Unable to save: embedded workflow is unavailable.');
       }
@@ -122,7 +147,7 @@ export function WorkflowTopBarControls() {
         workflowForPersistence = await obfuscateWorkflowInputPaths(workflowForPersistence, nodeTypes);
       }
       await saveUserWorkflow(finalFilename, workflowForPersistence);
-      setSavedWorkflow(workflow, finalFilename);
+      setSavedWorkflow(workflowToSave, finalFilename);
       setError(null);
       setSaveAsOpen(false);
       setActionsOpen(false);
@@ -136,7 +161,33 @@ export function WorkflowTopBarControls() {
         useWorkflowStore.getState().setSavingSessionId(null);
       }
     }
-  };
+  }, [setSavedWorkflow, workflow]);
+
+  useEffect(() => {
+    const handleSaveShortcut = (event: KeyboardEvent) => {
+      const isSaveShortcut =
+        event.key.toLowerCase() === 's'
+        && (event.metaKey || event.ctrlKey)
+        && !event.altKey;
+      if (!isDesktop || !workflow || !isSaveShortcut) return;
+
+      // Keep the browser's native "save page" dialog from competing with the
+      // workflow action, even when a save is already in progress.
+      event.preventDefault();
+      if (loading) return;
+
+      if (event.shiftKey || needsFilename) {
+        openSaveAs();
+        return;
+      }
+
+      // Match the enabled state of the Save action in the workflow menu.
+      if (currentFilename && isDirty) void performSave(currentFilename);
+    };
+
+    document.addEventListener('keydown', handleSaveShortcut);
+    return () => document.removeEventListener('keydown', handleSaveShortcut);
+  }, [currentFilename, isDesktop, isDirty, loading, needsFilename, openSaveAs, performSave, workflow]);
 
   const reloadFromSource = async () => {
     // Reload must replace the CURRENT tab's workflow, not open a new tab —
@@ -146,7 +197,9 @@ export function WorkflowTopBarControls() {
         loadWorkflow(originalWorkflow, currentFilename ?? undefined, {
           fresh: true,
           replaceActive: true,
-          source: { type: 'other' }
+          source: { type: 'other' },
+          // Reloading in place must not turn a stand-in name into a real one.
+          filenameIsPlaceholder,
         });
       }
       return;
@@ -174,15 +227,24 @@ export function WorkflowTopBarControls() {
         loadWorkflow(historyItem.workflow, `history-${workflowSource.promptId}.json`, {
           fresh: true,
           replaceActive: true,
-          source: workflowSource
+          source: workflowSource,
+          executedPrompt: historyItem.prompt,
         });
       }
       return;
     }
 
     if (workflowSource.type === 'file') {
-      const data = await getFileWorkflow(workflowSource.filePath, workflowSource.assetSource);
-      loadWorkflow(data, workflowSource.filePath, { fresh: true, replaceActive: true, source: workflowSource });
+      const metadata = await getFileWorkflowMetadata(
+        workflowSource.filePath,
+        workflowSource.assetSource,
+      );
+      loadWorkflow(metadata.workflow, workflowSource.filePath, {
+        fresh: true,
+        replaceActive: true,
+        source: workflowSource,
+        executedPrompt: metadata.prompt,
+      });
       return;
     }
 
@@ -190,7 +252,8 @@ export function WorkflowTopBarControls() {
       loadWorkflow(originalWorkflow, currentFilename ?? undefined, {
         fresh: true,
         replaceActive: true,
-        source: workflowSource
+        source: workflowSource,
+        filenameIsPlaceholder,
       });
     }
   };
@@ -317,22 +380,18 @@ export function WorkflowTopBarControls() {
                 label={t('Save')}
                 onClick={() => {
                   if (!workflow) return;
-                  if (!currentFilename) {
-                    setSaveAsFilename(currentFilename ?? '');
-                    setSaveAsOpen(true);
+                  if (needsFilename || !currentFilename) {
+                    openSaveAs();
                     return;
                   }
                   void performSave(currentFilename);
                 }}
-                disabled={!workflow || !isDirty || loading}
+                disabled={!workflow || (!isDirty && !needsFilename) || loading}
               />
               <WorkflowActionButton
                 icon={<SaveAsIcon className="w-4 h-4 text-slate-400" />}
                 label={t('Save as')}
-                onClick={() => {
-                  setSaveAsFilename(currentFilename ?? '');
-                  setSaveAsOpen(true);
-                }}
+                onClick={openSaveAs}
                 disabled={!workflow || loading}
               />
               {isDirty && (
@@ -388,9 +447,19 @@ export function WorkflowTopBarControls() {
           role="dialog"
           aria-modal="true"
         >
-          <div
+          <form
             className="w-full max-w-sm bg-slate-900 border border-white/10 text-slate-100 rounded-xl shadow-lg p-4"
             onClick={(event) => event.stopPropagation()}
+            onSubmit={(event) => {
+              event.preventDefault();
+              if (!workflow || loading) return;
+              const next = saveAsFilename.trim();
+              if (!next) {
+                setError(t('Please enter a filename.'));
+                return;
+              }
+              void performSave(next);
+            }}
           >
             <div className="text-base font-semibold text-slate-100 mb-3">{t('Save as')}</div>
             <div className="relative">
@@ -416,27 +485,21 @@ export function WorkflowTopBarControls() {
             </div>
             <div className="mt-4 flex justify-end gap-2">
               <button
+                type="button"
                 className="px-3 py-2 rounded-lg text-sm font-medium text-slate-300 hover:bg-white/10"
                 onClick={() => setSaveAsOpen(false)}
               >
                 {t('Cancel')}
               </button>
               <button
+                type="submit"
                 className="px-3 py-2 rounded-lg text-sm font-semibold text-slate-950 bg-cyan-500 hover:bg-cyan-400 disabled:opacity-50"
-                onClick={() => {
-                  const next = saveAsFilename.trim();
-                  if (!next) {
-                    setError(t('Please enter a filename.'));
-                    return;
-                  }
-                  void performSave(next);
-                }}
                 disabled={!workflow || loading}
               >
                 {t('Save')}
               </button>
             </div>
-          </div>
+          </form>
         </div>
       )}
 

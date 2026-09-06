@@ -1,10 +1,10 @@
 import { useMemo } from 'react';
 import type { WorkflowInput, WorkflowNode } from '@/api/types';
 import { ConnectionButton } from './Connections/ConnectionButton';
+import { ConnectionsSectionHeader } from './Connections/ConnectionsSectionHeader';
 import { useWorkflowStore } from '@/hooks/useWorkflow';
 import { useConnectionSectionFoldsStore } from '@/hooks/useConnectionSectionFolds';
 import { Collapsible } from '@/components/Collapsible';
-import { ChevronRightIcon } from '@/components/icons';
 import { useI18n } from '@/i18n';
 
 interface NodeCardConnectionsProps {
@@ -59,41 +59,12 @@ export function NodeCardConnections({
     // `overflow-hidden` edge so the navigation highlight ring (box-shadow spread)
     // shows in full instead of being clipped on the outer side.
     <div className="node-connections mb-3 px-1">
-      <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2 text-xs uppercase tracking-wide text-slate-500">
-        <div className="flex min-w-0 items-center gap-2">
-          {inputs.length > 0 && <span className="shrink-0">{t('Inputs')}</span>}
-          <span className="connection-section-divider h-px min-w-0 flex-1 bg-slate-700" aria-hidden="true" />
-        </div>
-        <button
-          type="button"
-          aria-expanded={expanded}
-          aria-label={expanded ? t('Fold connections') : t('Unfold connections')}
-          data-fold-state={expanded ? 'expanded' : 'collapsed'}
-          onClick={() => toggleExpanded(nodeHierarchicalKey)}
-          className={`flex h-7 items-center justify-center border text-slate-400 transition-[width,border-radius,background-color,border-color,color] duration-200 ease-out focus-visible:outline-none ${
-            expanded
-              ? 'w-7 rounded-full border-red-500/30 bg-red-950/55 hover:text-red-300'
-              : 'w-11 rounded-full border-white/10 bg-slate-950/80 hover:text-slate-200'
-          }`}
-        >
-          <ChevronRightIcon
-            data-connection-fold-chevron="left"
-            className={`h-4 w-4 transition-transform duration-200 ease-out ${
-              expanded ? 'translate-x-1' : 'translate-x-0'
-            }`}
-          />
-          <ChevronRightIcon
-            data-connection-fold-chevron="right"
-            className={`-ml-1 h-4 w-4 transition-transform duration-200 ease-out ${
-              expanded ? '-translate-x-1 rotate-180' : 'translate-x-0 rotate-180'
-            }`}
-          />
-        </button>
-        <div className="flex min-w-0 items-center gap-2">
-          <span className="connection-section-divider h-px min-w-0 flex-1 bg-slate-700" aria-hidden="true" />
-          {outputs.length > 0 && <span className="shrink-0 text-right">{t('Outputs')}</span>}
-        </div>
-      </div>
+      <ConnectionsSectionHeader
+        hasInputs={inputs.length > 0}
+        hasOutputs={outputs.length > 0}
+        expanded={expanded}
+        onToggle={() => toggleExpanded(nodeHierarchicalKey)}
+      />
 
       <Collapsible open={expanded}>
         <div className="grid grid-cols-2 gap-3 pt-1.5">

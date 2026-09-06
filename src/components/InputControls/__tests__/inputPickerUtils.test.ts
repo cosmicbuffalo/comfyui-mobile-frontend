@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { FileItem } from "@/api/client";
 import {
+  getInputPickerSelectionLocation,
   getInputPickerValue,
   projectInputSearchResults,
   sortInputPickerFiles,
@@ -14,6 +15,30 @@ const file = (id: string, date = 0): FileItem => ({
 });
 
 describe("input picker helpers", () => {
+  it("resolves the selected file's source, folder, and stable id", () => {
+    expect(getInputPickerSelectionLocation("reference/faces/a.png [input]"))
+      .toEqual({
+        source: "input",
+        folder: "reference/faces",
+        fileId: "input/reference/faces/a.png",
+      });
+    expect(getInputPickerSelectionLocation("renders\\approved\\b.png [output]"))
+      .toEqual({
+        source: "output",
+        folder: "renders/approved",
+        fileId: "output/renders/approved/b.png",
+      });
+  });
+
+  it("uses the picker source for an unannotated selected value", () => {
+    expect(getInputPickerSelectionLocation("clips/demo.mp4", "input"))
+      .toEqual({
+        source: "input",
+        folder: "clips",
+        fileId: "input/clips/demo.mp4",
+      });
+  });
+
   it("preserves nested input paths as widget values", () => {
     expect(getInputPickerValue(file("input/reference/faces/a.png"))).toBe("reference/faces/a.png");
   });

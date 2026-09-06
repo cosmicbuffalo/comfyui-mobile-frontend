@@ -581,9 +581,9 @@ export function WorkflowTabline({ showTabs = true }: WorkflowTablineProps) {
                     className={`shrink-0 text-xs font-semibold ${
                       view.isModified ? 'text-cyan-300' : 'text-slate-500'
                     }`}
-                    title={view.isModified ? 'Unsaved changes' : 'No unsaved changes'}
+                    title={view.isModified ? t('Unsaved changes') : t('No unsaved changes')}
                   >
-                    {view.isModified ? '* unsaved' : 'saved'}
+                    {view.isModified ? t('* unsaved') : t('saved')}
                   </span>
                 </button>
               ))}
@@ -593,7 +593,7 @@ export function WorkflowTabline({ showTabs = true }: WorkflowTablineProps) {
               onClick={cancelCloseForNewWorkflow}
               className="mt-3 w-full rounded-lg border border-white/10 bg-slate-800/50 px-3 py-2 text-sm text-slate-300 hover:bg-slate-700"
             >
-              Cancel
+              {t('Cancel')}
             </button>
           </div>
         </div>
@@ -604,24 +604,24 @@ export function WorkflowTabline({ showTabs = true }: WorkflowTablineProps) {
           onClose={() => setCloseConfirmTarget(null)}
           title={
             closeConfirmTarget.action === 'makeRoom'
-              ? 'Discard changes and load workflow?'
-              : 'Close unsaved workflow?'
+              ? t('Discard changes and load workflow?')
+              : t('Close unsaved workflow?')
           }
           description={
             closeConfirmTarget.action === 'makeRoom'
-              ? `"${closeConfirmTarget.view.label}" has unsaved changes. Dropping it will discard those changes so the new workflow can open.`
-              : `"${closeConfirmTarget.view.label}" has unsaved changes. Closing this tab will discard them.`
+              ? t('"{name}" has unsaved changes. Dropping it will discard those changes so the new workflow can open.', { name: closeConfirmTarget.view.label })
+              : t('"{name}" has unsaved changes. Closing this tab will discard them.', { name: closeConfirmTarget.view.label })
           }
           actions={[
             {
-              label: 'Cancel',
+              label: t('Cancel'),
               onClick: () => setCloseConfirmTarget(null),
               variant: 'secondary',
             },
             {
               label: closeConfirmTarget.action === 'makeRoom'
-                ? 'Discard and load'
-                : 'Close without saving',
+                ? t('Discard and load')
+                : t('Close without saving'),
               onClick: confirmCloseSession,
               variant: 'danger',
               autoFocus: true,

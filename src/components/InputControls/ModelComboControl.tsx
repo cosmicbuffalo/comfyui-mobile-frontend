@@ -34,6 +34,7 @@ export function ModelComboControl({
     <ComboControl
       {...rest}
       options={comboOptions}
+      isModelPicker={modelKind !== null}
       compactTrailingControls={compactTrailingControls ?? (modelKind !== null)}
     />
   );

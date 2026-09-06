@@ -1,10 +1,10 @@
-import { useMemo, useRef, useState } from "react";
-import type { ChangeEvent } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import type { ChangeEvent, ReactNode } from "react";
 import Select, { components, createFilter } from "react-select";
 import type { InputActionMeta, OnChangeValue, OptionProps } from "react-select";
 import { FullscreenWidgetModal } from "../modals/FullscreenWidgetModal";
 import { PinButton } from "./PinButton";
-import { ChevronDownIcon, PlusIcon, FolderIcon, PromotedWidgetIcon, FunnelIcon, CheckIcon } from "@/components/icons";
+import { ChevronDownIcon, PlusIcon, FolderIcon, PromotedWidgetIcon, FunnelIcon, CheckIcon, EyeIcon, EyeOffIcon } from "@/components/icons";
 import { getImagePreviewUrl, setFileState, uploadImageFile } from "@/api/client";
 import { useWorkflowStore } from "@/hooks/useWorkflow";
 import { useWorkflowErrorsStore } from "@/hooks/useWorkflowErrors";
@@ -13,6 +13,25 @@ import { resolveUploadFolder } from "./outputPickerUtils";
 import type { AssetSource } from "@/api/client";
 import { useCoarsePointer } from "@/hooks/useCoarsePointer";
 import { themeColors } from "@/theme/colors";
+import {
+  applyInlineComboAlignment,
+  clearComboScrollSpace,
+  findComboScroller,
+  holdInlineComboScroll,
+  measureInlineComboAlignment,
+  measureInlineComboOffset,
+  restoreInlineComboOffset,
+} from "./inlineComboScroll";
+import type { InlineComboScrollHold } from "./inlineComboScroll";
+import {
+  INLINE_COMBO_MENU_Z,
+  InlineComboScrim,
+} from "./InlineComboScrim";
+import {
+  afterCurrentPress,
+  guardAgainstGhostClick,
+} from "./inlineComboDismissal";
+
 import { isMultiSelectCombo, resolveComboOption } from "@/utils/workflowInputs";
 import type { ModelLookup } from "@/api/loraManagerClient";
 import {
@@ -22,7 +41,7 @@ import {
   type ComboSelectOption,
 } from "./ModelComboOption";
 import {
-  controlLabelClassName,
+  controlLabelRowClassName,
   controlSecondaryButtonDisabledClassName,
   controlSecondaryButtonEnabledClassName,
   controlStateClassName,
@@ -35,8 +54,14 @@ import {
 } from "@/components/chromeStyles";
 import { comboSelectionToValue } from "./comboSelection";
 import { useI18n } from "@/i18n";
+import { annotateInputPath, isAnnotatedPath, splitPathAnnotation } from "@/utils/annotatedPath";
+import { useShowHiddenStore } from "@/hooks/useShowHidden";
+import { hasDotHiddenPathSegment } from "@/utils/hiddenPath";
 
 const VIDEO_EXTENSIONS = new Set(["mp4", "webm", "mkv", "gif", "mov", "avi", "wmv"]);
+/** Keys that close the list without a pointer gesture still to play out. */
+const KEYS_THAT_CLOSE = new Set(["Escape", "Tab", "Enter"]);
+
 const comboInputBackground = "rgb(2 6 23 / 0.8)";
 const comboInputBorder = "rgb(255 255 255 / 0.1)";
 // Sentinel base-model filter value for models that have no base_model metadata.
@@ -55,6 +80,9 @@ interface ComboControlProps {
   onChange: (value: unknown) => void;
   disabled?: boolean;
   hideLabel?: boolean;
+  displayLabel?: string;
+  /** The row's "…" menu, rendered after the label like the other controls. */
+  labelAccessory?: ReactNode;
   hasPin: boolean;
   isPinned?: boolean;
   onTogglePin?: () => void;
@@ -69,6 +97,8 @@ interface ComboControlProps {
   onRequestModalOpen?: () => void;
   onModalClose?: () => void;
   compactTrailingControls?: boolean;
+  /** True for model/checkpoint/LoRA choices even when metadata is unavailable. */
+  isModelPicker?: boolean;
 }
 
 export function ComboControl({
@@ -79,6 +109,8 @@ export function ComboControl({
   onChange,
   disabled = false,
   hideLabel = false,
+  displayLabel,
+  labelAccessory,
   hasPin,
   isPinned = false,
   onTogglePin,
@@ -88,6 +120,7 @@ export function ComboControl({
   onRequestModalOpen,
   onModalClose,
   compactTrailingControls = false,
+  isModelPicker = false,
 }: ComboControlProps) {
   const { t } = useI18n();
   type SelectOption = ComboSelectOption;
@@ -98,8 +131,22 @@ export function ComboControl({
   const hiddenWorkflowPaths = useWorkflowHiddenStore((s) => s.hidden);
   const hiddenWorkflow = isWorkflowHidden(workflowSource, currentFilename, hiddenWorkflowPaths);
   const setError = useWorkflowErrorsStore((s) => s.setError);
+  const showHidden = useShowHiddenStore((s) => s.showHidden);
+  const toggleShowHidden = useShowHiddenStore((s) => s.toggleShowHidden);
   const [internalModalOpen, setInternalModalOpen] = useState(false);
-  const selectWrapperRef = useRef<HTMLDivElement>(null);
+  const inlineRootRef = useRef<HTMLDivElement>(null);
+  const inlineScrollerRef = useRef<HTMLElement | null>(null);
+  const inlineScrollHoldRef = useRef<InlineComboScrollHold | null>(null);
+  const inlineComboOffsetRef = useRef<number | null>(null);
+  const inlineDocumentScrollRef = useRef<{ x: number; y: number } | null>(null);
+  // The list's open state is owned here rather than by react-select, so the
+  // scrim can dismiss it directly. The scrim outlives the dismissal by one
+  // gesture: on touch the list closes at touchend, and unmounting there would
+  // let the trailing click land on whatever sits underneath.
+  const [inlineMenuOpen, setInlineMenuOpen] = useState(false);
+  const [inlineScrimVisible, setInlineScrimVisible] = useState(false);
+  const cancelInlineScrimLinger = useRef<(() => void) | null>(null);
+  const inlineLastKeyRef = useRef<string | null>(null);
   const uploadInputRef = useRef<HTMLInputElement>(null);
   const [uploadedChoices, setUploadedChoices] = useState<string[]>([]);
   const [isUploading, setIsUploading] = useState(false);
@@ -154,9 +201,19 @@ export function ComboControl({
     () => rawChoices.filter((opt) => opt !== null).map((opt) => String(opt)),
     [rawChoices],
   );
+  // A value carrying a directory annotation is resolved by PATH on the server,
+  // so it is a legitimate selection even though object_info never offered it —
+  // it CANNOT offer it, since it only enumerates top-level input files. Treat it
+  // as one of the choices so it resolves, renders under its own name, and shows
+  // up in the picker as the current selection instead of as a missing value.
+  const serverResolvedChoices = useMemo(
+    () => (Array.isArray(value) ? value : value == null ? [] : [value])
+      .filter((entry): entry is string => typeof entry === "string" && isAnnotatedPath(entry)),
+    [value],
+  );
   const mergedChoices = useMemo(
-    () => Array.from(new Set([...choices, ...uploadedChoices])),
-    [choices, uploadedChoices],
+    () => Array.from(new Set([...choices, ...uploadedChoices, ...serverResolvedChoices])),
+    [choices, uploadedChoices, serverResolvedChoices],
   );
   const rawChoiceByString = useMemo(() => {
     const result = new Map<string, unknown>();
@@ -172,8 +229,16 @@ export function ComboControl({
   const resolvedValue = resolveComboOption(value, mergedChoices);
   const resolvedValueString =
     resolvedValue === undefined ? null : String(resolvedValue);
+  // A value carrying a `[input]`/`[output]`/`[temp]` annotation is resolved by
+  // PATH on the server, not by combo membership, so it is valid even though it
+  // is not in the option list -- and it never could be, since object_info only
+  // enumerates top-level input files. This is the shape the mask editor writes
+  // (`clipspace/...png [input]`), so treating it as unmatched would report a
+  // file that is right there as missing from the server.
+  const isServerResolvedPath = isAnnotatedPath(rawValueString);
   const hasValueMatch =
     resolvedValueString !== null ||
+    isServerResolvedPath ||
     mergedChoices.includes(rawValueString) ||
     mergedChoices.includes(rawBase);
   const selectedRawValues = useMemo(
@@ -189,7 +254,9 @@ export function ComboControl({
     }),
     [mergedChoices, selectedRawValues],
   );
-  const isMissingValue = isMultiSelect ? missingValues.length > 0 : !hasValueMatch && missingValues.length > 0;
+  const isMissingValue = isMultiSelect
+    ? missingValues.length > 0
+    : !hasValueMatch && !isServerResolvedPath && missingValues.length > 0;
   const valueString = hasValueMatch
     ? resolvedValueString ??
       (mergedChoices.includes(rawValueString) ? rawValueString : rawBase)
@@ -199,10 +266,13 @@ export function ComboControl({
   // search keystroke rebuilt the whole option list and ran modelLookup for every
   // choice — janky on combos with hundreds of models.
   const selectOptions = useMemo<SelectOption[]>(() => {
-    const getDisplayLabel = (optionValue: string) =>
-      stripSafetensorsSuffix
-        ? optionValue.replace(/\.safetensors$/i, "")
-        : optionValue;
+    const getDisplayLabel = (optionValue: string) => {
+      // The " [input]" annotation is addressing, not part of the name.
+      const named = splitPathAnnotation(optionValue).path;
+      return stripSafetensorsSuffix
+        ? named.replace(/\.safetensors$/i, "")
+        : named;
+    };
     // In model mode, prefer Lora Manager's display name; otherwise plain filename.
     const buildOption = (optionValue: string, rawValue: unknown = optionValue): SelectOption => {
       const model = isModelMode ? modelLookup!(optionValue) : null;
@@ -244,6 +314,12 @@ export function ComboControl({
     ? selectedOptions.map((option) => option.label).join(', ')
     : selectedOption?.label;
   const hasSelection = isMultiSelect ? selectedOptions.length > 0 : selectedOption !== null;
+  const visibleSelectOptions = useMemo(
+    () => isModelPicker && !showHidden
+      ? selectOptions.filter((option) => !hasDotHiddenPathSegment(option.value))
+      : selectOptions,
+    [isModelPicker, selectOptions, showHidden],
+  );
 
   // Model-picker base-model filter. Collect the distinct base_model values present
   // in the resolved options (plus whether any lack metadata → "Unknown").
@@ -251,7 +327,7 @@ export function ComboControl({
     if (!isModelMode) return { baseModelChoices: [] as string[], hasUnknownBaseModel: false };
     const set = new Set<string>();
     let hasUnknown = false;
-    for (const opt of selectOptions) {
+    for (const opt of visibleSelectOptions) {
       if (!isFilterableOption(opt)) continue;
       const bm = opt.model?.base_model?.trim();
       if (bm) set.add(bm);
@@ -261,14 +337,14 @@ export function ComboControl({
       baseModelChoices: Array.from(set).sort((a, b) => a.localeCompare(b)),
       hasUnknownBaseModel: hasUnknown,
     };
-  }, [isModelMode, selectOptions]);
+  }, [isModelMode, visibleSelectOptions]);
   const showBaseModelFilter =
     isModelMode && (baseModelChoices.length > 0 || hasUnknownBaseModel);
   const baseModelFilterActive = showBaseModelFilter && baseModelFilter !== null;
   const modalSelectOptions =
     !baseModelFilterActive
-      ? selectOptions
-      : selectOptions.filter((opt) => {
+      ? visibleSelectOptions
+      : visibleSelectOptions.filter((opt) => {
           if (!isFilterableOption(opt)) return true;
           const bm = opt.model?.base_model?.trim();
           return baseModelFilter === BASE_MODEL_FILTER_UNKNOWN ? !bm : bm === baseModelFilter;
@@ -281,7 +357,9 @@ export function ComboControl({
       : []),
   ];
 
-  const simpleChoiceCount = rawChoices.filter((opt) => opt !== null).length;
+  const simpleChoiceCount = isModelPicker
+    ? visibleSelectOptions.filter((option) => option.value !== NULL_OPTION_VALUE).length
+    : rawChoices.filter((option) => option !== null).length;
   const useModalFlow = forceModalOpen
     ? true
     : isCoarsePointer && !(simpleChoiceCount > 0 && simpleChoiceCount < 5);
@@ -343,6 +421,9 @@ export function ComboControl({
 
   const selectClassName = [
     "rs-container",
+    // Marks the inline path: its open state is styled as one panel with the
+    // portalled option list, which the modal's in-flow list must not inherit.
+    "rs-inline",
     hasVisiblePin ? "rs-has-pin" : "rs-no-pin",
     compactTrailingControls ? "rs-compact-trailing" : "",
     hasError ? "rs-error" : "",
@@ -366,6 +447,13 @@ export function ComboControl({
   ]
     .filter(Boolean)
     .join(" ");
+
+  // The colour that outlines an open list, and the control it hangs from.
+  const comboAccent = hasError
+    ? themeColors.border.errorDark
+    : isPromoted
+      ? themeColors.brand.promotedPink
+      : themeColors.border.focusCyan;
 
   const menuPortalTarget =
     typeof document === "undefined" ? null : document.body;
@@ -403,6 +491,122 @@ export function ComboControl({
       ? actionMeta.prevInputValue
       : nextValue;
 
+  // Where the document sat before the tap. Recorded in the capture phase, so
+  // it predates any scrolling the browser does on its own once focus lands.
+  const handleInlinePointerDown = () => {
+    inlineDocumentScrollRef.current = { x: window.scrollX, y: window.scrollY };
+    inlineLastKeyRef.current = null;
+  };
+
+  // react-select does not forward onKeyDown, so the capture phase on the
+  // wrapper is where a key press can be seen before react-select acts on it.
+  const handleInlineKeyDownCapture = (event: React.KeyboardEvent) => {
+    inlineLastKeyRef.current = event.key;
+  };
+
+  // Everything the open menu depends on is captured once, at open time, and
+  // then held. See inlineComboScroll.ts for why nothing re-scrolls afterwards.
+  const handleInlineMenuOpen = () => {
+    setInlineMenuOpen(true);
+    setInlineScrimVisible(true);
+    cancelInlineScrimLinger.current?.();
+    const target = inlineRootRef.current;
+    if (!target) return;
+    const scroller = findComboScroller(target);
+    if (!scroller) return;
+
+    inlineScrollHoldRef.current?.release();
+
+    // Undo any scrolling that focusing the control provoked before measuring:
+    // the top bar is fixed, so a moved document is a misaligned panel.
+    const documentScroll = inlineDocumentScrollRef.current ?? {
+      x: window.scrollX,
+      y: window.scrollY,
+    };
+    if (
+      window.scrollX !== documentScroll.x ||
+      window.scrollY !== documentScroll.y
+    ) {
+      window.scrollTo(documentScroll.x, documentScroll.y);
+    }
+
+    // Where the combo is sitting now, so closing the list can put it back.
+    inlineComboOffsetRef.current = measureInlineComboOffset(target, scroller);
+
+    const alignment = measureInlineComboAlignment(target, scroller);
+    applyInlineComboAlignment(scroller, alignment);
+
+    inlineScrollerRef.current = scroller;
+    inlineScrollHoldRef.current = holdInlineComboScroll(
+      scroller,
+      scroller.scrollTop,
+      documentScroll,
+    );
+  };
+
+  // Opening a combo is an excursion: the list goes to the top so it has room,
+  // and closing it hands the reader back the view they were looking at.
+  const restoreInlinePosition = () => {
+    const scroller = inlineScrollerRef.current;
+    const target = inlineRootRef.current;
+    const offset = inlineComboOffsetRef.current;
+    inlineScrollerRef.current = null;
+    inlineComboOffsetRef.current = null;
+    if (!scroller?.isConnected) return;
+    if (!target || offset === null) {
+      clearComboScrollSpace(scroller);
+      return;
+    }
+    restoreInlineComboOffset(target, scroller, offset);
+  };
+
+  const handleInlineMenuClose = () => {
+    setInlineMenuOpen(false);
+    // A key press closes the list outright: nothing more is coming that the
+    // scrim would need to absorb, and leaving an invisible catcher over the
+    // page would only eat the reader's next click.
+    const closedByKey = KEYS_THAT_CLOSE.has(inlineLastKeyRef.current ?? "");
+    inlineLastKeyRef.current = null;
+    cancelInlineScrimLinger.current?.();
+    if (closedByKey) {
+      setInlineScrimVisible(false);
+      inlineScrollHoldRef.current?.release();
+      inlineScrollHoldRef.current = null;
+      restoreInlinePosition();
+      return;
+    }
+
+    // Otherwise the scrim sees out the press that dismissed it — no longer,
+    // or it would block the next scroll — and hands over to a listener that
+    // cancels the stray click a tap can leave behind.
+    let stopGuard: (() => void) | null = null;
+    const stopWaiting = afterCurrentPress(() => {
+      setInlineScrimVisible(false);
+      stopGuard = guardAgainstGhostClick();
+    });
+    cancelInlineScrimLinger.current = () => {
+      stopWaiting();
+      stopGuard?.();
+      cancelInlineScrimLinger.current = null;
+    };
+
+    inlineScrollHoldRef.current?.release();
+    inlineScrollHoldRef.current = null;
+    restoreInlinePosition();
+  };
+
+  useEffect(
+    () => () => {
+      inlineScrollHoldRef.current?.release();
+      cancelInlineScrimLinger.current?.();
+      // On unmount the view has usually moved on already; give the borrowed
+      // range back but do not haul the scroller anywhere.
+      const scroller = inlineScrollerRef.current;
+      if (scroller?.isConnected) clearComboScrollSpace(scroller);
+    },
+    [],
+  );
+
   const handleSelectChange = (next: OnChangeValue<SelectOption, boolean>) => {
     const nextValue = comboSelectionToValue(next, isMultiSelect);
     if (nextValue === undefined) return;
@@ -425,13 +629,18 @@ export function ComboControl({
     setIsUploading(true);
     try {
       const result = await uploadImageFile(file, { type: uploadFolder });
-      const nextValue = result.subfolder
+      const uploadedPath = result.subfolder
         ? `${result.subfolder}/${result.name}`
         : result.name;
+      // An upload into a subfolder can never be an object_info combo choice,
+      // so the value names its own directory. See annotateInputPath.
+      const nextValue = result.type === "input"
+        ? annotateInputPath(uploadedPath)
+        : uploadedPath;
       // Auto-hiding the new input is best-effort declutter — never let it abort
       // the upload assignment, so fire-and-forget instead of awaiting.
       if (hiddenWorkflow && result.type === "input") {
-        void setFileState("input", nextValue, "hidden", true).catch((err) => {
+        void setFileState("input", uploadedPath, "hidden", true).catch((err) => {
           console.warn("Failed to hide input from hidden workflow:", err);
         });
       }
@@ -459,9 +668,10 @@ export function ComboControl({
     setIsUploading(true);
     try {
       if (hiddenWorkflow) {
-        void setFileState("input", nextValue, "hidden", true).catch((err) => {
-          console.warn("Failed to hide input added to hidden workflow:", err);
-        });
+        void setFileState("input", splitPathAnnotation(nextValue).path, "hidden", true)
+          .catch((err) => {
+            console.warn("Failed to hide input added to hidden workflow:", err);
+          });
       }
       // Optimistically register the picked file as a choice so the value resolves
       // and displays immediately, without waiting on a node-types refresh.
@@ -529,6 +739,7 @@ export function ComboControl({
       defaultSource={imageFolder as AssetSource}
       uploadFolder={uploadFolder}
       supportsVideoUpload={supportsVideoUpload}
+      selectedValue={value}
     />
   ) : null;
 
@@ -539,12 +750,13 @@ export function ComboControl({
     return (
       <div className={`${containerClass} combo-control-root combo-control-input-browser pt-2`}>
         {!hideLabel && (
-          <label className={`${controlLabelClassName} mb-1`}>
-            <span className="inline-flex items-center gap-1">
-              <span>{name}</span>
+          <div className={`${controlLabelRowClassName} mb-1`}>
+            <label className="inline-flex min-w-0 items-center gap-1">
+              <span>{displayLabel ?? name}</span>
               {isPromoted && <PromotedWidgetIcon className="w-5 h-5 text-pink-500" />}
-            </span>
-          </label>
+            </label>
+            {labelAccessory}
+          </div>
         )}
         <div
           role="button"
@@ -572,7 +784,7 @@ export function ComboControl({
             )}
           </span>
         </div>
-        {isMissingValue && <div className="mt-1 pl-1 text-xs text-red-400">Missing on ComfyUI server</div>}
+        {isMissingValue && <div className="mt-1 pl-1 text-xs text-red-400">{t('Missing on ComfyUI server')}</div>}
         <div className="combo-control-upload mt-2">
           <div className="flex flex-col gap-2">{deviceUploadButton}</div>
           <input
@@ -593,6 +805,7 @@ export function ComboControl({
           defaultSource={imageFolder as AssetSource}
           uploadFolder={uploadFolder}
           supportsVideoUpload={supportsVideoUpload}
+          selectedValue={value}
         />
       </div>
     );
@@ -604,14 +817,15 @@ export function ComboControl({
         className={`${containerClass} combo-control-root combo-control-modal pt-2`}
       >
         {!hideLabel && (
-          <label className={`${controlLabelClassName} mb-1`}>
-            <span className="inline-flex items-center gap-1">
-              <span>{name}</span>
+          <div className={`${controlLabelRowClassName} mb-1`}>
+            <label className="inline-flex min-w-0 items-center gap-1">
+              <span>{displayLabel ?? name}</span>
               {isPromoted && (
                 <PromotedWidgetIcon className="w-5 h-5 text-pink-500" />
               )}
-            </span>
-          </label>
+            </label>
+            {labelAccessory}
+          </div>
         )}
 
         <div
@@ -687,7 +901,7 @@ export function ComboControl({
         {browseFilePicker}
 
         <FullscreenWidgetModal
-          title={name}
+          title={displayLabel ?? name}
           isOpen={showModal}
           onClose={handleClose}
           viewerSidebar={forceModalOpen}
@@ -717,13 +931,20 @@ export function ComboControl({
                 matchFrom: "any",
               })}
               styles={{
+                // Outlined and joined to the search box, the same way an
+                // inline list is — one panel rather than a box and a loose
+                // column of rows. The bottom margin is the scroll clearance
+                // that used to sit inside the list; keeping it outside puts
+                // the outline's bottom edge against the last option.
                 menu: (base) => ({
                   ...base,
                   position: "static",
                   boxShadow: "none",
-                  border: "none",
-                  marginTop: "0.5rem",
-                  borderRadius: 0,
+                  border: `1px solid ${comboAccent}`,
+                  borderTop: 0,
+                  marginTop: 0,
+                  marginBottom: "2rem",
+                  borderRadius: "0 0 0.5rem 0.5rem",
                   backgroundColor: themeColors.transparent,
                 }),
                 menuList: (base) => ({
@@ -734,7 +955,6 @@ export function ComboControl({
                   // gestures before the outer modal reaches its last rows.
                   maxHeight: "none",
                   height: "auto",
-                  paddingBottom: "2rem",
                   overflow: "visible",
                   touchAction: "pan-y",
                 }),
@@ -769,21 +989,52 @@ export function ComboControl({
                     minHeight: 48,
                     // Reserve room so the floating funnel button never overlaps
                     // the search text / selected value.
-                    paddingRight: showBaseModelFilter ? "2.75rem" : undefined,
+                    paddingRight: showBaseModelFilter && isModelPicker
+                      ? "5rem"
+                      : showBaseModelFilter || isModelPicker
+                        ? "2.75rem"
+                        : undefined,
                     borderColor,
                     boxShadow: state.isFocused || hasError || isPromoted
                       ? `0 0 0 1px ${borderColor}`
                       : "none",
                     backgroundColor: comboInputBackground,
                     color: selectText,
+                    ...(state.menuIsOpen
+                      ? {
+                          borderColor: comboAccent,
+                          borderBottomColor: themeColors.transparent,
+                          // Matches the radius the list caps itself with.
+                          borderRadius: "0.5rem 0.5rem 0 0",
+                          boxShadow: "none",
+                        }
+                      : {}),
                   };
                 },
               }}
               components={selectComponents}
               noOptionsMessage={() => t("No matches")}
             />
-              {showBaseModelFilter && (
-                <div className="combo-control-filter absolute right-1.5 top-[5px]">
+              {(showBaseModelFilter || isModelPicker) && (
+                <div className="combo-control-filter absolute right-1.5 top-[5px] flex gap-1">
+                  {isModelPicker && (
+                    <button
+                      type="button"
+                      aria-label={showHidden ? t("Hide hidden") : t("Show hidden")}
+                      onClick={toggleShowHidden}
+                      className={`flex h-9 w-9 items-center justify-center rounded-md transition-colors ${
+                        showHidden
+                          ? appChromeIconButtonActiveClassName
+                          : appChromeIconButtonClassName
+                      }`}
+                    >
+                      {showHidden
+                        ? <EyeOffIcon className="h-[18px] w-[18px]" />
+                        : <EyeIcon className="h-[18px] w-[18px]" />}
+                    </button>
+                  )}
+                  {showBaseModelFilter && (
+                    <div className="relative">
                   <button
                     type="button"
                     aria-label={t("Filter by base model")}
@@ -827,6 +1078,8 @@ export function ComboControl({
                       </div>
                     </>
                   )}
+                    </div>
+                  )}
                 </div>
               )}
             </div>
@@ -839,30 +1092,46 @@ export function ComboControl({
   return (
     <div
       className={`${containerClass} combo-control-root combo-control-inline pt-2`}
+      ref={inlineRootRef}
     >
       {!hideLabel && (
-        <label className={`${controlLabelClassName} mb-1`}>
-          <span className="inline-flex items-center gap-1">
-            <span>{name}</span>
+        <div className={`${controlLabelRowClassName} mb-1`}>
+            <label className="inline-flex min-w-0 items-center gap-1">
+              <span>{displayLabel ?? name}</span>
             {isPromoted && (
               <PromotedWidgetIcon className="w-3.5 h-3.5 text-pink-500" />
             )}
-          </span>
-        </label>
+            </label>
+            {labelAccessory}
+          </div>
+      )}
+      {inlineScrimVisible && (
+        <InlineComboScrim
+          controlRoot={inlineRootRef.current}
+          dimmed={inlineMenuOpen}
+          onDismiss={handleInlineMenuClose}
+        />
       )}
       <div
-        className="combo-control-input-wrapper relative rs-scroll-target"
-        ref={selectWrapperRef}
+        className="combo-control-input-wrapper relative"
         data-swipe-nav-ignore="true"
+        onPointerDownCapture={handleInlinePointerDown}
+        onKeyDownCapture={handleInlineKeyDownCapture}
       >
         <Select<SelectOption, boolean>
           className={selectClassName}
           classNamePrefix="rs"
-          options={selectOptions}
+          options={visibleSelectOptions}
           value={selectValue}
           onChange={handleSelectChange}
           isMulti={isMultiSelect}
-          isSearchable
+          // A touch device only reaches the inline path for a handful of
+          // options, where a search field buys nothing and costs a lot: the
+          // on-screen keyboard it summons resizes the visual viewport and lets
+          // the browser scroll the document out from under a fixed top bar.
+          // react-select's non-searchable input carries inputMode="none", so
+          // no keyboard appears.
+          isSearchable={!isCoarsePointer}
           isDisabled={disabled}
           filterOption={createFilter({
             ignoreAccents: true,
@@ -870,12 +1139,24 @@ export function ComboControl({
             trim: true,
             matchFrom: "any",
           })}
+          menuIsOpen={inlineMenuOpen}
           menuPortalTarget={menuPortalTarget}
-          menuPosition="fixed"
+          // Absolute document coordinates stay coupled to the control when a
+          // mobile keyboard pans the visual viewport. Fixed portal coordinates
+          // can render above the control by the viewport's offsetTop.
+          menuPosition="absolute"
           menuPlacement="bottom"
           menuShouldScrollIntoView={false}
+          onMenuOpen={handleInlineMenuOpen}
+          onMenuClose={handleInlineMenuClose}
           styles={{
-            menuPortal: (base) => ({ ...base, zIndex: 200 }),
+            menuPortal: (base) => ({
+              ...base,
+              zIndex: INLINE_COMBO_MENU_Z,
+              // The list is portalled to the body, so it cannot inherit the
+              // control's accent; hand it over explicitly.
+              "--rs-accent": comboAccent,
+            }),
             // react-select injects its own (light) defaults at runtime that win
             // over the static .rs__* CSS, so the menu/option/value colors must be
             // pinned here to stay on the dark theme.

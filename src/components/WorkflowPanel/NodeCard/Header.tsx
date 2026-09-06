@@ -24,12 +24,16 @@ interface NodeCardHeaderProps {
   setErrorPopoverOpen: (next: boolean) => void;
   toggleNodeFold: () => void;
   expandedBorderColor?: string;
+  // Shared-instance chip for a subgraph placeholder sharing its type with
+  // others: makes "editing this hits N other cards" visible at a glance.
+  instanceBadge?: ReactNode;
   rightSlot?: ReactNode;
 }
 
 export function NodeCardHeader({
   nodeId,
   displayName,
+  instanceBadge,
   isEditingLabel,
   labelValue,
   labelInputRef,
@@ -107,6 +111,7 @@ export function NodeCardHeader({
           </h3>
         )}
         <span id={`node-id-badge-${nodeId}`} className="text-xs text-slate-500 min-w-[2ch] text-right">#{nodeId}</span>
+        {instanceBadge}
         {(hasErrors || isMissing) && (
           <button
             ref={errorIconRef}

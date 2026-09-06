@@ -2,6 +2,7 @@ import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ComboControl } from '../ComboControl';
+import { useShowHiddenStore } from '@/hooks/useShowHidden';
 
 describe('ComboControl option memoization', () => {
   let container: HTMLDivElement;
@@ -17,6 +18,7 @@ describe('ComboControl option memoization', () => {
     container = document.createElement('div');
     document.body.appendChild(container);
     root = createRoot(container);
+    useShowHiddenStore.setState({ showHidden: false });
   });
 
   afterEach(() => {
@@ -70,5 +72,29 @@ describe('ComboControl option memoization', () => {
     expect(container.querySelector('.combo-control-trigger-label')?.className).toContain('pr-13');
     expect(container.querySelector('.combo-control-chevron')?.className).toContain('w-9');
     expect(container.querySelector('.combo-control-pin')).not.toBeNull();
+  });
+
+  it('filters dot-hidden model choices with the global preference', () => {
+    act(() => root.render(
+      <ComboControl
+        containerClass=""
+        name="model"
+        value="public/model.safetensors"
+        options={{ options: ['public/model.safetensors', '.hidden/fixture-model.safetensors'] }}
+        onChange={() => {}}
+        hasPin={false}
+        isModelPicker
+      />,
+    ));
+
+    act(() => {
+      container.querySelector<HTMLElement>('.rs__control')?.dispatchEvent(
+        new MouseEvent('mousedown', { bubbles: true }),
+      );
+    });
+    expect(document.body.textContent).not.toContain('.hidden/fixture-model.safetensors');
+
+    act(() => useShowHiddenStore.getState().setShowHidden(true));
+    expect(document.body.textContent).toContain('.hidden/fixture-model.safetensors');
   });
 });
