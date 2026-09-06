@@ -1,6 +1,48 @@
 # Changelog
 
-## 3.2.5 - Unreleased
+## 3.3.0 - 2026-09-06
+
+### Added
+
+- **Subgraphs are editable, reusable types.** A subgraph scope opens with its own connections section — its inputs on the left, its outputs on the right — so what crosses the boundary can be added, removed, rewired, renamed and reordered, from inside or from the placeholder card outside. Duplicating a subgraph makes another instance of the same definition rather than a private copy, with per-instance widget values and `{n}` in a name or label rendering each instance's own number. You can create a subgraph from a selection, move nodes and groups into an existing one, replace one with a different type, fork an instance onto a type of its own, dissolve one back into the graph, pop a node out to root, promote an inner widget to the boundary as either a control or a socket, and see every type the workflow defines in a subgraph types list
+- **A mask editor**, so inpainting workflows can be used from a phone. Mask brush, eraser, paint bucket, colour select and an RGB paint pen, with pan/zoom and undo/redo. Masks round-trip with ComfyUI's own editor
+- **New video playback controls in the image viewer**, including playback speed
+- **Enqueue with variations** queues one run per option of a combo widget, so a setting can be compared without editing and re-running it by hand
+- **Support for rgthree's Power Puter** ([rgthree-comfy#758](https://github.com/rgthree/rgthree-comfy/issues/758)). Workflows containing one used to fail to run at all. Its expression and output types are editable on the card
+- **The image viewer works inside outputs select mode.** Press and hold a card to open it full size without losing the selection you have built, then select, favourite and reject from there.
+- **Select a group's children, or every descendant**, from its header in workflow select mode
+- **Loading a workflow back from an output restores the seeds that actually ran**, instead of placeholders like -1 for frontend seed generation
+- **Workflow bookmarks now follow the workflow's family.** Tweak a workflow, save it under a new name, or open it from one of its outputs and the bookmarks come along; a bookmark made on one version shows up on the versions that have that node. They are stored in the server's user data, so they appear on every device you use, and bookmarks made before this change carry over to the family the first time it is opened
+- **Bookmarks are no longer capped at five**, and the bar scrolls once there are more than fit beside the node column. On desktop they are full named bars pinned beside the column rather than the mobile gutter of chips
+- **On desktop, hover an output card or row to favorite or reject it in place.** Folders get the favorite control; a favorited or rejected file keeps one persistent icon, so its state is visible without hovering. The file's `...` menu now offers **Reject** beside **Favorite**
+- **Video duration badges** on outputs and queue cards
+- **MarkdownNote nodes render their markdown** on the card, instead of showing the raw syntax
+- **The queue panel folds pending jobs away**, so a big batch no longer buries the run that is actually going. Pending is its own section, headed **_n_ Pending**, and the header folds and unfolds it
+- **Undo and redo in the workflow panel say what they moved through.** A banner names the action and the item it changed, and the panel scrolls that node — or the widget row itself — into view and flashes it. History now survives a page refresh, and there are desktop keybinds for both
+- **New desktop keyboard shortcuts**: undo/redo, save and Save As, search on the workflow and outputs pages, and a Finder-style toggle for showing hidden files
+- **Showing hidden files is now one preference across the whole app**, instead of a separate switch per browser: turn it on in outputs and the queue, the workflow lists and the input picker all show them too
+
+### Fixed
+
+- **An open combo now reads as one panel with its option list**, a cosmetic tidy-up of combo inputs
+- **Refresh model metadata refreshes LoRA Manager directly when installed**, rescanning LoRAs, checkpoints and embeddings before fetching their missing Civitai metadata. The built-in compatible scanner remains the fallback when LoRA Manager is absent
+- **The templates browser shows ComfyUI's whole template catalog**, not just the examples bundled with installed custom nodes — with preview images, descriptions, a category dropdown and search across the catalog
+- **Scrolling the queue panel is stable while jobs are generating.** Cards landing above the one you are reading no longer throw the list, and a flick is left to coast and settle where it lands instead of being cancelled or replayed
+- **A video's workflow can be loaded from its `...` menu on the outputs page**, not only from the full-screen viewer
+- **A fixed seed on rgthree's Seed node stays fixed.** "New Fixed Random" was silently re-rolled on every run
+- **Deleting or unplugging a Primitive keeps the value it was feeding**, instead of reverting the widget to an older one
+- **Create group in select mode nests a selected group** instead of dissolving it
+- **Progress tracking is more accurate**, on a run's overall progress and on cached runs
+- **Outputs folder navigation waits for the destination to load**, instead of showing the previous folder as if it were the new one
+- **Scrolling a queue card's thumbnails sideways no longer swipes between panels**
+- **Workflow scroll position is remembered per tab and per subgraph**
+- **A group holding a subgraph shows that subgraph's own bypass state**, and bypassing the group no longer bypasses every other copy of a shared type. Hidden bypassed nodes no longer tint the group they sit in
+- **A promoted seed's mode is one setting, not two**, shared by the card inside the subgraph and the placeholder outside it
+- **Deleting a node with nothing attached offers a single Delete**, instead of asking how to handle connections it does not have
+- **Following a connection into a folded group opens the group**
+- **Around fifty untranslated strings now appear in your language**, across the outputs menu, the bars and several node-card headings
+
+## 3.2.5 - 2026-08-25
 
 ### Fixed
 
