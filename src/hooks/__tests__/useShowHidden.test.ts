@@ -31,28 +31,41 @@ describe('useShowHiddenStore', () => {
     // write. The legacy-preference migration commits at import time, so an
     // unguarded write there would blank the app instead of only losing the
     // preference.
-    localStorage.clear();
-    localStorage.setItem('outputs-storage', JSON.stringify({ state: { showHidden: true } }));
-    vi.resetModules();
-    // Spy on the object, not Storage.prototype: under the setup file's
-    // fallback shim these are own properties and a prototype spy never fires.
-    const refuseWrites = vi
-      .spyOn(localStorage, 'setItem')
-      .mockImplementation(() => {
+    //
+    // Substitute the whole global rather than spying on a method: this suite
+    // runs against jsdom's Storage in CI, where setItem is inherited from a
+    // proxied prototype, and against the plain-object shim in vitest.setup.ts
+    // locally, where it is an own property. No single spy target bites in both,
+    // and the one that missed read as a pass.
+    const backing = new Map([
+      ['outputs-storage', JSON.stringify({ state: { showHidden: true } })],
+    ]);
+    let refusedWrites = 0;
+    vi.stubGlobal('localStorage', {
+      getItem: (key: string) => backing.get(key) ?? null,
+      setItem: () => {
+        refusedWrites += 1;
         throw new DOMException('exceeded the quota', 'QuotaExceededError');
-      });
+      },
+      removeItem: (key: string) => { backing.delete(key); },
+      clear: () => { backing.clear(); },
+      key: () => null,
+      get length() { return backing.size; },
+    });
+    vi.resetModules();
 
     try {
       const { useShowHiddenStore: store } = await import('@/hooks/useShowHidden');
-      // The migration write is the crash path; assert it was really attempted
-      // so a spy that stops biting can't quietly turn this into a no-op.
-      expect(refuseWrites).toHaveBeenCalledWith('show-hidden-storage', expect.any(String));
+      // The migration write is the crash path, so prove it was attempted —
+      // otherwise a storage that quietly stopped refusing would leave this
+      // asserting nothing.
+      expect(refusedWrites).toBeGreaterThan(0);
       expect(store.getState().showHidden).toBe(true);
       expect(() => store.getState().toggleShowHidden()).not.toThrow();
       expect(store.getState().showHidden).toBe(false);
     } finally {
-      refuseWrites.mockRestore();
-      localStorage.clear();
+      vi.unstubAllGlobals();
+      vi.resetModules();
     }
   });
 });
