@@ -529,6 +529,17 @@ describe('extractTextPreviewFromOutput', () => {
 });
 
 describe('collectExecutedMediaOutputs', () => {
+  it('treats a null output as nothing to collect', () => {
+    // An `executed` message can carry no output at all. Indexing it threw out
+    // of the whole message handler, and the socket's catch reported that as
+    // "[WS] Failed to parse message" — so the rest of the message's work was
+    // skipped and the reason it was skipped was misdescribed.
+    expect(collectExecutedMediaOutputs(null)).toEqual([]);
+    expect(collectExecutedMediaOutputs(undefined)).toEqual([]);
+    expect(collectDenoVideoCompareOutput(null)).toBeNull();
+    expect(collectDenoVideoCompareOutput(undefined)).toBeNull();
+  });
+
   it('collects video descriptors regardless of the standard bucket a node uses', () => {
     expect(collectExecutedMediaOutputs({
       // Native SaveVideo currently publishes PreviewVideo entries here.

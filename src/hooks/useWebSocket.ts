@@ -803,8 +803,8 @@ export function useWebSocket() {
           }
           // Image Comparer (rgthree) emits its two sides as a_images / b_images
           // rather than `images`, so capture them into the comparer store.
-          const comparerA = output.a_images ?? [];
-          const comparerB = output.b_images ?? [];
+          const comparerA = output?.a_images ?? [];
+          const comparerB = output?.b_images ?? [];
           if (comparerA.length > 0 || comparerB.length > 0) {
             itemKeysForOutput.forEach((key) => {
               setNodeComparerOutput(key, { a: comparerA, b: comparerB }, ctx.sessionId);
