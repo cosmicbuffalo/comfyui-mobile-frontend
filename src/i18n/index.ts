@@ -6,10 +6,7 @@ import {
   LOCALE_STORAGE_KEY,
   type Locale,
 } from './locales';
-import { zhCN } from './zh-CN';
-import { zhTW } from './zh-TW';
-import { ja } from './ja';
-import { ko } from './ko';
+import { LOCALE_DICTIONARIES } from './dictionaries';
 
 export {
   DEFAULT_LOCALE,
@@ -32,15 +29,16 @@ export type { Locale } from './locales';
  * (delete / uninstall confirmations), where a mistranslation could get someone
  * to confirm something they didn't intend.
  */
-const translations: Record<Locale, Record<string, string>> = {
-  // English is the source of truth: every key is its own English text, so no
-  // lookup table is needed. Missing translations in any locale fall back to
-  // the English key.
+/**
+ * Dictionaries that have arrived. Loaded on demand — see `./dictionaries`.
+ *
+ * English is the source of truth: every key is its own English text, so no
+ * lookup table is needed and `en` is complete from the start. Any locale not in
+ * here yet falls back to the English key, which is also what a genuinely
+ * missing translation does.
+ */
+const translations: Partial<Record<Locale, Record<string, string>>> = {
   en: {},
-  'zh-CN': zhCN,
-  'zh-TW': zhTW,
-  ja,
-  ko,
 };
 
 const warnedKeys = new Set<string>();
@@ -88,9 +86,12 @@ export function translate(
   locale: Locale,
   params?: Record<string, string | number>,
 ): string {
-  const table = translations[locale] ?? {};
-  const template = table[key] ?? key;
-  if (locale !== 'en' && !(key in table) && !warnedKeys.has(key)) {
+  const table = translations[locale];
+  const template = table?.[key] ?? key;
+  // Only a dictionary that is actually here can be missing a key. Warning while
+  // one is still in flight would report every string in the app as untranslated
+  // on each cold load.
+  if (table && locale !== 'en' && !(key in table) && !warnedKeys.has(key)) {
     warnedKeys.add(key);
     console.warn(`[i18n] Missing ${locale} translation for: ${key}`);
   }
@@ -105,11 +106,18 @@ function applyDocumentLocale(locale: Locale): void {
 
 interface LocaleState {
   locale: Locale;
+  /**
+   * Bumped each time a dictionary lands. Nothing reads its value — it exists so
+   * a component holding a memoised `t` re-renders when the words it needs
+   * finally arrive, which a locale that never changed would not otherwise do.
+   */
+  dictionaryVersion: number;
   setLocale: (locale: Locale) => void;
 }
 
 export const useLocaleStore = create<LocaleState>((set) => ({
   locale: detectInitialLocale(),
+  dictionaryVersion: 0,
   setLocale: (locale) => {
     if (!isLocale(locale)) return;
     try {
@@ -119,8 +127,49 @@ export const useLocaleStore = create<LocaleState>((set) => ({
     }
     applyDocumentLocale(locale);
     set({ locale });
+    void ensureLocaleLoaded(locale);
   },
 }));
+
+const inFlight = new Map<Locale, Promise<void>>();
+
+/**
+ * Fetch a locale's dictionary, once. Resolves immediately for a locale that is
+ * already here, and for `en`, which needs nothing.
+ *
+ * A failure resolves rather than rejects: the app is entirely usable in English
+ * and a missing dictionary is not worth taking a render down for.
+ */
+export function ensureLocaleLoaded(locale: Locale): Promise<void> {
+  if (locale === 'en' || translations[locale]) return Promise.resolve();
+  const existing = inFlight.get(locale);
+  if (existing) return existing;
+
+  const load = LOCALE_DICTIONARIES[locale]()
+    .then((table) => {
+      translations[locale] = table;
+      useLocaleStore.setState((state) => ({
+        dictionaryVersion: state.dictionaryVersion + 1,
+      }));
+    })
+    .catch((error) => {
+      console.warn(`[i18n] Unable to load the ${locale} dictionary:`, error);
+    })
+    .finally(() => {
+      inFlight.delete(locale);
+    });
+  inFlight.set(locale, load);
+  return load;
+}
+
+/**
+ * The dictionary for the locale this visit starts in. Awaited before the first
+ * render so a non-English user is not shown a frame of English while their
+ * words are still on the wire.
+ */
+export const initialLocaleReady: Promise<void> = ensureLocaleLoaded(
+  useLocaleStore.getState().locale,
+);
 
 applyDocumentLocale(useLocaleStore.getState().locale);
 
@@ -146,10 +195,16 @@ export function t(
 export function useI18n() {
   const locale = useLocaleStore((s) => s.locale);
   const setLocale = useLocaleStore((s) => s.setLocale);
+  // A dictionary arriving changes what `translate` returns without changing the
+  // locale, so the memo has to depend on it too.
+  const dictionaryVersion = useLocaleStore((s) => s.dictionaryVersion);
   const translateLocale = useCallback(
     (key: string, params?: Record<string, string | number>) =>
       translate(key, locale, params),
-    [locale],
+    // dictionaryVersion is a cache-invalidation signal, not a value this reads —
+    // `translate` looks the table up itself. The rule cannot see that.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [locale, dictionaryVersion],
   );
   return { t: translateLocale, locale, setLocale };
 }
