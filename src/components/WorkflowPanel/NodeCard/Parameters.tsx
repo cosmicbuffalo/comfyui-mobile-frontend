@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { Fragment, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Collapsible } from '@/components/Collapsible';
 import { FoldIcon } from '@/components/FoldIcon';
 import {
@@ -1184,6 +1184,262 @@ export function NodeCardParameters({
 
   if (!showParameters && !isFastGroupsBypasser && !showFastGroupConfig) return null;
 
+  const promotedSeedBlock: ReactNode =
+    !isKSampler && workflowExists && nodeTypesExists
+      ? (() => {
+          const seedIndex = seedWidgetIndex;
+          if (seedIndex === null) return null;
+          const baseChoices = ['fixed', 'randomize', 'increment', 'decrement'];
+          const choices = typeof seedControlValue === 'string' && !baseChoices.includes(seedControlValue)
+            ? [...baseChoices, seedControlValue]
+            : baseChoices;
+          if (seedInputEntry?.link != null && promotedSeedModeNodeId === undefined) return null;
+
+          const seedWidget = [...visibleInputWidgets, ...visibleWidgets].find(
+            (widget) => widget.widgetIndex === seedIndex,
+          );
+          const seedOptions = (seedWidget?.options ?? {}) as Record<string, unknown>;
+          const rawSeedValue = Number((resolveWidgetValue ? resolveWidgetValue(seedIndex) : widgetValues[seedIndex]) ?? 0);
+          const seedLabel = seedWidget && (seedWidget.inputIndex ?? -1) >= 0
+            ? widgetDisplayLabel(seedWidget) ?? seedWidget.name
+            : 'seed';
+          const seedMenuWidget = seedWidget
+            ? { ...seedWidget, value: rawSeedValue }
+            : syntheticWidget({
+                widgetIndex: seedIndex,
+                name: 'seed',
+                inputName: 'seed',
+                type: 'INT',
+                value: rawSeedValue,
+                options: seedOptions,
+              });
+          const min = typeof seedOptions.min === 'number' ? seedOptions.min : undefined;
+          const max = typeof seedOptions.max === 'number' ? seedOptions.max : undefined;
+          const step = typeof seedOptions.step === 'number' ? seedOptions.step : undefined;
+
+          if (hasSeedControl) {
+            const controlIndex = seedControlIndex ?? seedIndex + 1;
+            // The node's own control_after_generate drives the seed, so pair
+            // the two: the value sits directly above the control that steps
+            // it, the way desktop orders them. Without this the seed stayed
+            // down in the generic widget list, detached from its control.
+            return (
+              <div className="seed-control-widget">
+                <NumberControl
+                  name={seedLabel}
+                  value={rawSeedValue}
+                  onChange={handleSeedValueChange(seedIndex)}
+                  disabled={isBypassed}
+                  labelAccessory={rowMenuFor(seedMenuWidget)}
+                  min={min}
+                  max={max}
+                  step={step}
+                  hasError={errorInputNames.has('seed') || errorInputNames.has('noise_seed')}
+                  isPromoted={isPromotedWidget('seed')}
+                />
+                <WidgetControl
+                  name={t('Seed control')}
+                  type="COMBO"
+                  value={seedControlValue}
+                  options={choices}
+                  onChange={handleSeedControlChange(controlIndex)}
+                  isPromoted={isPromotedWidget('control_after_generate')}
+                  compactTrailingControls
+                  labelAccessory={rowMenuFor(syntheticWidget({
+                    widgetIndex: controlIndex,
+                    name: t('Seed control'),
+                    inputName: 'control_after_generate',
+                    type: 'COMBO',
+                    value: seedControlValue,
+                    options: choices,
+                  }))}
+                />
+              </div>
+            );
+          }
+
+          const specialMode = getSpecialSeedMode(rawSeedValue);
+          const seedMode = storedSeedMode ?? specialMode ?? 'fixed';
+          // Display the special seed value (-1/-2/-3) directly when in a
+          // special mode, matching the desktop rgthree behavior. The actual
+          // seed used at queue time is resolved from this special value.
+          const displaySeedValue = rawSeedValue;
+          const hasSeedError = errorInputNames.has('seed') || errorInputNames.has('noise_seed');
+
+          return (
+            <div className="seed-value-widget mb-3">
+              <NumberControl
+                name={seedLabel}
+                value={displaySeedValue}
+                onChange={handleSeedValueChange(seedIndex)}
+                disabled={isBypassed}
+                min={min}
+                max={max}
+                step={step}
+                hasError={hasSeedError}
+                isPromoted={isPromotedSeedBlock}
+                labelAccessory={rowMenuFor(seedMenuWidget)}
+              />
+              {!isRgthreeSeedNode && (
+                <WidgetControl
+                  name={t('Seed control')}
+                  type="COMBO"
+                  value={seedMode}
+                  options={baseChoices}
+                  onChange={handleSeedModeValue}
+                  isPromoted={isPromotedSeedBlock}
+                  compactTrailingControls
+                  labelAccessory={rowMenuFor(syntheticWidget({
+                    widgetIndex: seedIndex,
+                    name: t('Seed control'),
+                    inputName: 'control_after_generate',
+                    type: 'COMBO',
+                    value: seedMode,
+                    options: baseChoices,
+                  }))}
+                />
+              )}
+              <div className="grid gap-2 mt-2">
+                <button
+                  type="button"
+                  className={controlSecondaryButtonClassName}
+                  onClick={() => setSeedMode(seedModeNodeId, 'randomize')}
+                  disabled={isBypassed}
+                >
+                  🎲 Randomize each time
+                </button>
+                <button
+                  type="button"
+                  className={controlSecondaryButtonClassName}
+                  onClick={handleSeedNewFixedRandomClick(seedIndex)}
+                  disabled={isBypassed}
+                >
+                  🎲 New fixed random
+                </button>
+                <button
+                  type="button"
+                  className={controlSecondaryButtonClassName}
+                  onClick={handleSeedUseLastClick(seedIndex)}
+                  disabled={isBypassed || typeof lastSeedValue !== 'number'}
+                >
+                  {typeof lastSeedValue === 'number'
+                    ? `♻️ Use last queued seed (${lastSeedValue})`
+                    : '♻️ Use last queued seed'}
+                </button>
+              </div>
+            </div>
+          );
+      })()
+      : null;
+
+  const placeholderSeedSlot = ((): number => {
+    if (!isPlaceholder || !rendersSpecializedSeedBlock || seedWidgetIndex === null) return -1;
+    const seedWidget = [...visibleInputWidgets, ...visibleWidgets].find(
+      (widget) => widget.widgetIndex === seedWidgetIndex,
+    );
+    return seedWidget?.inputIndex ?? -1;
+  })();
+  const seedBlockDrawsInline = placeholderSeedSlot >= 0 && promotedSeedBlock !== null;
+
+  /** One COMBO row. */
+  const renderComboRow = (inputWidget: WidgetDescriptor): ReactNode => (
+    // Identified so a jump can land on this row rather than on the
+    // whole card — an undo of a widget edit goes to the widget.
+    // The wrapper carries it, not the control, so combos (which
+    // WidgetControl hands off before it draws its own markup) are
+    // addressable on the same terms as everything else.
+    <div
+      key={getWidgetKey(inputWidget, 'input-widget')}
+      id={widgetRowDomId(node.id, inputWidget.widgetIndex)}
+      className={isBypassed ? 'opacity-80' : ''}
+    >
+      <WidgetControl
+        name={inputWidget.name}
+        displayLabel={widgetDisplayLabel(inputWidget)}
+        type={inputWidget.type}
+        value={inputWidget.value}
+        options={inputWidget.options}
+        onChange={handleInputWidgetChange(inputWidget)}
+        disabled={isBypassed}
+        isPinned={canPinWidget(inputWidget.type, inputWidget.name, inputWidget.options) ? isWidgetPinned(inputWidget.widgetIndex) : false}
+        onTogglePin={canPinWidget(inputWidget.type, inputWidget.name, inputWidget.options) ? () => toggleWidgetPin(inputWidget.widgetIndex, inputWidget.name, inputWidget.type, inputWidget.options, inputWidget.inputName) : undefined}
+        hasError={hasWidgetError(inputWidget)}
+        isPromoted={isPromotedWidget(inputWidget.name)}
+        labelAccessory={
+          <RowActionsMenu
+            // Identity, not position: the row is remounted by a
+            // reorder, and the menu has to survive that.
+            menuKey={`widget:${menuScopeKey}:${node.id}:${rowMenuIdentity(inputWidget)}`}
+            rowName={inputWidget.name}
+            typeLabel={widgetTypeLabel(inputWidget)}
+            sections={buildWidgetMenu(inputWidget, false)}
+          />
+        }
+      />
+    </div>
+  );
+
+  /** One non-COMBO row. */
+  const renderValueRow = (widget: WidgetDescriptor): ReactNode => {
+    const canPopOut =
+      !isBypassed && !isSingleWidgetOnlyNode && Boolean(node.itemKey) && canPopOutWidget(widget);
+    return (
+      <div
+        key={getWidgetKey(widget, 'widget')}
+        id={widgetRowDomId(node.id, widget.widgetIndex)}
+        className={isBypassed ? 'opacity-80' : ''}
+      >
+        <WidgetControl
+          name={widget.name}
+          displayLabel={widgetDisplayLabel(widget)}
+          type={widget.type}
+          value={widget.value}
+          options={widget.options}
+          onChange={handleWidgetChange(widget)}
+          disabled={isBypassed || widget.disabled === true}
+          isPinned={canPinWidget(widget.type, widget.name, widget.options) ? isWidgetPinned(widget.widgetIndex) : false}
+          onTogglePin={canPinWidget(widget.type, widget.name, widget.options) ? () => toggleWidgetPin(widget.widgetIndex, widget.name, widget.type, widget.options, widget.inputName) : undefined}
+          hasError={hasWidgetError(widget)}
+          isPromoted={isPromotedWidget(widget.name)}
+          labelAccessory={
+            rowMenuFor(widget, canPopOut)
+          }
+        />
+      </div>
+    );
+  };
+
+  /**
+   * Every row this card draws, in the order the boundary declares.
+   *
+   * Only placeholders use it. Elsewhere the two lists and the seed block keep
+   * their own grouping, which is fine because nothing there is reorderable —
+   * but on a placeholder the drawn order IS the boundary order the Move
+   * actions step through, so the two have to be one list.
+   */
+  const orderedPlaceholderRows = ((): ReactNode[] => {
+    if (!isPlaceholder) return [];
+    const rows: { slot: number; node: ReactNode }[] = [
+      ...inputWidgetsToRender.map((widget) => ({
+        slot: widget.inputIndex ?? -1,
+        node: renderComboRow(widget),
+      })),
+      ...widgetsToRender.map((widget) => ({
+        slot: widget.inputIndex ?? -1,
+        node: renderValueRow(widget),
+      })),
+      // The widget rows carry their own keys; the seed block is a bare
+      // element, so it needs one to sit in this list.
+      ...(seedBlockDrawsInline
+        ? [{
+            slot: placeholderSeedSlot,
+            node: <Fragment key="promoted-seed-block">{promotedSeedBlock}</Fragment>,
+          }]
+        : []),
+    ];
+    return rows.sort((left, right) => left.slot - right.slot).map((row) => row.node);
+  })();
+
   return (
     <div className={`node-parameters ${hasOutputsBelow ? 'mb-2' : ''}`}>
       <div className="parameters-section-header grid grid-cols-[1fr_auto_1fr] items-center gap-2 mb-1.5 text-xs uppercase tracking-wide text-slate-500">
@@ -1266,150 +1522,7 @@ export function NodeCardParameters({
               </div>
             );
           })()}
-          {!isKSampler && workflowExists && nodeTypesExists && (() => {
-            const seedIndex = seedWidgetIndex;
-            if (seedIndex === null) return null;
-            const baseChoices = ['fixed', 'randomize', 'increment', 'decrement'];
-            const choices = typeof seedControlValue === 'string' && !baseChoices.includes(seedControlValue)
-              ? [...baseChoices, seedControlValue]
-              : baseChoices;
-            if (seedInputEntry?.link != null && promotedSeedModeNodeId === undefined) return null;
-
-            const seedWidget = [...visibleInputWidgets, ...visibleWidgets].find(
-              (widget) => widget.widgetIndex === seedIndex,
-            );
-            const seedOptions = (seedWidget?.options ?? {}) as Record<string, unknown>;
-            const rawSeedValue = Number((resolveWidgetValue ? resolveWidgetValue(seedIndex) : widgetValues[seedIndex]) ?? 0);
-            const seedLabel = seedWidget && (seedWidget.inputIndex ?? -1) >= 0
-              ? widgetDisplayLabel(seedWidget) ?? seedWidget.name
-              : 'seed';
-            const seedMenuWidget = seedWidget
-              ? { ...seedWidget, value: rawSeedValue }
-              : syntheticWidget({
-                  widgetIndex: seedIndex,
-                  name: 'seed',
-                  inputName: 'seed',
-                  type: 'INT',
-                  value: rawSeedValue,
-                  options: seedOptions,
-                });
-            const min = typeof seedOptions.min === 'number' ? seedOptions.min : undefined;
-            const max = typeof seedOptions.max === 'number' ? seedOptions.max : undefined;
-            const step = typeof seedOptions.step === 'number' ? seedOptions.step : undefined;
-
-            if (hasSeedControl) {
-              const controlIndex = seedControlIndex ?? seedIndex + 1;
-              // The node's own control_after_generate drives the seed, so pair
-              // the two: the value sits directly above the control that steps
-              // it, the way desktop orders them. Without this the seed stayed
-              // down in the generic widget list, detached from its control.
-              return (
-                <div className="seed-control-widget">
-                  <NumberControl
-                    name={seedLabel}
-                    value={rawSeedValue}
-                    onChange={handleSeedValueChange(seedIndex)}
-                    disabled={isBypassed}
-                    labelAccessory={rowMenuFor(seedMenuWidget)}
-                    min={min}
-                    max={max}
-                    step={step}
-                    hasError={errorInputNames.has('seed') || errorInputNames.has('noise_seed')}
-                    isPromoted={isPromotedWidget('seed')}
-                  />
-                  <WidgetControl
-                    name={t('Seed control')}
-                    type="COMBO"
-                    value={seedControlValue}
-                    options={choices}
-                    onChange={handleSeedControlChange(controlIndex)}
-                    isPromoted={isPromotedWidget('control_after_generate')}
-                    compactTrailingControls
-                    labelAccessory={rowMenuFor(syntheticWidget({
-                      widgetIndex: controlIndex,
-                      name: t('Seed control'),
-                      inputName: 'control_after_generate',
-                      type: 'COMBO',
-                      value: seedControlValue,
-                      options: choices,
-                    }))}
-                  />
-                </div>
-              );
-            }
-
-            const specialMode = getSpecialSeedMode(rawSeedValue);
-            const seedMode = storedSeedMode ?? specialMode ?? 'fixed';
-            // Display the special seed value (-1/-2/-3) directly when in a
-            // special mode, matching the desktop rgthree behavior. The actual
-            // seed used at queue time is resolved from this special value.
-            const displaySeedValue = rawSeedValue;
-            const hasSeedError = errorInputNames.has('seed') || errorInputNames.has('noise_seed');
-
-            return (
-              <div className="seed-value-widget mb-3">
-                <NumberControl
-                  name={seedLabel}
-                  value={displaySeedValue}
-                  onChange={handleSeedValueChange(seedIndex)}
-                  disabled={isBypassed}
-                  min={min}
-                  max={max}
-                  step={step}
-                  hasError={hasSeedError}
-                  isPromoted={isPromotedSeedBlock}
-                  labelAccessory={rowMenuFor(seedMenuWidget)}
-                />
-                {!isRgthreeSeedNode && (
-                  <WidgetControl
-                    name={t('Seed control')}
-                    type="COMBO"
-                    value={seedMode}
-                    options={baseChoices}
-                    onChange={handleSeedModeValue}
-                    isPromoted={isPromotedSeedBlock}
-                    compactTrailingControls
-                    labelAccessory={rowMenuFor(syntheticWidget({
-                      widgetIndex: seedIndex,
-                      name: t('Seed control'),
-                      inputName: 'control_after_generate',
-                      type: 'COMBO',
-                      value: seedMode,
-                      options: baseChoices,
-                    }))}
-                  />
-                )}
-                <div className="grid gap-2 mt-2">
-                  <button
-                    type="button"
-                    className={controlSecondaryButtonClassName}
-                    onClick={() => setSeedMode(seedModeNodeId, 'randomize')}
-                    disabled={isBypassed}
-                  >
-                    🎲 Randomize each time
-                  </button>
-                  <button
-                    type="button"
-                    className={controlSecondaryButtonClassName}
-                    onClick={handleSeedNewFixedRandomClick(seedIndex)}
-                    disabled={isBypassed}
-                  >
-                    🎲 New fixed random
-                  </button>
-                  <button
-                    type="button"
-                    className={controlSecondaryButtonClassName}
-                    onClick={handleSeedUseLastClick(seedIndex)}
-                    disabled={isBypassed || typeof lastSeedValue !== 'number'}
-                  >
-                    {typeof lastSeedValue === 'number'
-                      ? `♻️ Use last queued seed (${lastSeedValue})`
-                      : '♻️ Use last queued seed'}
-                  </button>
-                </div>
-              </div>
-            );
-          })()}
+          {!seedBlockDrawsInline && promotedSeedBlock}
           {isCrLoraStackNode ? (
             <>
               <div className="space-y-3">
@@ -1528,70 +1641,74 @@ export function NodeCardParameters({
             </>
           ) : (
             <>
-              {inputWidgetsToRender.map((inputWidget) => (
-                // Identified so a jump can land on this row rather than on the
-                // whole card — an undo of a widget edit goes to the widget.
-                // The wrapper carries it, not the control, so combos (which
-                // WidgetControl hands off before it draws its own markup) are
-                // addressable on the same terms as everything else.
-                <div
-                  key={getWidgetKey(inputWidget, 'input-widget')}
-                  id={widgetRowDomId(node.id, inputWidget.widgetIndex)}
-                  className={isBypassed ? 'opacity-80' : ''}
-                >
-                  <WidgetControl
-                    name={inputWidget.name}
-                    displayLabel={widgetDisplayLabel(inputWidget)}
-                    type={inputWidget.type}
-                    value={inputWidget.value}
-                    options={inputWidget.options}
-                    onChange={handleInputWidgetChange(inputWidget)}
-                    disabled={isBypassed}
-                    isPinned={canPinWidget(inputWidget.type, inputWidget.name, inputWidget.options) ? isWidgetPinned(inputWidget.widgetIndex) : false}
-                    onTogglePin={canPinWidget(inputWidget.type, inputWidget.name, inputWidget.options) ? () => toggleWidgetPin(inputWidget.widgetIndex, inputWidget.name, inputWidget.type, inputWidget.options, inputWidget.inputName) : undefined}
-                    hasError={hasWidgetError(inputWidget)}
-                    isPromoted={isPromotedWidget(inputWidget.name)}
-                    labelAccessory={
-                      <RowActionsMenu
-                        // Identity, not position: the row is remounted by a
-                        // reorder, and the menu has to survive that.
-                        menuKey={`widget:${menuScopeKey}:${node.id}:${rowMenuIdentity(inputWidget)}`}
-                        rowName={inputWidget.name}
-                        typeLabel={widgetTypeLabel(inputWidget)}
-                        sections={buildWidgetMenu(inputWidget, false)}
-                      />
-                    }
-                  />
-                </div>
-              ))}
-              {widgetsToRender.map((widget) => {
-                const canPopOut =
-                  !isBypassed && !isSingleWidgetOnlyNode && Boolean(node.itemKey) && canPopOutWidget(widget);
-                return (
+              {isPlaceholder ? orderedPlaceholderRows : (
+                <>
+                {inputWidgetsToRender.map((inputWidget) => (
+                  // Identified so a jump can land on this row rather than on the
+                  // whole card — an undo of a widget edit goes to the widget.
+                  // The wrapper carries it, not the control, so combos (which
+                  // WidgetControl hands off before it draws its own markup) are
+                  // addressable on the same terms as everything else.
                   <div
-                    key={getWidgetKey(widget, 'widget')}
-                    id={widgetRowDomId(node.id, widget.widgetIndex)}
+                    key={getWidgetKey(inputWidget, 'input-widget')}
+                    id={widgetRowDomId(node.id, inputWidget.widgetIndex)}
                     className={isBypassed ? 'opacity-80' : ''}
                   >
                     <WidgetControl
-                      name={widget.name}
-                      displayLabel={widgetDisplayLabel(widget)}
-                      type={widget.type}
-                      value={widget.value}
-                      options={widget.options}
-                      onChange={handleWidgetChange(widget)}
-                      disabled={isBypassed || widget.disabled === true}
-                      isPinned={canPinWidget(widget.type, widget.name, widget.options) ? isWidgetPinned(widget.widgetIndex) : false}
-                      onTogglePin={canPinWidget(widget.type, widget.name, widget.options) ? () => toggleWidgetPin(widget.widgetIndex, widget.name, widget.type, widget.options, widget.inputName) : undefined}
-                      hasError={hasWidgetError(widget)}
-                      isPromoted={isPromotedWidget(widget.name)}
+                      name={inputWidget.name}
+                      displayLabel={widgetDisplayLabel(inputWidget)}
+                      type={inputWidget.type}
+                      value={inputWidget.value}
+                      options={inputWidget.options}
+                      onChange={handleInputWidgetChange(inputWidget)}
+                      disabled={isBypassed}
+                      isPinned={canPinWidget(inputWidget.type, inputWidget.name, inputWidget.options) ? isWidgetPinned(inputWidget.widgetIndex) : false}
+                      onTogglePin={canPinWidget(inputWidget.type, inputWidget.name, inputWidget.options) ? () => toggleWidgetPin(inputWidget.widgetIndex, inputWidget.name, inputWidget.type, inputWidget.options, inputWidget.inputName) : undefined}
+                      hasError={hasWidgetError(inputWidget)}
+                      isPromoted={isPromotedWidget(inputWidget.name)}
                       labelAccessory={
-                        rowMenuFor(widget, canPopOut)
+                        <RowActionsMenu
+                          // Identity, not position: the row is remounted by a
+                          // reorder, and the menu has to survive that.
+                          menuKey={`widget:${menuScopeKey}:${node.id}:${rowMenuIdentity(inputWidget)}`}
+                          rowName={inputWidget.name}
+                          typeLabel={widgetTypeLabel(inputWidget)}
+                          sections={buildWidgetMenu(inputWidget, false)}
+                        />
                       }
                     />
                   </div>
-                );
-              })}
+                ))}
+                {widgetsToRender.map((widget) => {
+                  const canPopOut =
+                    !isBypassed && !isSingleWidgetOnlyNode && Boolean(node.itemKey) && canPopOutWidget(widget);
+                  return (
+                    <div
+                      key={getWidgetKey(widget, 'widget')}
+                      id={widgetRowDomId(node.id, widget.widgetIndex)}
+                      className={isBypassed ? 'opacity-80' : ''}
+                    >
+                      <WidgetControl
+                        name={widget.name}
+                        displayLabel={widgetDisplayLabel(widget)}
+                        type={widget.type}
+                        value={widget.value}
+                        options={widget.options}
+                        onChange={handleWidgetChange(widget)}
+                        disabled={isBypassed || widget.disabled === true}
+                        isPinned={canPinWidget(widget.type, widget.name, widget.options) ? isWidgetPinned(widget.widgetIndex) : false}
+                        onTogglePin={canPinWidget(widget.type, widget.name, widget.options) ? () => toggleWidgetPin(widget.widgetIndex, widget.name, widget.type, widget.options, widget.inputName) : undefined}
+                        hasError={hasWidgetError(widget)}
+                        isPromoted={isPromotedWidget(widget.name)}
+                        labelAccessory={
+                          rowMenuFor(widget, canPopOut)
+                        }
+                      />
+                    </div>
+                  );
+                })}
+                </>
+              )}
             </>
           )}
           {node.type === 'PrimitiveNode' && (() => {

@@ -374,4 +374,166 @@ describe('reordering promoted widgets on a placeholder card', () => {
 
     expect(shownBySlotName()).toEqual(everyValueIntact());
   });
+
+  /**
+   * The reported case, from a real workflow: an Output Video placeholder whose
+   * boundary reads interpolation_factor, filename_prefix, interpolation_seed.
+   *
+   * The seed block used to be drawn above every other row whatever slot it held,
+   * while Move up / Move down stepped through boundary order — two different
+   * lists. The first row on screen reported itself as already at the top, the
+   * last one still offered a move down, and no boundary order could put anything
+   * above the seed, because the seed was not in that order at all.
+   */
+  describe('a seed promoted into a later boundary slot', () => {
+    const renderOutputVideoCard = async (
+      onMoveBoundarySlot: (from: number, to: number) => void,
+      slots = { factorSlot: 1, prefixSlot: 2, seedSlot: 3 },
+    ) => {
+      const node: WorkflowNode = {
+        id: 1774,
+        itemKey: 'node:1774',
+        type: 'video-subgraph',
+        pos: [0, 0],
+        size: [420, 400],
+        flags: {},
+        order: 0,
+        mode: 0,
+        inputs: [],
+        outputs: [],
+        properties: {},
+        widgets_values: [],
+      };
+      const workflow: Workflow = {
+        last_node_id: node.id,
+        last_link_id: 0,
+        nodes: [node],
+        links: [],
+        groups: [],
+        config: {},
+        version: 1,
+      };
+      useWorkflowStore.setState({ workflow, nodeTypes: {}, scopeStack: [{ type: 'root' }] });
+
+      const values = new Map<number, unknown>([
+        [20_000, 4],
+        [20_001, 'Wan/12_part'],
+        [20_002, 2795446733],
+      ]);
+
+      await act(async () => {
+        root.render(
+          <NodeCardParameters
+            node={node}
+            isBypassed={false}
+            isKSampler={false}
+            workflowExists
+            nodeTypesExists
+            visibleInputWidgets={[]}
+            visibleWidgets={[
+              {
+                widgetIndex: 20_000,
+                inputIndex: slots.factorSlot,
+                name: 'interpolation_factor',
+                type: 'INT',
+                value: 4,
+              },
+              {
+                widgetIndex: 20_001,
+                inputIndex: slots.prefixSlot,
+                name: 'filename_prefix',
+                type: 'STRING',
+                value: 'Wan/12_part',
+              },
+              {
+                widgetIndex: 20_002,
+                inputIndex: slots.seedSlot,
+                name: 'interpolation_seed',
+                type: 'INT',
+                value: 2795446733,
+              },
+            ]}
+            errorInputNames={new Set()}
+            onUpdateNodeWidget={vi.fn()}
+            onUpdateNodeWidgets={vi.fn()}
+            getWidgetIndexForInput={() => null}
+            findSeedWidgetIndex={() => 20_002}
+            findSeedControlWidgetIndex={() => null}
+            isPlaceholder
+            onMoveBoundarySlot={onMoveBoundarySlot}
+            setSeedMode={vi.fn()}
+            isWidgetPinned={() => false}
+            toggleWidgetPin={vi.fn()}
+            resolveWidgetValue={(index) => values.get(index)}
+            showFastGroupConfig={false}
+            setShowFastGroupConfig={vi.fn()}
+          />,
+        );
+      });
+    };
+
+    const rowOrder = (): string[] =>
+      Array.from(container.querySelectorAll<HTMLButtonElement>('button.row-actions-button'))
+        .map((button) => button.getAttribute('aria-label') ?? '');
+
+    const menuLabelsFor = async (rowName: string): Promise<(string | undefined)[]> => {
+      const trigger = Array.from(
+        container.querySelectorAll<HTMLButtonElement>('button.row-actions-button'),
+      ).find((button) => (button.getAttribute('aria-label') ?? '').includes(rowName));
+      expect(trigger, `no row menu for ${rowName}`).toBeTruthy();
+      await act(async () => trigger!.click());
+      return Array.from(
+        document.querySelectorAll<HTMLButtonElement>('.row-actions-menu button'),
+      ).map((button) => button.textContent?.trim());
+    };
+
+    it('draws the seed in its own boundary position, not above everything', async () => {
+      await renderOutputVideoCard(vi.fn());
+      const order = rowOrder();
+      const factor = order.findIndex((label) => label.includes('interpolation_factor'));
+      const prefix = order.findIndex((label) => label.includes('filename_prefix'));
+      const seed = order.findIndex((label) => label.includes('interpolation_seed'));
+      expect(factor, 'interpolation_factor is drawn').toBeGreaterThanOrEqual(0);
+      expect(prefix).toBeGreaterThanOrEqual(0);
+      expect(seed).toBeGreaterThanOrEqual(0);
+      // Boundary order is 1, 2, 3 — so is the card.
+      expect(factor).toBeLessThan(prefix);
+      expect(prefix).toBeLessThan(seed);
+    });
+
+    it('offers no move up on the row that really is first', async () => {
+      await renderOutputVideoCard(vi.fn());
+      const labels = await menuLabelsFor('interpolation_factor');
+      expect(labels).not.toContain('Move up');
+      expect(labels).toContain('Move down');
+    });
+
+    it('offers no move down on the row that really is last', async () => {
+      await renderOutputVideoCard(vi.fn());
+      // The seed sits at the end of the boundary, so it ends the card too.
+      const labels = await menuLabelsFor('interpolation_seed');
+      expect(labels).not.toContain('Move down');
+      expect(labels).toContain('Move up');
+    });
+
+    it('moves a row past the seed rather than stopping short of it', async () => {
+      const onMoveBoundarySlot = vi.fn();
+      await renderOutputVideoCard(onMoveBoundarySlot);
+      await clickRowAction('filename_prefix', 'Move down');
+      // Slot 3 is the seed's: the row lands after it.
+      expect(onMoveBoundarySlot).toHaveBeenCalledWith(2, 3);
+    });
+
+    it('offers a move up above the seed once a row is below it', async () => {
+      const onMoveBoundarySlot = vi.fn();
+      await renderOutputVideoCard(onMoveBoundarySlot, {
+        seedSlot: 1,
+        factorSlot: 2,
+        prefixSlot: 3,
+      });
+      await clickRowAction('interpolation_factor', 'Move up');
+      expect(onMoveBoundarySlot).toHaveBeenCalledWith(2, 1);
+    });
+  });
+
 });
