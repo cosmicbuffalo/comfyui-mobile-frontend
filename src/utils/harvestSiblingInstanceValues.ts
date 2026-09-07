@@ -240,16 +240,54 @@ export function harvestSiblingInstanceValues(
     return next;
   };
 
-  // Only a source that is now feeding nothing at all can be offered for
-  // removal. Counted on the workflow AFTER the move, since that is where the
-  // links it lost have already gone.
-  const afterLinks = after.links ?? [];
-  const sources = new Set(harvested.map((entry) => entry.sourceNodeId));
-  const removable = [...sources].filter(
-    (id) => !movedNodeIds.includes(id) && !afterLinks.some((link) => link[1] === id),
-  );
-
+  // Counted against the links this harvest ends with, not the ones the move
+  // left behind: a source re-wired into a sibling instance just above is
+  // feeding something again, and reading the pre-harvest table would offer it
+  // for removal anyway.
   const links = [...(after.links ?? []), ...(addedLinks ?? [])];
+
+  // Which nodes the move left with nothing to do.
+  //
+  // The node that fed the retired slot is only the end of a chain. A `seconds`
+  // primitive feeding a math expression feeding the boundary leaves BOTH with
+  // no purpose once the expression's value is harvested, but one pass finds
+  // neither removable: the expression still has the primitive pointing at it,
+  // and the primitive still points at the expression. Each is held up by
+  // something that is itself on the way out.
+  //
+  // So sweep to a fixed point. A node qualifies once every link out of it lands
+  // on a node already going, and qualifying puts whatever fed IT up for the
+  // same question. Repeat until a pass changes nothing, which also settles the
+  // case where two harvested sources feed each other in list order.
+  const afterById = new Map((after.nodes ?? []).map((node) => [node.id, node]));
+  const definitionIds = new Set((after.definitions?.subgraphs ?? []).map((sg) => sg.id));
+  const sources = new Set(harvested.map((entry) => entry.sourceNodeId));
+  const candidates = new Set<number>(sources);
+  const going = new Set<number>();
+  const removable: number[] = [];
+  let sweeping = true;
+  while (sweeping) {
+    sweeping = false;
+    for (const id of [...candidates]) {
+      if (going.has(id) || movedNodeIds.includes(id) || !afterById.has(id)) continue;
+      // Still feeding something that is staying.
+      if (links.some((link) => link[1] === id && !going.has(link[3]))) continue;
+      going.add(id);
+      removable.push(id);
+      sweeping = true;
+      for (const link of links) {
+        if (link[3] !== id) continue;
+        const parent = afterById.get(link[1]);
+        // A subgraph instance is not a value holder — stranding one is a far
+        // bigger claim than stranding a primitive, and it may be the point of
+        // the graph rather than scaffolding. The sweep stops at it. Direct
+        // feeders of the retired slot are seeded above and keep their old
+        // eligibility whatever they are.
+        if (!parent || definitionIds.has(parent.type)) continue;
+        candidates.add(parent.id);
+      }
+    }
+  }
   // The nodes now feeding those inputs must say so too, or their outputs read as
   // unconnected and the next edit drops a link it cannot see.
   const withCaches = (after.nodes ?? []).map(seat).map((node) => ({

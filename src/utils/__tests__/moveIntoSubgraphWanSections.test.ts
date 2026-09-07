@@ -839,6 +839,74 @@ describe('editing one instance of a shared type', () => {
     }
   });
 
+  it('offers the whole stranded chain, not just what fed the slot', () => {
+    // The reported case. Every section computes its length the same way: its
+    // own `_Second` primitive and one shared primitive feed a math expression,
+    // and the expression feeds the section. Move a section's expression in
+    // together with its own primitive and each sibling is left holding BOTH —
+    // the expression, whose value has just been harvested onto the placeholder,
+    // and the primitive, which now feeds only that dead expression.
+    //
+    // Finding the expression alone is what a single pass does: the primitive
+    // still points at it, so it reads as busy right up until the expression
+    // goes.
+    const byId = (id: number) => current().nodes.find((n) => n.id === id);
+    const titleOf = (id: number) => byId(id)?.title ?? '';
+    const secondsFeeding = (expressionId: number): number[] => (current().links ?? [])
+      .filter((link) => link[3] === expressionId)
+      .map((link) => link[1])
+      .filter((id) => byId(id)?.type === 'PrimitiveFloat' && /_Second/.test(titleOf(id)));
+
+    const siblingExpressions = current().nodes
+      .filter((n) => /_Math ?Ex/.test(n.title ?? '') && n.id !== MATH_EXPRESSION)
+      .map((n) => n.id);
+    // The one primitive wired into every section's expression, so it is still
+    // feeding the sections this move does not touch.
+    const shared = 1363;
+
+    const result = useWorkflowStore.getState().moveItemsIntoSubgraph(
+      [keyOf(SECONDS), keyOf(MATH_EXPRESSION)], keyOf(PLACEHOLDER),
+    )!;
+    const offered = new Set(result.harvestedFrom);
+
+    const stranded = siblingExpressions.filter((id) => offered.has(id));
+    expect(stranded.length, 'sibling expressions were harvested').toBeGreaterThan(5);
+    for (const expressionId of stranded) {
+      for (const secondsId of secondsFeeding(expressionId)) {
+        expect(
+          offered.has(secondsId),
+          `#${secondsId} (${titleOf(secondsId)}) feeds only #${expressionId}, which is going`,
+        ).toBe(true);
+      }
+    }
+
+    // The shared primitive feeds expressions outside this type as well, and the
+    // harvest has just wired it into every sibling's new boundary input. It is
+    // busier than before, not stranded.
+    expect(offered.has(shared), 'the shared primitive is not offered').toBe(false);
+
+    // Nothing offered may still be feeding something that stays.
+    for (const id of offered) {
+      const consumers = (current().links ?? [])
+        .filter((link) => link[1] === id)
+        .map((link) => link[3])
+        .filter((target) => !offered.has(target));
+      expect(consumers, `#${id} (${titleOf(id)}) still feeds ${consumers.join(', ')}`).toEqual([]);
+    }
+  });
+
+  it('leaves the submitted graph alone when the whole chain is removed', () => {
+    const before = expandedSamplerFeeds(current());
+    const result = useWorkflowStore.getState().moveItemsIntoSubgraph(
+      [keyOf(SECONDS), keyOf(MATH_EXPRESSION)], keyOf(PLACEHOLDER),
+    )!;
+
+    const removed = useWorkflowStore.getState().removeHarvestedNodes(result.harvestedFrom);
+    expect(removed, 'every offered node was removed').toBe(result.harvestedFrom.length);
+    expectClean(current(), 'after removing the stranded chain');
+    expect(expandedSamplerFeeds(current())).toEqual(before);
+  });
+
   it('removes the offered nodes and leaves the submitted graph alone', () => {
     const before = expandedSamplerFeeds(current());
     const result = useWorkflowStore.getState().moveItemsIntoSubgraph(

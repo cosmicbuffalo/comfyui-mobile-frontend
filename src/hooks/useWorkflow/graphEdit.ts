@@ -1319,12 +1319,17 @@ const removeHarvestedNodes: WorkflowState["removeHarvestedNodes"] = (nodeIds) =>
 
   const links = workflow.links ?? [];
   const doomed = new Set(
-    nodeIds.filter((id) => {
-      const node = (workflow.nodes ?? []).find((candidate) => candidate.id === id);
-      if (!node) return false;
-      return !links.some((link) => link[1] === id);
-    }),
+    nodeIds.filter((id) => (workflow.nodes ?? []).some((candidate) => candidate.id === id)),
   );
+  let shrinking = true;
+  while (shrinking) {
+    shrinking = false;
+    for (const id of [...doomed]) {
+      if (!links.some((link) => link[1] === id && !doomed.has(link[3]))) continue;
+      doomed.delete(id);
+      shrinking = true;
+    }
+  }
   if (doomed.size === 0) return 0;
 
   const survivingLinks = links.filter((link) => !doomed.has(link[1]) && !doomed.has(link[3]));
