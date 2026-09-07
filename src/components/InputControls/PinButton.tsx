@@ -1,4 +1,5 @@
 import { PinIconSvg } from '@/components/icons';
+import { pinAccentTextClassName } from '@/components/chromeStyles';
 import { useI18n } from '@/i18n';
 
 interface PinButtonProps {
@@ -18,7 +19,7 @@ export function PinButton({ isPinned, onToggle }: PinButtonProps) {
     <button
       type="button"
       onClick={handleToggleClick}
-      className="flex items-center justify-center transition-colors text-fuchsia-500 hover:text-fuchsia-600"
+      className={`flex items-center justify-center transition-colors ${pinAccentTextClassName} hover:text-fuchsia-600`}
       aria-label={t("Remove pin")}
     >
       <PinIconSvg className="w-5 h-5" />

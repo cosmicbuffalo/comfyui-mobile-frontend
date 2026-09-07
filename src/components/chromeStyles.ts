@@ -21,6 +21,11 @@ export const appChromeIconButtonActiveClassName =
 export const appChromeIconButtonFilteredClassName =
   'bg-amber-500 border border-amber-500 text-slate-950 shadow-sm';
 
+export const pinAccentActiveClassName =
+  'bg-fuchsia-500 border border-fuchsia-500 text-white';
+export const pinAccentTextClassName = 'text-fuchsia-500';
+export const pinAccentMutedTextClassName = 'text-fuchsia-400';
+
 export const appChromePrimaryButtonClassName =
   'bg-cyan-500 text-slate-950 active:bg-cyan-400';
 

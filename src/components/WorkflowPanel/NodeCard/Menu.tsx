@@ -1,5 +1,6 @@
 import { useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { pinAccentMutedTextClassName } from '@/components/chromeStyles';
 import { BypassToggleIcon, BookmarkIconSvg, BookmarkOutlineIcon, CheckIcon, ClipboardIcon, ClipboardDownloadIcon, CopyIcon, EyeIcon, EyeOffIcon, MoveUpDownIcon, NodeConnectionsIcon, EditIcon, ExternalLinkIcon, PinIconSvg, PinOutlineIcon, PromotedWidgetIcon, SaveDiskIcon, TrashIcon, ArrowRightIcon, WorkflowIcon } from '@/components/icons';
 import { useWorkflowSelectionStore } from '@/hooks/useWorkflowSelection';
 import { useDismissOnOutsideClick } from '@/hooks/useDismissOnOutsideClick';
@@ -523,7 +524,7 @@ export function NodeCardMenu({
       {widgetPicker === 'pin' && (
         <WidgetPickerModal
           title={t('Pin widget')}
-          icon={<PinOutlineIcon className="h-5 w-5 text-fuchsia-400" />}
+          icon={<PinOutlineIcon className={`h-5 w-5 ${pinAccentMutedTextClassName}`} />}
           entries={pinnableWidgets.map((widget) => ({
             key: String(widget.widgetIndex),
             label: widget.name,
