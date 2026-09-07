@@ -368,6 +368,12 @@ export function NodeCardParameters({
   // The renamed label a widget shows, stored the way the desktop frontend
   // stores it: on the node's input slot.
   const widgetInputFor = (widget: WidgetDescriptor) => {
+    // The descriptor already knows WHICH slot it came from. Prefer it: on a
+    // placeholder several boundary slots can drive inner widgets sharing one
+    // canonical name (three promoted primitives all named `value`), and a
+    // name-keyed lookup handed every one of them the first slot's rename.
+    const slot = widget.inputIndex ?? -1;
+    if (slot >= 0 && node.inputs[slot]) return node.inputs[slot];
     const inputName = widget.inputName ?? widget.name;
     return node.inputs.find(
       (input) => input.widget?.name === inputName || input.name === inputName,
