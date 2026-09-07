@@ -612,6 +612,13 @@ export function NodeCardParameters({
 
     const routingActions: RowMenuAction[] = [
       {
+        key: 'pop-out',
+        label: t('Pop out widget'),
+        icon: <ArrowToDownRightIcon className="w-4 h-4 rotate-90" />,
+        hidden: !canPopOut,
+        onSelect: () => setPopOutTarget(widget),
+      },
+      {
         key: 'promote-widget',
         label: t('Promote as widget'),
         icon: <PromotedWidgetIcon className="w-4 h-4" />,
@@ -657,15 +664,9 @@ export function NodeCardParameters({
         key: 'remove-slot',
         label: t('Remove input'),
         icon: <NoEntryIcon className="w-4 h-4" />,
+        color: 'danger',
         hidden: !(isPlaceholder && onRemoveBoundarySlot && boundarySlot >= 0),
         onSelect: () => onRemoveBoundarySlot?.(boundarySlot),
-      },
-      {
-        key: 'pop-out',
-        label: t('Pop out widget'),
-        icon: <ArrowToDownRightIcon className="w-4 h-4 rotate-90" />,
-        hidden: !canPopOut,
-        onSelect: () => setPopOutTarget(widget),
       },
     ];
 
