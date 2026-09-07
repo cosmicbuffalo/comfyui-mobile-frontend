@@ -1111,7 +1111,6 @@ export const ko: Record<string, string> = {
   'Note': '노트',
   'Output Preview': '출력 미리보기',
   'Currently connected': '현재 연결됨',
-  'Reset to default': '기본값으로 재설정',
   'Enqueue with variations': '변형으로 큐에 추가',
   'Run variations': '변형 실행',
   'Every other setting is held fixed, including seeds set to randomize.': '무작위로 설정된 시드를 포함해 나머지 모든 설정은 고정됩니다.',

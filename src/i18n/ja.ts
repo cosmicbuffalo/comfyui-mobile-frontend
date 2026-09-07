@@ -1111,7 +1111,6 @@ export const ja: Record<string, string> = {
   'Note': 'ノート',
   'Output Preview': '出力プレビュー',
   'Currently connected': '現在接続中',
-  'Reset to default': '既定値に戻す',
   'Enqueue with variations': 'バリエーションでキューに追加',
   'Run variations': 'バリエーションを実行',
   'Every other setting is held fixed, including seeds set to randomize.': 'ランダム化に設定されたシードを含め、他のすべての設定は固定されます。',

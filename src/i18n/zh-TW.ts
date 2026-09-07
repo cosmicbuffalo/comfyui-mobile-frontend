@@ -1111,7 +1111,6 @@ export const zhTW: Record<string, string> = {
   'Note': '備註',
   'Output Preview': '輸出預覽',
   'Currently connected': '目前已連線',
-  'Reset to default': '重設為預設值',
   'Enqueue with variations': '依變體排入佇列',
   'Run variations': '執行變體',
   'Every other setting is held fixed, including seeds set to randomize.': '其他所有設定皆維持不變，包括設為隨機的種子。',

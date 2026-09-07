@@ -1112,7 +1112,6 @@ export const zhCN: Record<string, string> = {
   'Note': '备注',
   'Output Preview': '输出预览',
   'Currently connected': '当前已连接',
-  'Reset to default': '重置为默认值',
   'Enqueue with variations': '按变体入队',
   'Run variations': '运行变体',
   'Every other setting is held fixed, including seeds set to randomize.': '其他所有设置均保持不变，包括设为随机的种子。',

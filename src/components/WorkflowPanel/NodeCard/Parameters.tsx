@@ -9,7 +9,6 @@ import {
   PinIconSvg,
   PromotedWidgetIcon,
   QueueStackIcon,
-  UndoIcon,
 } from '@/components/icons';
 import { Dialog } from '@/components/modals/Dialog';
 import { WidgetVariationsModal } from '@/components/modals/WidgetVariationsModal';
@@ -489,12 +488,6 @@ export function NodeCardParameters({
     return values.length > 0 ? `COMBO · ${values.length}` : 'COMBO';
   };
 
-  const widgetDefaultValue = (widget: WidgetDescriptor): unknown => {
-    const options = widget.options;
-    if (!options || Array.isArray(options)) return undefined;
-    return options.default;
-  };
-
   /**
    * The options an "Enqueue with variations" run could sweep for this widget.
    * Empty — so the action hides — unless the value is genuinely this node's to
@@ -537,7 +530,6 @@ export function NodeCardParameters({
         : null;
     const moveDownTo = nextRow ? nextRow[nextRow.length - 1] : null;
     const pinAllowed = canPinWidget(widget.type, widget.name, widget.options);
-    const defaultValue = widgetDefaultValue(widget);
     // The RAW rename, never widgetDisplayLabel: that composes "text ⇠ positive"
     // for display, and seeding the field with it wrote the arrow into the saved
     // label — which then composed again on the next render, and again on the
@@ -591,14 +583,6 @@ export function NodeCardParameters({
         icon: <ArrowDownIcon className="w-4 h-4" />,
         hidden: !(onMoveBoundarySlot && moveDownTo !== null),
         onSelect: () => moveDownTo !== null && onMoveBoundarySlot?.(boundarySlot, moveDownTo),
-      },
-      {
-        key: 'reset',
-        label: t('Reset to default'),
-        icon: <UndoIcon className="w-4 h-4" />,
-        hidden: defaultValue === undefined,
-        disabled: defaultValue === widget.value,
-        onSelect: () => onUpdateNodeWidget(widget.widgetIndex, defaultValue, widget.inputName),
       },
       {
         key: 'enqueue-variations',
