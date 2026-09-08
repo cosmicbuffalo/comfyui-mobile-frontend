@@ -33,6 +33,8 @@ export interface MoveIntoSubgraphResult {
   addedOutputs: number;
   /** The ids the moved nodes took inside the definition, in move order. */
   movedInnerNodeIds: number[];
+  /** Original node id to its new id inside the destination definition. */
+  movedNodeIdMap: ReadonlyMap<number, number>;
 }
 
 /**
@@ -388,6 +390,7 @@ export function moveNodesIntoSubgraph(
     addedInputs: newInputs.length,
     addedOutputs: newOutputs.length,
     movedInnerNodeIds: moving.map((node) => innerIdByOuter.get(node.id)!),
+    movedNodeIdMap: innerIdByOuter,
   };
 }
 

@@ -1268,6 +1268,7 @@ const moveItemsIntoSubgraph: WorkflowState["moveItemsIntoSubgraph"] = (
       placeholder.nodeId,
       [...nodeIds],
       get().nodeTypes,
+      moved.movedNodeIdMap,
     );
     harvestedFrom = harvest.removable;
     const normalized = harvest.workflow;

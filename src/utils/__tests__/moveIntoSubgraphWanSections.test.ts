@@ -993,6 +993,48 @@ describe('editing one instance of a shared type', () => {
     expect(expandedSamplerFeeds(current())).toEqual(before);
   });
 
+  it('preserves every section duration before and after removing its harvested chain', () => {
+    const before = current();
+    const sourceFor = (node: WorkflowNode, inputName: string) => {
+      const linkId = node.inputs.find((input) => input.name === inputName)?.link;
+      const link = before.links.find((candidate) => candidate[0] === linkId)!;
+      return before.nodes.find((candidate) => candidate.id === link[1])!;
+    };
+    // Expand every section below, including the ones this fixture starts muted.
+    for (const node of before.nodes) if (node.type === sharedId()) node.mode = 0;
+    const expected = new Map(before.nodes.filter((node) => node.type === sharedId()).map((instance) => {
+      const seconds = sourceFor(sourceFor(instance, 'a_1'), 'a');
+      return [instance.id, (seconds.widgets_values as unknown[])[0]];
+    }));
+    expect(new Set(expected.values()).size).toBeGreaterThan(1);
+
+    const result = useWorkflowStore.getState().moveItemsIntoSubgraph(
+      [keyOf(SECONDS), keyOf(MATH_EXPRESSION)], keyOf(PLACEHOLDER),
+    )!;
+    const checkDurations = () => {
+      const index = widgetNames().indexOf('value');
+      expect(index).toBeGreaterThanOrEqual(0);
+      for (const instance of current().nodes.filter((node) => node.type === sharedId())) {
+        expect((instance.widgets_values as unknown[])[index], `duration for #${instance.id}`)
+          .toBe(expected.get(instance.id));
+      }
+      // With node types, the way the queue path expands — the fixture's
+      // primitives carry no widget-index map of their own.
+      const expanded = expandWorkflowSubgraphs(current(), useWorkflowStore.getState().nodeTypes);
+      const movedSeconds = sharedDefinition().nodes!.find((node) => node.type === 'PrimitiveFloat')!;
+      for (const [instanceId, seconds] of expected) {
+        const node = expanded.workflow.nodes.find((candidate) =>
+          expanded.promptKeyMap.get(candidate.id) === `${instanceId}:${movedSeconds.id}`,
+        )!;
+        expect(node, `expanded seconds for #${instanceId}`).toBeDefined();
+        expect((node.widgets_values as unknown[])[0]).toBe(seconds);
+      }
+    };
+    checkDurations();
+    useWorkflowStore.getState().removeHarvestedNodes(result.harvestedFrom);
+    checkDurations();
+  });
+
   it('removes the offered nodes and leaves the submitted graph alone', () => {
     const before = expandedSamplerFeeds(current());
     const result = useWorkflowStore.getState().moveItemsIntoSubgraph(
