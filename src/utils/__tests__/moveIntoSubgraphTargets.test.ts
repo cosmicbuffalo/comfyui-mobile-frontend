@@ -169,4 +169,69 @@ describe('collectMoveIntoSubgraphTargets', () => {
     // would put the type inside itself.
     expect(collectMoveIntoSubgraphTargets(workflow, ROOT, ['root/node:1'])).toEqual([]);
   });
+
+  describe('several instances of one type', () => {
+    /**
+     * Root holds a plain node wired to the second of three instances of the
+     * same section type — the twelve-section shape, cut down.
+     */
+    const sections = (linkFromNodeOne: number | null) => ({
+      last_node_id: 20,
+      last_link_id: 9,
+      nodes: [
+        node(1, 'MathExpression', {
+          outputs: linkFromNodeOne === null
+            ? []
+            : [{ name: 'INT', type: 'INT', links: [linkFromNodeOne] }],
+        }),
+        node(2, OUTER, { inputs: [{ name: 'a', type: 'INT', link: 5 }] }),
+        node(3, OUTER, { inputs: [{ name: 'a', type: 'INT', link: 7 }] }),
+        node(4, OUTER, { inputs: [{ name: 'a', type: 'INT', link: 9 }] }),
+      ],
+      links: [],
+      groups: [],
+      config: {},
+      version: 1,
+      definitions: {
+        subgraphs: [
+          { id: OUTER, name: 'Section', inputs: [], outputs: [], nodes: [], links: [], groups: [] },
+        ],
+      },
+    } as unknown as Workflow);
+
+    it('offers only the instance the selection is wired to', () => {
+      expect(
+        collectMoveIntoSubgraphTargets(sections(7), ROOT, ['root/node:1']).map((n) => n.id),
+      ).toEqual([3]);
+    });
+
+    it('offers every instance when the selection is wired to none of them', () => {
+      expect(
+        collectMoveIntoSubgraphTargets(sections(null), ROOT, ['root/node:1']).map((n) => n.id),
+      ).toEqual([2, 3, 4]);
+    });
+
+    it('offers every instance when the selection is wired to more than one', () => {
+      const workflow = sections(7);
+      workflow.nodes[0].outputs = [{ name: 'INT', type: 'INT', links: [7, 9] }] as never;
+      // Narrowing to one of two touched instances would hide the other, which
+      // may be the one meant.
+      expect(
+        collectMoveIntoSubgraphTargets(workflow, ROOT, ['root/node:1']).map((n) => n.id),
+      ).toEqual([2, 3, 4]);
+    });
+
+    it('leaves a lone instance of another type in the list', () => {
+      const workflow = sections(7);
+      workflow.definitions!.subgraphs!.push(
+        { id: INNER, name: 'Inner', inputs: [], outputs: [], nodes: [], links: [], groups: [] } as never,
+      );
+      workflow.nodes.push(node(5, INNER));
+      // Only the crowded type is narrowed; an unconnected type with one
+      // instance is still a destination.
+      expect(
+        collectMoveIntoSubgraphTargets(workflow, ROOT, ['root/node:1']).map((n) => n.id),
+      ).toEqual([3, 5]);
+    });
+  });
 });

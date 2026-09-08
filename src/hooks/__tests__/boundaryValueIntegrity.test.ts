@@ -321,4 +321,24 @@ describe('each instance of a shared type keeps its OWN values', () => {
     expect(shownFor(99)).toEqual({ alpha: 'root-alpha', gamma: 'root-gamma' });
     expect(shownFor(88)).toEqual({ alpha: 'nested-alpha', gamma: 'nested-gamma' });
   });
+
+  it.each([0, 1, 2])('keeps all remaining instance values when slot %i is unpromoted', (slot) => {
+    const workflow = useWorkflowStore.getState().workflow!;
+    const inner = workflow.definitions!.subgraphs![0].nodes![slot];
+    inner.properties = { __lm_widget_ids: [NAMES[slot]] };
+    inner.widgets_values = ['shared default'];
+    useWorkflowStore.setState({ scopeStack: [{ type: 'root' }] });
+
+    expect(useWorkflowStore.getState().demoteWidget({
+      subgraphId: SG, boundarySlot: slot, instanceNodeId: 99,
+    })).toBe(true);
+
+    const without = (values: string[]) => Object.fromEntries(
+      NAMES.flatMap((name, index) => index === slot ? [] : [[name, values[index]]]),
+    );
+    expect(shownFor(99)).toEqual(without(ROOT_VALUES));
+    expect(shownFor(88)).toEqual(without(NESTED_VALUES));
+    expect(useWorkflowStore.getState().workflow!.definitions!.subgraphs![0].nodes![slot].widgets_values)
+      .toEqual([ROOT_VALUES[slot]]);
+  });
 });

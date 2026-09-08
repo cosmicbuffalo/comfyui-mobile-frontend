@@ -1,7 +1,8 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { beforeAll, describe, expect, it } from 'vitest';
 import {
+  ensureLocaleLoaded,
   getLocale,
   translate,
   useLocaleStore,
@@ -19,6 +20,12 @@ import { ko } from '@/i18n/ko';
 import { formatRelativeAge } from '@/utils/outputsBrowser';
 
 const NON_EN_LOCALES: Locale[] = ['zh-CN', 'zh-TW', 'ja', 'ko'];
+
+// Dictionaries are fetched per locale rather than bundled, so a test that reads
+// one has to wait for it the way the app does.
+beforeAll(async () => {
+  await Promise.all(NON_EN_LOCALES.map((locale) => ensureLocaleLoaded(locale)));
+});
 
 // Keys in source order, including any duplicates — the whole point of reading
 // the file rather than the evaluated object.
@@ -82,6 +89,22 @@ describe('i18n', () => {
   it('falls back to the English key when a translation is missing', () => {
     expect(translate('A string that has no translation anywhere', 'zh-CN'))
       .toBe('A string that has no translation anywhere');
+  });
+
+  it('answers in English until a dictionary has arrived, without warning about it', async () => {
+    const warnings: unknown[] = [];
+    const warn = console.warn;
+    console.warn = (...args: unknown[]) => { warnings.push(args); };
+    try {
+      // A locale nothing has loaded yet behaves exactly like a missing key:
+      // the English source string. Reporting every string in the app as
+      // untranslated for the moment a dictionary is in flight would drown the
+      // warning that means something.
+      expect(translate('Outputs', 'ko-unloaded' as Locale)).toBe('Outputs');
+      expect(warnings).toEqual([]);
+    } finally {
+      console.warn = warn;
+    }
   });
 
   it('keeps the locale switchable and persisted', () => {
@@ -148,8 +171,19 @@ describe('i18n', () => {
     // Built at runtime by formatRelativeAge, so they appear in no source file.
     const runtimeBuilt = /^\{count\} (minute|hour|day|week|month|year)s? ago$/;
 
+    // A key is matched against the source as written there, which means both
+    // its bare form and the form a quote forces: `it's` is `it\'s` inside a
+    // single-quoted call, and a bare substring search called such a key dead
+    // while it was being used two lines away.
+    const asWritten = (key: string) => [
+      key,
+      key.replace(/'/g, "\\'"),
+      key.replace(/"/g, '\\"'),
+    ];
     const dead = readDictionaryKeys('zh-CN').filter(
-      (key) => !runtimeBuilt.test(key) && !sources.some((source) => source.includes(key)),
+      (key) =>
+        !runtimeBuilt.test(key)
+        && !asWritten(key).some((form) => sources.some((source) => source.includes(form))),
     );
 
     expect(

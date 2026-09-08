@@ -6,7 +6,12 @@ import { expandWorkflowSubgraphs } from '@/utils/expandWorkflowSubgraphs';
 import { moveNodesIntoSubgraph } from '@/utils/moveIntoSubgraph';
 import { normalizeSubgraphPlaceholders } from '@/utils/normalizeSubgraphPlaceholders';
 import { useWorkflowStore } from '@/hooks/useWorkflow';
+import { useWorkflowUndoStore } from '@/hooks/useWorkflowUndo';
 import { getSubgraphBoundaryWidgetSlots } from '@/utils/widgetDefinitions';
+import {
+  collectInstancePromotedValues,
+  instancesLosingPromotedValue,
+} from '@/utils/promotedWidgetForm';
 import { connectionSnapshot, findIntegrityProblems, summarizeProblems } from './helpers/linkIntegrity';
 
 /**
@@ -837,6 +842,197 @@ describe('editing one instance of a shared type', () => {
     for (const id of result.harvestedFrom) {
       expect((current().links ?? []).some((l) => l[1] === id), `#${id} still feeds something`).toBe(false);
     }
+  });
+
+  describe('unpromoting from outside the subgraph', () => {
+    const slotIndexOf = (name: string) =>
+      (sharedDefinition().inputs ?? []).findIndex((slot) => slot.name === name);
+    const innerText = (): unknown => {
+      const encoder = (sharedDefinition().nodes ?? [])
+        .find((n) => n.type === 'CLIPTextEncode');
+      return (encoder?.widgets_values as unknown[])?.[0];
+    };
+    const promoteTheEncoder = () => {
+      useWorkflowStore.getState().moveItemsIntoSubgraph(
+        [keyOf(POSITIVE_PROMPT)], keyOf(PLACEHOLDER),
+      );
+    };
+
+    it('brings the chosen instance value home and drops the control', () => {
+      promoteTheEncoder();
+      expect(widgetNames(), 'the prompt is promoted to begin with').toContain('text');
+      const kept = textByInstance();
+      const instance = current().nodes.find((n) => n.type === sharedId())!;
+
+      const done = useWorkflowStore.getState().demoteWidget({
+        subgraphId: sharedId(),
+        boundarySlot: slotIndexOf('text'),
+        instanceNodeId: instance.id,
+      });
+
+      expect(done).toBe(true);
+      expect(widgetNames(), 'the boundary slot is gone').not.toContain('text');
+      // The instance it was done from is the one whose value survives, on the
+      // inner node now shared by every instance.
+      const number = (instance.properties as Record<string, number>).mobileInstanceNumber;
+      expect(innerText()).toBe(kept[number]);
+      expectClean(current(), 'after unpromoting from the placeholder');
+    });
+
+    it('reports the instances that disagree before anything is dropped', () => {
+      promoteTheEncoder();
+      const values = collectInstancePromotedValues(
+        current(), sharedId(), slotIndexOf('text'),
+      );
+      // Each section was seeded with its own prompt, so this is the case the
+      // confirmation exists for.
+      expect(values.length).toBeGreaterThan(5);
+      const kept = values[0].instanceNodeId;
+      const losing = instancesLosingPromotedValue(values, kept);
+      expect(losing.length).toBe(values.length - 1);
+      expect(losing.some((entry) => entry.instanceNodeId === kept)).toBe(false);
+
+      // Once they all read the same, there is nothing to lose and no question
+      // worth asking.
+      const agreed = values.map((entry) => ({ ...entry, value: 'same' }));
+      expect(instancesLosingPromotedValue(agreed, kept)).toEqual([]);
+
+      // An instance that already agrees is not losing anything, so it is left
+      // out even while others disagree.
+      const mixed = values.map((entry, index) => (
+        index === 1 ? { ...entry, value: values[0].value } : entry
+      ));
+      const stillLosing = instancesLosingPromotedValue(mixed, kept);
+      expect(stillLosing.length).toBe(values.length - 2);
+      expect(stillLosing.some((entry) => entry.instanceNodeId === mixed[1].instanceNodeId))
+        .toBe(false);
+    });
+
+    it('is undone in one step', () => {
+      promoteTheEncoder();
+      const before = textByInstance();
+
+      useWorkflowStore.getState().demoteWidget({
+        subgraphId: sharedId(),
+        boundarySlot: slotIndexOf('text'),
+        instanceNodeId: current().nodes.find((n) => n.type === sharedId())!.id,
+      });
+      expect(widgetNames()).not.toContain('text');
+
+      useWorkflowUndoStore.getState().undo();
+      expect(widgetNames(), 'the promotion is back').toContain('text');
+      expect(textByInstance(), 'every instance has its own value again').toEqual(before);
+    });
+  });
+
+  it('offers the whole stranded chain, not just what fed the slot', () => {
+    // The reported case. Every section computes its length the same way: its
+    // own `_Second` primitive and one shared primitive feed a math expression,
+    // and the expression feeds the section. Move a section's expression in
+    // together with its own primitive and each sibling is left holding BOTH —
+    // the expression, whose value has just been harvested onto the placeholder,
+    // and the primitive, which now feeds only that dead expression.
+    //
+    // Finding the expression alone is what a single pass does: the primitive
+    // still points at it, so it reads as busy right up until the expression
+    // goes.
+    const byId = (id: number) => current().nodes.find((n) => n.id === id);
+    const titleOf = (id: number) => byId(id)?.title ?? '';
+    const secondsFeeding = (expressionId: number): number[] => (current().links ?? [])
+      .filter((link) => link[3] === expressionId)
+      .map((link) => link[1])
+      .filter((id) => byId(id)?.type === 'PrimitiveFloat' && /_Second/.test(titleOf(id)));
+
+    const siblingExpressions = current().nodes
+      .filter((n) => /_Math ?Ex/.test(n.title ?? '') && n.id !== MATH_EXPRESSION)
+      .map((n) => n.id);
+    // The one primitive wired into every section's expression, so it is still
+    // feeding the sections this move does not touch.
+    const shared = 1363;
+
+    const result = useWorkflowStore.getState().moveItemsIntoSubgraph(
+      [keyOf(SECONDS), keyOf(MATH_EXPRESSION)], keyOf(PLACEHOLDER),
+    )!;
+    const offered = new Set(result.harvestedFrom);
+
+    const stranded = siblingExpressions.filter((id) => offered.has(id));
+    expect(stranded.length, 'sibling expressions were harvested').toBeGreaterThan(5);
+    for (const expressionId of stranded) {
+      for (const secondsId of secondsFeeding(expressionId)) {
+        expect(
+          offered.has(secondsId),
+          `#${secondsId} (${titleOf(secondsId)}) feeds only #${expressionId}, which is going`,
+        ).toBe(true);
+      }
+    }
+
+    // The shared primitive feeds expressions outside this type as well, and the
+    // harvest has just wired it into every sibling's new boundary input. It is
+    // busier than before, not stranded.
+    expect(offered.has(shared), 'the shared primitive is not offered').toBe(false);
+
+    // Nothing offered may still be feeding something that stays.
+    for (const id of offered) {
+      const consumers = (current().links ?? [])
+        .filter((link) => link[1] === id)
+        .map((link) => link[3])
+        .filter((target) => !offered.has(target));
+      expect(consumers, `#${id} (${titleOf(id)}) still feeds ${consumers.join(', ')}`).toEqual([]);
+    }
+  });
+
+  it('leaves the submitted graph alone when the whole chain is removed', () => {
+    const before = expandedSamplerFeeds(current());
+    const result = useWorkflowStore.getState().moveItemsIntoSubgraph(
+      [keyOf(SECONDS), keyOf(MATH_EXPRESSION)], keyOf(PLACEHOLDER),
+    )!;
+
+    const removed = useWorkflowStore.getState().removeHarvestedNodes(result.harvestedFrom);
+    expect(removed, 'every offered node was removed').toBe(result.harvestedFrom.length);
+    expectClean(current(), 'after removing the stranded chain');
+    expect(expandedSamplerFeeds(current())).toEqual(before);
+  });
+
+  it('preserves every section duration before and after removing its harvested chain', () => {
+    const before = current();
+    const sourceFor = (node: WorkflowNode, inputName: string) => {
+      const linkId = node.inputs.find((input) => input.name === inputName)?.link;
+      const link = before.links.find((candidate) => candidate[0] === linkId)!;
+      return before.nodes.find((candidate) => candidate.id === link[1])!;
+    };
+    // Expand every section below, including the ones this fixture starts muted.
+    for (const node of before.nodes) if (node.type === sharedId()) node.mode = 0;
+    const expected = new Map(before.nodes.filter((node) => node.type === sharedId()).map((instance) => {
+      const seconds = sourceFor(sourceFor(instance, 'a_1'), 'a');
+      return [instance.id, (seconds.widgets_values as unknown[])[0]];
+    }));
+    expect(new Set(expected.values()).size).toBeGreaterThan(1);
+
+    const result = useWorkflowStore.getState().moveItemsIntoSubgraph(
+      [keyOf(SECONDS), keyOf(MATH_EXPRESSION)], keyOf(PLACEHOLDER),
+    )!;
+    const checkDurations = () => {
+      const index = widgetNames().indexOf('value');
+      expect(index).toBeGreaterThanOrEqual(0);
+      for (const instance of current().nodes.filter((node) => node.type === sharedId())) {
+        expect((instance.widgets_values as unknown[])[index], `duration for #${instance.id}`)
+          .toBe(expected.get(instance.id));
+      }
+      // With node types, the way the queue path expands — the fixture's
+      // primitives carry no widget-index map of their own.
+      const expanded = expandWorkflowSubgraphs(current(), useWorkflowStore.getState().nodeTypes);
+      const movedSeconds = sharedDefinition().nodes!.find((node) => node.type === 'PrimitiveFloat')!;
+      for (const [instanceId, seconds] of expected) {
+        const node = expanded.workflow.nodes.find((candidate) =>
+          expanded.promptKeyMap.get(candidate.id) === `${instanceId}:${movedSeconds.id}`,
+        )!;
+        expect(node, `expanded seconds for #${instanceId}`).toBeDefined();
+        expect((node.widgets_values as unknown[])[0]).toBe(seconds);
+      }
+    };
+    checkDurations();
+    useWorkflowStore.getState().removeHarvestedNodes(result.harvestedFrom);
+    checkDurations();
   });
 
   it('removes the offered nodes and leaves the submitted graph alone', () => {

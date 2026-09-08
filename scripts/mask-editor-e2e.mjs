@@ -324,8 +324,11 @@ async function main() {
   await page.mouse.move(from.x + 90, from.y, { steps: 6 });
   await page.mouse.up({ button: 'middle' });
   await page.waitForTimeout(120);
+  // Compare the numeric left edge — "185,50" sorts before "95,50" as strings,
+  // so a pan crossing a digit-count boundary would flip a string comparison.
+  const leftOf = (pan) => Number(pan.split(',')[0]);
   const edgeAfterMiddle = await readPan();
-  check('middle-drag pans the view', edgeAfterMiddle > edgeBefore,
+  check('middle-drag pans the view', leftOf(edgeAfterMiddle) > edgeBeforeLeft,
     `left edge ${edgeBefore} -> ${edgeAfterMiddle}`);
 
   // Space + left-drag.
@@ -337,7 +340,7 @@ async function main() {
   await page.keyboard.up(' ');
   await page.waitForTimeout(120);
   const edgeAfterSpace = await readPan();
-  check('space + drag pans the view', edgeAfterSpace < edgeAfterMiddle,
+  check('space + drag pans the view', leftOf(edgeAfterSpace) < leftOf(edgeAfterMiddle),
     `left edge ${edgeAfterMiddle} -> ${edgeAfterSpace}`);
 
   // The important half: panning must not have left paint behind.

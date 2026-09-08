@@ -61,11 +61,16 @@ export function extractTextPreviewFromOutput(output: Record<string, unknown>): s
  * extension is more reliable than the bucket name.
  */
 export function collectExecutedMediaOutputs(
-  output: Record<string, unknown>,
+  output: Record<string, unknown> | null | undefined,
   executionCacheToken?: string | number,
 ): HistoryOutputImage[] {
   const media: HistoryOutputImage[] = [];
   const seen = new Set<string>();
+  // An `executed` message can carry a null output — a node that ran with
+  // nothing to show. Indexing it threw out of the whole message handler, and
+  // the socket's catch reported that as a parse failure, so a run went on with
+  // the rest of that message's work silently skipped.
+  if (!output || typeof output !== 'object') return media;
   for (const key of ['images', 'gifs', 'videos', 'deno_video_preview'] as const) {
     const candidates = output[key];
     if (!Array.isArray(candidates)) continue;
@@ -118,8 +123,9 @@ function denoAudio(value: unknown): DenoVideoCompareAudio | null {
  * existing node comparer store, retaining its virtual-clock/audio metadata for
  * the dedicated workflow-card player. */
 export function collectDenoVideoCompareOutput(
-  output: Record<string, unknown>,
+  output: Record<string, unknown> | null | undefined,
 ): NodeComparerOutput | null {
+  if (!output || typeof output !== 'object') return null;
   const list = output.deno_video_compare;
   if (!Array.isArray(list) || !list[0] || typeof list[0] !== 'object') return null;
   const meta = list[0] as Record<string, unknown>;

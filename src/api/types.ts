@@ -259,7 +259,11 @@ export interface WSExecutedMessage extends WSMessage {
   data: {
     node: string;
     display_node?: string;
-    output: HistoryOutput;
+    /**
+     * Null when the node ran with nothing to show. The type said otherwise, so
+     * the handler indexed it and threw out of the whole message.
+     */
+    output: HistoryOutput | null;
     prompt_id: string;
   };
 }

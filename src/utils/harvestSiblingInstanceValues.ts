@@ -91,6 +91,7 @@ export function harvestSiblingInstanceValues(
   editedInstanceId: number,
   movedNodeIds: number[],
   nodeTypes: NodeTypes | null,
+  movedNodeIdMap: ReadonlyMap<number, number>,
 ): HarvestResult {
   const empty: HarvestResult = { workflow: after, harvested: [], connected: [], skipped: [], removable: [] };
   if (!nodeTypes) return empty;
@@ -115,17 +116,24 @@ export function harvestSiblingInstanceValues(
 
   const beforeById = new Map((before.nodes ?? []).map((node) => [node.id, node]));
   const feeders = feedersByInstance(before, subgraphId);
-  const movedByType = new Map<string, WorkflowNode>();
-  for (const id of movedNodeIds) {
-    const node = beforeById.get(id);
-    if (node) movedByType.set(node.type, node);
+  const editedFeeds = feeders.get(editedInstanceId);
+  const afterDefinition = (after.definitions?.subgraphs ?? []).find((sg) => sg.id === subgraphId);
+  // Boundary names may have suffixes (value, value_1). Resolve them through
+  // their actual target instead of assuming they equal a widget's name.
+  const promotedTargets = new Map<string, string>();
+  for (const link of afterDefinition?.links ?? []) {
+    if (link.origin_id !== -10) continue;
+    const name = afterDefinition?.inputs?.[link.origin_slot]?.name;
+    if (!name || !gainedWidgets.includes(name)) continue;
+    const inner = afterDefinition?.nodes?.find((node) => node.id === link.target_id);
+    const input = inner?.inputs?.[link.target_slot];
+    if (input) promotedTargets.set(`${link.target_id}:${input.widget?.name ?? input.name}`, name);
   }
-  if (movedByType.size === 0) return empty;
 
   const harvested: HarvestedValue[] = [];
   const skipped: HarvestSkip[] = [];
   /** instance node id → the node that was feeding it what the move took away. */
-  const counterparts = new Map<number, WorkflowNode>();
+  const counterparts = new Map<number, Map<number, WorkflowNode>>();
   /** instance node id → { widget name → value } */
   const valuesFor = new Map<number, Map<string, unknown>>();
 
@@ -142,22 +150,45 @@ export function harvestSiblingInstanceValues(
       // nothing is orphaned: it is inside now, and every instance shares it.
       if (movedNodeIds.includes(sourceId)) continue;
       const source = beforeById.get(sourceId);
-      const moved = source ? movedByType.get(source.type) : undefined;
-      if (!source || !moved) {
+      const movedId = editedFeeds?.get(slotName);
+      const moved = movedId === undefined ? undefined : beforeById.get(movedId);
+      if (!source || !moved || source.type !== moved.type || !movedNodeIds.includes(moved.id)) {
         // A different kind of node fed this instance's slot — a switch, a
         // shared encoder, something the user wired deliberately. Its widgets
         // are not the ones that moved, so copying them would be an invention.
         skipped.push({ instanceNodeId: instanceId, sourceNodeId: sourceId, reason: 'different-node-type' });
         continue;
       }
-      counterparts.set(instanceId, source);
-      const movedWidgets = new Set(getWidgetDefinitions(nodeTypes, moved).map((w) => w.name));
-      for (const widget of getWidgetDefinitions(nodeTypes, source)) {
-        if (!gainedWidgets.includes(widget.name) || !movedWidgets.has(widget.name)) continue;
-        const bucket = valuesFor.get(instanceId) ?? new Map<string, unknown>();
-        bucket.set(widget.name, widget.value);
-        valuesFor.set(instanceId, bucket);
-        harvested.push({ instanceNodeId: instanceId, sourceNodeId: sourceId, widgetName: widget.name });
+      const matched = counterparts.get(instanceId) ?? new Map<number, WorkflowNode>();
+      counterparts.set(instanceId, matched);
+      const pending = [{ moved, source }];
+      while (pending.length > 0) {
+        const pair = pending.pop()!;
+        if (matched.has(pair.moved.id)) continue;
+        matched.set(pair.moved.id, pair.source);
+        const innerId = movedNodeIdMap.get(pair.moved.id);
+        for (const widget of getWidgetDefinitions(nodeTypes, pair.source)) {
+          const name = widget.inputName ?? widget.name;
+          const boundaryName = promotedTargets.get(`${innerId}:${name}`);
+          if (!boundaryName || widget.connected) continue;
+          const bucket = valuesFor.get(instanceId) ?? new Map<string, unknown>();
+          bucket.set(boundaryName, widget.value);
+          valuesFor.set(instanceId, bucket);
+          harvested.push({ instanceNodeId: instanceId, sourceNodeId: pair.source.id, widgetName: boundaryName });
+        }
+        // Walk only the portion that moved, pairing the same input and output
+        // on each side. This carries a sibling's seconds primitive as well as
+        // the expression it feeds, without guessing from node type alone.
+        for (const [slot, input] of pair.moved.inputs.entries()) {
+          const movedLink = (before.links ?? []).find((link) => link[3] === pair.moved.id && link[4] === slot);
+          if (!movedLink || !movedNodeIds.includes(movedLink[1])) continue;
+          const sourceSlot = pair.source.inputs.findIndex((candidate) => candidate.name === input.name);
+          const sourceLink = (before.links ?? []).find((link) => link[3] === pair.source.id && link[4] === sourceSlot);
+          const movedParent = beforeById.get(movedLink[1]);
+          const sourceParent = sourceLink ? beforeById.get(sourceLink[1]) : undefined;
+          if (!movedParent || !sourceParent || movedParent.type !== sourceParent.type || movedLink[2] !== sourceLink?.[2]) continue;
+          pending.push({ moved: movedParent, source: sourceParent });
+        }
       }
     }
   }
@@ -168,7 +199,6 @@ export function harvestSiblingInstanceValues(
   // with a required input and nothing in it, which the backend refuses — the
   // encoder's `clip` is exactly this. Each sibling is wired to whatever was
   // feeding the SAME input on its own counterpart.
-  const afterDefinition = (after.definitions?.subgraphs ?? []).find((sg) => sg.id === subgraphId);
   const gainedConnections = [...slotsAfter]
     .filter((name) => !slotsBefore.has(name) && !namesAfter.includes(name));
   const connected: HarvestedConnection[] = [];
@@ -179,6 +209,7 @@ export function harvestSiblingInstanceValues(
     ...(after.definitions?.subgraphs ?? []).flatMap((sg) => (sg.links ?? []).map((l) => l.id)),
   );
   const wiredInput = new Map<number, Map<number, number>>();
+  const outerByInner = new Map([...movedNodeIdMap].map(([outer, inner]) => [inner, outer]));
 
   for (const slotName of gainedConnections) {
     if (!afterDefinition) break;
@@ -191,7 +222,10 @@ export function harvestSiblingInstanceValues(
     const innerInputName = innerNode?.inputs?.[interior.target_slot]?.name;
     if (!innerInputName) continue;
 
-    for (const [instanceId, counterpart] of counterparts) {
+    const originalId = innerNode ? outerByInner.get(innerNode.id) : undefined;
+    for (const [instanceId, matched] of counterparts) {
+      const counterpart = originalId === undefined ? undefined : matched.get(originalId);
+      if (!counterpart) continue;
       // What fed the same input on this instance's own copy of the node.
       const inputIndex = (counterpart.inputs ?? []).findIndex((i) => i.name === innerInputName);
       if (inputIndex < 0) continue;
@@ -223,8 +257,18 @@ export function harvestSiblingInstanceValues(
     let next = node;
     if (bucket) {
       const existing = Array.isArray(node.widgets_values) ? node.widgets_values : [];
-      const values = namesAfter.map((name, index) => (
-        bucket.has(name) ? bucket.get(name) : existing[index] ?? null
+      // widgets_values is read through the instance's OWN proxy order when it
+      // has one, and only falls back to boundary order without it. Seating by
+      // boundary position regardless would rotate every value on an instance
+      // whose list orders itself differently.
+      const raw = (node.properties as Record<string, unknown> | undefined)?.proxyWidgets;
+      const entries: Array<[string, string]> = Array.isArray(raw)
+        ? raw
+          .filter((entry): entry is [unknown, unknown] => Array.isArray(entry) && entry.length >= 2)
+          .map((entry) => [String(entry[0]), String(entry[1])])
+        : namesAfter.map((name) => ['-1', name]);
+      const values = entries.map(([owner, name], index) => (
+        owner === '-1' && bucket.has(name) ? bucket.get(name) : existing[index] ?? null
       ));
       while (values.length > 0 && values[values.length - 1] == null) values.pop();
       next = { ...next, widgets_values: values };
@@ -240,16 +284,54 @@ export function harvestSiblingInstanceValues(
     return next;
   };
 
-  // Only a source that is now feeding nothing at all can be offered for
-  // removal. Counted on the workflow AFTER the move, since that is where the
-  // links it lost have already gone.
-  const afterLinks = after.links ?? [];
-  const sources = new Set(harvested.map((entry) => entry.sourceNodeId));
-  const removable = [...sources].filter(
-    (id) => !movedNodeIds.includes(id) && !afterLinks.some((link) => link[1] === id),
-  );
-
+  // Counted against the links this harvest ends with, not the ones the move
+  // left behind: a source re-wired into a sibling instance just above is
+  // feeding something again, and reading the pre-harvest table would offer it
+  // for removal anyway.
   const links = [...(after.links ?? []), ...(addedLinks ?? [])];
+
+  // Which nodes the move left with nothing to do.
+  //
+  // The node that fed the retired slot is only the end of a chain. A `seconds`
+  // primitive feeding a math expression feeding the boundary leaves BOTH with
+  // no purpose once the expression's value is harvested, but one pass finds
+  // neither removable: the expression still has the primitive pointing at it,
+  // and the primitive still points at the expression. Each is held up by
+  // something that is itself on the way out.
+  //
+  // So sweep to a fixed point. A node qualifies once every link out of it lands
+  // on a node already going, and qualifying puts whatever fed IT up for the
+  // same question. Repeat until a pass changes nothing, which also settles the
+  // case where two harvested sources feed each other in list order.
+  const afterById = new Map((after.nodes ?? []).map((node) => [node.id, node]));
+  const definitionIds = new Set((after.definitions?.subgraphs ?? []).map((sg) => sg.id));
+  const sources = new Set(harvested.map((entry) => entry.sourceNodeId));
+  const candidates = new Set<number>(sources);
+  const going = new Set<number>();
+  const removable: number[] = [];
+  let sweeping = true;
+  while (sweeping) {
+    sweeping = false;
+    for (const id of [...candidates]) {
+      if (going.has(id) || movedNodeIds.includes(id) || !afterById.has(id)) continue;
+      // Still feeding something that is staying.
+      if (links.some((link) => link[1] === id && !going.has(link[3]))) continue;
+      going.add(id);
+      removable.push(id);
+      sweeping = true;
+      for (const link of links) {
+        if (link[3] !== id) continue;
+        const parent = afterById.get(link[1]);
+        // A subgraph instance is not a value holder — stranding one is a far
+        // bigger claim than stranding a primitive, and it may be the point of
+        // the graph rather than scaffolding. The sweep stops at it. Direct
+        // feeders of the retired slot are seeded above and keep their old
+        // eligibility whatever they are.
+        if (!parent || definitionIds.has(parent.type) || !sources.has(parent.id)) continue;
+        candidates.add(parent.id);
+      }
+    }
+  }
   // The nodes now feeding those inputs must say so too, or their outputs read as
   // unconnected and the next edit drops a link it cannot see.
   const withCaches = (after.nodes ?? []).map(seat).map((node) => ({

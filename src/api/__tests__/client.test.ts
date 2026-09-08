@@ -64,56 +64,50 @@ describe('searchUserImagesByPrompt', () => {
     vi.unstubAllGlobals();
   });
 
-  it('unions name/path and prompt searches without trusting directory entries', async () => {
-    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
-      const url = String(input);
-      const params = new URL(`http://localhost${url}`).searchParams;
-      const files = params.has('search')
-        ? [
-            { name: 'video', path: 'video', type: 'dir', date: 1 },
-            {
-              name: 'ComfyUI_04555_.png',
-              path: '.hidden/batch/sample scene/ComfyUI_04555_.png',
-              folder: '.hidden/batch/sample scene',
-              type: 'image',
-              date: 2,
-              size: 100,
-            },
-          ]
-        : [
-            {
-              name: 'ComfyUI_04555_.png',
-              path: '.hidden/batch/sample scene/ComfyUI_04555_.png',
-              folder: '.hidden/batch/sample scene',
-              type: 'image',
-              date: 2,
-              size: 100,
-            },
-            {
-              name: 'ComfyUI_04556_.png',
-              path: '.hidden/batch/sample scene/ComfyUI_04556_.png',
-              folder: '.hidden/batch/sample scene',
-              type: 'image',
-              date: 3,
-              size: 101,
-            },
-          ];
-
-      return {
-        ok: true,
-        json: async () => ({ files, total: files.length, offset: 0, limit: 0 }),
-      } as Response;
-    });
+  it('asks the server once for the name-or-prompt union, without trusting directory entries', async () => {
+    // `q` is the server's own combined query. Asking `search` and `prompt`
+    // separately walked the tree twice and read every candidate's PNG metadata
+    // twice, on the slowest request the outputs panel makes.
+    const fetchMock = vi.fn<(input: RequestInfo | URL) => Promise<Response>>(async () => ({
+      ok: true,
+      json: async () => ({
+        files: [
+          { name: 'video', path: 'video', type: 'dir', date: 1 },
+          {
+            name: 'ComfyUI_04555_.png',
+            path: '.hidden/batch/sample scene/ComfyUI_04555_.png',
+            folder: '.hidden/batch/sample scene',
+            type: 'image',
+            date: 2,
+            size: 100,
+          },
+          {
+            name: 'ComfyUI_04556_.png',
+            path: '.hidden/batch/sample scene/ComfyUI_04556_.png',
+            folder: '.hidden/batch/sample scene',
+            type: 'image',
+            date: 3,
+            size: 101,
+          },
+        ],
+        total: 3,
+        offset: 0,
+        limit: 0,
+      }),
+    } as Response));
 
     vi.stubGlobal('fetch', fetchMock);
 
     const results = await searchUserImagesByPrompt('output', 'sample scene', null, true);
 
-    expect(fetchMock).toHaveBeenCalledTimes(2);
-    const urls = fetchMock.mock.calls.map(([input]) => String(input));
-    expect(urls.some((url) => url.includes('search=sample+scene'))).toBe(true);
-    expect(urls.some((url) => url.includes('prompt=sample+scene'))).toBe(true);
-    expect(urls.some((url) => url.includes('q=sample+scene'))).toBe(false);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const url = String(fetchMock.mock.calls[0][0]);
+    expect(url).toContain('q=sample+scene');
+    expect(url).toContain('recursive=true');
+    expect(url).toContain('showHidden=true');
+    expect(url).not.toContain('prompt=');
+    // A recursive listing carries the folders it walked through; they are not
+    // results.
     expect(results.map((item) => item.id)).toEqual([
       'output/.hidden/batch/sample scene/ComfyUI_04555_.png',
       'output/.hidden/batch/sample scene/ComfyUI_04556_.png',

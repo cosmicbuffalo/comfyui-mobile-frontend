@@ -1,4 +1,5 @@
 import { MaskIcon } from '@/components/MaskEditor/icons';
+import { pinAccentActiveClassName, pinAccentMutedTextClassName } from '@/components/chromeStyles';
 import { MenuSubPageHeader } from './MenuSubPageHeader';
 import { LegendItem, type LegendItemProps } from './LegendItem';
 import { t as globalT, useI18n } from '@/i18n';
@@ -45,7 +46,7 @@ function getLegendItems(): LegendItemProps[] {
     },
     {
       icon: (
-        <div className="w-10 h-10 flex items-center justify-center bg-amber-500 text-white rounded-lg shadow-sm">
+        <div className={`w-10 h-10 flex items-center justify-center rounded-lg shadow-sm ${pinAccentActiveClassName}`}>
           <PinIconSvg className="w-5 h-5" />
         </div>
       ),
@@ -117,7 +118,7 @@ function getLegendItems(): LegendItemProps[] {
     },
     {
       icon: (
-        <div className="w-8 h-8 flex items-center justify-center text-slate-200">
+        <div className={`w-8 h-8 flex items-center justify-center ${pinAccentMutedTextClassName}`}>
           <PinOutlineIcon className="w-5 h-5" />
         </div>
       ),

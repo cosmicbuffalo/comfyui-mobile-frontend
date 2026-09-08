@@ -295,7 +295,7 @@ async function fetchMobileFiles(
   recursive: boolean = false,
   source: AssetSource = 'output',
   showHidden?: boolean,
-  options: { search?: string; prompt?: string; dirsOnly?: boolean } = {},
+  options: { search?: string; prompt?: string; q?: string; dirsOnly?: boolean } = {},
 ): Promise<MobileFilesResponse> {
   const params = new URLSearchParams();
   if (path) params.set('path', path);
@@ -304,6 +304,7 @@ async function fetchMobileFiles(
   if (showHidden) params.set('showHidden', 'true');
   if (options.search) params.set('search', options.search);
   if (options.prompt) params.set('prompt', options.prompt);
+  if (options.q) params.set('q', options.q);
   if (options.dirsOnly) params.set('dirsOnly', 'true');
 
   const response = await fetch(`/mobile/api/files?${params}`);
@@ -348,18 +349,9 @@ export async function searchUserImagesByPrompt(
   showHidden?: boolean,
 ): Promise<FileItem[]> {
   const searchRoot = folder || '';
-  const [nameMatches, promptMatches] = await Promise.all([
-    fetchMobileFiles(searchRoot, true, source, showHidden, { search: query }),
-    fetchMobileFiles(searchRoot, true, source, showHidden, { prompt: query }),
-  ]);
+  const result = await fetchMobileFiles(searchRoot, true, source, showHidden, { q: query });
 
-  const byPath = new Map<string, MobileFileItem>();
-  for (const file of [...nameMatches.files, ...promptMatches.files]) {
-    if (file.type === 'dir') continue;
-    byPath.set(file.path, file);
-  }
-
-  return Array.from(byPath.values()).map((f) => {
+  return result.files.filter((f) => f.type !== 'dir').map((f) => {
     const folderPath = f.folder || (f.path.includes('/') ? f.path.substring(0, f.path.lastIndexOf('/')) : '');
     return {
       id: `${source}/${f.path}`,

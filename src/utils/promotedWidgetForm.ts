@@ -13,6 +13,20 @@ import {
   type LinkedWidgetRoute,
 } from '@/utils/widgetDefinitions';
 import { getNodePropertyWidgetIndexMap } from '@/utils/workflowInputs';
+import { collectSubgraphInstances } from '@/utils/boundarySlotLabels';
+
+export function resolvePromotedInstance(
+  workflow: Workflow,
+  subgraphId: string,
+  instanceNodeId: number | null,
+  parentSubgraphId?: string | null,
+): WorkflowNode | undefined {
+  const matches = collectSubgraphInstances(workflow, subgraphId).filter((entry) =>
+    (instanceNodeId === null || entry.node.id === instanceNodeId)
+    && (parentSubgraphId === undefined || entry.parentSubgraphId === parentSubgraphId),
+  );
+  return matches.length === 1 ? matches[0].node : undefined;
+}
 
 /**
  * How a promoted widget presents itself on the placeholder.
@@ -222,15 +236,20 @@ export function readInstancePromotedValue(
   subgraphId: string,
   instanceNodeId: number | null,
   boundarySlot: number,
+  parentSubgraphId?: string | null,
 ): unknown {
   const definition = (workflow.definitions?.subgraphs ?? []).find((sg) => sg.id === subgraphId);
-  const instances: WorkflowNode[] = [
-    ...(workflow.nodes ?? []),
-    ...(workflow.definitions?.subgraphs ?? []).flatMap((sg) => sg.nodes ?? []),
-  ].filter((node) => node.type === subgraphId);
-  const instance =
-    instances.find((node) => node.id === instanceNodeId) ?? instances[0];
+  const instance = resolvePromotedInstance(workflow, subgraphId, instanceNodeId, parentSubgraphId);
   if (!instance) return undefined;
+  return readPromotedValueOfInstance(definition, instance, boundarySlot);
+}
+
+/** The value one already-resolved instance holds for a promoted boundary slot. */
+function readPromotedValueOfInstance(
+  definition: WorkflowSubgraphDefinition | undefined,
+  instance: WorkflowNode,
+  boundarySlot: number,
+): unknown {
   // Resolved through the instance's OWN proxy order, which is what the card
   // reads and what execution reads. Counting widget-backed boundary inputs
   // instead lands on a different value the moment the instance also carries
@@ -239,6 +258,71 @@ export function readInstancePromotedValue(
   const values = instance.widgets_values;
   if (index != null && Array.isArray(values)) return values[index];
   return undefined;
+}
+
+/** One instance of a shared type, and what it holds for a promoted widget. */
+export interface InstancePromotedValue {
+  instanceNodeId: number;
+  parentSubgraphId: string | null;
+  value: unknown;
+}
+
+/**
+ * What every instance of a type is holding for one promoted boundary slot.
+ *
+ * A promoted widget has as many values as there are instances; the inner node
+ * it drives has exactly one. Unpromoting therefore collapses them, and which
+ * one survives is whichever instance the unpromote was done from — so the
+ * question worth asking first is whether the others were holding something
+ * else. Nested instances count: a shared type used inside another subgraph has
+ * values of its own that would go the same way.
+ */
+export function collectInstancePromotedValues(
+  workflow: Workflow,
+  subgraphId: string,
+  boundarySlot: number,
+): InstancePromotedValue[] {
+  // One scan: the instances are already in hand, so each value is read off its
+  // node directly rather than re-resolving the instance per entry.
+  const definition = (workflow.definitions?.subgraphs ?? []).find((sg) => sg.id === subgraphId);
+  return collectSubgraphInstances(workflow, subgraphId).map(({ node, parentSubgraphId }) => ({
+    instanceNodeId: node.id,
+    parentSubgraphId,
+    value: readPromotedValueOfInstance(definition, node, boundarySlot),
+  }));
+}
+
+/**
+ * The instances that would actually lose something to an unpromote, given which
+ * one's value is being kept.
+ *
+ * An instance already holding the kept value loses nothing — the inner widget
+ * ends up on the value it was showing either way — so it is neither a reason to
+ * ask the question nor something to list when asking it. Empty means there is
+ * nothing to warn about.
+ *
+ * Compared by serialized shape rather than identity: a promoted value can be an
+ * array or an object (a V3 combo's payload), and two instances holding equal
+ * ones are not in conflict just because they are separate objects.
+ */
+export function instancesLosingPromotedValue(
+  values: InstancePromotedValue[],
+  keptInstanceNodeId: number,
+  parentSubgraphId?: string | null,
+): InstancePromotedValue[] {
+  const shape = (value: unknown): string => JSON.stringify(value ?? null, (_key, item) =>
+    item && typeof item === 'object' && !Array.isArray(item)
+      ? Object.fromEntries(Object.keys(item).sort().map((key) => [key, item[key]]))
+      : item,
+  );
+  const candidates = values.filter((entry) => entry.instanceNodeId === keptInstanceNodeId
+    && (parentSubgraphId === undefined || entry.parentSubgraphId === parentSubgraphId));
+  if (candidates.length !== 1) return [];
+  const kept = candidates[0];
+  const keptShape = shape(kept?.value);
+  return values.filter(
+    (entry) => entry !== kept && shape(entry.value) !== keptShape,
+  );
 }
 
 /** An inner node's own value for one of its widgets. */

@@ -1,5 +1,31 @@
 # Changelog
 
+## 3.3.1 - 2026-09-07
+
+### Added
+
+- **Unpromote a widget from a subgraph placeholder**, without going inside to find the node it came from. Where a shared type's instances hold different values, a confirmation shows which one is kept and which are dropped
+- **Showing hidden files can turn itself back off once you stop using the app.** Five minutes by default; 0, 10, 20, 30, 60, 90 minutes or Never in Preferences. The wait counts time backgrounded or idle, not time since you switched it on
+- **Hold the run count's + or − to double or halve it**, instead of tapping your way from 1 to 64
+
+### Changed
+
+- **The app starts on a smaller download.** Only the translation dictionary actually in use is fetched, rather than all four, and an English session fetches none at all
+- **Searching prompts asks the server once instead of twice**, halving the work behind the slowest request the outputs panel makes
+
+### Fixed
+
+- **A subgraph placeholder draws every promoted control under its own name.** Where several boundary inputs drive inner widgets sharing a name — three primitives each exposing a `value` widget, say — every one of those rows took the first slot's name. The controls were always wired to the right values; only the labels were wrong
+- **A promoted seed sits where the boundary puts it on a placeholder card**, so Move up and Move down step through the order you can see. Nothing could be moved above the seed before, and the last row still offered a move down
+- **Moving nodes into a subgraph offers the whole stranded chain for removal**, not only the node that touched the boundary slot
+- **Move into subgraph offers the instance the selection is wired to**, where a type has several instances in scope
+- **Open workflows survive a browser refusing to save them.** A save that failed after IndexedDB accepted it was recorded as saved, and one failure broke every write after it
+- **The app loads when the browser blocks storage**, instead of failing on start-up in a private session or with site data disabled
+- **Opening a panel after the app has been updated offers a reload instead of a blank screen.** A tab left open across an update was asking for files the update had replaced
+- **Searching prompts no longer shows results from the folder you just left**
+- **A broken multi-user auth provider denies access instead of quietly serving everyone's files.** An auth node that failed to load left the server running as if none were installed
+- **The icon legend draws the pin icons in the colour the app actually uses**
+
 ## 3.3.0 - 2026-09-06
 
 ### Added

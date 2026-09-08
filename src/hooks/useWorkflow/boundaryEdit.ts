@@ -31,6 +31,7 @@ import { newBoundarySlotId } from "@/utils/subgraphBoundaryNames";
 import {
   findPromotedWidgetSlot,
   readInstancePromotedValue,
+  resolvePromotedInstance,
   reorderInstancePromotedValues,
   setInnerWidgetValue,
   type PromotedWidgetForm,
@@ -63,6 +64,11 @@ function currentSubgraphScope(workflow: Workflow, scopeStack: WorkflowState["sco
   const scope = resolveCurrentScope(scopeStack, workflow);
   if (scope.subgraphId == null) return null;
   return scope as SubgraphScope;
+}
+
+function parentDefinitionId(scopeStack: WorkflowState["scopeStack"]): string | null {
+  const frame = scopeStack[scopeStack.length - 2];
+  return frame?.type === 'subgraph' ? frame.id : null;
 }
 
 /**
@@ -829,7 +835,7 @@ const setPromotedWidgetForm: WorkflowState["setPromotedWidgetForm"] = (target, f
   const previousWidgetIndex = getSubgraphBoundaryWidgetIndexForSlot(definition, slot.boundarySlot);
   const promotedValue = previousWidgetIndex == null
     ? undefined
-    : readInstancePromotedValue(workflow, scope.subgraphId, instanceNodeId, slot.boundarySlot);
+    : readInstancePromotedValue(workflow, scope.subgraphId, instanceNodeId, slot.boundarySlot, parentDefinitionId(scopeStack));
 
   const nextNodes = scope.nodes.map((candidate) => {
     if (candidate.id !== node.id) return candidate;
@@ -865,6 +871,98 @@ const setPromotedWidgetForm: WorkflowState["setPromotedWidgetForm"] = (target, f
 };
 
 /**
+ * Unpromote a whole boundary input, from outside the subgraph.
+ *
+ * The inside route works widget by widget, because in there a fan-out is
+ * visible as several rows and demoting one of them should leave the others
+ * promoted. Outside there is one row for the slot, so this releases every inner
+ * widget it drives and then drops the slot.
+ *
+ * `instanceNodeId` is the instance whose value comes home. Every other
+ * instance's value for this slot is discarded — there is one inner widget and
+ * it can hold one value — which is why the caller is expected to have asked
+ * about that first.
+ */
+function demoteBoundarySlot(
+  scope: SubgraphScope,
+  boundarySlot: number,
+  instanceNodeId: number | null,
+  parentSubgraphId?: string | null,
+): boolean {
+  const { workflow, nodeTypes } = get();
+  if (!workflow) return false;
+  const definition = (workflow.definitions?.subgraphs ?? []).find(
+    (candidate) => candidate.id === scope.subgraphId,
+  );
+  if (!definition || !definition.inputs?.[boundarySlot]) return false;
+  if (!resolvePromotedInstance(workflow, scope.subgraphId, instanceNodeId, parentSubgraphId)) return false;
+  // Read the value while the definition still describes the promotion: the
+  // widgets_values index is derived from the boundary this is about to drop.
+  const promotedValue = getSubgraphBoundaryWidgetIndexForSlot(definition, boundarySlot) == null
+    ? undefined
+    : readInstancePromotedValue(workflow, scope.subgraphId, instanceNodeId, boundarySlot, parentSubgraphId);
+
+  const interior = (definition.links ?? []).filter(
+    (link) => link.origin_id === SUBGRAPH_INPUT_NODE_ID && link.origin_slot === boundarySlot,
+  );
+  if (interior.length === 0) return false;
+
+  const byName = (widgetName: string) => (widget: { name: string; inputName?: string }) =>
+    (widget.inputName ?? widget.name) === widgetName;
+  const landed = new Map<number, { widgetName: string; targetSlot: number }[]>();
+  for (const link of interior) {
+    const node = (definition.nodes ?? []).find((candidate) => candidate.id === link.target_id);
+    const input = node?.inputs?.[link.target_slot];
+    const widgetName = input?.widget?.name ?? input?.name;
+    if (!node || !widgetName) continue;
+    landed.set(node.id, [
+      ...(landed.get(node.id) ?? []),
+      { widgetName, targetSlot: link.target_slot },
+    ]);
+  }
+  if (landed.size === 0) return false;
+
+  const nextNodes = scope.nodes.map((candidate) => {
+    const writes = landed.get(candidate.id);
+    if (!writes) return candidate;
+    let next = candidate;
+    for (const { widgetName, targetSlot } of writes) {
+      if (promotedValue !== undefined) {
+        // Same resolution order expansion uses, so the value lands where the
+        // executed graph would read it from.
+        const innerWidgetIndex =
+          getNodePropertyWidgetIndexMap(next)?.[widgetName]
+          ?? (nodeTypes
+            ? (getWidgetDefinitions(nodeTypes, next).find(byName(widgetName))
+              ?? getInputWidgetDefinitions(nodeTypes, next).find(byName(widgetName)))?.widgetIndex
+            : undefined)
+          ?? null;
+        next = setInnerWidgetValue(next, widgetName, innerWidgetIndex, promotedValue);
+      }
+      // Restore socket-form widgets only when this node actually owns one.
+      // A boundary can also fan out to link-only inputs of the same type.
+      const ownsWidget = next.inputs[targetSlot]?.widget
+        || getNodePropertyWidgetIndexMap(next)?.[widgetName] !== undefined
+        || (nodeTypes && [...getWidgetDefinitions(nodeTypes, next), ...getInputWidgetDefinitions(nodeTypes, next)]
+          .some(byName(widgetName)));
+      if (ownsWidget) {
+        const inputs = [...next.inputs];
+        inputs[targetSlot] = { ...inputs[targetSlot], widget: { name: widgetName } };
+        next = { ...next, inputs };
+      }
+    }
+    return next;
+  });
+
+  set({ workflow: scope.applyPatch(workflow, { nodes: nextNodes }) });
+  // Drops the slot, its links, the link references on the inner nodes, and the
+  // widgets_values entry it owned on every instance.
+  removeBoundarySlot("input", boundarySlot, { subgraphId: scope.subgraphId });
+
+  return true;
+}
+
+/**
  * Undo a promotion outright: the boundary input and its link go, and the widget
  * returns to being an ordinary widget on the inner node, holding the value the
  * placeholder was showing.
@@ -875,8 +973,21 @@ const demoteWidget: WorkflowState["demoteWidget"] = (target) => runUndoTransacti
   // one undo step rather than three.
   const { workflow, scopeStack, nodeTypes } = get();
   if (!workflow) return false;
-  const scope = currentSubgraphScope(workflow, scopeStack);
+  const fromPlaceholder = "boundarySlot" in target;
+  const scope = targetSubgraphScope(
+    workflow,
+    scopeStack,
+    fromPlaceholder ? target.subgraphId : undefined,
+  );
   if (!scope) return false;
+
+  // From outside, the whole control goes: the card shows one row per boundary
+  // slot, so unpromoting it has to release every inner widget that slot drives
+  // rather than leaving the slot standing with one target fewer.
+  if (fromPlaceholder) {
+    return demoteBoundarySlot(scope, target.boundarySlot, target.instanceNodeId ?? null, target.parentSubgraphId);
+  }
+
   const resolved = resolvePromotedTarget(workflow, scope, nodeTypes, target);
   if (!resolved) return false;
   const { definition, node, widgetName, slot, innerWidgetIndex } = resolved;
@@ -889,7 +1000,7 @@ const demoteWidget: WorkflowState["demoteWidget"] = (target) => runUndoTransacti
   const widgetIndex = getSubgraphBoundaryWidgetIndexForSlot(definition, slot.boundarySlot);
   const promotedValue = widgetIndex == null
     ? undefined
-    : readInstancePromotedValue(workflow, scope.subgraphId, instanceNodeId, slot.boundarySlot);
+    : readInstancePromotedValue(workflow, scope.subgraphId, instanceNodeId, slot.boundarySlot, parentDefinitionId(scopeStack));
 
   // Bring the value home first: removeBoundarySlot reads the definition it is
   // about to change, so it has to run against a workflow that still describes

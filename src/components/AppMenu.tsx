@@ -1,4 +1,4 @@
-import { lazy, Suspense, useRef, useState, useEffect, useCallback } from 'react';
+import { Suspense, useRef, useState, useEffect, useCallback } from 'react';
 import { BackendStatusOverlay } from './BackendStatusOverlay';
 import { LoadingSpinner } from './LoadingSpinner';
 import { useConnectionStatusStore } from '@/hooks/useConnectionStatus';
@@ -18,6 +18,7 @@ import { readWorkflowFromFile } from '@/utils/workflowFromFile';
 import { useNoWorkflowImageModal } from '@/hooks/useNoWorkflowImageModal';
 import { useCustomNodesManager } from '@/hooks/useCustomNodesManager';
 import { t as globalT, useI18n } from '@/i18n';
+import { lazyPanel } from '@/components/lazyPanel';
 import type { CustomNodeFilterValue } from '@/utils/customNodesManager';
 import type { Workflow } from '@/api/types';
 import {
@@ -39,25 +40,25 @@ import {
   type AssetSource
 } from '@/api/client';
 
-const TemplatesPanel = lazy(() =>
+const TemplatesPanel = lazyPanel(() =>
   import('./AppMenu/TemplatesPanel').then((module) => ({ default: module.TemplatesPanel })),
 );
-const UserWorkflowsPanel = lazy(() =>
+const UserWorkflowsPanel = lazyPanel(() =>
   import('./AppMenu/UserWorkflowsPanel').then((module) => ({
     default: module.UserWorkflowsPanel,
   })),
 );
-const RecentWorkflowsPanel = lazy(() =>
+const RecentWorkflowsPanel = lazyPanel(() =>
   import('./AppMenu/RecentWorkflowsPanel').then((module) => ({
     default: module.RecentWorkflowsPanel,
   })),
 );
-const GenerationSettingsPanel = lazy(() =>
+const GenerationSettingsPanel = lazyPanel(() =>
   import('./AppMenu/GenerationSettingsPanel').then((module) => ({
     default: module.GenerationSettingsPanel,
   })),
 );
-const CustomNodesManagerModal = lazy(() =>
+const CustomNodesManagerModal = lazyPanel(() =>
   import('./CustomNodesManagerModal').then((module) => ({
     default: module.CustomNodesManagerModal,
   })),

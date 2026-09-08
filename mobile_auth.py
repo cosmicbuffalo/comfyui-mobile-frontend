@@ -30,6 +30,13 @@ _api = None
 _warned = False
 
 
+class _BrokenAuth:
+    """Keep a failed provider on each helper's existing deny/error path."""
+
+    def __getattr__(self, name):
+        raise RuntimeError("auth provider failed to initialize")
+
+
 def _resolve():
     """Return the auth node's api module, or None when it isn't installed.
 
@@ -44,14 +51,15 @@ def _resolve():
             return _api
         try:
             _api = importlib.import_module(_MODULE_NAME)
-        except ImportError:
-            _api = None
-        except Exception as exc:  # pragma: no cover - defensive
-            # Present but broken. Leave _api None (so is_enabled() is False and
-            # this node behaves as single-user) but say so loudly, because the
-            # operator installed it expecting it to gate.
+        except ModuleNotFoundError as exc:
+            if exc.name in (_MODULE_NAME, "comfyui_multiuser"):
+                _api = None
+            else:
+                print(f"{_LOG_PREFIX} auth node failed to import: {exc}", flush=True)
+                _api = _BrokenAuth()
+        except Exception as exc:
             print(f"{_LOG_PREFIX} auth node failed to import: {exc}", flush=True)
-            _api = None
+            _api = _BrokenAuth()
         _resolved = True
     return _api
 
@@ -117,12 +125,11 @@ def can_read_file(path: str, user=None) -> bool:
     if api is None:
         return True
     try:
-        return bool(api.can_read_file(path, user=user))
-    except AttributeError:
         # An auth node older than this contract. Treat the capability as absent
         # rather than denying, so upgrading this node alone cannot lock a user
         # out of their own outputs.
-        return True
+        check = getattr(api, "can_read_file", None)
+        return True if check is None else bool(check(path, user=user))
     except Exception as exc:
         _warn_once(exc)
         return False
@@ -134,11 +141,10 @@ def can_modify_file(path: str, user=None) -> bool:
     if api is None:
         return True
     try:
-        return bool(api.can_modify_file(path, user=user))
-    except AttributeError:
         # Auth node predating this contract: fall back to read permission,
         # which is stricter than nothing and never blocks a single-user setup.
-        return can_read_file(path, user=user)
+        check = getattr(api, "can_modify_file", None)
+        return can_read_file(path, user=user) if check is None else bool(check(path, user=user))
     except Exception as exc:
         _warn_once(exc)
         return False

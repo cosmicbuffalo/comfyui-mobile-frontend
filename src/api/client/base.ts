@@ -4,10 +4,17 @@ import { getImageCacheToken } from '@/utils/imageCacheBust';
 
 function getOrCreateClientId(): string {
   const storageKey = 'comfyui-mobile-client-id';
-  let id = localStorage.getItem(storageKey);
-  if (!id) {
-    id = 'mobile-' + Math.random().toString(36).substring(2, 15);
+  try {
+    const saved = localStorage.getItem(storageKey);
+    if (saved) return saved;
+  } catch {
+    // Storage can be disabled while the rest of the app is usable.
+  }
+  const id = 'mobile-' + Math.random().toString(36).substring(2, 15);
+  try {
     localStorage.setItem(storageKey, id);
+  } catch {
+    // Keep a stable id for this page even when it cannot survive a reload.
   }
   return id;
 }

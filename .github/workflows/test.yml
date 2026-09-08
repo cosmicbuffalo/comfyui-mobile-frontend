@@ -2,9 +2,8 @@ name: Tests
 
 on:
   push:
-    branches: [main]
+    branches: [main, 'release-*']
   pull_request:
-    branches: [main]
 
 jobs:
   test:
@@ -26,3 +25,29 @@ jobs:
           # compressed siblings must already be tracked (never newly generated).
           git diff --exit-code -- dist ':(exclude)dist/**/*.gz' ':(exclude)dist/**/*.br'
           test -z "$(git status --porcelain --untracked-files=all -- dist | grep '^[?][?]')"
+
+  mask-editor-e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22.12.0"
+          cache: npm
+      - run: npm ci
+      - name: Resolve the pinned Playwright version
+        id: playwright
+        run: echo "version=$(node -p "require('./package.json').devDependencies.playwright")" >> "$GITHUB_OUTPUT"
+      - name: Cache the browser
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          # Keyed on the driver version: a browser build belongs to the
+          # Playwright release that installed it.
+          key: playwright-chromium-${{ runner.os }}-${{ steps.playwright.outputs.version }}
+      - name: Install the browser
+        # --with-deps is needed on a cache hit too: the cache holds the browser
+        # build, not the system libraries it links against.
+        run: npx playwright install --with-deps chromium
+      - run: npm run test:mask-e2e

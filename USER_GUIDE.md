@@ -1,6 +1,6 @@
 # ComfyUI Mobile User Guide
 
-This guide walks through every feature in the mobile frontend as of `v3.3.0`
+This guide walks through every feature in the mobile frontend as of `v3.3.1`
 
 ## Table of Contents
 
@@ -221,7 +221,7 @@ You don't have to open the file first: **Load workflow** is also in the file's `
 <a id="how-do-i-run-my-workflow-multiple-times"></a>
 ### How do I run my workflow multiple times?
 
-Use the run count buttons (minus/plus) in the [Bottom Bar](#bottom-bar) to set how many runs to enqueue, then tap the **Run** button. Each run is queued separately on the server. You can monitor all pending and running items on the [Queue Page](#queue-page).
+Use the run count buttons (minus/plus) in the [Bottom Bar](#bottom-bar) to set how many runs to enqueue — press and hold either button to double or halve the count instead of stepping one at a time — then tap the **Run** button. Each run is queued separately on the server. You can monitor all pending and running items on the [Queue Page](#queue-page).
 
 <a id="how-do-i-enable-infinite-generation-mode"></a>
 ### How do I enable infinite generation mode?
@@ -451,6 +451,7 @@ App-wide toggles, reached from **Server → Preferences**:
 - **Alias filepaths in embedded metadata** — hide input paths and output filename prefixes in shared workflow metadata.
 - **Credit comfyui-mobile-frontend in workflows** — **on by default.** Embeds a small hidden note crediting this project, with a link to its repository, into the workflow that gets saved alongside your outputs. The note is added only to that embedded copy at run time: it never appears in the mobile UI, is never part of the workflow you save to the server, and is stripped back out if you load one of those outputs' workflows. It does travel inside the metadata of images you generate, so turn it off if you'd rather your shared outputs carry no reference to the app.
 - **Enable infinite mode** — show the ∞ button next to Run. See [How do I enable infinite generation mode?](#how-do-i-enable-infinite-generation-mode).
+- **Re-hide hidden files when you leave** — **on by default.** Turns **Show hidden** back off on its own after the app has sat in the background, or a desktop tab has sat untouched, for the chosen wait (five minutes unless you pick another; **At once** acts the moment you leave and never on idleness). The wait counts time away or idle, not time since you flipped the switch, so it never turns off in front of you. Toggle the preference off to keep Show hidden on until you turn it off by hand.
 - **Hide bottom bar when viewer is idle** — fade the bottom bar along with the image-viewer controls after a few seconds without interaction.
 - **Follow into subgraphs** — when following execution, navigate into subgraph scopes so you can watch nodes running inside them.
 - **Tag autocomplete** — suggest tags, your custom word list, LoRAs, and embeddings while typing prompts. This toggle only appears when a supported source is installed on the server (ComfyUI-Autocomplete-Plus and/or ComfyUI-Custom-Scripts); the description names whichever it found.
@@ -515,7 +516,7 @@ You can keep several workflows open at once (up to 10), each in its own tab. A s
 <a id="bottom-bar"></a>
 ### Bottom Bar
 
-- Run count: use the minus/plus buttons to set how many runs to queue.
+- Run count: use the minus/plus buttons to set how many runs to queue; press and hold either button to double or halve the count.
 - Run button: queues the current workflow on the server X times as indicated by the run count.
 - Pinned widget shortcut: appears when a widget is pinned for quick editing — tap it to open a modal to edit your pinned widget from anywhere.
 - On the outputs page, the pinned widget button is replaced with a filter/sort button (or a selection actions button when in selection mode).
@@ -674,7 +675,7 @@ Most of what follows happens inside a subgraph scope, so enter one first (see [S
 
 - **Promote as widget** draws an editable control on the placeholder card, and each instance of the type owns its own value for it — twelve instances of one subgraph can each carry their own seed.
 - **Promote as input** draws a plain connection socket instead. The value stays on the inner node, shared by every instance of the type, and the graph above can wire something into it.
-- **Switch to input** and **Switch to widget** change form afterwards, carrying the value to wherever it now lives. **Unpromote** brings it home to the inner node and takes the slot away.
+- **Switch to input** and **Switch to widget** change form afterwards, carrying the value to wherever it now lives. **Unpromote** brings it home to the inner node and takes the slot away — and it works from the placeholder card too, so you can undo a promotion without going inside to find the node it came from. Because the inner widget holds one value shared by the whole type, unpromoting from an instance keeps that instance's value; when other instances hold something different, a confirmation tables what is kept against what would be dropped before anything happens.
 - A promoted widget stays an editable control **inside** the subgraph as well, reading and writing the value of the instance you entered through — the scope header names that instance and lets you change it. The row falls back to a connection only when that instance really is fed from outside.
 - Where the two names differ, both are shown: `text ⇠ positive` inside the subgraph — this `text` widget is the subgraph's `positive` input — and `positive ⇢ text` on the placeholder.
 
@@ -1110,7 +1111,7 @@ On the desktop-responsive Workflow page:
 
 On the Outputs page, `Command+F` / `Ctrl+F` opens and focuses output search.
 
-**Show hidden** is one preference shared by every list that can hide things — outputs, the queue, the workflow lists, the input picker — and `Command+Shift+.` toggles it from anywhere in the app, the way Finder does. It is `Command` specifically: `Ctrl+Shift+.` is deliberately left alone.
+**Show hidden** is one preference shared by every list that can hide things — outputs, the queue, the workflow lists, the input picker — and `Command+Shift+.` toggles it from anywhere in the app, the way Finder does. It is `Command` specifically: `Ctrl+Shift+.` is deliberately left alone. By default it also turns itself back off after five minutes away from the app or idle in front of it, so hidden things do not stay on display for whoever picks the device up next — tune or disable that under [Preferences](#preferences) → **Re-hide hidden files when you leave**.
 
 The image viewer accepts these keys when no text input is focused:
 
