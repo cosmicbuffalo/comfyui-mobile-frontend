@@ -98,6 +98,7 @@ function touchFileModifiedDates(
 
 const fileStateMutationTails = new Map<string, Promise<void>>();
 const fileStateHydrationInFlight = new Map<AssetSource, Promise<boolean>>();
+let promptSearchRequestId = 0;
 const fileStateMutationVersions = new Map<AssetSource, number>();
 
 function queueFileStateMutation(
@@ -398,6 +399,7 @@ export const useOutputsStore = create<OutputsState>()(
       setSource: (source) => {
         const { source: prevSource, currentFolder, folderBySource, tabs, activeTabId } = get();
         if (source === prevSource || get().isLoading) return;
+        promptSearchRequestId += 1;
         // Stash where we were in the source we're leaving, and restore where we
         // last were in the source we're entering.
         const nextFolderBySource = { ...folderBySource, [prevSource]: currentFolder };
@@ -417,6 +419,7 @@ export const useOutputsStore = create<OutputsState>()(
           promptSearchActive: false,
           promptSearchResults: [],
           promptSearchQuery: '',
+          promptSearchLoading: false,
           searchOpen: false,
           searchDraft: '',
         });
@@ -457,6 +460,7 @@ export const useOutputsStore = create<OutputsState>()(
         );
         const target = synced.find((t) => t.id === tabId);
         if (!target) return;
+        promptSearchRequestId += 1;
         const nextFolder = folder !== undefined ? folder : target.folder;
         // Carry an in-progress selection across tabs that share the active
         // source, so the user can build one selection while hopping tab to tab.
@@ -481,6 +485,7 @@ export const useOutputsStore = create<OutputsState>()(
           promptSearchActive: false,
           promptSearchResults: [],
           promptSearchQuery: '',
+          promptSearchLoading: false,
           searchOpen: false,
           searchDraft: '',
         });
@@ -491,9 +496,11 @@ export const useOutputsStore = create<OutputsState>()(
       setCurrentFolder: (folder) => {
         const { currentFolder, filter, promptSearchActive, isLoading } = get();
         if (isLoading) return;
+        promptSearchRequestId += 1;
         const newPath = currentFolder ? `${currentFolder}/${folder}` : folder;
         set({
           currentFolder: newPath,
+          promptSearchLoading: false,
           files: [],
           selectionMode: false,
           selectedIds: [],
@@ -509,8 +516,10 @@ export const useOutputsStore = create<OutputsState>()(
       navigateToPath: (path) => {
         const { filter, promptSearchActive, isLoading } = get();
         if (isLoading) return;
+        promptSearchRequestId += 1;
         set({
           currentFolder: path,
+          promptSearchLoading: false,
           files: [],
           selectionMode: false,
           selectedIds: [],
@@ -522,11 +531,13 @@ export const useOutputsStore = create<OutputsState>()(
       navigateUp: () => {
         const { currentFolder, filter, promptSearchActive, isLoading } = get();
         if (!currentFolder || isLoading) return;
+        promptSearchRequestId += 1;
         const parts = currentFolder.split('/');
         parts.pop();
         const newPath = parts.length > 0 ? parts.join('/') : null;
         set({
           currentFolder: newPath,
+          promptSearchLoading: false,
           files: [],
           selectionMode: false,
           selectedIds: [],
@@ -739,15 +750,20 @@ export const useOutputsStore = create<OutputsState>()(
         }
         const { source, currentFolder } = get();
         const showHidden = useShowHiddenStore.getState().showHidden;
+        const requestId = ++promptSearchRequestId;
+        const isCurrent = () => requestId === promptSearchRequestId
+          && get().source === source && get().currentFolder === currentFolder;
         set({ promptSearchLoading: true, promptSearchError: null });
         try {
           await flushFileStateMutations(source);
+          if (!isCurrent()) return;
           const results = await api.searchUserImagesByPrompt(
             source,
             trimmed,
             currentFolder,
             showHidden,
           );
+          if (!isCurrent()) return;
           const backendFavoriteIds = results
             .filter((file) => file.favorite)
             .map((file) => file.id);
@@ -765,6 +781,7 @@ export const useOutputsStore = create<OutputsState>()(
             rejected: reconcileReturnedFileState(s.rejected, results, backendRejectedIds),
           }));
         } catch (err) {
+          if (!isCurrent()) return;
           console.error('Prompt search failed:', err);
           // Distinguish "the search failed" from "no matches".
           set({
@@ -775,6 +792,7 @@ export const useOutputsStore = create<OutputsState>()(
       },
 
       clearPromptSearch: () => {
+        promptSearchRequestId += 1;
         set((s) => ({
           filter: { ...s.filter, search: '' },
           searchDraft: '',
@@ -799,9 +817,11 @@ export const useOutputsStore = create<OutputsState>()(
 
       syncShowHidden: (showHidden) => {
         const { currentFolder, promptSearchActive, promptSearchQuery } = get();
+        promptSearchRequestId += 1;
         const nextFolder = showHidden ? currentFolder : getVisibleParentPath(currentFolder);
         set((s) => ({
           currentFolder: nextFolder,
+          promptSearchLoading: false,
           files: [],
           selectionMode: false,
           selectedIds: [],
