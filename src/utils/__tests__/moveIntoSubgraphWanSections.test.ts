@@ -6,7 +6,12 @@ import { expandWorkflowSubgraphs } from '@/utils/expandWorkflowSubgraphs';
 import { moveNodesIntoSubgraph } from '@/utils/moveIntoSubgraph';
 import { normalizeSubgraphPlaceholders } from '@/utils/normalizeSubgraphPlaceholders';
 import { useWorkflowStore } from '@/hooks/useWorkflow';
+import { useWorkflowUndoStore } from '@/hooks/useWorkflowUndo';
 import { getSubgraphBoundaryWidgetSlots } from '@/utils/widgetDefinitions';
+import {
+  collectInstancePromotedValues,
+  instancesLosingPromotedValue,
+} from '@/utils/promotedWidgetForm';
 import { connectionSnapshot, findIntegrityProblems, summarizeProblems } from './helpers/linkIntegrity';
 
 /**
@@ -837,6 +842,87 @@ describe('editing one instance of a shared type', () => {
     for (const id of result.harvestedFrom) {
       expect((current().links ?? []).some((l) => l[1] === id), `#${id} still feeds something`).toBe(false);
     }
+  });
+
+  describe('unpromoting from outside the subgraph', () => {
+    const slotIndexOf = (name: string) =>
+      (sharedDefinition().inputs ?? []).findIndex((slot) => slot.name === name);
+    const innerText = (): unknown => {
+      const encoder = (sharedDefinition().nodes ?? [])
+        .find((n) => n.type === 'CLIPTextEncode');
+      return (encoder?.widgets_values as unknown[])?.[0];
+    };
+    const promoteTheEncoder = () => {
+      useWorkflowStore.getState().moveItemsIntoSubgraph(
+        [keyOf(POSITIVE_PROMPT)], keyOf(PLACEHOLDER),
+      );
+    };
+
+    it('brings the chosen instance value home and drops the control', () => {
+      promoteTheEncoder();
+      expect(widgetNames(), 'the prompt is promoted to begin with').toContain('text');
+      const kept = textByInstance();
+      const instance = current().nodes.find((n) => n.type === sharedId())!;
+
+      const done = useWorkflowStore.getState().demoteWidget({
+        subgraphId: sharedId(),
+        boundarySlot: slotIndexOf('text'),
+        instanceNodeId: instance.id,
+      });
+
+      expect(done).toBe(true);
+      expect(widgetNames(), 'the boundary slot is gone').not.toContain('text');
+      // The instance it was done from is the one whose value survives, on the
+      // inner node now shared by every instance.
+      const number = (instance.properties as Record<string, number>).mobileInstanceNumber;
+      expect(innerText()).toBe(kept[number]);
+      expectClean(current(), 'after unpromoting from the placeholder');
+    });
+
+    it('reports the instances that disagree before anything is dropped', () => {
+      promoteTheEncoder();
+      const values = collectInstancePromotedValues(
+        current(), sharedId(), slotIndexOf('text'),
+      );
+      // Each section was seeded with its own prompt, so this is the case the
+      // confirmation exists for.
+      expect(values.length).toBeGreaterThan(5);
+      const kept = values[0].instanceNodeId;
+      const losing = instancesLosingPromotedValue(values, kept);
+      expect(losing.length).toBe(values.length - 1);
+      expect(losing.some((entry) => entry.instanceNodeId === kept)).toBe(false);
+
+      // Once they all read the same, there is nothing to lose and no question
+      // worth asking.
+      const agreed = values.map((entry) => ({ ...entry, value: 'same' }));
+      expect(instancesLosingPromotedValue(agreed, kept)).toEqual([]);
+
+      // An instance that already agrees is not losing anything, so it is left
+      // out even while others disagree.
+      const mixed = values.map((entry, index) => (
+        index === 1 ? { ...entry, value: values[0].value } : entry
+      ));
+      const stillLosing = instancesLosingPromotedValue(mixed, kept);
+      expect(stillLosing.length).toBe(values.length - 2);
+      expect(stillLosing.some((entry) => entry.instanceNodeId === mixed[1].instanceNodeId))
+        .toBe(false);
+    });
+
+    it('is undone in one step', () => {
+      promoteTheEncoder();
+      const before = textByInstance();
+
+      useWorkflowStore.getState().demoteWidget({
+        subgraphId: sharedId(),
+        boundarySlot: slotIndexOf('text'),
+        instanceNodeId: current().nodes.find((n) => n.type === sharedId())!.id,
+      });
+      expect(widgetNames()).not.toContain('text');
+
+      useWorkflowUndoStore.getState().undo();
+      expect(widgetNames(), 'the promotion is back').toContain('text');
+      expect(textByInstance(), 'every instance has its own value again').toEqual(before);
+    });
   });
 
   it('offers the whole stranded chain, not just what fed the slot', () => {

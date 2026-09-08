@@ -135,6 +135,8 @@ interface NodeCardParametersProps {
   onPromoteWidget?: (widget: PromotableWidget, form: PromotedWidgetForm) => void;
   onChangePromotedForm?: (inputName: string, form: PromotedWidgetForm) => void;
   onDemoteWidget?: (inputName: string) => void;
+  /** Unpromote a boundary slot from the placeholder side. */
+  onUnpromoteBoundarySlot?: (slotIndex: number) => void;
   /**
    * Placeholder-side boundary editing. The order of promoted widgets is only
    * visible here, on the card that draws them, so this is where moving them
@@ -178,6 +180,7 @@ export function NodeCardParameters({
   onPromoteWidget,
   onChangePromotedForm,
   onDemoteWidget,
+  onUnpromoteBoundarySlot,
   onMoveBoundarySlot,
   onRemoveBoundarySlot,
   onRenameBoundarySlot,
@@ -642,6 +645,13 @@ export function NodeCardParameters({
         icon: <NoEntryIcon className="w-4 h-4" />,
         hidden: !(promotedForm && onDemoteWidget),
         onSelect: () => onDemoteWidget?.(inputName),
+      },
+      {
+        key: 'unpromote-slot',
+        label: t('Unpromote'),
+        icon: <NoEntryIcon className="w-4 h-4" />,
+        hidden: !(isPlaceholder && onUnpromoteBoundarySlot && boundarySlot >= 0),
+        onSelect: () => onUnpromoteBoundarySlot?.(boundarySlot),
       },
       {
         key: 'remove-slot',

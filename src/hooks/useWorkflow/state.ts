@@ -362,7 +362,18 @@ export interface WorkflowState {
   ) => boolean;
   // Undo a promotion: drop the boundary slot and its link, and return the
   // widget to the inner node holding the value it was showing.
-  demoteWidget: (target: { nodeKey: HierarchicalKey; inputName: string }) => boolean;
+  //
+  // Reachable from both sides. From INSIDE the subgraph the target is the inner
+  // node's widget. From a placeholder OUTSIDE it there is no inner node in
+  // view, so the boundary slot names itself and `instanceNodeId` says which
+  // instance's value is the one that comes home — the others are collapsed onto
+  // it, which is what `collectInstancePromotedValues` is for asking about
+  // first.
+  demoteWidget: (
+    target:
+      | { nodeKey: HierarchicalKey; inputName: string }
+      | { subgraphId: string; boundarySlot: number; instanceNodeId?: number; parentSubgraphId?: string | null },
+  ) => boolean;
   // Rename a widget's label on one node, stored as the input slot's `label`
   // the way the desktop frontend stores it. A blank label clears the override.
   setWidgetLabel: (

@@ -14,7 +14,9 @@ import type { LinkedWidgetRoute, ProxyWidgetRoute } from '@/utils/widgetDefiniti
 import { getInstanceNumber, getMobileDefMeta, isSubgraphPlaceholder, resolveCurrentScope } from '@/utils/canonicalWorkflowOps';
 import { getNodeDeletionOptions } from '@/utils/nodeDeletionOptions';
 import {
+  collectInstancePromotedValues,
   collectPromotedWidgetViews,
+  instancesLosingPromotedValue,
   resolveBoundaryTargetWidgetNames,
 } from '@/utils/promotedWidgetForm';
 import { ArrowRightIcon } from '@/components/icons';
@@ -30,6 +32,7 @@ import {
 import { DeleteContainerModal } from '@/components/modals/DeleteContainerModal';
 import { EditBoundarySlotLabelModal } from '@/components/modals/EditBoundarySlotLabelModal';
 import { Dialog } from '@/components/modals/Dialog';
+import { UnpromoteSharedWidgetDialog } from '@/components/modals/UnpromoteSharedWidgetDialog';
 import { isLoraManagerNodeType } from '@/utils/loraManager';
 import { useSeedStore } from '@/hooks/useSeed';
 import { useBookmarksStore } from '@/hooks/useBookmarks';
@@ -152,6 +155,9 @@ export const NodeCard = memo(function NodeCard({
   const removeBoundarySlot = useWorkflowStore((s) => s.removeBoundarySlot);
   // Which boundary slot the rename modal is open for, on a placeholder card.
   const [boundaryLabelSlot, setBoundaryLabelSlot] = useState<number | null>(null);
+  // Set when unpromoting a slot would collapse instance values that disagree,
+  // so the card can name what it is about to drop before doing it.
+  const [unpromoteSlot, setUnpromoteSlot] = useState<number | null>(null);
   const setWidgetLabel = useWorkflowStore((s) => s.setWidgetLabel);
   const updateNodeTitle = useWorkflowStore((s) => s.updateNodeTitle);
   const updateWorkflowItemColor = useWorkflowStore((s) => s.updateWorkflowItemColor);
@@ -1656,6 +1662,25 @@ export const NodeCard = memo(function NodeCard({
               onRemoveBoundarySlot={isPlaceholder ? (slotIndex) => {
                 removeBoundarySlot('input', slotIndex, { subgraphId: node.type });
               } : undefined}
+              onUnpromoteBoundarySlot={isPlaceholder ? (slotIndex) => {
+                // Only worth asking when the instances actually disagree: one
+                // instance, or several holding the same value, lose nothing.
+                const values = workflow
+                  ? collectInstancePromotedValues(workflow, node.type, slotIndex)
+                  : [];
+                // Only instances holding something OTHER than this one's value
+                // lose anything, so they are the whole reason to ask.
+                if (instancesLosingPromotedValue(values, node.id, currentSubgraphDefinition?.id ?? null).length > 0) {
+                  setUnpromoteSlot(slotIndex);
+                  return;
+                }
+                demoteWidget({
+                  subgraphId: node.type,
+                  boundarySlot: slotIndex,
+                  instanceNodeId: node.id,
+                  parentSubgraphId: currentSubgraphDefinition?.id ?? null,
+                });
+              } : undefined}
               onRenameBoundarySlot={isPlaceholder ? (slotIndex) => {
                 setBoundaryLabelSlot(slotIndex);
               } : undefined}
@@ -1777,6 +1802,27 @@ export const NodeCard = memo(function NodeCard({
         anchorRef={errorIconRef}
         onClose={resetErrorPopover}
       />
+
+      {unpromoteSlot !== null && isPlaceholder && (
+        <UnpromoteSharedWidgetDialog
+          subgraphId={node.type}
+          instanceNodeId={node.id}
+          parentSubgraphId={currentSubgraphDefinition?.id ?? null}
+          boundarySlot={unpromoteSlot}
+          slotLabel={
+            node.inputs?.[unpromoteSlot]?.label
+            ?? node.inputs?.[unpromoteSlot]?.name
+            ?? String(unpromoteSlot)
+          }
+          onConfirm={() => demoteWidget({
+            subgraphId: node.type,
+            boundarySlot: unpromoteSlot,
+            instanceNodeId: node.id,
+            parentSubgraphId: currentSubgraphDefinition?.id ?? null,
+          })}
+          onClose={() => setUnpromoteSlot(null)}
+        />
+      )}
 
       {boundaryLabelSlot !== null && isPlaceholder && (
         <EditBoundarySlotLabelModal
