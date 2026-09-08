@@ -27,6 +27,7 @@ import { buildOutputPreferredViewerImages, type ViewerImage } from './utils/view
 import { useOutputsStore } from './hooks/useOutputs';
 import { useShowHiddenStore } from './hooks/useShowHidden';
 import { useShowHiddenShortcut } from './hooks/useShowHiddenShortcut';
+import { useShowHiddenAutoHide } from './hooks/useShowHiddenAutoHide';
 import { useMaskEditorStore } from './hooks/useMaskEditor';
 
 const QueuePanel = lazy(() =>
@@ -125,6 +126,7 @@ function App() {
   }, [currentPanel]);
 
   useShowHiddenShortcut({ enabled: true, onToggle: toggleShowHidden });
+  useShowHiddenAutoHide();
 
   useWebSocket();
 

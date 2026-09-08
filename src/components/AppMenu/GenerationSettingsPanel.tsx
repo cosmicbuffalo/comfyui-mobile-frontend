@@ -11,6 +11,11 @@ import {
 } from './menuStyles';
 import { NotificationsSettings } from './NotificationsSettings';
 import { useAutocompleteStore } from '@/hooks/useAutocompleteStore';
+import {
+  AUTO_HIDE_MINUTE_CHOICES,
+  DEFAULT_AUTO_HIDE_MINUTES,
+  useShowHiddenStore,
+} from '@/hooks/useShowHidden';
 import { useEffect, type ReactNode } from 'react';
 import { useI18n } from '@/i18n';
 
@@ -71,6 +76,8 @@ export function GenerationSettingsPanel({ onBack }: GenerationSettingsPanelProps
   const setInfiniteModeEnabled = useGenerationSettingsStore((s) => s.setInfiniteModeEnabled);
   const previewMethod = useGenerationSettingsStore((s) => s.previewMethod);
   const setPreviewMethod = useGenerationSettingsStore((s) => s.setPreviewMethod);
+  const autoHideMinutes = useShowHiddenStore((s) => s.autoHideMinutes);
+  const setAutoHideMinutes = useShowHiddenStore((s) => s.setAutoHideMinutes);
   const followIntoSubgraphs = useGenerationSettingsStore((s) => s.followIntoSubgraphs);
   const setFollowIntoSubgraphs = useGenerationSettingsStore((s) => s.setFollowIntoSubgraphs);
   const webpPreviewEnabled = useGenerationSettingsStore((s) => s.webpPreviewEnabled);
@@ -233,6 +240,46 @@ export function GenerationSettingsPanel({ onBack }: GenerationSettingsPanelProps
             onToggle={() => void setAutocompleteEnabled(!autocompleteEnabled)}
           />
         )}
+
+        <PreferenceSection
+          label={t('Re-hide hidden files when you leave')}
+          description={t('Showing hidden files stays on until you turn it off. Switch this on to have it turn itself off once the app has been in the background for a while.')}
+          checked={autoHideMinutes !== null}
+          onToggle={() => setAutoHideMinutes(
+            autoHideMinutes === null ? DEFAULT_AUTO_HIDE_MINUTES : null,
+          )}
+        >
+          {autoHideMinutes !== null && (
+            <div className="px-4 py-3">
+              <div className={`text-sm ${menuTextClassName}`}>{t('After')}</div>
+              <div
+                className="mt-3 grid grid-cols-4 gap-2"
+                role="radiogroup"
+                aria-label={t('Time away before hidden files are hidden again')}
+              >
+                {AUTO_HIDE_MINUTE_CHOICES.map((minutes) => {
+                  const isActive = autoHideMinutes === minutes;
+                  return (
+                    <button
+                      key={minutes}
+                      type="button"
+                      role="radio"
+                      aria-checked={isActive}
+                      onClick={() => setAutoHideMinutes(minutes)}
+                      className={`auto-hide-choice min-h-[44px] rounded-lg border px-2 py-2 text-center text-sm font-semibold transition-colors focus:outline-none focus:ring-2 focus:ring-cyan-400 ${
+                        isActive
+                          ? 'border-cyan-400 bg-cyan-500 text-slate-950 shadow-sm'
+                          : 'border-white/10 bg-slate-950/70 text-slate-100 hover:bg-slate-800/95'
+                      }`}
+                    >
+                      {minutes === 0 ? t('At once') : t('{n} min', { n: minutes })}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+        </PreferenceSection>
 
         <div className="pt-2">
           <div className={menuSectionHeaderClassName}>{t('Notifications')}</div>

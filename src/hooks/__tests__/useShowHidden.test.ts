@@ -1,9 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { useShowHiddenStore } from '@/hooks/useShowHidden';
+import { DEFAULT_AUTO_HIDE_MINUTES, useShowHiddenStore } from '@/hooks/useShowHidden';
 
 describe('useShowHiddenStore', () => {
   beforeEach(() => {
-    useShowHiddenStore.setState({ showHidden: false });
+    useShowHiddenStore.setState({
+      showHidden: false,
+      autoHideMinutes: DEFAULT_AUTO_HIDE_MINUTES,
+      backgroundedAt: null,
+    });
   });
 
   it('provides one toggle shared by every consumer', () => {
@@ -18,7 +22,14 @@ describe('useShowHiddenStore', () => {
     useShowHiddenStore.getState().setShowHidden(true);
 
     const persisted = JSON.parse(localStorage.getItem('show-hidden-storage') ?? '{}');
-    expect(persisted.state).toEqual({ showHidden: true });
+    // The auto-hide wait rides along, and so does the mark left by the last
+    // exit — a cold start is judged as time away, so it has to survive the
+    // page going away.
+    expect(persisted.state).toEqual({
+      showHidden: true,
+      autoHideMinutes: DEFAULT_AUTO_HIDE_MINUTES,
+      backgroundedAt: null,
+    });
 
     useShowHiddenStore.setState({ showHidden: false });
     localStorage.setItem('show-hidden-storage', JSON.stringify(persisted));
