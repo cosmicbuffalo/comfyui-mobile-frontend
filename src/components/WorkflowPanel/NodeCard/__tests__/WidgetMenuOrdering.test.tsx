@@ -165,16 +165,13 @@ describe('the widget row menu', () => {
     const entries = await renderPlaceholderRow();
     const remove = entries.find((button) => button.textContent?.trim() === 'Remove input');
     expect(remove, 'Remove input is offered').toBeTruthy();
-    expect(remove!.className).toContain('text-red-400');
+    expect(remove!.getAttribute('data-tone')).toBe('danger');
+    // The icon carries the tone too, rather than staying the default slate.
+    expect(remove!.querySelector('[data-tone-icon="danger"]')).toBeTruthy();
 
-    const icon = remove!.querySelector('[class*="text-red-400"], svg');
-    expect(icon, 'the entry draws an icon').toBeTruthy();
-    // The icon takes the row's colour rather than staying slate.
-    const iconWrapper = remove!.querySelector('.text-red-400');
-    expect(iconWrapper, 'the icon is red too').toBeTruthy();
-
-    // Nothing else in the menu is coloured this way.
-    const reds = entries.filter((button) => button.className.includes('text-red-400'));
-    expect(reds).toHaveLength(1);
+    // It is the only entry marked that way: Unpromote above it moves the value
+    // rather than dropping it.
+    const marked = entries.filter((button) => button.getAttribute('data-tone') === 'danger');
+    expect(marked).toHaveLength(1);
   });
 });

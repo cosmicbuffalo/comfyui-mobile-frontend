@@ -2,6 +2,11 @@ import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { PinButton } from '@/components/InputControls/PinButton';
+import {
+  pinAccentActiveClassName,
+  pinAccentMutedTextClassName,
+  pinAccentTextClassName,
+} from '@/components/chromeStyles';
 import { MenuLegend } from '../MenuLegend';
 
 /**
@@ -26,9 +31,6 @@ describe('icon legend swatches', () => {
     container.remove();
   });
 
-  const classesOf = (element: Element | null | undefined) =>
-    (element?.getAttribute('class') ?? '').split(/\s+/);
-
   it('draws the pin entries in the accent the pin controls use', async () => {
     await act(async () => root.render(<MenuLegend onBack={vi.fn()} />));
     const legend = container.innerHTML;
@@ -37,14 +39,15 @@ describe('icon legend swatches', () => {
     document.body.appendChild(pinControl);
     const pinRoot = createRoot(pinControl);
     await act(async () => pinRoot.render(<PinButton isPinned onToggle={vi.fn()} />));
-    const accent = classesOf(pinControl.querySelector('button'))
-      .find((name) => name.startsWith('text-fuchsia-'));
+    const control = pinControl.querySelector('button')?.getAttribute('class') ?? '';
     await act(async () => pinRoot.unmount());
     pinControl.remove();
 
-    expect(accent).toBeDefined();
-    // The same hue family, and nothing left on the old amber.
-    expect(legend).toContain('fuchsia');
-    expect(legend).not.toContain('amber');
+    // Both sides are asserted against the shared token rather than a colour
+    // spelled out here — the point is that they read the same source, not that
+    // the source says any particular thing today.
+    expect(control).toContain(pinAccentTextClassName);
+    expect(legend).toContain(pinAccentActiveClassName);
+    expect(legend).toContain(pinAccentMutedTextClassName);
   });
 });

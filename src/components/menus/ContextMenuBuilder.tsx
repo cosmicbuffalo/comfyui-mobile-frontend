@@ -134,10 +134,14 @@ export function ContextMenuBuilder({
             ].join(' ').trim()}
             onClick={item.onClick}
             disabled={item.disabled}
+            data-tone={item.color ?? 'default'}
           >
             <span className="flex items-center gap-2 min-w-0 flex-1">
               {item.icon ? (
-                <span className={`flex h-5 w-5 shrink-0 items-center justify-center ${tone.icon}`}>
+                <span
+                  data-tone-icon={item.color ?? 'default'}
+                  className={`flex h-5 w-5 shrink-0 items-center justify-center ${tone.icon}`}
+                >
                   {item.icon}
                 </span>
               ) : null}
