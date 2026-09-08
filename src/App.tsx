@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
+import { Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import { TopBar } from './components/TopBar';
 import { LoadingSpinner } from './components/LoadingSpinner';
 import { WorkflowPanel } from './components/WorkflowPanel';
@@ -29,17 +29,18 @@ import { useShowHiddenStore } from './hooks/useShowHidden';
 import { useShowHiddenShortcut } from './hooks/useShowHiddenShortcut';
 import { useShowHiddenAutoHide } from './hooks/useShowHiddenAutoHide';
 import { useMaskEditorStore } from './hooks/useMaskEditor';
+import { lazyPanel } from './components/lazyPanel';
 
-const QueuePanel = lazy(() =>
+const QueuePanel = lazyPanel(() =>
   import('./components/QueuePanel').then((module) => ({ default: module.QueuePanel })),
 );
-const OutputsPanel = lazy(() =>
+const OutputsPanel = lazyPanel(() =>
   import('./components/OutputsPanel').then((module) => ({ default: module.OutputsPanel })),
 );
-const ImageViewer = lazy(() =>
+const ImageViewer = lazyPanel(() =>
   import('./components/ImageViewer').then((module) => ({ default: module.ImageViewer })),
 );
-const MaskEditorModal = lazy(() =>
+const MaskEditorModal = lazyPanel(() =>
   import('./components/MaskEditor/MaskEditorModal').then((module) => ({
     default: module.MaskEditorModal,
   })),

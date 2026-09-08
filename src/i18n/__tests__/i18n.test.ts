@@ -171,8 +171,19 @@ describe('i18n', () => {
     // Built at runtime by formatRelativeAge, so they appear in no source file.
     const runtimeBuilt = /^\{count\} (minute|hour|day|week|month|year)s? ago$/;
 
+    // A key is matched against the source as written there, which means both
+    // its bare form and the form a quote forces: `it's` is `it\'s` inside a
+    // single-quoted call, and a bare substring search called such a key dead
+    // while it was being used two lines away.
+    const asWritten = (key: string) => [
+      key,
+      key.replace(/'/g, "\\'"),
+      key.replace(/"/g, '\\"'),
+    ];
     const dead = readDictionaryKeys('zh-CN').filter(
-      (key) => !runtimeBuilt.test(key) && !sources.some((source) => source.includes(key)),
+      (key) =>
+        !runtimeBuilt.test(key)
+        && !asWritten(key).some((form) => sources.some((source) => source.includes(form))),
     );
 
     expect(
