@@ -4,7 +4,6 @@ import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 import type { NodeTypes, Workflow, WorkflowNode } from '@/api/types';
 import { useParameterSectionFoldsStore } from '@/hooks/useParameterSectionFolds';
 import { useSeedStore } from '@/hooks/useSeed';
-import { resolveBoundaryTargetWidgetNames } from '@/utils/promotedWidgetForm';
 import {
   resolveSubgraphPlaceholderInputWidgetDefs,
   resolveSubgraphPlaceholderWidgetDefs,
@@ -85,13 +84,6 @@ describe('placeholder rows over boundary slots that share an inner widget name',
     const visibleInputWidgets = byBoundaryOrder(
       resolveSubgraphPlaceholderInputWidgetDefs(placeholder, workflow, NODE_TYPES),
     );
-    const boundaryTargetNames = Object.fromEntries(
-      (definition.inputs ?? []).map((_slot, index) => [
-        index,
-        resolveBoundaryTargetWidgetNames(definition, index),
-      ]),
-    );
-
     await act(async () => {
       root.render(
         <NodeCardParameters
@@ -114,7 +106,6 @@ describe('placeholder rows over boundary slots that share an inner widget name',
           toggleWidgetPin={vi.fn()}
           showFastGroupConfig={false}
           setShowFastGroupConfig={vi.fn()}
-          boundaryTargetNames={boundaryTargetNames}
           onRenameBoundarySlot={vi.fn()}
         />,
       );
@@ -123,15 +114,17 @@ describe('placeholder rows over boundary slots that share an inner widget name',
     const labels = Array.from(container.querySelectorAll('[data-widget-control]'))
       .map((el) => el.getAttribute('data-widget-control'));
 
-    // `turbo_mode` is the one slot whose name matches the widget it drives, so
-    // it names only itself; the rest name both sides of the boundary.
+    // Each row wears its own slot's rename — never another slot's, and never
+    // an inner-mapping arrow: from outside the scope, which inner widget a
+    // boundary slot drives is the subgraph's business, not the card's.
     expect(labels).toEqual([
-      'turbo_steps ⇢ value',
+      'turbo_steps',
       'turbo_mode',
-      'turbo_model_strength ⇢ strength_model',
-      'turbo_cfg ⇢ value',
+      'turbo_model_strength',
+      'turbo_cfg',
     ]);
-    // The regression: every `value`-backed row wearing the first slot's rename.
-    expect(labels).not.toContain('turbo_mode ⇢ value');
+    // The original regression: every `value`-backed row wearing the first
+    // slot's rename.
+    expect(labels.filter((label) => label === 'turbo_steps')).toHaveLength(1);
   });
 });

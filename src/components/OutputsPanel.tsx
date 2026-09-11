@@ -1405,7 +1405,7 @@ export const OutputsPanel = memo(function OutputsPanel({ visible }: { visible: b
     >
       <div
         id="outputs-panel-root"
-        className="relative h-full bg-slate-950/88 text-slate-100 flex flex-col pt-4"
+        className="relative h-full bg-slate-950/88 text-slate-100 flex flex-col"
         style={{ paddingBottom: 'var(--bottom-bar-offset, 80px)' }}
         aria-busy={isLoading}
       >

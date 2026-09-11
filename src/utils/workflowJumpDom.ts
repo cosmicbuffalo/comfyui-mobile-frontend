@@ -22,6 +22,16 @@ const FLASH_MS = 1200;
 const FLASH_AFTER_SCROLL_MS = 300;
 
 /**
+ * A row-level target's pulse (a widget row, a boundary slot's button) waits
+ * longer the further away it starts: a long smooth scroll can spend most of a
+ * second travelling, and a flash timed for the short hop is over before the
+ * row is even on screen. Scaled by how far off-screen the target begins,
+ * capped so a huge workflow still flashes promptly after arrival.
+ */
+const SCALED_FLASH_DELAY_MAX_MS = 900;
+const SCALED_FLASH_DELAY_PER_PX = 0.25;
+
+/**
  * Where a jump puts its target in the visible list.
  *
  * `start` is the default: flush with the top, showing as much of the target as
@@ -51,7 +61,8 @@ export type JumpElementTarget =
   | { kind: 'node'; nodeId: number }
   | { kind: 'container'; nodeId: number }
   | { kind: 'group'; groupKey: string }
-  | { kind: 'connection'; domId: string };
+  | { kind: 'connection'; domId: string }
+  | { kind: 'widgetRow'; domId: string };
 
 interface JumpElements {
   /** Scrolled into view. */
@@ -61,7 +72,7 @@ interface JumpElements {
 }
 
 function resolveJumpElements(target: JumpElementTarget): JumpElements {
-  if (target.kind === 'connection') {
+  if (target.kind === 'connection' || target.kind === 'widgetRow') {
     const element = document.getElementById(target.domId);
     return { scroll: element, flash: element };
   }
@@ -114,17 +125,55 @@ function alignWithinList(element: Element | null, alignment: JumpAlignment): boo
 export function flashJumpTarget(element: HTMLElement | null): void {
   if (!element) return;
   document
-    .querySelectorAll('.highlight-pulse, .connection-highlight-pulse')
+    .querySelectorAll(
+      '.highlight-pulse, .connection-highlight-pulse, .widget-input-highlight-pulse, .widget-label-highlight-pulse',
+    )
     .forEach((el) => {
       el.classList.remove('highlight-pulse');
       el.classList.remove('connection-highlight-pulse');
+      el.classList.remove('widget-input-highlight-pulse');
+      el.classList.remove('widget-label-highlight-pulse');
     });
+
+  // A widget row does not take the generic card rectangle: the cue is a cyan
+  // ring around the control's input — right where a promoted widget wears its
+  // pink one — with the slot name in the label tinted in unison. Every standard control
+  // marks its actual border surface through controlStyles, including react-select. Rows whose
+  // control draws no standard input (the specialised blocks) fall back to the
+  // rectangle rather than flashing nothing.
+  if (element.id.startsWith('widget-row-')) {
+    const input = element.querySelector<HTMLElement>('.widget-jump-surface');
+    if (input) {
+      const labelBit =
+        element.querySelector<HTMLElement>('.boundary-jump')
+        ?? element.querySelector<HTMLElement>('label');
+      input.classList.add('widget-input-highlight-pulse');
+      labelBit?.classList.add('widget-label-highlight-pulse');
+      setTimeout(() => {
+        input.classList.remove('widget-input-highlight-pulse');
+        labelBit?.classList.remove('widget-label-highlight-pulse');
+      }, FLASH_MS);
+      if ('vibrate' in navigator) navigator.vibrate(10);
+      return;
+    }
+  }
+
   // A connection button is a small circle whose own border carries the pulse;
   // everything else is a card or container that takes the outline version.
   const isConnectionButton = element.id.startsWith('connection-button-');
   const className = isConnectionButton ? 'connection-highlight-pulse' : 'highlight-pulse';
   element.classList.add(className);
   setTimeout(() => element.classList.remove(className), FLASH_MS);
+  // The slot's name joins the button's pulse, mirroring how a widget arrival
+  // tints the label — the name is what the jump was aimed at.
+  if (isConnectionButton) {
+    const slotLabel =
+      element.parentElement?.querySelector<HTMLElement>('.connection-slot-label');
+    if (slotLabel) {
+      slotLabel.classList.add('widget-label-highlight-pulse');
+      setTimeout(() => slotLabel.classList.remove('widget-label-highlight-pulse'), FLASH_MS);
+    }
+  }
   if ('vibrate' in navigator) navigator.vibrate(10);
 }
 
@@ -163,7 +212,19 @@ export function revealJumpTarget(
   if (alreadyInView) {
     flashOnArrival();
   } else {
-    setTimeout(flashOnArrival, FLASH_AFTER_SCROLL_MS);
+    // How far off-screen the target starts, for the distance-scaled delay.
+    const offscreenDistance = rect == null
+      ? 0
+      : rect.bottom < 0
+        ? -rect.bottom
+        : Math.max(0, rect.top - window.innerHeight);
+    const delay = target.kind === 'widgetRow' || target.kind === 'connection'
+      ? Math.min(
+          SCALED_FLASH_DELAY_MAX_MS,
+          FLASH_AFTER_SCROLL_MS + offscreenDistance * SCALED_FLASH_DELAY_PER_PX,
+        )
+      : FLASH_AFTER_SCROLL_MS;
+    setTimeout(flashOnArrival, delay);
   }
   return true;
 }

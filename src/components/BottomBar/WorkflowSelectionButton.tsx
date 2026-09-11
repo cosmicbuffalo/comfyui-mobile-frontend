@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { ArrowRightIcon, CheckIcon, CopyIcon, NoEntryIcon, PlusIcon, TrashIcon, WorkflowIcon } from '@/components/icons';
+import { ArrowRightIcon, CheckIcon, CopyIcon, EyeIcon, EyeOffIcon, NoEntryIcon, PlusIcon, TrashIcon, WorkflowIcon } from '@/components/icons';
 import { MoveIntoSubgraphModal } from '@/components/modals/MoveIntoSubgraphModal';
 import { RemoveHarvestedNodesDialog } from '@/components/modals/RemoveHarvestedNodesDialog';
 import { Dialog } from '@/components/modals/Dialog';
@@ -29,6 +29,9 @@ export function WorkflowSelectionButton() {
   const deleteSelectedItems = useWorkflowStore((s) => s.deleteSelectedItems);
   const moveItemsIntoSubgraph = useWorkflowStore((s) => s.moveItemsIntoSubgraph);
   const jumpToWorkflowItem = useWorkflowStore((s) => s.jumpToWorkflowItem);
+  const setItemHidden = useWorkflowStore((s) => s.setItemHidden);
+  const hiddenItems = useWorkflowStore((s) => s.hiddenItems);
+  const itemKeyByPointer = useWorkflowStore((s) => s.itemKeyByPointer);
   const workflow = useWorkflowStore((s) => s.workflow);
   const scopeStack = useWorkflowStore((s) => s.scopeStack);
 
@@ -45,6 +48,15 @@ export function WorkflowSelectionButton() {
   const canMoveIntoSubgraph = useMemo(
     () => collectMoveIntoSubgraphTargets(workflow, scopeStack, selectedKeys).length > 0,
     [workflow, scopeStack, selectedKeys],
+  );
+  // Drives one menu entry rather than separate Hide and Unhide ones: it reads
+  // Unhide only when every selected item is already hidden — reachable because
+  // select mode can pick hidden items — and Hide otherwise, so a mixed
+  // selection hides and ends up agreeing.
+  const allSelectedHidden = useMemo(
+    () => selectedKeys.length > 0
+      && selectedKeys.every((key) => Boolean(hiddenItems[itemKeyByPointer[key] ?? key])),
+    [hiddenItems, itemKeyByPointer, selectedKeys],
   );
 
   const handleCreateSubgraph = () => {
@@ -77,6 +89,10 @@ export function WorkflowSelectionButton() {
   const runAndExit = (op: (keys: string[]) => void) => {
     op(selectedKeys);
     exitSelectionMode();
+  };
+
+  const setSelectionHidden = (keys: string[], hidden: boolean) => {
+    for (const key of keys) setItemHidden(key, hidden);
   };
 
   return (
@@ -215,6 +231,17 @@ export function WorkflowSelectionButton() {
               {t('Move into subgraph')}
             </button>
           )}
+          <button
+            className="hide-selection-action flex w-full items-center gap-2 px-4 py-3 text-left text-sm text-slate-200 hover:bg-white/10"
+            onClick={() => runAndExit((keys) => setSelectionHidden(keys, !allSelectedHidden))}
+          >
+            {allSelectedHidden ? (
+              <EyeIcon className="h-4 w-4 text-slate-400" />
+            ) : (
+              <EyeOffIcon className="h-4 w-4 text-slate-400" />
+            )}
+            {allSelectedHidden ? t('Unhide') : t('Hide')}
+          </button>
           <button
             className="flex w-full items-center gap-2 px-4 py-3 text-left text-sm text-red-400 hover:bg-red-500/10"
             onClick={() => runAndExit(deleteSelectedItems)}

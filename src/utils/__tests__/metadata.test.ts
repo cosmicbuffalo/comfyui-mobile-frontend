@@ -164,4 +164,45 @@ describe('extractMetadata', () => {
     expect(result.sampler).toBe('euler');
     expect(result.scheduler).toBe('normal');
   });
+
+  describe('seeds', () => {
+    it('reads seeds off any node, not just a known sampler class', () => {
+      // The value that made the image usually lives on a dedicated seed node or
+      // inside an expanded subgraph, keyed by execution id.
+      const prompt = {
+        '814:1852': { class_type: 'Seed (rgthree)', inputs: { seed: 3947389889 } },
+        '1774:1836': { class_type: 'GIMMVFI_interpolate', inputs: { seed: 2795446733 } },
+      };
+      expect(extractMetadata(prompt).seeds).toEqual([3947389889, 2795446733]);
+    });
+
+    it('ignores a connected seed and names that only mention seed', () => {
+      const prompt = {
+        '1': {
+          class_type: 'KSampler',
+          // [sourceNodeId, slot] — the seed is computed elsewhere in the graph.
+          inputs: { seed: ['2', 0], seed_mode: 'randomize', seed_offset: 5 },
+        },
+      };
+      expect(extractMetadata(prompt).seeds).toBeUndefined();
+    });
+
+    it('collapses the same seed shared by several nodes', () => {
+      const prompt = {
+        '1': { class_type: 'KSampler', inputs: { seed: 42 } },
+        '2': { class_type: 'KSamplerAdvanced', inputs: { noise_seed: 42 } },
+      };
+      expect(extractMetadata(prompt).seeds).toEqual([42]);
+    });
+
+    it('stops after four distinct seeds', () => {
+      const prompt = Object.fromEntries(
+        Array.from({ length: 9 }, (_, i) => [
+          String(i + 1),
+          { class_type: 'KSampler', inputs: { seed: i + 1 } },
+        ]),
+      );
+      expect(extractMetadata(prompt).seeds).toEqual([1, 2, 3, 4]);
+    });
+  });
 });

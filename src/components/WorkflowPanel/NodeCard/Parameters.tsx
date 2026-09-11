@@ -1,3 +1,4 @@
+import { WidgetRow } from './WidgetRow';
 import { Fragment, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Collapsible } from '@/components/Collapsible';
 import { FoldIcon } from '@/components/FoldIcon';
@@ -25,9 +26,14 @@ import type { WorkflowNode } from '@/api/types';
 import {
   generateSeedFromNode,
   getSpecialSeedMode,
+  getWidgetIndexForInput as resolveWidgetIndexForInputOnNode,
   useWorkflowStore
 } from '@/hooks/useWorkflow';
 import { useI18n } from '@/i18n';
+import { useConnectionSectionFoldsStore } from '@/hooks/useConnectionSectionFolds';
+import { connectionButtonDomId } from '@/utils/connectionFlash';
+import { subgraphBoundaryFoldKey } from '@/utils/subgraphBoundaryFold';
+import { SUBGRAPH_INPUT_NODE_ID } from '@/utils/canonicalWorkflowOps';
 import { RowActionsMenu, type RowMenuAction } from './RowActionsMenu';
 import type { PromotableWidget } from '@/utils/promotableWidgets';
 import { widgetRowDomId } from '@/utils/workflowJumpTargets';
@@ -127,7 +133,11 @@ interface NodeCardParametersProps {
    * connection row names the slot it crosses.
    */
   promotedBoundaryLabels?: Record<string, string>;
-  /** On a placeholder: the inner widget names each boundary slot drives. */
+  /** Inside a subgraph: the boundary input slot index behind each promoted
+   *  widget, so its annotation/marker can jump to that slot's row. */
+  promotedBoundarySlots?: Record<string, number>;
+  /** On a placeholder: the inner widget names each boundary slot drives,
+   *  named only in a row's "…" menu — the row labels stay boundary-only. */
   boundaryTargetNames?: Record<number, string[]>;
   /** How many instances share this placeholder's type, for the reorder caution. */
   instanceCount?: number;
@@ -174,6 +184,7 @@ export function NodeCardParameters({
   promotableWidgets = [],
   promotedWidgetForms = {},
   promotedBoundaryLabels = {},
+  promotedBoundarySlots = {},
   boundaryTargetNames = {},
   instanceCount = 1,
   onPromoteWidget,
@@ -190,6 +201,9 @@ export function NodeCardParameters({
   const nodeTypes = useWorkflowStore((state) => state.nodeTypes);
   const popWidgetToPrimitive = useWorkflowStore((state) => state.popWidgetToPrimitive);
   const setPowerPuterOutputs = useWorkflowStore((state) => state.setPowerPuterOutputs);
+  const jumpToWorkflowItem = useWorkflowStore((state) => state.jumpToWorkflowItem);
+  const enterSubgraph = useWorkflowStore((state) => state.enterSubgraph);
+  const expandConnectionsSection = useConnectionSectionFoldsStore((state) => state.expand);
 
   // Parameters section fold (default open; persisted per node key).
   const parametersCollapsed = useParameterSectionFoldsStore(
@@ -310,8 +324,8 @@ export function NodeCardParameters({
     // `interpolation_seed` is still this exact widget.
     if (
       rendersSpecializedSeedBlock &&
-      seedWidgetIndex !== null &&
-      widget.widgetIndex === seedWidgetIndex
+      (kSamplerSeedIndex ?? seedWidgetIndex) !== null &&
+      widget.widgetIndex === (kSamplerSeedIndex ?? seedWidgetIndex)
     ) {
       return false;
     }
@@ -383,30 +397,80 @@ export function NodeCardParameters({
   };
   const widgetDisplayLabel = (widget: WidgetDescriptor): string | undefined => {
     const rename = widgetInputFor(widget)?.label;
+    return typeof rename === 'string' && rename.trim() ? rename.trim() : undefined;
+  };
+
+  /**
+   * Inside the subgraph scope, a promoted widget is drawn under one name and
+   * drives a boundary slot with another. "⇠ positive" names the slot in the
+   * same shape a connection row uses for the boundary it crosses; the label
+   * row draws it right where it always sat, followed by the promoted marker.
+   *
+   * The placeholder card deliberately draws NO such mapping: from outside the
+   * scope, which inner widget a boundary slot happens to drive is an
+   * implementation detail of the subgraph, and the slot's own (renameable)
+   * label is the whole story.
+   */
+  const widgetBoundaryAnnotation = (widget: WidgetDescriptor): string | undefined => {
+    const rename = widgetInputFor(widget)?.label;
     const own = typeof rename === 'string' && rename.trim() ? rename.trim() : widget.name;
     const inputName = widget.inputName ?? widget.name;
+    const label =
+      promotedBoundaryLabels[inputName] ?? widgetBoundaryLinkBinding(widget)?.label;
+    return label && label !== own ? `⇠ ${label}` : undefined;
+  };
 
-    // A promoted widget is drawn under one name and drives a slot with another.
-    // Name both, in the same shape a connection row uses for the boundary it
-    // crosses — "text ⇠ positive" reads "this text widget is the subgraph's
-    // positive input", and on the placeholder "positive ⇢ text" reads
-    // "positive drives the inner text widget".
-    const boundaryLabel = promotedBoundaryLabels[inputName];
-    if (boundaryLabel && boundaryLabel !== own) return `${own} ⇠ ${boundaryLabel}`;
+  /**
+   * The boundary slot behind a promoted widget, read straight off the node's
+   * own input link. A fallback behind the promoted-view maps: the view
+   * machinery also resolves an inner widget index for value routing, and a
+   * widget it gives up on still has a boundary slot worth jumping to (and a
+   * label worth drawing).
+   */
+  const widgetBoundaryLinkBinding = (
+    widget: WidgetDescriptor,
+  ): { slot: number; label: string } | undefined => {
+    const frame = scopeStack[scopeStack.length - 1];
+    if (frame?.type !== 'subgraph' || !workflow) return undefined;
+    const def = workflow.definitions?.subgraphs?.find((sg) => sg.id === frame.id);
+    if (!def) return undefined;
+    const inputName = widget.inputName ?? widget.name;
+    const inputSlot = (node.inputs ?? []).findIndex(
+      (input) => (input.widget?.name ?? input.name) === inputName,
+    );
+    const linkId = node.inputs?.[inputSlot]?.link;
+    if (inputSlot < 0 || linkId == null) return undefined;
+    const link = def.links?.find((candidate) => candidate.id === linkId);
+    if (!link || link.origin_id !== SUBGRAPH_INPUT_NODE_ID) return undefined;
+    if (link.target_id !== node.id || link.target_slot !== inputSlot) return undefined;
+    const boundary = def.inputs?.[link.origin_slot];
+    return {
+      slot: link.origin_slot,
+      label: boundary?.label || boundary?.localized_name || boundary?.name || inputName,
+    };
+  };
 
-    if (isPlaceholder) {
-      const targets = boundaryTargetNames[widget.inputIndex ?? -1] ?? [];
-      // A label override is presentation, not a second mapping. Compare the
-      // target to the boundary slot's canonical name so renaming `seed` to
-      // `interpolation_seed` draws just that label. Preserve the arrow when the
-      // boundary really does route between differently named fields (for
-      // example `positive` driving an inner `text` widget).
-      const boundaryName = node.inputs[widget.inputIndex ?? -1]?.name ?? own;
-      const differing = targets.filter((name) => name !== boundaryName);
-      if (differing.length > 0) return `${own} ⇢ ${differing.join(', ')}`;
-    }
-
-    return typeof rename === 'string' && rename.trim() ? rename.trim() : undefined;
+  /**
+   * Tapping the annotation — or the promoted marker alone, when the boundary
+   * shares the widget's name and no annotation is drawn — jumps up to that
+   * slot's row in the subgraph's connections section, flashing it like any
+   * other jump.
+   */
+  const widgetBoundaryJump = (widget: WidgetDescriptor): (() => void) | undefined => {
+    const inputName = widget.inputName ?? widget.name;
+    const slot =
+      promotedBoundarySlots[inputName] ?? widgetBoundaryLinkBinding(widget)?.slot;
+    if (slot === undefined) return undefined;
+    return () => {
+      // The section folds like any other connections section, and a folded
+      // one has no row to reveal — unfold it first, then let it render.
+      const top = scopeStack[scopeStack.length - 1];
+      if (top?.type === 'subgraph') expandConnectionsSection(subgraphBoundaryFoldKey(top.id));
+      jumpToWorkflowItem({
+        kind: 'boundarySlot',
+        domId: connectionButtonDomId(SUBGRAPH_INPUT_NODE_ID, 'input', slot),
+      });
+    };
   };
 
   // What "up" and "down" step through: the ROWS this placeholder draws, in
@@ -486,6 +550,58 @@ export function NodeCardParameters({
         ? ((options as Record<string, unknown>).options as unknown[])
         : [];
     return values.length > 0 ? `COMBO · ${values.length}` : 'COMBO';
+  };
+
+  /**
+   * On a placeholder, the inner widget(s) this row's boundary slot drives —
+   * drawn beside the name on the first line of the row's "…" menu. The card's
+   * labels dropped that mapping on purpose, so the menu is where it can still
+   * be checked without entering the scope.
+   */
+  const menuRowAnnotation = (widget: WidgetDescriptor): string | undefined => {
+    if (!isPlaceholder) return undefined;
+    const targets = boundaryTargetNames[widget.inputIndex ?? -1] ?? [];
+    return targets.length > 0 ? `⇢ ${targets.join(', ')}` : undefined;
+  };
+
+  /**
+   * The first inner widget this placeholder row's boundary slot drives — the
+   * mapping the menu heading names. Tapping the heading enters THIS instance's
+   * scope (not whichever instance a bare scope lookup would pick) and jumps to
+   * that widget's row.
+   */
+  const menuHeadingJump = (widget: WidgetDescriptor): (() => void) | undefined => {
+    if (!isPlaceholder || !workflow) return undefined;
+    const def = workflow.definitions?.subgraphs?.find((sg) => sg.id === node.type);
+    const slotIndex = widget.inputIndex ?? -1;
+    if (!def || slotIndex < 0) return undefined;
+    for (const link of def.links ?? []) {
+      if (link.origin_id !== SUBGRAPH_INPUT_NODE_ID || link.origin_slot !== slotIndex) continue;
+      const inner = def.nodes?.find((candidate) => candidate.id === link.target_id);
+      if (!inner?.itemKey) continue;
+      const widgetName = inner.inputs?.[link.target_slot]?.widget?.name;
+      if (!widgetName) continue;
+      const innerWidgetIndex = nodeTypes
+        ? resolveWidgetIndexForInputOnNode(workflow, nodeTypes, inner, widgetName)
+        : null;
+      const innerKey = inner.itemKey;
+      return () => {
+        enterSubgraph(node.id);
+        jumpToWorkflowItem(
+          innerWidgetIndex !== null
+            // The widget jump sees the scope already matching, so it keeps the
+            // instance entered above rather than re-picking one.
+            ? {
+                kind: 'widget',
+                itemKey: innerKey,
+                nodeId: inner.id,
+                domId: widgetRowDomId(inner.id, innerWidgetIndex),
+              }
+            : { kind: 'node', itemKey: innerKey },
+        );
+      };
+    }
+    return undefined;
   };
 
   /**
@@ -685,6 +801,8 @@ export function NodeCardParameters({
     <RowActionsMenu
       menuKey={`widget:${menuScopeKey}:${node.id}:${rowMenuIdentity(widget)}`}
       rowName={widget.name}
+      rowNameAnnotation={menuRowAnnotation(widget)}
+      onHeadingClick={menuHeadingJump(widget)}
       typeLabel={widgetTypeLabel(widget)}
       note={
         isPlaceholder && instanceCount > 1 && onMoveBoundarySlot
@@ -719,22 +837,28 @@ export function NodeCardParameters({
     handleSeedModeValue(newValue);
   };
 
+  // Switching to "fixed" is what these three do FIRST, before writing the value
+  // the user asked for. On a seed with no control widget (an rgthree Seed, or a
+  // promoted seed on a placeholder) that switch replaces a special value
+  // (-1/-2/-3) with a concrete one of its own choosing — and it reads the node
+  // as it was at render time, so doing it second would land that substitute on
+  // top of the number written here.
   const handleSeedValueChange = (seedIndex: number) => (newValue: number) => {
-    onUpdateNodeWidget(seedIndex, newValue, 'seed');
     setSeedMode(seedModeNodeId, 'fixed');
+    onUpdateNodeWidget(seedIndex, newValue, 'seed');
   };
 
   const handleSeedNewFixedRandomClick = (seedIndex: number) => () => {
     if (!nodeTypes) return;
     const nextSeed = generateSeedFromNode(nodeTypes, node);
-    onUpdateNodeWidget(seedIndex, nextSeed, 'seed');
     setSeedMode(seedModeNodeId, 'fixed');
+    onUpdateNodeWidget(seedIndex, nextSeed, 'seed');
   };
 
   const handleSeedUseLastClick = (seedIndex: number) => () => {
     if (typeof lastSeedValue !== 'number') return;
-    onUpdateNodeWidget(seedIndex, lastSeedValue, 'seed');
     setSeedMode(seedModeNodeId, 'fixed');
+    onUpdateNodeWidget(seedIndex, lastSeedValue, 'seed');
   };
 
   const updateLoraManagerList = (listIndex: number, nextList: unknown[]) => {
@@ -1209,18 +1333,20 @@ export function NodeCardParameters({
             // it, the way desktop orders them. Without this the seed stayed
             // down in the generic widget list, detached from its control.
             return (
-              <div className="seed-control-widget">
+              <WidgetRow nodeId={node.id} widgetIndex={seedIndex} className="seed-control-widget">
                 <NumberControl
                   name={seedLabel}
                   value={rawSeedValue}
                   onChange={handleSeedValueChange(seedIndex)}
                   disabled={isBypassed}
+                  boundaryAnnotation={seedWidget ? widgetBoundaryAnnotation(seedWidget) : undefined}
+                  onBoundaryJump={seedWidget ? widgetBoundaryJump(seedWidget) : undefined}
                   labelAccessory={rowMenuFor(seedMenuWidget)}
                   min={min}
                   max={max}
                   step={step}
                   hasError={errorInputNames.has('seed') || errorInputNames.has('noise_seed')}
-                  isPromoted={isPromotedWidget('seed')}
+                  isPromoted={isPromotedSeedBlock}
                 />
                 <WidgetControl
                   name={t('Seed control')}
@@ -1239,7 +1365,7 @@ export function NodeCardParameters({
                     options: choices,
                   }))}
                 />
-              </div>
+              </WidgetRow>
             );
           }
 
@@ -1252,12 +1378,14 @@ export function NodeCardParameters({
           const hasSeedError = errorInputNames.has('seed') || errorInputNames.has('noise_seed');
 
           return (
-            <div className="seed-value-widget mb-3">
+            <WidgetRow nodeId={node.id} widgetIndex={seedIndex} className="seed-value-widget mb-3">
               <NumberControl
                 name={seedLabel}
                 value={displaySeedValue}
                 onChange={handleSeedValueChange(seedIndex)}
                 disabled={isBypassed}
+                boundaryAnnotation={seedWidget ? widgetBoundaryAnnotation(seedWidget) : undefined}
+                onBoundaryJump={seedWidget ? widgetBoundaryJump(seedWidget) : undefined}
                 min={min}
                 max={max}
                 step={step}
@@ -1312,7 +1440,7 @@ export function NodeCardParameters({
                     : '♻️ Use last queued seed'}
                 </button>
               </div>
-            </div>
+            </WidgetRow>
           );
       })()
       : null;
@@ -1333,14 +1461,16 @@ export function NodeCardParameters({
     // The wrapper carries it, not the control, so combos (which
     // WidgetControl hands off before it draws its own markup) are
     // addressable on the same terms as everything else.
-    <div
+    <WidgetRow
       key={getWidgetKey(inputWidget, 'input-widget')}
-      id={widgetRowDomId(node.id, inputWidget.widgetIndex)}
+      nodeId={node.id} widgetIndex={inputWidget.widgetIndex}
       className={isBypassed ? 'opacity-80' : ''}
     >
       <WidgetControl
         name={inputWidget.name}
         displayLabel={widgetDisplayLabel(inputWidget)}
+        boundaryAnnotation={widgetBoundaryAnnotation(inputWidget)}
+        onBoundaryJump={widgetBoundaryJump(inputWidget)}
         type={inputWidget.type}
         value={inputWidget.value}
         options={inputWidget.options}
@@ -1356,12 +1486,14 @@ export function NodeCardParameters({
             // reorder, and the menu has to survive that.
             menuKey={`widget:${menuScopeKey}:${node.id}:${rowMenuIdentity(inputWidget)}`}
             rowName={inputWidget.name}
+            rowNameAnnotation={menuRowAnnotation(inputWidget)}
+            onHeadingClick={menuHeadingJump(inputWidget)}
             typeLabel={widgetTypeLabel(inputWidget)}
             sections={buildWidgetMenu(inputWidget, false)}
           />
         }
       />
-    </div>
+    </WidgetRow>
   );
 
   /** One non-COMBO row. */
@@ -1369,14 +1501,16 @@ export function NodeCardParameters({
     const canPopOut =
       !isBypassed && !isSingleWidgetOnlyNode && Boolean(node.itemKey) && canPopOutWidget(widget);
     return (
-      <div
+      <WidgetRow
         key={getWidgetKey(widget, 'widget')}
-        id={widgetRowDomId(node.id, widget.widgetIndex)}
+        nodeId={node.id} widgetIndex={widget.widgetIndex}
         className={isBypassed ? 'opacity-80' : ''}
       >
         <WidgetControl
           name={widget.name}
           displayLabel={widgetDisplayLabel(widget)}
+          boundaryAnnotation={widgetBoundaryAnnotation(widget)}
+          onBoundaryJump={widgetBoundaryJump(widget)}
           type={widget.type}
           value={widget.value}
           options={widget.options}
@@ -1390,7 +1524,7 @@ export function NodeCardParameters({
             rowMenuFor(widget, canPopOut)
           }
         />
-      </div>
+      </WidgetRow>
     );
   };
 
@@ -1462,6 +1596,9 @@ export function NodeCardParameters({
             const seedIndex = kSamplerSeedIndex;
             if (seedIndex === null) return null;
             const seedValue = widgetValues[seedIndex];
+            const seedWidget = [...visibleInputWidgets, ...visibleWidgets].find(
+              (widget) => widget.widgetIndex === seedIndex,
+            ) ?? syntheticWidget({ widgetIndex: seedIndex, name: 'seed', inputName: 'seed', type: 'INT', value: seedValue });
             const seedControlIndex = seedIndex + 1;
             const seedControlValue = widgetValues[seedControlIndex];
             const seedControlChoices = ['fixed', 'increment', 'decrement', 'randomize'];
@@ -1469,9 +1606,12 @@ export function NodeCardParameters({
             const hideSeedControl = Boolean(noiseSeedInput?.link);
 
             return (
-              <div>
+              <WidgetRow nodeId={node.id} widgetIndex={seedIndex}>
                 <WidgetControl
                   name="seed"
+                  displayLabel={widgetDisplayLabel(seedWidget)}
+                  boundaryAnnotation={widgetBoundaryAnnotation(seedWidget)}
+                  onBoundaryJump={widgetBoundaryJump(seedWidget)}
                   type="INT"
                   value={seedValue}
                   onChange={(newValue) => onUpdateNodeWidget(seedIndex, newValue, 'seed')}
@@ -1504,7 +1644,7 @@ export function NodeCardParameters({
                     }))}
                   />
                 )}
-              </div>
+              </WidgetRow>
             );
           })()}
           {!seedBlockDrawsInline && promotedSeedBlock}
@@ -1634,14 +1774,16 @@ export function NodeCardParameters({
                   // The wrapper carries it, not the control, so combos (which
                   // WidgetControl hands off before it draws its own markup) are
                   // addressable on the same terms as everything else.
-                  <div
+                  <WidgetRow
                     key={getWidgetKey(inputWidget, 'input-widget')}
-                    id={widgetRowDomId(node.id, inputWidget.widgetIndex)}
+                    nodeId={node.id} widgetIndex={inputWidget.widgetIndex}
                     className={isBypassed ? 'opacity-80' : ''}
                   >
                     <WidgetControl
                       name={inputWidget.name}
                       displayLabel={widgetDisplayLabel(inputWidget)}
+                      boundaryAnnotation={widgetBoundaryAnnotation(inputWidget)}
+                      onBoundaryJump={widgetBoundaryJump(inputWidget)}
                       type={inputWidget.type}
                       value={inputWidget.value}
                       options={inputWidget.options}
@@ -1657,25 +1799,29 @@ export function NodeCardParameters({
                           // reorder, and the menu has to survive that.
                           menuKey={`widget:${menuScopeKey}:${node.id}:${rowMenuIdentity(inputWidget)}`}
                           rowName={inputWidget.name}
+                          rowNameAnnotation={menuRowAnnotation(inputWidget)}
+            onHeadingClick={menuHeadingJump(inputWidget)}
                           typeLabel={widgetTypeLabel(inputWidget)}
                           sections={buildWidgetMenu(inputWidget, false)}
                         />
                       }
                     />
-                  </div>
+                  </WidgetRow>
                 ))}
                 {widgetsToRender.map((widget) => {
                   const canPopOut =
                     !isBypassed && !isSingleWidgetOnlyNode && Boolean(node.itemKey) && canPopOutWidget(widget);
                   return (
-                    <div
+                    <WidgetRow
                       key={getWidgetKey(widget, 'widget')}
-                      id={widgetRowDomId(node.id, widget.widgetIndex)}
+                      nodeId={node.id} widgetIndex={widget.widgetIndex}
                       className={isBypassed ? 'opacity-80' : ''}
                     >
                       <WidgetControl
                         name={widget.name}
                         displayLabel={widgetDisplayLabel(widget)}
+                        boundaryAnnotation={widgetBoundaryAnnotation(widget)}
+                        onBoundaryJump={widgetBoundaryJump(widget)}
                         type={widget.type}
                         value={widget.value}
                         options={widget.options}
@@ -1689,7 +1835,7 @@ export function NodeCardParameters({
                           rowMenuFor(widget, canPopOut)
                         }
                       />
-                    </div>
+                    </WidgetRow>
                   );
                 })}
                 </>

@@ -1090,7 +1090,22 @@ def _apply_activity_dates(
     item: dict[str, Any],
     activity: dict[str, Any] | None,
     stat: os.stat_result,
+    *,
+    apply_created: bool = True,
 ) -> None:
+    """Layer a durable activity record over an item's stat-derived dates.
+
+    For a file the recorded `createdAt` wins: it is the truer creation time and
+    it survives rewrites that push the stat-derived value later.
+
+    A folder passes `apply_created=False`. Its `createdAt` is not a record of
+    anything the user did — `_touch_activity` seeds it from the directory's own
+    inode the first time any descendant is touched, freezing exactly the value a
+    folder's listed date is meant to replace: a folder made last week and filled
+    today would be pinned to last week. `modifiedAt` still applies, since that
+    one does record real activity (a move or rename into the folder), and it is
+    only ever taken as a floor.
+    """
     if not isinstance(activity, dict):
         return
     device = activity.get("device")
@@ -1101,7 +1116,7 @@ def _apply_activity_dates(
             # item's created/activity timestamps.
             return
     created_at = activity.get("createdAt")
-    if isinstance(created_at, int) and created_at > 0:
+    if apply_created and isinstance(created_at, int) and created_at > 0:
         item["createdDate"] = created_at
     modified_at = activity.get("modifiedAt")
     if isinstance(modified_at, int) and modified_at > 0:
@@ -1274,7 +1289,9 @@ def annotate_listing(
                 full_path = os.path.abspath(os.path.join(base, rel))
                 try:
                     if os.path.commonpath([base, full_path]) == base:
-                        _apply_activity_dates(item, activity, os.stat(full_path))
+                        _apply_activity_dates(
+                            item, activity, os.stat(full_path), apply_created=False,
+                        )
                 except (OSError, ValueError):
                     pass
             for state in STATES:

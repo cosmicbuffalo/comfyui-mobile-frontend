@@ -1,3 +1,6 @@
+/** The actual input border that receives a widget-jump arrival pulse. */
+export const controlJumpSurfaceClassName = "widget-jump-surface";
+
 export const controlLabelClassName = "block text-sm font-medium text-slate-300";
 
 /**
@@ -61,6 +64,7 @@ export function controlStateClassName({
   isPromoted?: boolean;
 }): string {
   return [
+    controlJumpSurfaceClassName,
     disabled ? "opacity-60 cursor-not-allowed" : "",
     hasError ? "border-red-500 ring-1 ring-red-500" : "",
     !hasError && isPromoted

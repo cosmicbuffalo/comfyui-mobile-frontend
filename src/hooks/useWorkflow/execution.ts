@@ -3,7 +3,7 @@ import type {Workflow, WorkflowNode} from "@/api/types";
 import {useWorkflowErrorsStore, type NodeError} from "@/hooks/useWorkflowErrors";
 import * as api from "@/api/client";
 import {useQueueStore} from "@/hooks/useQueue";
-import {computeQueueWorkflowDiff, selectDiffBase} from "@/utils/workflowDiff";
+import {collectQueueSeeds, computeQueueWorkflowDiff, selectDiffBase, withoutSeedFieldChanges} from "@/utils/workflowDiff";
 import {QUEUE_WORKFLOW_LABEL_EXTRA_DATA_KEY} from "@/utils/queueWorkflowLabel";
 import {useSeedStore} from "@/hooks/useSeed";
 import {useGenerationSettingsStore} from "@/hooks/useGenerationSettings";
@@ -15,11 +15,14 @@ import {injectMarketingNote} from "@/utils/marketingNote";
 import {collectOasisPreviewIoIds, ensureOasisPreviewIoIds} from "@/utils/nodeFrontendPreviews";
 import {isSetGetNode} from "@/utils/setGetNodes";
 import {isUseEverywhereNode, resolveUseEverywhereForPrompt} from "@/utils/useEverywhere";
+import {isNetworkFetchError} from "@/utils/networkFetchError";
 import {isSubgraphPlaceholder} from "@/utils/canonicalWorkflowOps";
 import {resolveNodeIdentityFromHierarchicalKey} from "@/utils/workflowHierarchy";
 import {validateAndNormalizeWorkflow} from "@/utils/workflowValidator";
 import {applyWidgetVariation, formatVariationValue} from "@/utils/widgetVariations";
 import {HIDDEN_WORKFLOW_EXTRA_DATA_KEY, isWorkflowHidden} from "@/utils/workflowHidden";
+import {promptReferencesHiddenFile} from "@/utils/hiddenReferences";
+import {useOutputsStore} from "@/hooks/useOutputs";
 import {stripWorkflowClientMetadata} from "./metadataNormalization";
 import {applySeedOverridesForExpansion, buildSubgraphSeedWidgetDescriptors, inferSeedMode} from "./seedExpansion";
 import {capPromptToSession} from "./sessions";
@@ -775,7 +778,15 @@ const queueWorkflow: WorkflowState["queueWorkflow"] = async (
           : `${scopeSubgraphId}:${node.id}`;
       seedOverrides[overrideKey] = seedToUse;
       nextSeedLastValues = { ...nextSeedLastValues, [node.id]: seedToUse };
-      return node;
+      // A slot holding a sentinel (-1/-2/-3) encodes its mode in the value, so
+      // the value must stay. A concrete slot gets the generated seed written
+      // back — what stock's control_after_generate does — otherwise the card
+      // shows the load-time seed forever while every run quietly executes
+      // another (the override above never reaches widgets_values).
+      if (isSpecialSeedValue(rawSeed)) return node;
+      const nextWidgetValues = [...node.widgets_values];
+      nextWidgetValues[seedIndex] = seedToUse;
+      return { ...node, widgets_values: nextWidgetValues };
     };
 
     // ComfyUI implements `front` by assigning successively more-negative
@@ -838,14 +849,13 @@ const queueWorkflow: WorkflowState["queueWorkflow"] = async (
       // connection and the downstream branch never executes.
       const validatedForQueue = validateAndNormalizeWorkflow(iterationWorkflow);
 
-      // Seed overrides recorded above for a promoted-seed placeholder (no
-      // real control_after_generate on the boundary, so processSeedNode
-      // took the ephemeral seedOverrides path rather than mutating
-      // widgets_values) never landed in currentWorkflow.nodes itself.
-      // Patch a throwaway clone, used only for this expansion pass, so
-      // the fresh value propagates into the inner node it proxies to
-      // instead of being overwritten by the stale saved one. See
-      // applySeedOverridesForExpansion's own docstring for why.
+      // A placeholder seed slot still holding a sentinel (-1 from a load
+      // this session hasn't touched) keeps its value in widgets_values —
+      // processSeedNode writes concrete slots back but leaves sentinels,
+      // since for them the value IS the mode. Patch a throwaway clone, used
+      // only for this expansion pass, so the resolved seed propagates into
+      // the inner node instead of the sentinel. For a written-back concrete
+      // slot this is a no-op (the override equals the slot).
       const workflowForExpansion = applySeedOverridesForExpansion(
         validatedForQueue,
         nodeTypes,
@@ -998,6 +1008,14 @@ const queueWorkflow: WorkflowState["queueWorkflow"] = async (
         prompt[promptKey] = { class_type: classType, inputs };
       }
 
+      // The seeds this iteration actually runs with, read off the built prompt
+      // rather than the workflow. A frontend-generated seed does not reliably
+      // reach widgets_values: promoted/special-value seeds are applied as
+      // ephemeral overrides here, and seeds on nodes inside a subgraph
+      // definition are never walked by the workflow diff. The prompt is the one
+      // place every seed is already resolved.
+      const executedSeeds = collectQueueSeeds(prompt, iterationWorkflow);
+
       // Infinite-loop safety: if an infinite re-enqueue would submit the
       // exact same prompt as last time (e.g. a fixed seed), the loop would
       // just regenerate an identical result forever. Stop and explain.
@@ -1042,7 +1060,17 @@ const queueWorkflow: WorkflowState["queueWorkflow"] = async (
       const metadataWorkflowLabel = variations
         ? `${baseWorkflowLabel} · ${variations.widgetName}: ${formatVariationValue(variationValue)}`
         : baseWorkflowLabel;
-      const hiddenWorkflow = isWorkflowHidden(metadataSource, metadataFilename);
+      // Hidden by where the recipe came from, OR by what the run consumes.
+      //
+      // The second half matters on its own: a workflow nobody hid, loading an
+      // input that somebody did, produces an output that is just as much of
+      // that input as the input was — and landing it in the grid in plain view
+      // undoes the hiding entirely. So the mark is inherited from the prompt,
+      // which is the one place every path the run actually reads has been
+      // resolved. Read from `prompt` rather than `queuedPrompt`: obfuscation
+      // rewrites input paths into opaque hashes, and those match nothing.
+      const hiddenWorkflow = isWorkflowHidden(metadataSource, metadataFilename)
+        || promptReferencesHiddenFile(prompt, useOutputsStore.getState().hiddenIds);
       const previewMethod = useGenerationSettingsStore.getState().previewMethod;
       // VHS's optional animated latent protocol is enabled through
       // workflow metadata rather than ComfyUI's preview_method field.
@@ -1231,6 +1259,13 @@ const queueWorkflow: WorkflowState["queueWorkflow"] = async (
             // currentWorkflow, so the variation never leaks into the diff the
             // NEXT ordinary run is measured against.
             const diff = computeQueueWorkflowDiff(base, iterationWorkflow);
+            if (executedSeeds.length > 0) {
+              diff.seeds = executedSeeds;
+              // A randomized top-level seed also lands in widgets_values, so
+              // without this it reads twice: once as a change the user never
+              // made, once as the seed the run used.
+              diff.nodeChanges = withoutSeedFieldChanges(diff.nodeChanges, executedSeeds);
+            }
             workflowDiffForMetadata = diff;
             useQueueStore.getState().recordWorkflowDiff(promptId, diff);
             const enqueuedSnapshot = structuredClone(currentWorkflow);
@@ -1287,7 +1322,13 @@ const queueWorkflow: WorkflowState["queueWorkflow"] = async (
     useWorkflowErrorsStore
       .getState()
       .setError(
-        err instanceof Error ? err.message : t("Failed to queue workflow"),
+        // The browser's network-failure TypeError message ("Load failed" on
+        // Safari) is meaningless in the error toast; name the real problem.
+        isNetworkFetchError(err)
+          ? t("Could not reach the server — check your connection and try again.")
+          : err instanceof Error
+            ? err.message
+            : t("Failed to queue workflow"),
       );
     return false;
   } finally {

@@ -1,6 +1,13 @@
-import type { NodeTypes, Workflow, WorkflowNode } from '@/api/types';
+import type {
+  NodeTypes,
+  Workflow,
+  WorkflowNode,
+  WorkflowSubgraphDefinition,
+} from '@/api/types';
+import { getInstanceNumber } from '@/utils/canonicalWorkflowOps';
+import { interpolateInstanceLabel } from '@/utils/subgraphInstanceLabels';
 import { getNodeWidgetIndexMap } from '@/utils/workflowInputs';
-import { findSeedWidgetIndex } from '@/utils/seedUtils';
+import { findSeedWidgetIndex, isSeedInputName } from '@/utils/seedUtils';
 
 // A queue item's prompt-preview / diff is computed once at enqueue time
 // (see useWorkflow.queueWorkflow) and stored keyed by prompt_id in the queue
@@ -38,11 +45,29 @@ export interface QueueNodeChange {
   changes: QueueFieldChange[];
 }
 
+/** A seed a run actually executed with, read off the built prompt. */
+export interface QueueSeedEntry {
+  /** Execution id of the node that ran with this seed ("50:7" inside a subgraph). */
+  nodeId: string;
+  label: string;
+  /** Input name the seed was supplied under ("seed", "noise_seed", ...). */
+  field: string;
+  value: number;
+}
+
 export interface QueueWorkflowDiff {
   /** Every prompt node in the workflow (sorted by label), with inline diff. */
   prompts: QueuePromptEntry[];
   /** Non-prompt nodes that changed vs the base (ordered by node order). */
   nodeChanges: QueueNodeChange[];
+  /** The seeds this run executed with. Recorded from the built prompt rather
+   *  than diffed out of the workflow: a frontend-generated seed often never
+   *  reaches widgets_values at all (subgraph-promoted and special-value seeds
+   *  are applied as ephemeral overrides at queue time), and seeds on nodes
+   *  inside a subgraph definition are invisible to the node-level diff, which
+   *  only walks the top-level nodes. Absent on items enqueued before this
+   *  shipped, or from another device. */
+  seeds?: QueueSeedEntry[];
 }
 
 // Above this token-pair product the O(m*n) LCS is skipped for a coarse diff.
@@ -116,9 +141,23 @@ export function wordDiff(before: string, after: string): DiffSegment[] {
   return out;
 }
 
-function nodeLabel(node: WorkflowNode): string {
+type SubgraphDefinitions = Map<string, WorkflowSubgraphDefinition>;
+
+function subgraphDefinitions(workflow: Workflow | null | undefined): SubgraphDefinitions {
+  return new Map(
+    (workflow?.definitions?.subgraphs ?? []).map((sg) => [String(sg.id), sg]),
+  );
+}
+
+function nodeLabel(node: WorkflowNode, definitions?: SubgraphDefinitions): string {
   const title = typeof node.title === 'string' ? node.title.trim() : '';
   if (title) return title;
+  // A subgraph placeholder's `type` is its definition's UUID, which names
+  // nothing to a reader. Fall back to the instance name the workflow panel
+  // shows on the card — {n} token resolved against this instance's number,
+  // the same way NodeCard builds it.
+  const name = definitions?.get(String(node.type))?.name?.trim();
+  if (name) return interpolateInstanceLabel(name, getInstanceNumber(node)) || name;
   if (node.type) return node.type;
   return `Node ${node.id}`;
 }
@@ -201,6 +240,7 @@ export function computeQueueWorkflowDiff(
   const prompts: QueuePromptEntry[] = [];
   const nodeChanges: QueueNodeChange[] = [];
 
+  const definitions = subgraphDefinitions(current);
   const currentNodes = current.nodes ?? [];
   currentNodes.forEach((node, index) => {
     if (node.mode === 4) return; // bypassed nodes are not enqueued
@@ -220,7 +260,7 @@ export function computeQueueWorkflowDiff(
           : [];
       prompts.push({
         nodeId: String(node.id),
-        label: nodeLabel(node),
+        label: nodeLabel(node, definitions),
         order,
         segments,
         changed: segments.some((s) => s.type !== 'equal'),
@@ -239,7 +279,12 @@ export function computeQueueWorkflowDiff(
       if (before !== after) changes.push({ field: w.name, before, after });
     }
     if (changes.length > 0) {
-      nodeChanges.push({ nodeId: String(node.id), label: nodeLabel(node), order, changes });
+      nodeChanges.push({
+        nodeId: String(node.id),
+        label: nodeLabel(node, definitions),
+        order,
+        changes,
+      });
     }
   });
 
@@ -322,4 +367,96 @@ export function selectDiffBase(
     return { base: lastEnqueued, nextDiffBase: lastEnqueued };
   }
   return { base: diffBase ?? original ?? null, nextDiffBase: diffBase };
+}
+
+/**
+ * Resolve an execution id to a human label using the canonical workflow.
+ * "814:1852" is node 1852 inside the subgraph placed at node 814, so it reads
+ * "<placeholder title> / <inner title>" — two samplers inside the same subgraph
+ * type would otherwise be indistinguishable.
+ */
+function resolveExecutionLabel(
+  key: string,
+  workflow: Workflow | null | undefined,
+): string | null {
+  if (!workflow) return null;
+  const definitions = subgraphDefinitions(workflow);
+  let nodes: WorkflowNode[] = workflow.nodes ?? [];
+  const parts: string[] = [];
+  for (const segment of key.split(':')) {
+    const node = nodes.find((candidate) => String(candidate.id) === segment);
+    if (!node) break;
+    parts.push(nodeLabel(node, definitions));
+    nodes = definitions.get(String(node.type))?.nodes ?? [];
+  }
+  return parts.length > 0 ? parts.join(' / ') : null;
+}
+
+/**
+ * The seeds a run actually executes with, read off the API prompt — the one
+ * place every seed is already resolved (control_after_generate rolls,
+ * special-value resolution, subgraph-promoted overrides, and nodes that live
+ * inside a subgraph definition).
+ *
+ * Works on a prompt we just built and on one read back from the queue/history,
+ * so a run that predates the recording still gets its seeds. `workflow` is the
+ * canonical (unexpanded) workflow, used only for labels.
+ */
+export function collectQueueSeeds(
+  prompt: Record<string, unknown>,
+  workflow?: Workflow | null,
+): QueueSeedEntry[] {
+  const seeds: QueueSeedEntry[] = [];
+  for (const [key, entry] of Object.entries(prompt)) {
+    if (!entry || typeof entry !== 'object') continue;
+    const { inputs, class_type: classType } = entry as {
+      inputs?: unknown;
+      class_type?: unknown;
+    };
+    if (!inputs || typeof inputs !== 'object' || Array.isArray(inputs)) continue;
+    const label =
+      resolveExecutionLabel(key, workflow)
+      ?? (typeof classType === 'string' && classType ? classType : `Node ${key}`);
+    for (const [field, value] of Object.entries(inputs as Record<string, unknown>)) {
+      // A link is an array ([sourceId, slot]); only a literal number is a seed
+      // this run owns.
+      if (!isSeedInputName(field)) continue;
+      if (typeof value !== 'number' || !Number.isFinite(value)) continue;
+      seeds.push({ nodeId: key, label, field, value });
+    }
+  }
+  return seeds;
+}
+
+/**
+ * Drop widget changes that the seeds list already reports. A randomized seed on
+ * a top-level node lands in widgets_values, so without this it shows up twice:
+ * once as an "old -> new" change the user never made, and once as the seed the
+ * run used.
+ */
+export function withoutSeedFieldChanges(
+  nodeChanges: QueueNodeChange[],
+  seeds: QueueSeedEntry[],
+): QueueNodeChange[] {
+  if (seeds.length === 0) return nodeChanges;
+  // Keyed by the ROOT node id: a seed executed inside a subgraph reports
+  // under its execution id ("30:3"), but the widget its write-back changed
+  // sits on the placeholder ("30") — the only node the workflow diff walks.
+  const reported = new Set(
+    seeds.map((s) => `${s.nodeId.split(':')[0]}\u0000${s.value}`),
+  );
+  const out: QueueNodeChange[] = [];
+  for (const node of nodeChanges) {
+    // Match on the field name too: a deliberate edit to a NAMED non-seed
+    // widget that happens to collide with the node's seed value must survive.
+    // A fallback "widget N" label means the input name is unknown, so the
+    // value match keeps the last word there.
+    const changes = node.changes.filter(
+      (change) =>
+        !(isSeedInputName(change.field) || /^widget \d+$/.test(change.field)) ||
+        !reported.has(`${node.nodeId}\u0000${change.after}`),
+    );
+    if (changes.length > 0) out.push({ ...node, changes });
+  }
+  return out;
 }

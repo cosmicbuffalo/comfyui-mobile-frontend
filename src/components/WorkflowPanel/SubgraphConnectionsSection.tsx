@@ -1,6 +1,6 @@
 import { useCallback, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { useWorkflowStore } from '@/hooks/useWorkflow';
+import { getWidgetIndexForInput, useWorkflowStore } from '@/hooks/useWorkflow';
 import { useConnectionSectionFoldsStore } from '@/hooks/useConnectionSectionFolds';
 import { useLongPress } from '@/hooks/useLongPress';
 import { useDismissOnOutsideClick } from '@/hooks/useDismissOnOutsideClick';
@@ -10,6 +10,7 @@ import {
 } from '@/utils/canonicalWorkflowOps';
 import { connectionButtonDomId } from '@/utils/connectionFlash';
 import { subgraphBoundaryFoldKey } from '@/utils/subgraphBoundaryFold';
+import { widgetRowDomId } from '@/utils/workflowJumpTargets';
 import {
   findWorkflowNodeInScope,
   resolveWorkflowNodeDisplayName,
@@ -45,6 +46,13 @@ interface BoundaryEndpoint {
   slotIndex: number;
   nodeName: string;
   slotLabel: string;
+  /**
+   * The inner node's own index for the widget behind this input, when it is
+   * widget-backed — the jump then lands on the widget's ROW, not just the
+   * card. A big node can hold the card on screen while the promoted widget
+   * sits far below the fold.
+   */
+  widgetIndex: number | null;
 }
 
 interface BoundarySlotRow {
@@ -87,6 +95,7 @@ export function SubgraphConnectionsSection({ subgraphId }: SubgraphConnectionsSe
   const nodeTypes = useWorkflowStore((s) => s.nodeTypes);
   const scopeStack = useWorkflowStore((s) => s.scopeStack);
   const scrollToNode = useWorkflowStore((s) => s.scrollToNode);
+  const jumpToWorkflowItem = useWorkflowStore((s) => s.jumpToWorkflowItem);
   const expandConnectionsSection = useConnectionSectionFoldsStore((s) => s.expand);
   const setScopeTrail = useWorkflowStore((s) => s.setScopeTrail);
   const moveBoundarySlot = useWorkflowStore((s) => s.moveBoundarySlot);
@@ -136,6 +145,8 @@ export function SubgraphConnectionsSection({ subgraphId }: SubgraphConnectionsSe
           if (!inner?.itemKey) continue;
           const slotEntry =
             direction === 'input' ? inner.inputs?.[innerSlot] : inner.outputs?.[innerSlot];
+          const widgetName =
+            direction === 'input' ? (slotEntry as { widget?: { name?: string } })?.widget?.name : undefined;
           endpoints.push({
             nodeId: inner.id,
             nodeKey: inner.itemKey,
@@ -143,6 +154,9 @@ export function SubgraphConnectionsSection({ subgraphId }: SubgraphConnectionsSe
             nodeName: resolveWorkflowNodeDisplayName(workflow, inner, nodeTypes),
             slotLabel:
               slotEntry?.label || slotEntry?.localized_name || slotEntry?.name || `#${innerSlot}`,
+            widgetIndex: widgetName && nodeTypes
+              ? getWidgetIndexForInput(workflow, nodeTypes, inner, widgetName)
+              : null,
           });
         }
         return {
@@ -169,10 +183,22 @@ export function SubgraphConnectionsSection({ subgraphId }: SubgraphConnectionsSe
     return [...buildRows('input'), ...buildRows('output')];
   }, [workflow, def, nodeTypes, currentInstance]);
 
-  // Jump to the inner node a boundary slot is wired to, flashing the slot that
-  // carries the connection — the same gesture a regular connection button has.
+  // Jump to the inner node a boundary slot is wired to. A widget-backed slot
+  // lands on the widget's own ROW (a big node can hold the card on screen with
+  // the widget still below the fold); a socket slot scrolls the card and
+  // flashes the connection button, the same gesture a regular connection
+  // button has.
   const goToEndpoint = useCallback(
     (row: BoundarySlotRow, endpoint: BoundaryEndpoint) => {
+      if (endpoint.widgetIndex !== null) {
+        jumpToWorkflowItem({
+          kind: 'widget',
+          itemKey: endpoint.nodeKey,
+          nodeId: endpoint.nodeId,
+          domId: widgetRowDomId(endpoint.nodeId, endpoint.widgetIndex),
+        });
+        return;
+      }
       expandConnectionsSection(endpoint.nodeKey);
       scrollToNode(
         endpoint.nodeKey,
@@ -180,7 +206,7 @@ export function SubgraphConnectionsSection({ subgraphId }: SubgraphConnectionsSe
         connectionButtonDomId(endpoint.nodeId, row.direction, endpoint.slotIndex),
       );
     },
-    [expandConnectionsSection, scrollToNode],
+    [expandConnectionsSection, jumpToWorkflowItem, scrollToNode],
   );
 
   // Rendered even with no slots yet: the Add buttons are how an empty boundary

@@ -4,6 +4,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ImageViewer } from '@/components/ImageViewer';
 import { deleteFile } from '@/api/client';
 import type { HistoryEntry } from '@/hooks/useHistory';
+import { useShowHiddenStore } from '@/hooks/useShowHidden';
+import { HIDDEN_WORKFLOW_EXTRA_DATA_KEY } from '@/utils/workflowHidden';
 
 const mocks = vi.hoisted(() => {
   const viewerState: {
@@ -916,5 +918,112 @@ describe('ImageViewer follow queue mode', () => {
     // Must NOT have yanked back to the older gen-1 image at any point.
     expect(jumpFilenames()).not.toContain('gen-1.png');
     expect(jumpFilenames().at(-1)).toBe('gen-2.png');
+  });
+});
+
+describe('follow queue and hidden workflows', () => {
+  let container: HTMLDivElement;
+  let root: Root;
+
+  const render = async () => {
+    await act(async () => {
+      root.render(<ImageViewer onClose={() => {}} />);
+    });
+    await flushEffects();
+  };
+
+  /** Every filename the viewer was ever handed, across all its list writes. */
+  const filenamesOffered = () => {
+    const names = new Set<string>();
+    for (const [next] of mocks.setViewerState.mock.calls) {
+      for (const image of (next.viewerImages as Array<{ filename?: string }> | undefined) ?? []) {
+        if (image.filename) names.add(image.filename);
+      }
+    }
+    for (const props of mocks.mediaViewerProps) {
+      for (const image of (props.items as Array<{ filename?: string }> | undefined) ?? []) {
+        if (image.filename) names.add(image.filename);
+      }
+    }
+    return names;
+  };
+
+  beforeEach(() => {
+    mocks.viewerState.viewerOpen = true;
+    mocks.viewerState.viewerImages = [];
+    mocks.viewerState.viewerIndex = 0;
+    mocks.workflowState.followQueue = true;
+    mocks.queueState.running = [];
+    mocks.queueState.pending = [];
+    mocks.queueState.livePromptOutputs = {};
+    mocks.queueState.localPromptOrder = {};
+    mocks.historyState.history = [];
+    mocks.setViewerState.mockClear();
+    mocks.mediaViewerProps.length = 0;
+    useShowHiddenStore.setState({ showHidden: false });
+
+    container = document.createElement('div');
+    document.body.appendChild(container);
+    root = createRoot(container);
+  });
+
+  afterEach(async () => {
+    await act(async () => {
+      root.unmount();
+    });
+    container.remove();
+    useShowHiddenStore.setState({ showHidden: false });
+  });
+
+  /** A visible live completion, which is what makes follow mode build a list. */
+  const liveVisibleOutput = () => {
+    mocks.queueState.livePromptOutputs = {
+      'live-open': [{ filename: 'live.png', subfolder: '', type: 'output' }],
+    };
+  };
+
+  it('never offers a generation from a hidden workflow', async () => {
+    // Follow mode is built from the history store, not from the queue panel's
+    // filtered list — so the panel hiding its own cards did nothing here, and
+    // the newest hidden generation was the first thing the viewer jumped to.
+    const hidden = makeHistoryEntry('hidden-run', 'secret.png');
+    hidden.hidden = true;
+    mocks.historyState.history = [hidden, makeHistoryEntry('open-run', 'shown.png')];
+    liveVisibleOutput();
+
+    await render();
+
+    const names = filenamesOffered();
+    expect(names.has('live.png')).toBe(true);
+    expect(names.has('shown.png')).toBe(true);
+    expect(names.has('secret.png')).toBe(false);
+  });
+
+  it('leaves out a hidden run still in flight, before history knows about it', async () => {
+    // A running prompt announces itself through `extra`; the history entry that
+    // carries the flag does not exist yet. Reading only one of the two leaves a
+    // window in which the live output is exactly what follow mode jumps to.
+    mocks.queueState.running = [
+      { prompt_id: 'live-hidden', extra: { [HIDDEN_WORKFLOW_EXTRA_DATA_KEY]: true } },
+    ] as unknown as typeof mocks.queueState.running;
+    mocks.queueState.livePromptOutputs = {
+      'live-hidden': [{ filename: 'secret-live.png', subfolder: '', type: 'output' }],
+    };
+
+    await render();
+
+    expect(filenamesOffered().has('secret-live.png')).toBe(false);
+  });
+
+  it('shows them again once hidden files are switched back on', async () => {
+    const hidden = makeHistoryEntry('hidden-run', 'secret.png');
+    hidden.hidden = true;
+    mocks.historyState.history = [hidden];
+    liveVisibleOutput();
+    useShowHiddenStore.setState({ showHidden: true });
+
+    await render();
+
+    expect(filenamesOffered().has('secret.png')).toBe(true);
   });
 });

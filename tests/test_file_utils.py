@@ -348,6 +348,149 @@ class TestNonRecursiveListing:
         assert after["createdDate"] == before["createdDate"]
 
 
+class TestFolderContentDates:
+    """A folder's dates describe its contents, not its own inode.
+
+    The directory's own mtime answers the wrong question: it moves when a
+    direct child is renamed or removed, and it does NOT move when a file lands
+    deeper in the subtree, so it reads both too new and too old.
+    """
+
+    def _folder(self, base, name="library"):
+        return next(
+            r for r in list_files(str(base), str(base))
+            if r["name"] == name
+        )
+
+    def _stamp(self, path, when_ms):
+        seconds = when_ms / 1000
+        os.utime(str(path), (seconds, seconds))
+
+    def test_dates_come_from_the_newest_visible_descendant(self, tmp_path):
+        folder = tmp_path / "library"
+        folder.mkdir()
+        old = folder / "old.png"
+        old.write_bytes(b"old")
+        new = folder / "new.png"
+        new.write_bytes(b"new")
+        self._stamp(old, 1_600_000_000_000)
+        self._stamp(new, 1_700_000_000_000)
+
+        entry = self._folder(tmp_path)
+
+        assert entry["createdDate"] == 1_700_000_000_000
+        assert entry["modifiedDate"] == 1_700_000_000_000
+        assert entry["date"] == 1_700_000_000_000
+
+    def test_a_deep_write_dates_the_folder_even_though_its_mtime_did_not_move(
+        self, tmp_path,
+    ):
+        """The reported bug: a file added inside an existing subfolder never
+        touches the top folder's mtime, so it used to keep an older date."""
+        folder = tmp_path / "library"
+        nested = folder / "session"
+        nested.mkdir(parents=True)
+        (nested / "render.png").write_bytes(b"render")
+        self._stamp(nested / "render.png", 1_700_000_000_000)
+        # Pin every directory in the chain far in the past: adding the file
+        # bumped their mtimes, and only the file's own date should count.
+        self._stamp(nested, 1_500_000_000_000)
+        self._stamp(folder, 1_500_000_000_000)
+
+        entry = self._folder(tmp_path)
+
+        assert entry["createdDate"] == 1_700_000_000_000
+        assert entry["modifiedDate"] == 1_700_000_000_000
+
+    def test_a_stale_child_does_not_drag_the_folder_back(self, tmp_path):
+        """Newest wins — one ancient file must not sink a busy folder."""
+        folder = tmp_path / "library"
+        folder.mkdir()
+        for name, when in (("ancient.png", 1_400_000_000_000),
+                           ("today.png", 1_700_000_000_000)):
+            target = folder / name
+            target.write_bytes(b"bytes")
+            self._stamp(target, when)
+
+        entry = self._folder(tmp_path)
+
+        assert entry["createdDate"] == 1_700_000_000_000
+
+    def test_hidden_files_do_not_supply_folder_dates(self, tmp_path):
+        """The date must agree with the count: a folder never advertises a
+        timestamp belonging to a file the listing refuses to show."""
+        folder = tmp_path / "library"
+        folder.mkdir()
+        visible = folder / "visible.png"
+        visible.write_bytes(b"visible")
+        self._stamp(visible, 1_600_000_000_000)
+        hidden = folder / ".hidden.png"
+        hidden.write_bytes(b"hidden")
+        self._stamp(hidden, 1_700_000_000_000)
+
+        entry = self._folder(tmp_path)
+
+        assert entry["count"] == 1
+        assert entry["createdDate"] == 1_600_000_000_000
+
+        shown = next(
+            r for r in list_files(str(tmp_path), str(tmp_path), show_hidden=True)
+            if r["name"] == "library"
+        )
+        assert shown["count"] == 2
+        assert shown["createdDate"] == 1_700_000_000_000
+
+    def test_manually_hidden_files_do_not_supply_folder_dates(self, tmp_path):
+        folder = tmp_path / "library"
+        folder.mkdir()
+        visible = folder / "visible.png"
+        visible.write_bytes(b"visible")
+        self._stamp(visible, 1_600_000_000_000)
+        marked = folder / "marked.png"
+        marked.write_bytes(b"marked")
+        self._stamp(marked, 1_700_000_000_000)
+
+        entry = next(
+            r for r in list_files(
+                str(tmp_path), str(tmp_path), hidden_paths=["library/marked.png"],
+            )
+            if r["name"] == "library"
+        )
+
+        assert entry["count"] == 1
+        assert entry["createdDate"] == 1_600_000_000_000
+
+    def test_empty_folder_falls_back_to_its_own_stat(self, tmp_path):
+        """With no contents there is no content date; the inode is all we have,
+        and a folder must not sort as if it came from 1970."""
+        folder = tmp_path / "library"
+        folder.mkdir()
+        self._stamp(folder, 1_700_000_000_000)
+
+        entry = self._folder(tmp_path)
+
+        assert entry["count"] == 0
+        assert entry["createdDate"] == 1_700_000_000_000
+        assert entry["modifiedDate"] == 1_700_000_000_000
+        assert entry["date"] == 1_700_000_000_000
+
+    def test_folder_with_only_unlistable_files_falls_back_to_its_own_stat(
+        self, tmp_path,
+    ):
+        """`count` ignores nothing but hidden files, so a folder of .txt files
+        still reports a count — but the grid lists no media from it. The dates
+        follow the same walk as the count, which keeps the two consistent."""
+        folder = tmp_path / "library"
+        folder.mkdir()
+        notes = folder / "notes.txt"
+        notes.write_bytes(b"text")
+        self._stamp(notes, 1_700_000_000_000)
+
+        entry = self._folder(tmp_path)
+
+        assert entry["createdDate"] == 1_700_000_000_000
+
+
 class TestRecursiveListing:
     def test_recursive_includes_nested_files(self, tree):
         results = list_files(str(tree), str(tree), recursive=True)

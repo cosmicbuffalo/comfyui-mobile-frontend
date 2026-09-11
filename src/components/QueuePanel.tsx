@@ -31,6 +31,7 @@ import { CloseIcon } from './icons';
 import * as api from '@/api/client';
 import { buildReenqueueRequest } from './QueuePanel/queueReenqueue';
 import { useShowHiddenStore } from '@/hooks/useShowHidden';
+import { markProgrammaticScroll } from '@/utils/scrollInterrupt';
 
 interface QueuePanelProps {
   visible: boolean;
@@ -70,6 +71,14 @@ function promptIdFromNotificationUrl(value: unknown): string | null {
   }
 }
 
+/**
+ * How long a `behavior: smooth` scroll is assumed to keep reporting. The
+ * browser gives no completion signal, and the animation is a few hundred
+ * milliseconds; this outlasts it without holding a scroll-to-dismiss off for
+ * anything a reader would notice.
+ */
+const SMOOTH_SCROLL_SETTLE_MS = 600;
+
 // Same treatment as the workflow panel's connection-jump highlight (see
 // useWorkflow's `scrollToNode`): scroll the card into view, then ring-pulse
 // it via the shared `.highlight-pulse` keyframes so a notification landing on
@@ -79,6 +88,9 @@ function flashQueueCard(promptId: string) {
     `[data-scroll-anchor-id="${CSS.escape(promptId)}"]`,
   );
   if (!card) return;
+  // A smooth scroll reports for the length of its animation, so the window has
+  // to outlast it rather than cover only the first frame.
+  markProgrammaticScroll(SMOOTH_SCROLL_SETTLE_MS);
   card.scrollIntoView({ behavior: 'smooth', block: 'center' });
   document
     .querySelectorAll('.highlight-pulse')
@@ -258,6 +270,7 @@ export const QueuePanel = memo(function QueuePanel({ visible, onImageClick }: Qu
     }
 
     if (!wasOpenRef.current && hasMountedRef.current && listRef.current) {
+      markProgrammaticScroll();
       listRef.current.scrollTop = 0;
     }
     wasOpenRef.current = true;

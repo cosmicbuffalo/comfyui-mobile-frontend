@@ -594,6 +594,63 @@ def test_in_app_move_advances_both_old_and_new_folder_trees(
     assert by_name["new"]["modifiedDate"] == activity_time
 
 
+def test_folder_created_date_tracks_contents_not_the_frozen_activity_record(
+    tmp_path: Path,
+    monkeypatch,
+):
+    """A folder's activity `createdAt` is seeded from the directory inode the
+    first time any descendant is touched. Letting it win would re-freeze the
+    folder at that moment — the exact staleness a content-derived date fixes.
+    """
+    cache = tmp_path / "file_state.json"
+    output = tmp_path / "output"
+    folder = output / "folder"
+    folder.mkdir(parents=True)
+    old_image = folder / "old.png"
+    old_image.write_bytes(b"old")
+    old_time = 1_600_000_000_000
+    os.utime(str(old_image), (old_time / 1000, old_time / 1000))
+
+    # Touch the folder through the app so it gains an activity record.
+    monkeypatch.setattr(mobile_file_state, "_now_ms", lambda: old_time + 60_000)
+    set_state(str(cache), "output", "favorite", str(output), "folder/old.png", True)
+
+    # Later, a new render lands in the folder.
+    new_image = folder / "new.png"
+    new_image.write_bytes(b"new")
+    new_time = 1_700_000_000_000
+    os.utime(str(new_image), (new_time / 1000, new_time / 1000))
+
+    listing = list_files(str(output), str(output))
+    annotate_listing(str(cache), "output", str(output), listing, set())
+
+    assert listing[0]["name"] == "folder"
+    assert listing[0]["createdDate"] == new_time
+
+
+def test_folder_modified_date_still_takes_the_activity_record_as_a_floor(
+    tmp_path: Path,
+    monkeypatch,
+):
+    """An in-app move is real activity in the folder even though it leaves
+    every remaining file's mtime untouched."""
+    cache = tmp_path / "file_state.json"
+    output = tmp_path / "output"
+    folder = output / "folder"
+    folder.mkdir(parents=True)
+    image = folder / "image.png"
+    image.write_bytes(b"image")
+    before = list_files(str(output), str(output))[0]
+    activity_time = before["modifiedDate"] + 60_000
+    monkeypatch.setattr(mobile_file_state, "_now_ms", lambda: activity_time)
+
+    set_state(str(cache), "output", "favorite", str(output), "folder/image.png", True)
+
+    listing = list_files(str(output), str(output))
+    annotate_listing(str(cache), "output", str(output), listing, set())
+    assert listing[0]["modifiedDate"] == activity_time
+
+
 def test_remove_path_drops_all_three_states_at_once(tmp_path: Path):
     cache, output, _folder = _three_state_layout(tmp_path)
 

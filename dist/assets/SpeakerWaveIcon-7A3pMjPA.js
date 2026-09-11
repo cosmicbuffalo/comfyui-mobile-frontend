@@ -1,2 +1,0 @@
-import{j as r}from"./index-C32h286e.js";function t(e){return r.jsxs("svg",{viewBox:"0 0 24 24",fill:"none","aria-hidden":"true",...e,children:[r.jsx("path",{d:"M4 9v6h4l5 4V5L8 9H4Z",fill:"currentColor"}),r.jsx("path",{d:"M16 9a4 4 0 0 1 0 6M18.5 6.5a7.5 7.5 0 0 1 0 11",stroke:"currentColor",strokeWidth:"1.8",strokeLinecap:"round"})]})}export{t as S};
-//# sourceMappingURL=SpeakerWaveIcon-7A3pMjPA.js.map

@@ -8,6 +8,10 @@ import {
   getActiveNodeInputDefinitions,
   getNodeWidgetIndexMap,
 } from '@/utils/workflowInputs';
+import {
+  getPlaceholderValueIndexForBoundarySlot,
+  getSubgraphBoundaryWidgetSlots,
+} from '@/utils/widgetDefinitions';
 import { isSpecialSeedValue, SPECIAL_SEED_RANDOM } from '@/utils/seedUtils';
 
 type PromptNode = {
@@ -167,6 +171,74 @@ function readConcreteSeed(promptNode: PromptNode, inputName: string): number | n
   ) ? seed : null;
 }
 
+/** Resolve boundary connections using their target slots and full instance paths. */
+function restorePlaceholderNode(
+  workflow: Workflow,
+  nodeTypes: NodeTypes | null,
+  node: WorkflowNode,
+  lookup: PromptNodeLookup,
+): WorkflowNode {
+  const subgraph = workflow.definitions?.subgraphs?.find((entry) => entry.id === node.type);
+  if (!subgraph || !Array.isArray(node.widgets_values)) return node;
+  const definitions = new Map(workflow.definitions?.subgraphs?.map((sg) => [sg.id, sg]));
+  // Match canonical node objects so a root id cannot alias an inner id. Shared
+  // definitions can have multiple paths; their restored value must agree.
+  const paths: string[] = [];
+  const visit = (nodes: WorkflowNode[], prefix: string, ancestors: Set<string>) => {
+    for (const candidate of nodes) {
+      const path = prefix ? `${prefix}:${candidate.id}` : String(candidate.id);
+      if (candidate === node) paths.push(path);
+      const definition = definitions.get(candidate.type);
+      if (definition && !ancestors.has(definition.id)) {
+        visit(definition.nodes, path, new Set([...ancestors, definition.id]));
+      }
+    }
+  };
+  visit(workflow.nodes, '', new Set());
+
+  const readBoundary = (
+    definition: typeof subgraph, slot: number, prefix: string, seeds: Set<number>, depth = 0,
+  ) => {
+    if (depth > 32) return;
+    for (const id of definition.inputs?.[slot]?.linkIds ?? []) {
+      const link = definition.links.find((entry) => entry.id === id);
+      const target = definition.nodes.find((entry) => entry.id === link?.target_id);
+      if (!link || !target) continue;
+      const path = `${prefix}:${target.id}`;
+      const nested = definitions.get(target.type);
+      if (nested) {
+        readBoundary(nested, link.target_slot, path, seeds, depth + 1);
+      } else {
+        const input = target.inputs?.[link.target_slot];
+        const promptNode = lookup.direct.get(path);
+        if (!input || !promptNode || promptNode.class_type !== (resolveNodeType(nodeTypes, target)?.classType ?? target.type)) continue;
+        const seed = readConcreteSeed(promptNode, input.name);
+        if (seed !== null) seeds.add(seed);
+      }
+    }
+  };
+
+  const updates = new Map<number, number>();
+  for (const { boundarySlot } of getSubgraphBoundaryWidgetSlots(subgraph)) {
+    const boundaryInput = subgraph.inputs?.[boundarySlot];
+    const name = boundaryInput?.name;
+    if (!name || !isSeedInputName(name)) continue;
+    if (String(boundaryInput?.type ?? 'INT').toUpperCase() !== 'INT') continue;
+    const valueIndex = getPlaceholderValueIndexForBoundarySlot(node, subgraph, boundarySlot);
+    if (valueIndex === null) continue;
+    if (node.widgets_values[valueIndex] !== SPECIAL_SEED_RANDOM) continue;
+
+    const seeds = new Set<number>();
+    for (const path of paths) readBoundary(subgraph, boundarySlot, path, seeds);
+    if (seeds.size === 1) updates.set(valueIndex, seeds.values().next().value!);
+  }
+  if (updates.size === 0) return node;
+
+  const values = [...node.widgets_values];
+  for (const [valueIndex, seed] of updates) values[valueIndex] = seed;
+  return { ...node, widgets_values: values };
+}
+
 function restoreNode(
   workflow: Workflow,
   nodeTypes: NodeTypes | null,
@@ -174,6 +246,11 @@ function restoreNode(
   lookup: PromptNodeLookup,
   rootScope: boolean,
 ): WorkflowNode {
+  // A placeholder's `type` is a subgraph UUID, which nodeTypes has no schema
+  // for; its seeds are found through the boundary instead.
+  if (workflow.definitions?.subgraphs?.some((entry) => entry.id === node.type)) {
+    return restorePlaceholderNode(workflow, nodeTypes, node, lookup);
+  }
   const { bindings, classType } = getSeedWidgetBindings(workflow, nodeTypes, node);
   const randomBindings = bindings.filter(
     (binding) => getWidgetValue(node, binding) === SPECIAL_SEED_RANDOM,

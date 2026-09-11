@@ -29,6 +29,9 @@ const outputsState = {
   selectionActionOpen: false,
   currentFolder: '',
   navigateUp: vi.fn(),
+  // Startup learns which files are hidden, so a run that consumes one can
+  // inherit the mark while its prompt is being built.
+  hydrateFileState: vi.fn(async () => true),
 };
 
 const navigationState = {
@@ -51,10 +54,12 @@ vi.mock('@/hooks/useQueue', () => ({
     selector(queueState),
 }));
 
-vi.mock('@/hooks/useOutputs', () => ({
-  useOutputsStore: (selector: (state: typeof outputsState) => unknown) =>
-    selector(outputsState),
-}));
+vi.mock('@/hooks/useOutputs', () => {
+  const useOutputsStore = (selector: (state: typeof outputsState) => unknown) =>
+    selector(outputsState);
+  useOutputsStore.getState = () => outputsState;
+  return { useOutputsStore };
+});
 
 vi.mock('@/hooks/useNavigation', () => ({
   useNavigationStore: (selector: (state: { currentPanel: string; setCurrentPanel: () => void }) => unknown) =>

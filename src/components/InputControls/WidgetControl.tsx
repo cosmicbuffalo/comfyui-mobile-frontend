@@ -46,6 +46,9 @@ interface WidgetControlProps {
   isPromoted?: boolean;
   /** Small control rendered inline right after the widget's label text. */
   labelAccessory?: ReactNode;
+  /** "⇠ slot" boundary annotation and its jump — see ControlLabelRow. */
+  boundaryAnnotation?: string;
+  onBoundaryJump?: () => void;
   /**
    * Renamed label to show in place of the widget's name. Display only: `name`
    * stays the widget's real name, which is what values, pins and model-kind
@@ -81,6 +84,8 @@ export function WidgetControl({
   containerClass,
   isPromoted = false,
   labelAccessory,
+  boundaryAnnotation,
+  onBoundaryJump,
   displayLabel,
   modelKind,
 }: WidgetControlProps) {
@@ -152,6 +157,8 @@ export function WidgetControl({
     isPinned,
     onTogglePin,
     labelAccessory,
+    boundaryAnnotation,
+    onBoundaryJump,
     displayLabel,
   };
 
@@ -723,11 +730,32 @@ export function WidgetControl({
             id={`widget-label-${name}`}
             className="inline-flex min-w-0 items-center gap-1 text-[10px] font-bold text-slate-400 uppercase tracking-wider mr-2"
           >
-            <span className="truncate">{label}</span>
-            {isPromoted && (
+            <span className="truncate">
+              {label}
+              {boundaryAnnotation && !onBoundaryJump ? ` ${boundaryAnnotation}` : ""}
+            </span>
+            {isPromoted && !onBoundaryJump && (
               <PromotedWidgetIcon className="w-3.5 h-3.5 shrink-0 text-pink-500" />
             )}
           </label>
+          {/* Annotation and marker as ONE button when they can jump — same
+              two-path shape as ControlLabelRow, in this branch's typography. */}
+          {onBoundaryJump && (boundaryAnnotation || isPromoted) && (
+            <button
+              type="button"
+              className="boundary-jump mr-2 inline-flex min-w-0 shrink-0 items-center gap-1 text-[10px] font-bold text-slate-400 uppercase tracking-wider transition-colors hover:text-cyan-300 active:scale-95"
+              aria-label={t("Show boundary input")}
+              onClick={(event) => {
+                event.stopPropagation();
+                onBoundaryJump();
+              }}
+            >
+              {boundaryAnnotation && <span className="truncate">{boundaryAnnotation}</span>}
+              {isPromoted && (
+                <PromotedWidgetIcon className="w-3.5 h-3.5 shrink-0 text-pink-500" />
+              )}
+            </button>
+          )}
           {/* This branch renders every type the specialised controls do not —
               previews, custom node widgets — and dropped the row's actions and
               its promoted marker on the floor along with them. Outside the

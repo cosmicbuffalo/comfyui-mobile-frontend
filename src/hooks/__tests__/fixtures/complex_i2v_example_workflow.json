@@ -5699,7 +5699,7 @@
               }
             },
             "widgets_values": [
-              "Watermark.png",
+              "watermark.png",
               "bottom-right",
               15,
               50,
@@ -8278,7 +8278,7 @@
             "widgets_values": {
               "frame_rate": 8,
               "loop_count": 0,
-              "filename_prefix": "video/%date:yyyy-MM-dd%/%date:hhmmss%MINIMEME",
+              "filename_prefix": "video/%date:yyyy-MM-dd%/%date:hhmmss%",
               "format": "image/gif",
               "pingpong": false,
               "save_output": true,

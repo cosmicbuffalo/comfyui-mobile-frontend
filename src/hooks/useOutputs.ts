@@ -5,14 +5,82 @@ import * as api from '@/api/client';
 import type { FileItem, AssetSource, SortMode } from '@/api/client';
 import { useShowHiddenStore } from '@/hooks/useShowHidden';
 
-function getVisibleParentPath(path: string | null): string | null {
+/**
+ * The deepest ancestor of `path` that is still visible with hidden files off.
+ *
+ * Two ways a folder is hidden, and the walk has to stop at either. A
+ * dot-prefixed segment is hidden by its name; a folder the user marked hidden
+ * has an ordinary name and is only known from the listing that showed it
+ * (`hiddenFolderPaths`, which accumulates as you browse). Reading the name
+ * alone left the panel sitting inside a marked folder — showing its contents —
+ * after the auto-hide timer had turned hidden files back off, which is exactly
+ * what the timer exists to prevent.
+ */
+function getVisibleParentPath(
+  path: string | null,
+  hiddenFolderPaths: readonly string[] = [],
+): string | null {
   if (!path) return null;
+  const hidden = new Set(hiddenFolderPaths);
   const visibleParts: string[] = [];
   for (const part of path.split('/')) {
     if (part.startsWith('.')) break;
+    const candidate = [...visibleParts, part].join('/');
+    if (hidden.has(candidate)) break;
     visibleParts.push(part);
   }
   return visibleParts.length > 0 ? visibleParts.join('/') : null;
+}
+
+/**
+ * Every remembered browse location, moved out of any folder that is hidden.
+ *
+ * `currentFolder` is not the only one: the inactive tabs each park a folder,
+ * and `folderBySource` parks one per source, so correcting only what is on
+ * screen leaves the panel one tap from walking straight back in.
+ *
+ * `hiddenFolderPaths` describes the source currently being browsed and nothing
+ * else — the paths are relative to their source, so `album/personal` in the
+ * outputs says nothing about the same path in the inputs. Locations belonging
+ * to another source are therefore judged by name alone, which still catches
+ * every dot-hidden folder.
+ */
+function correctHiddenLocations(state: {
+  source: AssetSource;
+  currentFolder: string | null;
+  tabs: OutputsTab[];
+  folderBySource: Record<AssetSource, string | null>;
+  hiddenFolderPaths: string[];
+}): {
+  currentFolder: string | null;
+  tabs: OutputsTab[];
+  folderBySource: Record<AssetSource, string | null>;
+  changed: boolean;
+} {
+  const marksFor = (source: AssetSource) =>
+    source === state.source ? state.hiddenFolderPaths : [];
+
+  const currentFolder = getVisibleParentPath(state.currentFolder, marksFor(state.source));
+  let changed = currentFolder !== state.currentFolder;
+
+  const tabs = state.tabs.map((tab) => {
+    const folder = getVisibleParentPath(tab.folder, marksFor(tab.source));
+    if (folder === tab.folder) return tab;
+    changed = true;
+    return { ...tab, folder };
+  });
+
+  const folderBySource = { ...state.folderBySource };
+  for (const [source, folder] of Object.entries(state.folderBySource) as Array<
+    [AssetSource, string | null]
+  >) {
+    const next = getVisibleParentPath(folder, marksFor(source));
+    if (next === folder) continue;
+    folderBySource[source] = next;
+    changed = true;
+  }
+
+  return { currentFolder, tabs, folderBySource, changed };
 }
 
 function hasHiddenPathSegment(file: FileItem, source: AssetSource): boolean {
@@ -248,7 +316,14 @@ interface OutputsState {
   currentFolder: string | null;  // null = root, else path string like 'foo/bar'
   folders: string[];  // Available subfolders for current source
   files: FileItem[];
-  hiddenFolderPaths: string[];  // hidden folder paths seen while browsing (for breadcrumb italics)
+  /**
+   * Folder paths (relative to `source`) the listing reported as hidden while
+   * browsing. Drives the breadcrumb's dim styling for an ancestor already
+   * navigated past, and tells the auto-hide walk which ordinary-looking folder
+   * it must climb out of. Cleared whenever the source changes, so it always
+   * describes the source currently being browsed.
+   */
+  hiddenFolderPaths: string[];
   folderBySource: Record<AssetSource, string | null>;  // last folder per source, so switching restores location
   tabs: OutputsTab[];  // breadcrumb-row tabs; the active one mirrors source/currentFolder
   activeTabId: string;
@@ -266,6 +341,18 @@ interface OutputsState {
   // Images explicitly marked "rejected". Mutually exclusive with favorites: an
   // id is never in both lists at once (the mutation actions enforce this).
   rejected: string[];
+  /**
+   * Files and folders the user marked hidden, as prefixed ids
+   * (`input/private/a.png`). Read back from the same server index favourites
+   * and rejects come from, and kept because hiding is not only a display
+   * concern: a generation that consumes a hidden input inherits its hiddenness
+   * (see `promptReferencesHiddenFile`), and that decision is made at queue
+   * time, with no listing to read it off.
+   *
+   * Marks on FOLDERS are stored as the folder's own path; the files beneath it
+   * are hidden by inheritance and are not listed individually.
+   */
+  hiddenIds: string[];
   searchOpen: boolean;
   searchDraft: string;
 
@@ -381,6 +468,7 @@ export const useOutputsStore = create<OutputsState>()(
       favorites: [],
       migratedFavoriteSources: [],
       rejected: [],
+      hiddenIds: [],
       searchOpen: false,
       searchDraft: '',
       promptSearchActive: false,
@@ -634,6 +722,11 @@ export const useOutputsStore = create<OutputsState>()(
                 requestedSource,
                 favoriteIdsForSource(requestedSource, serverState.reject),
               ),
+              hiddenIds: replaceSourceFavorites(
+                s.hiddenIds,
+                requestedSource,
+                favoriteIdsForSource(requestedSource, serverState.hidden),
+              ),
             }));
             return true;
           } catch (err) {
@@ -816,11 +909,18 @@ export const useOutputsStore = create<OutputsState>()(
       },
 
       syncShowHidden: (showHidden) => {
-        const { currentFolder, promptSearchActive, promptSearchQuery } = get();
+        const state = get();
+        const { currentFolder, promptSearchActive, promptSearchQuery } = state;
         promptSearchRequestId += 1;
-        const nextFolder = showHidden ? currentFolder : getVisibleParentPath(currentFolder);
+        const corrected = showHidden ? null : correctHiddenLocations(state);
+        const nextFolder = corrected ? corrected.currentFolder : currentFolder;
         set((s) => ({
           currentFolder: nextFolder,
+          // The parked tabs and per-source folders move with it, or switching
+          // tab and back would walk right back into what was just left.
+          ...(corrected?.changed
+            ? { tabs: corrected.tabs, folderBySource: corrected.folderBySource }
+            : {}),
           promptSearchLoading: false,
           files: [],
           selectionMode: false,
@@ -939,6 +1039,7 @@ export const useOutputsStore = create<OutputsState>()(
       setItemHidden: (id, hidden) => get().setItemsHidden([id], hidden),
 
       markItemHiddenLocally: (id) => {
+        set((s) => (s.hiddenIds.includes(id) ? {} : { hiddenIds: [...s.hiddenIds, id] }));
         const mark = (file: FileItem) => file.id === id
           ? { ...file, hidden: true, hiddenSelf: true }
           : file;
@@ -957,6 +1058,17 @@ export const useOutputsStore = create<OutputsState>()(
         if (ids.length === 0) return;
         const { source } = get();
         const prefix = `${source}/`;
+        // Applied before the writes land, so a generation queued in the next
+        // breath already inherits the mark. `refresh` below re-reads the
+        // server's view and corrects anything that was refused.
+        set((s) => {
+          const marked = new Set(s.hiddenIds);
+          for (const id of ids) {
+            if (hidden) marked.add(id);
+            else marked.delete(id);
+          }
+          return { hiddenIds: [...marked] };
+        });
         const results = await Promise.all(ids.map((id) => {
           const path = id.startsWith(prefix) ? id.slice(prefix.length) : id;
           return queueFileStateMutation(source, path, 'hidden', hidden).catch((err) => {
@@ -1370,6 +1482,14 @@ export const useOutputsStore = create<OutputsState>()(
         folderBySource: state.folderBySource,
         tabs: state.tabs,
         activeTabId: state.activeTabId,
+        // Persisted for the same reason `currentFolder` is. A folder hidden by
+        // a mark rather than by a leading dot is only knowable from the listing
+        // that showed it, so a cold start into a restored `currentFolder` had
+        // no way to tell it was inside one — and the auto-hide walk, which is
+        // what stops that folder's contents being on screen with hidden files
+        // off, could not act. Belongs to the persisted `source` above, which is
+        // the source it will be read against.
+        hiddenFolderPaths: state.hiddenFolderPaths,
         viewMode: state.viewMode,
         sort: state.sort,
         // Never persist the search text.
@@ -1382,3 +1502,23 @@ export const useOutputsStore = create<OutputsState>()(
     }
   )
 );
+
+// A cold start is the one case `syncShowHidden` cannot see: it fires when the
+// preference CHANGES, and after a reload it has not changed — it was already
+// off, restored from localStorage along with the browse location, which may
+// well be the hidden folder the user was in when they closed the app. Apply
+// the same correction once, here, before any panel has mounted to fetch it.
+//
+// `useShowHidden` settles its own preference at module scope (it expires a
+// wait that ran out while the app was closed), and this module imports it, so
+// the value read here is the settled one.
+if (!useShowHiddenStore.getState().showHidden) {
+  const corrected = correctHiddenLocations(useOutputsStore.getState());
+  if (corrected.changed) {
+    useOutputsStore.setState({
+      currentFolder: corrected.currentFolder,
+      tabs: corrected.tabs,
+      folderBySource: corrected.folderBySource,
+    });
+  }
+}

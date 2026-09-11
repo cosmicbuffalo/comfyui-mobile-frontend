@@ -410,4 +410,126 @@ describe('InputFilePicker options menu', () => {
     expect(onPick).not.toHaveBeenCalled();
     vi.useRealTimers();
   });
+  it('offers to take the held image straight from the viewer', async () => {
+    // The viewer opened by a long press is still part of choosing a file: you
+    // page through the same list at full size precisely so you can tell which
+    // one you want. Without this the only way back was to close the viewer and
+    // find that thumbnail again.
+    getUserImagesMock.mockClear();
+    const file: FileItem = {
+      id: 'input/reference/candidate.png',
+      name: 'candidate.png',
+      type: 'image',
+      fullUrl: '/view?filename=candidate.png&subfolder=reference&type=input',
+    };
+    getUserImagesMock.mockResolvedValueOnce([file]);
+    const onPick = vi.fn();
+
+    await act(async () => {
+      root.render(<InputFilePicker open onClose={() => {}} onPick={onPick} />);
+    });
+    await flushUntil(() => document.querySelector('.file-card-grid-item > div') !== null);
+    const card = document.querySelector<HTMLElement>('.file-card-grid-item > div');
+
+    vi.useFakeTimers();
+    const pointerDown = new MouseEvent('pointerdown', {
+      bubbles: true,
+      button: 0,
+      clientX: 10,
+      clientY: 10,
+    });
+    Object.defineProperties(pointerDown, {
+      pointerId: { value: 1 },
+      isPrimary: { value: true },
+    });
+    await act(async () => {
+      card?.dispatchEvent(pointerDown);
+      await vi.advanceTimersByTimeAsync(500);
+    });
+    vi.useRealTimers();
+
+    const pick = useImageViewerStore.getState().viewerPickAction;
+    expect(pick?.label).toBe('Select current');
+
+    const shown = useImageViewerStore.getState().viewerImages[0];
+    await act(async () => {
+      pick!.onPick(shown);
+    });
+    await flushUntil(() => onPick.mock.calls.length > 0);
+
+    // The value committed is the held file, and the viewer stands down for it.
+    // Same value the grid's own tap commits, annotation and all.
+    expect(onPick).toHaveBeenCalledWith('reference/candidate.png [input]', 'input');
+    expect(useImageViewerStore.getState().viewerOpen).toBe(false);
+    // The offer belongs to that viewing session and must not outlive it.
+    expect(useImageViewerStore.getState().viewerPickAction).toBeNull();
+  });
+
+  it('shows favourite and reject marks the listing reports', async () => {
+    // The picker calls the listing API directly rather than going through the
+    // outputs store, so a source the outputs panel has not loaded this session
+    // has no marks in the store at all — every badge was silently missing.
+    getUserImagesMock.mockClear();
+    useOutputsStore.setState({ favorites: [], rejected: [] });
+    getUserImagesMock.mockResolvedValueOnce([
+      {
+        id: 'input/liked.png',
+        name: 'liked.png',
+        type: 'image',
+        fullUrl: '/view?filename=liked.png&type=input',
+        favorite: true,
+      },
+      {
+        id: 'input/spurned.png',
+        name: 'spurned.png',
+        type: 'image',
+        fullUrl: '/view?filename=spurned.png&type=input',
+        rejected: true,
+      },
+    ] as FileItem[]);
+
+    await act(async () => {
+      root.render(<InputFilePicker open onClose={() => {}} onPick={() => {}} />);
+    });
+    await flushUntil(() => document.querySelectorAll('.file-card-grid-item').length === 2);
+
+    expect(document.querySelector('.favorite-badge-icon, .favorite-badge-container')).toBeTruthy();
+    expect(document.querySelector('.rejected-badge-icon, .rejected-badge-container')).toBeTruthy();
+  });  it('removes listing badges after marks are cleared in the viewer store', async () => {
+    useOutputsStore.setState({ favorites: ['input/liked.png'], rejected: ['input/spurned.png'] });
+    getUserImagesMock.mockResolvedValueOnce([
+      { id: 'input/liked.png', name: 'liked.png', type: 'image', fullUrl: '/view?filename=liked.png&type=input', favorite: true },
+      { id: 'input/spurned.png', name: 'spurned.png', type: 'image', fullUrl: '/view?filename=spurned.png&type=input', rejected: true },
+    ] as FileItem[]);
+    await act(async () => {
+      root.render(<InputFilePicker open onClose={() => {}} onPick={() => {}} />);
+    });
+    await flushUntil(() => document.querySelectorAll('.file-card-grid-item').length === 2);
+    await act(async () => {
+      useOutputsStore.getState().unfavoriteItem('input/liked.png');
+      useOutputsStore.getState().toggleRejected('input/spurned.png');
+    });
+    expect(document.querySelector('.favorite-badge-icon, .favorite-badge-container')).toBeNull();
+    expect(document.querySelector('.rejected-badge-icon, .rejected-badge-container')).toBeNull();
+  });
+
+  it('preserves a rejection made while a stale favorite listing is in flight', async () => {
+    useOutputsStore.setState({ favorites: ['input/liked.png'], rejected: [] });
+    let resolveListing!: (files: FileItem[]) => void;
+    getUserImagesMock.mockImplementationOnce(() => new Promise((resolve) => { resolveListing = resolve; }));
+    await act(async () => {
+      root.render(<InputFilePicker open onClose={() => {}} onPick={() => {}} />);
+    });
+    await flushUntil(() => Boolean(resolveListing));
+    await act(async () => {
+      useOutputsStore.getState().toggleRejected('input/liked.png');
+      resolveListing([{ id: 'input/liked.png', name: 'liked.png', type: 'image', favorite: true, rejected: false }]);
+    });
+    await flushUntil(() => document.querySelectorAll('.file-card-grid-item').length === 1);
+    expect(useOutputsStore.getState().favorites).not.toContain('input/liked.png');
+    expect(useOutputsStore.getState().rejected).toContain('input/liked.png');
+    expect(document.querySelector('.favorite-badge-container')).toBeNull();
+    expect(document.querySelector('.rejected-badge-container')).toBeTruthy();
+  });
+
 });

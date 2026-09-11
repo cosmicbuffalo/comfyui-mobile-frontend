@@ -2,12 +2,14 @@ import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import type { NodeTypes, Workflow } from '@/api/types';
 import type { SeedMode } from '@/hooks/useWorkflow';
+import { isSubgraphPlaceholder } from '@/utils/canonicalWorkflowOps';
 import {
   findSeedWidgetIndex,
   getSpecialSeedValueForMode,
   hasSeedControlWidget,
   isSpecialSeedValue,
   generateSeedFromNode,
+  nodeTypeStripsSeedControl,
 } from '@/utils/seedUtils';
 
 export type SeedLastValues = Record<number, number | null>;
@@ -49,8 +51,18 @@ export const useSeedStore = create<SeedState>()(
                 ? context.seedWidgetIndex
                 : findSeedWidgetIndex(workflow, nodeTypes, node);
             if (seedWidgetIndex !== null && Array.isArray(node.widgets_values)) {
+              // The slot after a seed is its control_after_generate only on a
+              // real ComfyUI node, which adds that pairing implicitly. A
+              // subgraph never promotes it that way — only an explicit
+              // proxyWidgets entry can surface one, and the caller passes its
+              // index when it does. Guessing here writes the mode string over
+              // whatever the next promoted widget happens to be (a model combo
+              // reads as a control widget, since any non-empty string does).
+              const guessedControlIndex = isSubgraphPlaceholder(node, workflow)
+                ? null
+                : seedWidgetIndex + 1;
               const controlWidgetIndex = context.controlWidgetIndex === undefined
-                ? seedWidgetIndex + 1
+                ? guessedControlIndex
                 : context.controlWidgetIndex;
               const hasControlWidget = controlWidgetIndex !== null && hasSeedControlWidget(
                 node,
@@ -62,9 +74,25 @@ export const useSeedStore = create<SeedState>()(
                 updates[controlWidgetIndex!] = mode;
               } else {
                 const specialValue = getSpecialSeedValueForMode(mode);
-                if (specialValue !== null && mode !== 'fixed') {
+                // Only a node that encodes its mode in the seed value itself
+                // (rgthree's Seed strips the control widget) gets the -1/-2/-3
+                // sentinel written into widgets_values -- for it, the value IS
+                // the mode. Everywhere else -- a promoted placeholder seed, or
+                // any seed without a companion control -- the mode lives in the
+                // seedModes store and queue time generates from it. Persisting
+                // the sentinel there would save a seed stock rejects (min 0)
+                // into the workflow file.
+                const writesSentinel =
+                  specialValue !== null &&
+                  mode !== 'fixed' &&
+                  nodeTypeStripsSeedControl(node.type);
+                if (writesSentinel) {
                   updates[seedWidgetIndex] = specialValue;
-                } else if (mode === 'fixed') {
+                } else {
+                  // Keep the slot concrete: on plain mode changes this restores
+                  // a stock-valid seed over any sentinel left behind, which
+                  // also stops a stale sentinel from overriding the store's
+                  // mode at queue time (sentinels win there).
                   const currentSeed = Number(node.widgets_values[seedWidgetIndex]);
                   if (isSpecialSeedValue(currentSeed)) {
                     const lastSeed = seedLastValues[nodeId];

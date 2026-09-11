@@ -2,6 +2,7 @@ import type { RefObject } from 'react';
 import { useState } from 'react';
 import { useOutputsStore } from '@/hooks/useOutputs';
 import { useShowHiddenStore } from '@/hooks/useShowHidden';
+import { useDeleteRejectedShortcut } from '@/hooks/useDeleteRejectedShortcut';
 import { deleteRejectedOutputs, rejectedIdsForSources } from '@/utils/deleteRejectedOutputs';
 import { CheckIcon, DiceIcon, DocumentLinesIcon, EyeIcon, EyeOffIcon, FolderIcon, ArrowRightIcon, SearchIcon, TrashIcon } from '@/components/icons';
 import { ContextMenuButton } from '@/components/buttons/ContextMenuButton';
@@ -51,6 +52,14 @@ export function OutputsTopBarMenu({
     setDeleteRejectedOpen(true);
     onClose();
   };
+
+  // This component only mounts while the outputs panel owns the top bar, so the
+  // chord is scoped to the panel it acts on without needing to ask which one is
+  // showing.
+  useDeleteRejectedShortcut({
+    enabled: rejectedHere.length > 0,
+    onTrigger: handleDeleteRejectedClick,
+  });
 
   const confirmDeleteRejected = async () => {
     const result = await deleteRejectedOutputs([source]);

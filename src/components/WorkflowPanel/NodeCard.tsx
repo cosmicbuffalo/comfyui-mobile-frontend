@@ -653,8 +653,17 @@ export const NodeCard = memo(function NodeCard({
     ),
     [promotedWidgetViews],
   );
-  // On a placeholder, the mapping runs the other way: each boundary slot names
-  // the inner widget it drives.
+  // The slot index behind each promoted widget, for the label row's jump up
+  // to the boundary row in the subgraph's connections section.
+  const promotedBoundarySlots = useMemo(
+    () => Object.fromEntries(
+      promotedWidgetViews.map((view) => [view.widgetName, view.boundarySlot]),
+    ),
+    [promotedWidgetViews],
+  );
+  // On a placeholder, each boundary slot's inner target widget names — shown
+  // only in a widget row's "…" menu, so the mapping can be checked without
+  // entering the scope; the row labels themselves stay boundary-only.
   const boundaryTargetNames = useMemo(() => {
     if (!isPlaceholder || !workflow) return {};
     const definition = workflow.definitions?.subgraphs?.find((sg) => sg.id === node.type);
@@ -666,7 +675,6 @@ export const NodeCard = memo(function NodeCard({
       ]),
     );
   }, [isPlaceholder, workflow, node.type]);
-
   const promotedInputSlots = useMemo(
     () => new Set(
       promotedWidgetViews
@@ -1331,7 +1339,15 @@ export const NodeCard = memo(function NodeCard({
         seedWidgetIndex,
         // A promoted seed has no companion control slot on the placeholder;
         // encode the mode in that instance's seed value just like its own card.
-        controlWidgetIndex: route ? null : undefined,
+        // On the placeholder's own card the same holds unless the subgraph
+        // explicitly promoted a control_after_generate — resolve that from the
+        // descriptor list rather than letting the store fall back to the
+        // seed-adjacent slot, which is another promoted widget here.
+        controlWidgetIndex: route
+          ? null
+          : isPlaceholder
+            ? findSeedControlWidgetIndex([...inputWidgets, ...widgets])
+            : undefined,
         updateNodeWidgets: (_rawNodeId, updates) => {
           if (!route) {
             handleUpdateNodeWidgets(updates);
@@ -1352,6 +1368,7 @@ export const NodeCard = memo(function NodeCard({
       node,
       inputWidgets,
       widgets,
+      isPlaceholder,
       promotedSeedModeRoute,
       findLinkedSourceNode,
       setSeedMode,
@@ -1637,6 +1654,7 @@ export const NodeCard = memo(function NodeCard({
               promotableWidgets={promotableWidgets}
               promotedWidgetForms={promotedWidgetForms}
               promotedBoundaryLabels={promotedBoundaryLabels}
+              promotedBoundarySlots={promotedBoundarySlots}
               boundaryTargetNames={boundaryTargetNames}
               instanceCount={subgraphInstanceCount}
               onPromoteWidget={(widget, form) => {

@@ -470,7 +470,7 @@ async def api_set_hidden(request):
         # Hiding is a declutter toggle rather than access control, so reading
         # is the right bar: you may fold away anything you can see. (Per-viewer
         # hidden state, so one account's toggle cannot reach another's listing,
-        # is the multiuser-auth branch's answer and is not ported here.)
+        # is an access-control concern and is deliberately not handled here.)
         if (_mobile_auth.is_enabled() and os.path.isfile(target_path)
                 and not _mobile_auth.can_read_file(target_path,
                                                    user=_mobile_auth.current_user())):

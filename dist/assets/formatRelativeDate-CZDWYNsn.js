@@ -1,2 +1,0 @@
-import{t as n}from"./index-C32h286e.js";function g(o){const r=new Date,t=new Date(o*1e3),d=r.getTime()-t.getTime(),e=Math.floor(d/(1e3*60*60*24)),s=String(t.getMonth()+1),i=String(t.getDate()),c=String(t.getFullYear()).slice(-2),a=`${s}/${i}/${c}`;return e===0?n("{date} (Today)",{date:a}):e===1?n("{date} (Yesterday)",{date:a}):n("{date} ({count} days ago)",{date:a,count:e})}export{g as f};
-//# sourceMappingURL=formatRelativeDate-CZDWYNsn.js.map

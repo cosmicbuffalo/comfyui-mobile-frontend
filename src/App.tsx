@@ -29,7 +29,9 @@ import { useShowHiddenStore } from './hooks/useShowHidden';
 import { useShowHiddenShortcut } from './hooks/useShowHiddenShortcut';
 import { useShowHiddenAutoHide } from './hooks/useShowHiddenAutoHide';
 import { useMaskEditorStore } from './hooks/useMaskEditor';
-import { lazyPanel } from './components/lazyPanel';
+import { lazyPanel, prefetchLazyPanels } from './components/lazyPanel';
+import { UpdateNotice } from './components/UpdateNotice';
+import { useAppUpdateCheck } from './hooks/useAppUpdateCheck';
 
 const QueuePanel = lazyPanel(() =>
   import('./components/QueuePanel').then((module) => ({ default: module.QueuePanel })),
@@ -80,6 +82,16 @@ function App() {
   const [storeHydrated, setStoreHydrated] = useState(
     () => useWorkflowStore.persist?.hasHydrated() ?? true,
   );
+  const { updateAvailable, dismissUpdate } = useAppUpdateCheck();
+
+  // Warm the lazy panel chunks once startup has settled, so a server update
+  // later can never strand this session on a panel it hadn't opened yet (the
+  // update deletes the old hashed chunk files this tab's index names).
+  useEffect(() => {
+    const idle = window.setTimeout(() => prefetchLazyPanels(), 3000);
+    return () => window.clearTimeout(idle);
+  }, []);
+
   useEffect(() => {
     const persist = useWorkflowStore.persist;
     if (!persist || persist.hasHydrated()) {
@@ -254,6 +266,19 @@ function App() {
     fetchQueue();
   }, [fetchQueue]);
 
+  // Learn which files are hidden, once, at startup.
+  //
+  // Queueing needs this synchronously: a run that consumes a hidden input
+  // inherits the mark (see `promptReferencesHiddenFile`), and that decision is
+  // made while building the prompt, with nothing to await. The queue panel
+  // already hydrates `output` when it first opens; `input` is the source that
+  // decides here and nothing else loads it until the outputs panel is pointed
+  // at it, which may never happen in a session.
+  useEffect(() => {
+    void useOutputsStore.getState().hydrateFileState('input');
+    void useOutputsStore.getState().hydrateFileState('output');
+  }, []);
+
   // Memoized so it's a stable prop for the memoized QueueCard/WorkflowPanel —
   // otherwise every App render reconciles the whole queue list. All deps are
   // stable store actions / useCallback'd hook setters.
@@ -301,8 +326,15 @@ function App() {
     // Read history fresh from the store so the keydown handler (whose effect
     // intentionally doesn't re-register on every history change) never opens
     // with a stale closed-over snapshot.
+    // Hidden runs stay out of it. The queue panel filters its own list, but
+    // this opens straight from the history store — so with hidden files off,
+    // pressing Follow Queue landed on the newest generation whether or not its
+    // workflow was one the user had tucked away.
+    const showHiddenNow = useShowHiddenStore.getState().showHidden;
     const allImages = buildOutputPreferredViewerImages(
-      useHistoryStore.getState().history,
+      useHistoryStore.getState().history.filter(
+        (item) => showHiddenNow || !item.hidden,
+      ),
       { alt: 'Generation' },
     );
 
@@ -345,6 +377,7 @@ function App() {
   return (
     <div id="app-root" className="min-h-screen bg-slate-950">
       <TopBar mode={currentPanel} />
+      <UpdateNotice visible={updateAvailable} onDismiss={dismissUpdate} />
 
       <main
         id="main-content"

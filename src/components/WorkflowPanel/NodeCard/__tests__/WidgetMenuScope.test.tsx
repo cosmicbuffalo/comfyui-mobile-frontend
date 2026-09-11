@@ -196,8 +196,9 @@ describe('widget menu by scope', () => {
       }),
       isKSampler: true,
       // One ordinary widget as well, since the parameters section only renders
-      // when the node has some.
-      visibleWidgets: [widget],
+      // when the node has some. It must not sit on the seed's widget index:
+      // the generic list skips that descriptor because the seed block draws it.
+      visibleWidgets: [{ ...widget, widgetIndex: 2 }],
       getWidgetIndexForInput: (name: string) => (name === 'seed' ? 0 : null),
       findSeedWidgetIndex: () => 0,
     });

@@ -38,6 +38,15 @@ const NODE_TYPES_WITHOUT_SEED_CONTROL: ReadonlySet<string> = new Set([
   RGTHREE_SEED_NODE_TYPE,
 ]);
 
+// An API-prompt input name holds a seed when it is exactly "seed" or ends in
+// "_seed" ("noise_seed", "rand_seed"). Deliberately narrow: "seed_mode" and
+// "seed_offset" are not the value that produced the image.
+const SEED_INPUT_NAME_RE = /^(?:.*_)?seed$/i;
+
+export function isSeedInputName(name: string): boolean {
+  return SEED_INPUT_NAME_RE.test(name);
+}
+
 /**
  * True when this node type strips ComfyUI's auto-added control_after_generate
  * widget, so a freshly built node must not reserve a slot for it.

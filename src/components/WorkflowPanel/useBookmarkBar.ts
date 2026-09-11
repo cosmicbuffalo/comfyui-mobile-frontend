@@ -299,8 +299,21 @@ export function useBookmarkBar(deps: BookmarkBarDeps) {
           return;
         }
         if (ref.type === "subgraph") {
+          // Key the entry by the PLACEHOLDER's own itemKey, not the subgraph
+          // definition's. A subgraph is bookmarked through its placeholder
+          // card, and NodeCard toggles `node.itemKey` — so a definition-keyed
+          // entry matched nothing in `bookmarkedItems` and the mark never
+          // appeared in the gutter. It is also the only key that identifies
+          // ONE instance: every placeholder of a reusable type shares the
+          // definition key, and jumpToWorkflowItem resolves a node identity
+          // from what it is given, which a definition key has never had.
+          // The definition key remains the fallback for a legacy layout ref
+          // that recorded no placeholder id.
+          const placeholderItemKey = typeof ref.nodeId === "number"
+            ? nodeItemKeyByScopedKey.get(scopedNodeKey(ref.nodeId, currentSubgraphId))
+            : undefined;
           const itemKey = requireHierarchicalKey(
-            subgraphItemKeyById.get(ref.id),
+            placeholderItemKey ?? subgraphItemKeyById.get(ref.id),
             `layout subgraph ref ${ref.id}`,
           );
           const scopedNodes = currentSubgraphId

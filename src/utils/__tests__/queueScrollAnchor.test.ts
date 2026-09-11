@@ -6,6 +6,7 @@ import {
   restoreQueueScrollAnchor,
   shouldCaptureQueueScrollAnchor,
 } from '../queueScrollAnchor';
+import { shouldDismissOnScroll } from '../scrollInterrupt';
 
 function rect(top: number, bottom: number): DOMRect {
   return {
@@ -157,6 +158,39 @@ describe('queueScrollAnchor', () => {
       scrollTop: 300,
     })).toBe(true);
     expect(c.scrollTop).toBe(400);
+  });
+
+  it('declares its own scroll write, so an open menu is not closed by it', () => {
+    // The compensation runs on every arriving image while the reader sits
+    // still. Without a declaration, a menu opened over the queue reads that
+    // `scrollTop` write as a scroll-to-dismiss the moment any stray touchmove
+    // has marked a gesture — which a finger resting over the menu does.
+    const c = container(100, 700, 300);
+    c.appendChild(anchorEl('c1::media::a.png', 180, 320));
+
+    // A fixed clock, set past any window an earlier case in this file left
+    // behind — the suppression lives in module state, not in the anchor.
+    const base = Date.now() + 60_000;
+    const now = vi.spyOn(Date, 'now').mockReturnValue(base);
+    try {
+      const menuOpenedAt = base - 1000;
+      window.dispatchEvent(new Event('touchmove'));
+      expect(shouldDismissOnScroll(menuOpenedAt)).toBe(true);
+
+      restoreQueueScrollAnchor(c, {
+        itemId: 'c1::media::a.png',
+        offsetTop: -20,
+        scrollTop: 300,
+      });
+
+      expect(shouldDismissOnScroll(menuOpenedAt)).toBe(false);
+
+      // A ceiling, not a lock.
+      now.mockReturnValue(base + 500);
+      expect(shouldDismissOnScroll(menuOpenedAt)).toBe(true);
+    } finally {
+      now.mockRestore();
+    }
   });
 
   it('can repeatedly restore the same anchor through animated size changes', () => {

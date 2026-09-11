@@ -12,6 +12,8 @@ const mocks = vi.hoisted(() => ({
   expand: vi.fn(),
   setScopeTrail: vi.fn(),
   setScopeInstance: vi.fn(),
+  jumpToWorkflowItem: vi.fn(),
+  getWidgetIndexForInput: vi.fn(),
 }));
 
 vi.mock('@/hooks/useWorkflow', () => ({
@@ -19,6 +21,7 @@ vi.mock('@/hooks/useWorkflow', () => ({
     (selector: (state: Record<string, unknown>) => unknown) => selector(mocks.state),
     { getState: () => mocks.state },
   ),
+  getWidgetIndexForInput: (...args: unknown[]) => mocks.getWidgetIndexForInput(...args),
 }));
 
 vi.mock('@/hooks/useConnectionSectionFolds', () => ({
@@ -159,11 +162,15 @@ describe('SubgraphConnectionsSection', () => {
         { type: 'subgraph', id: SUBGRAPH_ID, placeholderNodeId: 99 },
       ],
       scrollToNode: mocks.scrollToNode,
+      jumpToWorkflowItem: mocks.jumpToWorkflowItem,
       revealNodeWithParents: mocks.revealNodeWithParents,
       setScopeTrail: mocks.setScopeTrail,
       setScopeInstance: mocks.setScopeInstance,
     };
     mocks.scrollToNode.mockClear();
+    mocks.jumpToWorkflowItem.mockClear();
+    mocks.getWidgetIndexForInput.mockClear();
+    mocks.getWidgetIndexForInput.mockReturnValue(null);
     mocks.revealNodeWithParents.mockClear();
     mocks.expand.mockClear();
     mocks.setScopeTrail.mockClear();
@@ -232,6 +239,31 @@ describe('SubgraphConnectionsSection', () => {
       'connection-button-2-output-0',
     );
     expect(menuItems()).toHaveLength(0);
+  });
+
+  it('lands a widget-backed slot on the widget row, not just the card', async () => {
+    // A big node can hold the card on screen while the promoted widget sits
+    // far below the fold — so the jump targets the ROW the boundary drives.
+    const workflow = makeWorkflow() as unknown as {
+      definitions: { subgraphs: Array<{ nodes: Array<{ inputs: Array<Record<string, unknown>> }> }> };
+    };
+    workflow.definitions.subgraphs[0].nodes[0].inputs[0].widget = { name: 'text' };
+    workflow.definitions.subgraphs[0].nodes[1].inputs[0].widget = { name: 'text' };
+    mocks.state.workflow = workflow;
+    mocks.state.nodeTypes = { CLIPTextEncode: {} };
+    mocks.getWidgetIndexForInput.mockReturnValue(3);
+    await render();
+
+    await act(async () => slotButton('Show 2 connections').click());
+    await act(async () => menuItems()[0].click());
+
+    expect(mocks.jumpToWorkflowItem).toHaveBeenCalledWith({
+      kind: 'widget',
+      itemKey: `${SUBGRAPH_ID}/node:1`,
+      nodeId: 1,
+      domId: 'widget-row-1-3',
+    });
+    expect(mocks.scrollToNode).not.toHaveBeenCalled();
   });
 
   it('still offers the Add buttons for a subgraph with no boundary slots yet', async () => {
@@ -388,6 +420,7 @@ describe('SubgraphConnectionsSection instances', () => {
         { type: 'subgraph', id: SUBGRAPH_ID, placeholderNodeId: 99 },
       ],
       scrollToNode: mocks.scrollToNode,
+      jumpToWorkflowItem: mocks.jumpToWorkflowItem,
       revealNodeWithParents: mocks.revealNodeWithParents,
       setScopeTrail: mocks.setScopeTrail,
       setScopeInstance: mocks.setScopeInstance,
@@ -521,6 +554,7 @@ describe('SubgraphConnectionsSection unwired inside', () => {
         { type: 'subgraph', id: SUBGRAPH_ID, placeholderNodeId: 99 },
       ],
       scrollToNode: mocks.scrollToNode,
+      jumpToWorkflowItem: mocks.jumpToWorkflowItem,
       revealNodeWithParents: mocks.revealNodeWithParents,
       setScopeTrail: mocks.setScopeTrail,
       setScopeInstance: mocks.setScopeInstance,
@@ -538,6 +572,9 @@ describe('SubgraphConnectionsSection unwired inside', () => {
   beforeEach(() => {
     useRowMenuStore.setState({ openKey: null });
     mocks.scrollToNode.mockClear();
+    mocks.jumpToWorkflowItem.mockClear();
+    mocks.getWidgetIndexForInput.mockClear();
+    mocks.getWidgetIndexForInput.mockReturnValue(null);
     mocks.setScopeTrail.mockClear();
     container = document.createElement('div');
     document.body.appendChild(container);
