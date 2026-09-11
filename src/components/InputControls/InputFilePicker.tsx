@@ -90,11 +90,13 @@ export function InputFilePicker({
 }: InputFilePickerProps) {
   const { t } = useI18n();
   const favorites = useOutputsStore((state) => state.favorites);
+  const storeRejected = useOutputsStore((state) => state.rejected);
   const toggleFavorite = useOutputsStore((state) => state.toggleFavorite);
   const setError = useWorkflowErrorsStore((state) => state.setError);
   const setFollowQueue = useWorkflowStore((state) => state.setFollowQueue);
   const viewerOpen = useImageViewerStore((state) => state.viewerOpen);
   const setViewerState = useImageViewerStore((state) => state.setViewerState);
+  const setViewerPickAction = useImageViewerStore((state) => state.setViewerPickAction);
   const selectionLocation = useMemo(
     () => getInputPickerSelectionLocation(selectedValue, defaultSource),
     [defaultSource, selectedValue],
@@ -137,22 +139,45 @@ export function InputFilePicker({
     const timer = window.setTimeout(async () => {
       setIsLoading(true);
       try {
+        const before = useOutputsStore.getState();
+        const acceptMarks = (result: FileItem[]) => {
+          useOutputsStore.setState((current) => {
+            const merge = (key: 'favorites' | 'rejected', field: 'favorite' | 'rejected') => {
+              const ids = new Set(current[key]);
+              for (const file of result) {
+                // Preserve edits made while this listing was in flight.
+                if (file[field] === undefined ||
+                  before.favorites.includes(file.id) !== current.favorites.includes(file.id) ||
+                  before.rejected.includes(file.id) !== current.rejected.includes(file.id)) continue;
+                if (file[field]) ids.add(file.id);
+                else ids.delete(file.id);
+              }
+              return [...ids];
+            };
+            return { favorites: merge('favorites', 'favorite'), rejected: merge('rejected', 'rejected') };
+          });
+        };
         const query = search.trim();
         if (query) {
           const result = await searchUserImagesByPrompt(source, query, null, showHidden);
-          if (!canceled) setSearchResults(result);
+          if (!canceled) {
+            acceptMarks(result);
+            setSearchResults(result);
+          }
         } else if (favoritesOnly) {
           // Favorites can live anywhere in the tree, so pull the whole source
           // recursively and let the favorites filter below flatten it — a
           // folder-scoped listing would hide favorites in nested folders.
           const result = await getUserImages(source, 1000, 0, sortMode, true, null, showHidden);
           if (!canceled) {
+            acceptMarks(result);
             setFiles(result);
             setSearchResults(null);
           }
         } else {
           const result = await getUserImages(source, 1000, 0, sortMode, false, folder, showHidden);
           if (!canceled) {
+            acceptMarks(result);
             setFiles(result);
             setSearchResults(null);
           }
@@ -196,6 +221,11 @@ export function InputFilePicker({
     setSearchResults(null);
   };
 
+  // Listings initialize marks in the shared store once. Subsequent viewer
+  // mutations then remain authoritative, including removals.
+  const favoriteIds = favorites;
+  const rejectedIds = storeRejected;
+
   const pickFile = async (file: FileItem) => {
     if (!isOutput) {
       // Subfolder files (including files beneath a hidden folder) are not part
@@ -234,7 +264,7 @@ export function InputFilePicker({
       // Carry the favorite over to the copied input so it stays flagged in the
       // input tab (where it otherwise couldn't be favorited).
       const copiedId = `${uploadFolder}/${value}`;
-      if (favorites.includes(file.id) && !favorites.includes(copiedId)) {
+      if (favoriteIds.includes(file.id) && !favoriteIds.includes(copiedId)) {
         toggleFavorite(copiedId);
       }
       onPick(value, "output");
@@ -246,15 +276,31 @@ export function InputFilePicker({
     }
   };
 
+  // Kept in a ref for the viewer's "Use this": that callback is registered once
+  // when the viewer opens and must not act on a stale copy of this closure.
+  const pickFileRef = useRef(pickFile);
+  useEffect(() => {
+    pickFileRef.current = pickFile;
+  });
+
+  // A closed picker owns no offer. The viewer store also drops it when the
+  // viewer itself closes; this covers the picker being dismissed underneath.
+  useEffect(() => {
+    if (open) return;
+    setViewerPickAction(null);
+  }, [open, setViewerPickAction]);
+  useEffect(() => () => setViewerPickAction(null), [setViewerPickAction]);
+
+
   const displayedFiles = useMemo(() => {
     let result = searchResults ? projectInputSearchResults(searchResults, folder, source) : [...files];
     if (favoritesOnly) {
-      result = result.filter((file) => favorites.includes(file.id));
+      result = result.filter((file) => favoriteIds.includes(file.id));
     }
     const pickableType = supportsVideoUpload ? "video" : "image";
     result = result.filter((file) => file.type === "folder" || file.type === pickableType);
     return sortInputPickerFiles(result, sortMode);
-  }, [favorites, favoritesOnly, files, folder, searchResults, sortMode, source, supportsVideoUpload]);
+  }, [favoriteIds, favoritesOnly, files, folder, searchResults, sortMode, source, supportsVideoUpload]);
 
   const { folders, nonFolders } = useMemo(() => ({
     folders: displayedFiles.filter((file) => file.type === "folder"),
@@ -308,6 +354,23 @@ export function InputFilePicker({
     }));
     // This is a fixed browse-list preview, not the queue-following gallery.
     setFollowQueue(false);
+    // The viewer opened from here is still part of choosing a file: you page
+    // through the same list at full size precisely so you can tell which one
+    // you want. Offer to take the one on screen rather than making the user
+    // close the viewer and find that thumbnail again. Routed through a ref so
+    // the offer always runs the current `pickFile` rather than the closure
+    // captured when the viewer opened.
+    setViewerPickAction({
+      label: t("Select current"),
+      canPick: (item) => Boolean(
+        item.file && isOutputFileSelectable(item.file.type, supportsVideoUpload),
+      ),
+      onPick: (item) => {
+        if (!item.file) return;
+        setViewerState({ viewerOpen: false });
+        void pickFileRef.current(item.file);
+      },
+    });
     setViewerState({
       viewerImages,
       viewerIndex: index,
@@ -481,7 +544,7 @@ export function InputFilePicker({
             toggleFoldersCollapsed={() => setFoldersCollapsed((current) => !current)}
             selectionMode={false}
             selectedIds={[]}
-            favorites={favorites}
+            favorites={favoriteIds}
             setCurrentFolder={navigateToFolder}
             handleOpen={() => {}}
             handleMenu={noop}
@@ -495,7 +558,8 @@ export function InputFilePicker({
             viewMode={viewMode}
             selectionMode={false}
             selectedIds={selectionLocation ? [selectionLocation.fileId] : []}
-            favorites={favorites}
+            favorites={favoriteIds}
+            rejected={rejectedIds}
             setCurrentFolder={navigateToFolder}
             handleOpen={(file) => void pickFile(file)}
             handleLongPressOpen={openFileViewer}

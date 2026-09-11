@@ -3,6 +3,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useDismissOnOutsideClick } from '@/hooks/useDismissOnOutsideClick';
 import { useNavigationStore } from '@/hooks/useNavigation';
+import { markProgrammaticScroll } from '@/utils/scrollInterrupt';
 
 function Harness({ onDismiss }: { onDismiss: () => void }) {
   const [open] = useState(true);
@@ -54,13 +55,68 @@ describe('useDismissOnOutsideClick', () => {
     expect(onDismiss).not.toHaveBeenCalled();
   });
 
-  it('still dismisses on a scroll once the grace window has passed', async () => {
+  it('still dismisses on a deliberate scroll once the grace window has passed', async () => {
     const onDismiss = vi.fn();
-    const now = vi.spyOn(performance, 'now');
+    const now = vi.spyOn(Date, 'now');
     now.mockReturnValue(0);
     await render(onDismiss);
 
     now.mockReturnValue(1000);
+    await act(async () => {
+      // The gesture, then the scroll it caused. Both are needed: the wheel is
+      // what marks this as the user's own doing.
+      window.dispatchEvent(new Event('wheel'));
+      document.dispatchEvent(new Event('scroll', { bubbles: false }));
+    });
+
+    expect(onDismiss).toHaveBeenCalledTimes(1);
+  });
+
+  it('survives momentum from the fling the opening tap interrupted', async () => {
+    // The case the grace window alone could never cover: a fling keeps firing
+    // `scroll` for seconds after the finger has left the glass, so a menu
+    // opened mid-coast was killed by the first momentum frame past the grace.
+    // The gesture happened BEFORE the open, so it is not a dismissal.
+    const onDismiss = vi.fn();
+    const now = vi.spyOn(Date, 'now');
+    now.mockReturnValue(0);
+    window.dispatchEvent(new Event('touchmove'));
+
+    now.mockReturnValue(100);
+    await render(onDismiss);
+
+    now.mockReturnValue(1200);
+    await act(async () => {
+      document.dispatchEvent(new Event('scroll', { bubbles: false }));
+      document.dispatchEvent(new Event('scroll', { bubbles: false }));
+    });
+
+    expect(onDismiss).not.toHaveBeenCalled();
+  });
+
+  it('ignores the scroll the app performs to steady a list under it', async () => {
+    // The queue panel compensates for an arriving image by writing scrollTop,
+    // which nobody asked for. The gesture test alone cannot cover this: a
+    // finger resting or drifting over the open menu marks a touchmove, and the
+    // next compensation pass would then read as a dismissal. Only the code
+    // doing the scrolling knows, so it says so.
+    const onDismiss = vi.fn();
+    const now = vi.spyOn(Date, 'now');
+    now.mockReturnValue(0);
+    await render(onDismiss);
+
+    now.mockReturnValue(1000);
+    window.dispatchEvent(new Event('touchmove'));
+    await act(async () => {
+      markProgrammaticScroll();
+      document.dispatchEvent(new Event('scroll', { bubbles: false }));
+    });
+
+    expect(onDismiss).not.toHaveBeenCalled();
+
+    // A ceiling, not a lock: the gesture already made still dismisses once the
+    // app's own scroll has settled.
+    now.mockReturnValue(1000 + 500);
     await act(async () => {
       document.dispatchEvent(new Event('scroll', { bubbles: false }));
     });

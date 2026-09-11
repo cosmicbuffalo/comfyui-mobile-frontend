@@ -132,7 +132,8 @@ def safe_join(base_dir, *rel_parts):
     return target
 
 
-# Cache of a folder's recursive (count, total_size), keyed by (abs_path, show_hidden).
+# Cache of a folder's recursive (count, total_size, newest created, newest
+# modified), keyed by (abs_path, show_hidden).
 # Walking a subtree to count files + sum sizes is the most expensive part of a
 # default (non-flattened) listing, and the outputs view re-lists constantly, so we
 # memoize it. The folder's own st_mtime_ns invalidates the entry when its direct
@@ -171,6 +172,8 @@ def _is_manually_hidden_rel_path(rel_path, hidden_paths):
 def _compute_folder_stats(base_dir, full_path, show_hidden, hidden_paths=()):
     count = 0
     total_size = 0
+    newest_created = 0
+    newest_modified = 0
     # Set membership, not a linear scan: this is consulted once per walked entry.
     hidden_paths = frozenset(hidden_paths)
     for walk_root, walk_dirs, files in os.walk(full_path):
@@ -197,25 +200,38 @@ def _compute_folder_stats(base_dir, full_path, show_hidden, hidden_paths=()):
         count += len(visible_files)
         for f in visible_files:
             try:
-                total_size += os.path.getsize(os.path.join(walk_root, f))
+                stat = os.stat(os.path.join(walk_root, f))
             except OSError:
-                pass
-    return count, total_size
+                continue
+            total_size += stat.st_size
+            created_ms, modified_ms = _stat_dates_ms(stat)
+            if created_ms > newest_created:
+                newest_created = created_ms
+            if modified_ms > newest_modified:
+                newest_modified = modified_ms
+    return count, total_size, newest_created, newest_modified
 
 
 def folder_stats(base_dir, full_path, show_hidden, dir_mtime_ns, hidden_paths=()):
-    """Recursive (count, total_size) for a folder, memoized. `dir_mtime_ns` is the
-    folder's own st_mtime_ns; a change invalidates the cache, and a short TTL
-    backstops deep-subtree changes that don't bump the top folder's mtime."""
+    """Recursive (count, total_size, newest_created_ms, newest_modified_ms) for a
+    folder, memoized. `dir_mtime_ns` is the folder's own st_mtime_ns; a change
+    invalidates the cache, and a short TTL backstops deep-subtree changes that
+    don't bump the top folder's mtime.
+
+    The two timestamps are the newest over every *visible* descendant file, so
+    they honor `show_hidden`/`hidden_paths` exactly like the count does: a
+    folder never advertises a date belonging to a file the listing won't show.
+    Both are 0 for a folder with no visible files.
+    """
     normalized_hidden_paths = _normalize_hidden_paths(hidden_paths)
     key = (full_path, bool(show_hidden), normalized_hidden_paths)
     now = time.monotonic()
     cached = _FOLDER_STATS_CACHE.get(key)
     if cached is not None:
-        c_mtime, c_deadline, c_count, c_size = cached
+        c_mtime, c_deadline, c_stats = cached
         if c_mtime == dir_mtime_ns and now < c_deadline:
-            return c_count, c_size
-    count, total_size = _compute_folder_stats(
+            return c_stats
+    stats = _compute_folder_stats(
         base_dir,
         full_path,
         show_hidden,
@@ -225,8 +241,8 @@ def folder_stats(base_dir, full_path, show_hidden, dir_mtime_ns, hidden_paths=()
     # dropping everything on overflow is cheap and simpler than an LRU.
     if len(_FOLDER_STATS_CACHE) >= _FOLDER_STATS_CACHE_MAX:
         _FOLDER_STATS_CACHE.clear()
-    _FOLDER_STATS_CACHE[key] = (dir_mtime_ns, now + _FOLDER_STATS_TTL_SECONDS, count, total_size)
-    return count, total_size
+    _FOLDER_STATS_CACHE[key] = (dir_mtime_ns, now + _FOLDER_STATS_TTL_SECONDS, stats)
+    return stats
 
 
 def _rel_fwd(path, start):
@@ -532,22 +548,29 @@ def list_files(base_dir, target_path, *, recursive=False, show_hidden=False,
                     dir_mtime_ns = 0
                     dir_created_ms = 0
                     dir_modified_ms = 0
-                count, total_size = folder_stats(
+                count, total_size, content_created_ms, content_modified_ms = folder_stats(
                     base_dir,
                     full_path,
                     show_hidden,
                     dir_mtime_ns,
                     normalized_hidden_paths,
                 )
+                # A folder's dates describe its contents, not its inode. A
+                # directory's own mtime moves when a direct child is renamed or
+                # deleted and stays put when a file lands deeper in the subtree,
+                # so it reads both too new and too old for the question the user
+                # is actually asking ("when did anything in here happen?"). The
+                # inode dates only stand in for a folder with nothing visible in
+                # it, which would otherwise sort as if it were from 1970.
                 results.append({
                     "name": name,
                     "type": "dir",
                     "path": rel_path,
                     "count": count,
                     "size": total_size,
-                    "date": dir_mtime_ms,
-                    "createdDate": dir_created_ms,
-                    "modifiedDate": dir_modified_ms,
+                    "date": content_modified_ms or dir_mtime_ms,
+                    "createdDate": content_created_ms or dir_created_ms,
+                    "modifiedDate": content_modified_ms or dir_modified_ms,
                 })
             else:
                 item = process_file(target_path, name)

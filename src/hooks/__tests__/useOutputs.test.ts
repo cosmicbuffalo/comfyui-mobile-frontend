@@ -1048,6 +1048,76 @@ describe('multi-tab selection', () => {
   });
 });
 
+describe('turning hidden files back off leaves the folder it was showing', () => {
+  it('climbs out of a dot-hidden folder', async () => {
+    useOutputsStore.setState({ currentFolder: 'album/.private/raw' });
+
+    useOutputsStore.getState().syncShowHidden(false);
+
+    expect(useOutputsStore.getState().currentFolder).toBe('album');
+  });
+
+  it('climbs out of a folder the user marked hidden, which has an ordinary name', async () => {
+    // The other half of "hidden", and the one the auto-hide timer kept sitting
+    // inside: a marked folder is named like any other, so a walk that only
+    // looks for a leading dot walked straight past it and left the panel
+    // showing the contents the timer had just turned off.
+    useOutputsStore.setState({
+      currentFolder: 'album/personal/raw',
+      hiddenFolderPaths: ['album/personal'],
+    });
+
+    useOutputsStore.getState().syncShowHidden(false);
+
+    expect(useOutputsStore.getState().currentFolder).toBe('album');
+  });
+
+  it('stays put when nothing on the path was hidden', async () => {
+    useOutputsStore.setState({ currentFolder: 'album/raw', hiddenFolderPaths: [] });
+
+    useOutputsStore.getState().syncShowHidden(false);
+
+    expect(useOutputsStore.getState().currentFolder).toBe('album/raw');
+  });
+
+  it('takes the parked tabs and per-source folders with it', async () => {
+    // Correcting only what is on screen leaves the panel one tab-tap from
+    // walking straight back into the folder it just left.
+    useOutputsStore.setState({
+      source: 'output',
+      currentFolder: 'album/personal/raw',
+      hiddenFolderPaths: ['album/personal'],
+      tabs: [
+        { id: 'a', source: 'output', folder: 'album/personal/raw' },
+        { id: 'b', source: 'output', folder: 'album/personal' },
+        { id: 'c', source: 'input', folder: 'refs/.stash' },
+      ],
+      activeTabId: 'a',
+      folderBySource: { output: 'album/personal', input: 'refs/.stash', temp: null },
+    });
+
+    useOutputsStore.getState().syncShowHidden(false);
+
+    const state = useOutputsStore.getState();
+    expect(state.currentFolder).toBe('album');
+    expect(state.tabs.map((tab) => tab.folder)).toEqual(['album', 'album', 'refs']);
+    // A mark is relative to its own source, so `album/personal` says nothing
+    // about the inputs — but a dot-folder is hidden by name in every source.
+    expect(state.folderBySource).toEqual({ output: 'album', input: 'refs', temp: null });
+  });
+
+  it('does not climb when hidden files are being switched ON', async () => {
+    useOutputsStore.setState({
+      currentFolder: 'album/personal',
+      hiddenFolderPaths: ['album/personal'],
+    });
+
+    useOutputsStore.getState().syncShowHidden(true);
+
+    expect(useOutputsStore.getState().currentFolder).toBe('album/personal');
+  });
+});
+
 describe('flushFileStateMutations', () => {
   it('gives up on a write that never settles instead of wedging the listing', async () => {
     // setFileState is a plain fetch with no timeout; on a dropped mobile link the

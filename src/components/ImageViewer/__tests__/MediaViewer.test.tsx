@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ViewerImage } from '@/utils/viewerImages';
 import { MediaViewer } from '@/components/ImageViewer/MediaViewer';
 import { useImageViewerStore } from '@/hooks/useImageViewer';
+import { useWorkflowStore } from '@/hooks/useWorkflow';
 
 const getFileWorkflowAvailabilityMock = vi.fn();
 const getImageMetadataMock = vi.fn();
@@ -1053,6 +1054,62 @@ describe('MediaViewer workflow availability', () => {
     });
   });
 
+  // A video file carries no readable generation metadata of its own — the
+  // metadata endpoint answers for one with the same-basename image beside it,
+  // which is another file's metadata. The viewer must not claim it.
+  it('offers no metadata toggle for a video and never fetches its sibling metadata', async () => {
+    vi.useFakeTimers();
+
+    await act(async () => {
+      root.render(
+        <MediaViewer
+          open={true}
+          items={[makeVideoItem()]}
+          index={0}
+          showMetadataToggle
+          onIndexChange={() => {}}
+          onClose={() => {}}
+          onDelete={() => {}}
+          onLoadWorkflow={() => {}}
+          onLoadInWorkflow={() => {}}
+        />,
+      );
+    });
+
+    await settleWorkflowProbe();
+
+    expect(document.querySelector('button[aria-label="Toggle metadata"]')).toBeNull();
+    expect(getImageMetadataMock).not.toHaveBeenCalled();
+  });
+
+  it('keeps the metadata toggle on a video whose item carries its own run metadata', async () => {
+    vi.useFakeTimers();
+    // Queue/history items attach metadata read from the run's own prompt —
+    // honestly the video's — so the toggle stays, with no sibling fetch.
+    const item: ViewerImage = { ...makeVideoItem(), metadata: { seeds: [123] } };
+
+    await act(async () => {
+      root.render(
+        <MediaViewer
+          open={true}
+          items={[item]}
+          index={0}
+          showMetadataToggle
+          onIndexChange={() => {}}
+          onClose={() => {}}
+          onDelete={() => {}}
+          onLoadWorkflow={() => {}}
+          onLoadInWorkflow={() => {}}
+        />,
+      );
+    });
+
+    await settleWorkflowProbe();
+
+    expect(document.querySelector('button[aria-label="Toggle metadata"]')).not.toBeNull();
+    expect(getImageMetadataMock).not.toHaveBeenCalled();
+  });
+
 });
 
 // Deleting an output leaves its history entry — and so its viewer slot —
@@ -1157,5 +1214,320 @@ describe('MediaViewer deleted media', () => {
 
     expect(onIndexChange).not.toHaveBeenCalled();
     expect(document.querySelector('.image-load-error')).not.toBeNull();
+  });
+});
+
+describe('MediaViewer follow queue', () => {
+  let container: HTMLDivElement;
+  let root: Root;
+  let onIndexChange: ReturnType<typeof vi.fn<(index: number) => void>>;
+
+  const item = (name: string) => makeImageItem(`output/${name}`, name);
+
+  const viewer = (items: ViewerImage[], index: number) =>
+    act(async () => {
+      root.render(
+        <MediaViewer
+          open={true}
+          items={items}
+          index={index}
+          onIndexChange={onIndexChange}
+          onClose={() => {}}
+          onDelete={() => {}}
+          onLoadWorkflow={() => {}}
+          onLoadInWorkflow={() => {}}
+        />,
+      );
+    });
+
+  beforeEach(() => {
+    vi.stubGlobal('ResizeObserver', ResizeObserverMock);
+    vi.stubGlobal('fetch', vi.fn(async () => ({ status: 500 })));
+    container = document.createElement('div');
+    document.body.appendChild(container);
+    root = createRoot(container);
+    onIndexChange = vi.fn();
+    getFileWorkflowAvailabilityMock.mockReset();
+    getFileWorkflowAvailabilityMock.mockResolvedValue(false);
+    getImageMetadataMock.mockReset();
+    getImageMetadataMock.mockResolvedValue({});
+    useWorkflowStore.getState().setFollowQueue(true);
+  });
+
+  afterEach(async () => {
+    await act(async () => {
+      root.unmount();
+    });
+    container.remove();
+    vi.unstubAllGlobals();
+    useWorkflowStore.getState().setFollowQueue(false);
+  });
+
+  it('stops following once the user cycles to another generation', async () => {
+    // Following exists to yank the viewer to the newest output the moment one
+    // lands. Stepping away is a decision to look at THAT one, so leaving the
+    // mode on meant every browse backwards was undone by the next completion.
+    await viewer([item('newest.png'), item('older.png')], 0);
+
+    await act(async () => {
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight' }));
+    });
+
+    expect(onIndexChange).toHaveBeenCalledWith(1);
+    expect(useWorkflowStore.getState().followQueue).toBe(false);
+  });
+
+  it('keeps following when the step could not go anywhere', async () => {
+    await viewer([item('only.png')], 0);
+
+    await act(async () => {
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight' }));
+    });
+
+    expect(onIndexChange).not.toHaveBeenCalled();
+    expect(useWorkflowStore.getState().followQueue).toBe(true);
+  });
+});
+
+describe('MediaViewer video framing', () => {
+  let container: HTMLDivElement;
+  let root: Root;
+  let resizeCallbacks: Array<() => void>;
+
+  /** Captures its callback so a test can drive a container measurement pass. */
+  class CapturingResizeObserver {
+    constructor(callback: () => void) {
+      resizeCallbacks.push(callback);
+    }
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  }
+
+  const measure = (el: Element, width: number, height: number) => {
+    Object.defineProperty(el, 'clientWidth', { value: width, configurable: true });
+    Object.defineProperty(el, 'clientHeight', { value: height, configurable: true });
+  };
+
+  beforeEach(() => {
+    resizeCallbacks = [];
+    // jsdom defines no pointer capture at all, and the viewer claims it on
+    // every pointerdown. Without these the double-tap below throws out of
+    // React's dispatch and vitest reports an unhandled error. Assigned rather
+    // than spied because there is nothing there to spy on.
+    Object.assign(Element.prototype, {
+      setPointerCapture: () => {},
+      releasePointerCapture: () => {},
+      hasPointerCapture: () => false,
+    });
+    vi.stubGlobal('ResizeObserver', CapturingResizeObserver);
+    vi.stubGlobal('fetch', vi.fn(async () => ({ status: 500 })));
+    container = document.createElement('div');
+    document.body.appendChild(container);
+    root = createRoot(container);
+    getFileWorkflowAvailabilityMock.mockReset();
+    getFileWorkflowAvailabilityMock.mockResolvedValue(false);
+    getImageMetadataMock.mockReset();
+    getImageMetadataMock.mockResolvedValue({});
+  });
+
+  afterEach(async () => {
+    await act(async () => {
+      root.unmount();
+    });
+    container.remove();
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  /** Render the viewer on `items` at `index`, measuring the viewport at 400x800. */
+  const openAt = async (items: ViewerImage[], index: number) => {
+    await act(async () => {
+      root.render(
+        <MediaViewer
+          open={true}
+          items={items}
+          index={index}
+          onIndexChange={() => {}}
+          onClose={() => {}}
+          onDelete={() => {}}
+          onLoadWorkflow={() => {}}
+          onLoadInWorkflow={() => {}}
+        />,
+      );
+    });
+  };
+
+  /** Report a portrait clip's dimensions and let the viewer measure. */
+  const reportPortraitVideo = async () => {
+    const viewport = document.querySelector('#media-viewer-overlay > div')!;
+    measure(viewport, 400, 800);
+    const video = document.querySelector<HTMLVideoElement>('#media-viewer-overlay video')!;
+    Object.defineProperty(video, 'videoWidth', { value: 720, configurable: true });
+    Object.defineProperty(video, 'videoHeight', { value: 1600, configurable: true });
+    await act(async () => {
+      video.dispatchEvent(new Event('loadedmetadata'));
+      resizeCallbacks.forEach((run) => run());
+    });
+    return video;
+  };
+
+  const scaleOf = (video: HTMLVideoElement) =>
+    Number(/scale\(([\d.]+)\)/.exec(video.style.transform)?.[1]);
+
+  it('fits a new arrival to the height even after the last one was zoomed to cover', async () => {
+    // Follow mode delivers every generation at index 0, so sitting at the front
+    // means the index never changes — and the zoom mode used to reset only on
+    // an index change. A `cover` left behind by a double tap therefore carried
+    // into the next arrival, and for a portrait clip `cover` IS scale 1, which
+    // is fit-to-width. Intermittent because it needed a double tap first.
+    const first = { ...makeVideoItem('output/renders/first.mp4'), src: '/view?filename=first.mp4&subfolder=renders&type=output' };
+    const second = { ...makeVideoItem('output/renders/second.mp4'), src: '/view?filename=second.mp4&subfolder=renders&type=output' };
+
+    await openAt([first], 0);
+    const firstVideo = await reportPortraitVideo();
+    expect(scaleOf(firstVideo)).toBeLessThan(1);
+
+    // Double tap to cover — two taps inside the double-tap window.
+    const viewport = document.querySelector('#media-viewer-overlay > div')!;
+    const tap = (id: number) => {
+      const down = new MouseEvent('pointerdown', { bubbles: true, clientX: 200, clientY: 400 });
+      const up = new MouseEvent('pointerup', { bubbles: true, clientX: 200, clientY: 400 });
+      for (const event of [down, up]) {
+        Object.defineProperties(event, { pointerId: { value: id }, isPrimary: { value: true } });
+      }
+      viewport.dispatchEvent(down);
+      viewport.dispatchEvent(up);
+    };
+    await act(async () => { tap(1); tap(2); });
+    expect(scaleOf(firstVideo)).toBe(1);
+
+    // The next generation lands at the same index — a different clip entirely.
+    await openAt([second], 0);
+    const secondVideo = await reportPortraitVideo();
+    expect(scaleOf(secondVideo)).toBeLessThan(1);
+  });
+
+  it('fits a tall video to the screen height even when its metadata arrived first', async () => {
+    // The race this closes: the effect that clears the recorded dimensions on
+    // an item change and the element's own `loadedmetadata` are not ordered
+    // against each other. When the event won, its dimensions were recorded and
+    // then wiped — and since it never fires twice, nothing ever re-measured.
+    // A missing base size makes the fit scale 1, which is fit-to-WIDTH, so a
+    // portrait clip opened cropped to the full screen width.
+    await act(async () => {
+      root.render(
+        <MediaViewer
+          open={true}
+          items={[makeVideoItem()]}
+          index={0}
+          onIndexChange={() => {}}
+          onClose={() => {}}
+          onDelete={() => {}}
+          onLoadWorkflow={() => {}}
+          onLoadInWorkflow={() => {}}
+        />,
+      );
+    });
+
+    const viewport = document.querySelector('#media-viewer-overlay > div')!;
+    measure(viewport, 400, 800);
+    const video = document.querySelector<HTMLVideoElement>('#media-viewer-overlay video')!;
+    // Reported by the element but never handed to React — the state the lost
+    // `loadedmetadata` leaves behind.
+    Object.defineProperty(video, 'videoWidth', { value: 720, configurable: true });
+    Object.defineProperty(video, 'videoHeight', { value: 1600, configurable: true });
+
+    await act(async () => {
+      resizeCallbacks.forEach((run) => run());
+    });
+
+    // Width-fitted the clip would stand 888px in an 800px viewport, so fitting
+    // asks for 800/888 of that.
+    const scale = Number(/scale\(([\d.]+)\)/.exec(video.style.transform)?.[1]);
+    expect(scale).toBeCloseTo(800 / (1600 * (400 / 720)), 3);
+    expect(scale).toBeLessThan(1);
+  });
+});
+
+describe('MediaViewer pick mode', () => {
+  let container: HTMLDivElement;
+  let root: Root;
+
+  const render = (pickAction: Record<string, unknown> | null) =>
+    act(async () => {
+      root.render(
+        <MediaViewer
+          open={true}
+          items={[makeImageItem('output/a.png', 'a.png')]}
+          index={0}
+          onIndexChange={() => {}}
+          onClose={() => {}}
+          onDelete={() => {}}
+          onLoadWorkflow={() => {}}
+          onLoadInWorkflow={() => {}}
+          onToggleFavorite={() => {}}
+          onReject={() => {}}
+          onDownload={() => {}}
+          showMetadataToggle
+          pickAction={pickAction as never}
+        />,
+      );
+    });
+
+  beforeEach(() => {
+    vi.stubGlobal('ResizeObserver', ResizeObserverMock);
+    vi.stubGlobal('fetch', vi.fn(async () => ({ status: 500 })));
+    container = document.createElement('div');
+    document.body.appendChild(container);
+    root = createRoot(container);
+    getFileWorkflowAvailabilityMock.mockReset();
+    getFileWorkflowAvailabilityMock.mockResolvedValue(true);
+    getImageMetadataMock.mockReset();
+    getImageMetadataMock.mockResolvedValue({});
+  });
+
+  afterEach(async () => {
+    await act(async () => {
+      root.unmount();
+    });
+    container.remove();
+    vi.unstubAllGlobals();
+  });
+
+  it('centres the pick button and hands the item on screen back', async () => {
+    const onPick = vi.fn();
+    await render({ label: 'Select current', onPick });
+
+    const button = document.querySelector<HTMLButtonElement>('.viewer-pick-action');
+    expect(button?.textContent).toBe('Select current');
+    // Centred on the row, not merely between the side groups.
+    expect(button?.className).toContain('left-1/2');
+    expect(button?.className).toContain('-translate-x-1/2');
+
+    await act(async () => button?.click());
+    expect(onPick).toHaveBeenCalledTimes(1);
+    expect((onPick.mock.calls[0][0] as { filename?: string }).filename).toBe('a.png');
+  });
+
+  it('clears the room the answer needs, the way select mode does', async () => {
+    // Delete, download and the two "take this into the workflow" buttons all
+    // act on the file as a destination, which is not the question being asked
+    // while picking — and the room they take is what stops the answer being
+    // centred. Triage and metadata stay.
+    await render({ label: 'Select current', onPick: () => {} });
+
+    expect(document.querySelector('button[aria-label="Delete output"]')).toBeNull();
+    expect(document.querySelector('button[aria-label="Use in workflow"]')).toBeNull();
+    expect(document.querySelector('.viewer-pick-action')).not.toBeNull();
+    expect(document.querySelector('button[aria-label="Favorite"]')).not.toBeNull();
+  });
+
+  it('leaves the ordinary viewer untouched when nothing is picking', async () => {
+    await render(null);
+
+    expect(document.querySelector('.viewer-pick-action')).toBeNull();
+    expect(document.querySelector('button[aria-label="Delete output"]')).not.toBeNull();
+    expect(document.querySelector('button[aria-label="Use in workflow"]')).not.toBeNull();
   });
 });

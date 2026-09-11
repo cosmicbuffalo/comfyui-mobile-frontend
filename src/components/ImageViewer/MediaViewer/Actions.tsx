@@ -19,6 +19,13 @@ interface MediaViewerActionsProps {
   canReject: boolean;
   isRejected: boolean;
   canDownload: boolean;
+  /**
+   * Label for the "take this one" button offered by whatever opened the viewer
+   * (the input picker). Absent for an ordinary viewing session.
+   */
+  pickLabel?: string;
+  /** Absent when the item on screen isn't something the picker can accept. */
+  onPick?: () => void;
   deleteDisabled?: boolean;
   loadWorkflowProgress?: number | null;
   onDelete: () => void;
@@ -62,6 +69,8 @@ export function MediaViewerActions({
   canReject,
   isRejected,
   canDownload,
+  pickLabel,
+  onPick,
   deleteDisabled,
   loadWorkflowProgress,
   onDelete,
@@ -79,13 +88,23 @@ export function MediaViewerActions({
   onToggleSelection,
 }: MediaViewerActionsProps) {
   const { t } = useI18n();
+  // Picking is a mode, the way select mode is, and it strips the row for the
+  // same reason: the viewer has been opened to answer one question, so the
+  // controls that act on the file as a destination — delete, download, and the
+  // two "take this into the workflow" buttons the pick button supersedes — are
+  // noise in front of it, and the room they take is what stops the answer being
+  // centred. Reject, favourite and the metadata toggle stay: triaging and
+  // checking what made a file are part of choosing between them.
+  const picking = !selectionMode && Boolean(pickLabel && onPick);
   return (
     <div
       className="absolute inset-x-0 px-3 pb-2 pt-2 flex items-center justify-between"
       style={{ bottom: "calc(var(--bottom-bar-offset, 0px) + 4px)" }}
     >
       <div className="flex items-center gap-2">
-        {!selectionMode && <DeleteButton onClick={onDelete} disabled={deleteDisabled} />}
+        {!selectionMode && !picking && (
+          <DeleteButton onClick={onDelete} disabled={deleteDisabled} />
+        )}
         {canReject && (
           <RejectButton
             onClick={onReject}
@@ -94,33 +113,46 @@ export function MediaViewerActions({
           />
         )}
       </div>
+      {/* Centred on the ROW, not between the two groups: absolute positioning
+          is what keeps it on the screen's midline however wide the side groups
+          happen to be, which a middle flex child cannot promise. */}
+      {picking && (
+        <button
+          type="button"
+          onClick={onPick}
+          className="viewer-pick-action pointer-events-auto absolute left-1/2 -translate-x-1/2 h-9 rounded-full bg-cyan-500 px-5 text-sm font-semibold text-slate-950 shadow-lg transition-colors hover:bg-cyan-400"
+        >
+          {pickLabel}
+        </button>
+      )}
       <div className="flex items-center gap-2" style={{ marginRight: rightInset }}>
         {canFavorite && (
           <FavoriteButton onClick={onToggleFavorite} isFavorited={isFavorited} />
         )}
-        {!selectionMode && canDownload && (
+        {!selectionMode && !picking && canDownload && (
           <DownloadButton
             onClick={onDownload}
             fileId={downloadFileId}
             onLoadingChange={onDownloadLoadingChange}
           />
         )}
-        {!selectionMode && canLoadWorkflow && (
+        {!selectionMode && !picking && canLoadWorkflow && (
           <LoadWorkflowButton
             onClick={onLoadWorkflow}
             progress={loadWorkflowProgress}
           />
         )}
-        {!isVideo && (
-          <>
-          {!selectionMode && <UseInWorkflowButton onClick={onUseInWorkflow} />}
-          {showMetadataToggle && (
-            <MetadataButton
-              onClick={onToggleMetadata}
-              disabled={!canToggleMetadata}
-            />
-          )}
-          </>
+        {!isVideo && !selectionMode && !picking && (
+          <UseInWorkflowButton onClick={onUseInWorkflow} />
+        )}
+        {/* Not image-only: a video whose item carries its own run metadata
+            gets the toggle too — the caller passes showMetadataToggle=false
+            for a video with nothing of its own to show. */}
+        {showMetadataToggle && (
+          <MetadataButton
+            onClick={onToggleMetadata}
+            disabled={!canToggleMetadata}
+          />
         )}
         {/* Rightmost in this corner, so the checkbox sits where the thumb
             already is for selection work. Built on OverlayCircleButton like

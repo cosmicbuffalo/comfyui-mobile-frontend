@@ -37,6 +37,7 @@ import {
 import { ContextMenuBuilder } from '@/components/menus/ContextMenuBuilder';
 import { ConnectionRow } from './ConnectionRow';
 import { getTypeClass } from './slotTypeClass';
+import { shouldDismissOnScroll } from '@/utils/scrollInterrupt';
 
 function normalizeTypes(type: string): string[] {
   return String(type)
@@ -573,6 +574,7 @@ export const ConnectionButton = memo(function ConnectionButton({
 
   useEffect(() => {
     if (!menuOpen) return;
+    const openedAt = Date.now();
     const updatePosition = () => updatePositionRef.current?.();
     const handleClickOutside = (event: MouseEvent) => {
       if (!menuRef.current || !event.target) return;
@@ -584,6 +586,10 @@ export const ConnectionButton = memo(function ConnectionButton({
       }
     };
     const handleScroll = (event: Event) => {
+      // A fling's momentum keeps scrolling for seconds after the finger lifts,
+      // which used to close this menu the instant it opened. Only a gesture
+      // made after the open counts as scroll-to-dismiss.
+      if (!shouldDismissOnScroll(openedAt)) return;
       const target = event.target as Node | null;
       if (menuRef.current && target && menuRef.current.contains(target)) {
         return;

@@ -13,11 +13,29 @@ import { StaleBuildNotice } from '@/components/StaleBuildNotice';
  * This deliberately never rejects, so it needs no error boundary above it and
  * cannot take down anything outside its own Suspense.
  */
+const registeredLoaders: Array<() => Promise<unknown>> = [];
+
+/**
+ * Warm every lazyPanel chunk in the background.
+ *
+ * A running session that already holds all of its chunks cannot be stranded by
+ * a server update: the content-hashed files it would need are exactly the ones
+ * it has. Called once after startup has settled (see App), so the prefetch
+ * never competes with the requests first paint depends on. Failures are
+ * ignored — the render path retries and has the stale-build fallback.
+ */
+export function prefetchLazyPanels(): void {
+  for (const load of registeredLoaders) {
+    void load().catch(() => {});
+  }
+}
+
 // The props are the loaded component's own; this only passes them through.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function lazyPanel<T extends ComponentType<any>>(
   load: () => Promise<{ default: T }>,
 ): LazyExoticComponent<T> {
+  registeredLoaders.push(load);
   return lazy(async (): Promise<{ default: T }> => {
     try {
       return await load();

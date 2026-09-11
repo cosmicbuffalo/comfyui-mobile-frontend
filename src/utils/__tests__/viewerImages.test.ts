@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   buildOutputPreferredViewerImages,
   buildViewerImages,
+  ensureViewerImageIdentity,
   fileIdFromAssetUrl,
   getHistoryImageFileId,
   type HistoryImageItem,
@@ -162,5 +163,44 @@ describe('fileIdFromAssetUrl source parameter', () => {
   it('still reads /view URLs, which spell it `type`', () => {
     expect(fileIdFromAssetUrl('/view?filename=c.png&subfolder=&type=output'))
       .toBe('output/c.png');
+  });
+});
+
+describe('ensureViewerImageIdentity', () => {
+  it('leaves an item that already knows which file it is exactly as it was', () => {
+    const item = {
+      src: '/view?filename=a.png&subfolder=&type=output',
+      filename: 'a.png',
+      file: { id: 'output/a.png', name: 'a.png', type: 'image' as const },
+    };
+    // Reference equality matters, not just deep equality: the viewer store's
+    // list-extension effects compare arrays by identity to avoid re-firing on
+    // their own writes.
+    expect(ensureViewerImageIdentity(item)).toBe(item);
+  });
+
+  it('derives filename and file from the asset URL when a producer forgot them', () => {
+    // Without this the viewer titles itself from the alt text ("Generation")
+    // and favourite, reject, delete and download all sit inert, because every
+    // one of them is gated on `file`.
+    const restored = ensureViewerImageIdentity({
+      src: '/view?filename=clip.mp4&subfolder=run&type=output',
+      alt: 'Generation',
+    });
+    expect(restored.filename).toBe('clip.mp4');
+    expect(restored.mediaType).toBe('video');
+    expect(restored.file).toEqual({
+      id: 'output/run/clip.mp4',
+      name: 'clip.mp4',
+      type: 'video',
+      fullUrl: '/view?filename=clip.mp4&subfolder=run&type=output',
+    });
+  });
+
+  it('invents nothing for a source that names no file', () => {
+    // A latent preview is a blob: URL with no file behind it; giving it an
+    // identity would point delete and favourite at something that isn't there.
+    const preview = { src: 'blob:http://localhost/abcd', alt: 'Live preview' };
+    expect(ensureViewerImageIdentity(preview)).toBe(preview);
   });
 });

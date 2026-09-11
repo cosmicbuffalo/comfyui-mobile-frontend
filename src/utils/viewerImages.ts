@@ -137,6 +137,44 @@ export function buildViewerImages(
   return images;
 }
 
+/**
+ * Fill in the identity a viewer item is meant to carry, from its own URL.
+ *
+ * The viewer keys almost everything off `file` and `filename`: the header title,
+ * favourite, reject, delete and download all read one or the other, and an item
+ * carrying neither renders as the alt text ("Generation") with a row of inert
+ * buttons. Every list builder in the app attaches both — but the viewer is a
+ * shared surface fed from a dozen call sites, and one that forgets is a silent,
+ * confusing failure rather than a loud one.
+ *
+ * So the guarantee is enforced here instead of trusted at each producer. A
+ * server asset URL already names the file, the subfolder and the source, which
+ * is exactly what `file` needs; anything else (a `blob:` latent preview) is
+ * returned untouched, since inventing an identity for it would make delete and
+ * favourite reach for a file that does not exist.
+ */
+export function ensureViewerImageIdentity(item: ViewerImage): ViewerImage {
+  if (item.file && item.filename) return item;
+  const fileId = fileIdFromAssetUrl(item.src);
+  if (!fileId) return item;
+  // `${type}/${subfolder?}/${name}` — the name is whatever follows the last
+  // separator, and the type is what precedes the first.
+  const name = fileId.slice(fileId.lastIndexOf('/') + 1);
+  if (!name) return item;
+  const mediaType = item.mediaType ?? getMediaType(name);
+  return {
+    ...item,
+    filename: item.filename ?? name,
+    mediaType,
+    file: item.file ?? {
+      id: fileId,
+      name,
+      type: mediaType === 'video' ? 'video' : 'image',
+      fullUrl: item.src,
+    },
+  };
+}
+
 export function buildOutputPreferredViewerImages(
   items: HistoryImageItem[],
   options: Omit<BuildViewerImageOptions, 'onlyOutput' | 'preferOutputPerItem'> = {}

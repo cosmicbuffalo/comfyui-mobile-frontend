@@ -63,6 +63,16 @@ interface MediaViewerProps {
   onReject?: (item: ViewerImage) => void;
   isRejected?: (item: ViewerImage) => boolean;
   onDownload?: (item: ViewerImage) => Promise<DownloadOutcome | undefined> | void;
+  /**
+   * An offer to hand the item on screen back to whatever opened the viewer —
+   * the input picker's "use this". Absent for an ordinary viewing session, and
+   * hidden for an item the picker reports it cannot accept.
+   */
+  pickAction?: {
+    label: string;
+    canPick?: (item: ViewerImage) => boolean;
+    onPick: (item: ViewerImage) => void;
+  } | null;
   showMetadataToggle?: boolean;
   showLoadingPlaceholder?: boolean;
   // Live latent preview painted behind the placeholder's progress bar while a
@@ -118,6 +128,20 @@ function isViewerVideo(item: ViewerImage): boolean {
   );
 }
 
+/**
+ * The intrinsic size a media element is currently reporting, or null before it
+ * knows one. Videos answer with `videoWidth/Height` (set at `loadedmetadata`),
+ * images with `naturalWidth/Height` (set at decode).
+ */
+function readMediaNaturalSize(
+  media: HTMLImageElement | HTMLVideoElement | null,
+): { width: number; height: number } | null {
+  if (!media) return null;
+  const width = media instanceof HTMLVideoElement ? media.videoWidth : media.naturalWidth;
+  const height = media instanceof HTMLVideoElement ? media.videoHeight : media.naturalHeight;
+  return width > 0 && height > 0 ? { width, height } : null;
+}
+
 export function MediaViewer({
   open,
   items,
@@ -136,6 +160,7 @@ export function MediaViewer({
   onReject,
   isRejected,
   onDownload,
+  pickAction,
   showMetadataToggle = false,
   showLoadingPlaceholder = false,
   loadingPreviewSrc = null,
@@ -303,6 +328,8 @@ export function MediaViewer({
       lastStepDirectionRef.current = direction;
       const target = findViewableIndex(index + direction, direction);
       if (target < 0) return false;
+      const workflowState = useWorkflowStore.getState();
+      if (workflowState.followQueue) workflowState.setFollowQueue(false);
       onIndexChange(target);
       return true;
     },
@@ -372,7 +399,13 @@ export function MediaViewer({
   const renderFullSrc = renderItem && !renderIsVideo ? getFullScreenImageSrc(renderItem) : null;
   const fileId = currentItem?.file?.id ?? null;
   const fetchedMetadata = fileId ? metadataById[fileId] : undefined;
-  const metadata = currentItem?.metadata ?? (fetchedMetadata === undefined ? undefined : fetchedMetadata);
+  // A video file carries no readable generation metadata of its own; what the
+  // metadata endpoint returns for one is read out of a same-basename image
+  // beside it — another file's metadata. Only run-sourced metadata (attached
+  // by the queue/history list builders from the run's own prompt) is honestly
+  // the video's, so a video never shows fetched metadata.
+  const metadata = currentItem?.metadata
+    ?? (isVideo ? null : fetchedMetadata === undefined ? undefined : fetchedMetadata);
   const durationLabel = formatDuration(currentItem?.durationSeconds);
   const displayName = currentItem?.filename || currentItem?.alt || t('Output');
   /**
@@ -384,7 +417,12 @@ export function MediaViewer({
    */
   const chromeIdle = isIdle && !selectionMode;
   const showMetadataOverlay = showMetadata && !chromeIdle;
-  const canToggleMetadata = showMetadataToggle;
+  // On a video the toggle exists only when the item carries its own run's
+  // metadata; with nothing honest to show, a video gets no metadata UI at all
+  // (no button, no overlay) rather than a "no metadata" placeholder for a
+  // sibling image's data it refuses to claim.
+  const metadataToggleAvailable = showMetadataToggle && (!isVideo || Boolean(currentItem?.metadata));
+  const canToggleMetadata = metadataToggleAvailable;
   const metadataIsLoading = fileId ? Boolean(metadataLoading[fileId]) : false;
   const workflowAvailabilityKnown = fileId ? Object.prototype.hasOwnProperty.call(workflowAvailableById, fileId) : false;
   const canLoadWorkflow = Boolean(currentItem?.workflow)
@@ -447,6 +485,12 @@ export function MediaViewer({
     resetIdleTimer();
     onReject?.(currentItem);
   }, [currentItem, onReject, resetIdleTimer]);
+
+  const handlePickClick = useCallback(() => {
+    if (!currentItem || !pickAction) return;
+    resetIdleTimer();
+    pickAction.onPick(currentItem);
+  }, [currentItem, pickAction, resetIdleTimer]);
 
   const handleDownloadClick = useCallback(() => {
     if (!currentItem) return undefined;
@@ -610,40 +654,6 @@ export function MediaViewer({
     currentItem && isRejected && isRejected(currentItem),
   );
 
-  // Bottom-corner positions of the displayed image, used to park the favorite/
-  // reject state badges on the image itself once the controls fade on idle.
-  // Mirrors getBaseOffset's centering, then offsets by the current pan/zoom, and
-  // clamps to the visible container so the badges hug the image's bottom corners.
-  const idleStateBadgePositions = useMemo(() => {
-    if (!containerSize) return null;
-
-    // Where the transformed media actually is on screen. Images and videos
-    // share the same base-size/scale/translate model.
-    let box: { left: number; top: number; width: number; height: number } | null = null;
-    if (baseSize) {
-      const width = baseSize.width * scale;
-      const height = baseSize.height * scale;
-      box = {
-        left: (width < containerSize.width ? (containerSize.width - width) / 2 : 0) + translate.x,
-        top: (height < containerSize.height ? (containerSize.height - height) / 2 : 0) + translate.y,
-        width,
-        height,
-      };
-    }
-    if (!box) return null;
-
-    const PAD = 8;
-    const ICON = 28; // w-7 / h-7
-    const left = Math.max(0, box.left);
-    const right = Math.min(containerSize.width, box.left + box.width);
-    const bottom = Math.min(containerSize.height, box.top + box.height);
-    const top = Math.max(PAD, bottom - ICON - PAD);
-    return {
-      reject: { left: left + PAD, top },
-      favorite: { left: Math.max(left + PAD, right - ICON - PAD), top },
-    };
-  }, [baseSize, containerSize, scale, translate]);
-
   const renderedVideoWidth = useMemo(() => {
     if (!isVideo || !containerSize || !naturalSize || naturalSize.width <= 0 || naturalSize.height <= 0) {
       return undefined;
@@ -687,6 +697,9 @@ export function MediaViewer({
   );
   const canRejectCurrent = Boolean(currentItem?.file && onReject);
   const canDownloadCurrent = Boolean(currentItem?.src && onDownload);
+  const canPickCurrent = Boolean(
+    currentItem && pickAction && (pickAction.canPick?.(currentItem) ?? true),
+  );
 
   useEffect(() => {
     if (open) {
@@ -715,6 +728,15 @@ export function MediaViewer({
     };
   }, [setViewerState]);
 
+  // Keyed on the ITEM, not only on the index.
+  //
+  // Zoom mode is a choice about the thing being looked at, and a double tap
+  // sets it to `cover`. Follow mode delivers each new generation at index 0, so
+  // when the viewer is already sitting there the index does not change and this
+  // never fired: the new arrival inherited the previous one's `cover`. For a
+  // portrait clip `cover` IS scale 1 — fit-to-width — so a tall video opened
+  // cropped to the screen's width rather than fitted to its height, but only
+  // once something had been double-tapped, which is what made it intermittent.
   useEffect(() => {
     if (!open) return;
     targetZoomModeRef.current = 'fit';
@@ -723,7 +745,7 @@ export function MediaViewer({
     pinchRef.current = null;
     lastTapRef.current = null;
     transformGestureRef.current = false;
-  }, [open, index]);
+  }, [open, index, currentItem?.src]);
 
   // Leave a slot whose media has been deleted. Adjacent preloads usually mark
   // one before the user reaches it (so the swipe steps straight over it), but
@@ -1168,6 +1190,9 @@ export function MediaViewer({
     if (!open || !showMetadataToggle) return;
     if (!currentItem?.file) return;
     if (currentItem.metadata) return;
+    // Never fetch for a video: the endpoint answers with the same-basename
+    // sibling image's metadata, which is not this file's to show.
+    if (isViewerVideo(currentItem)) return;
     if (!fileId) return;
     if (metadata !== undefined || metadataIsLoading) return;
 
@@ -1322,7 +1347,8 @@ export function MediaViewer({
     }
 
     const updateSizes = () => {
-      const natural = naturalSizeRef.current;
+      const natural = naturalSizeRef.current ?? readMediaNaturalSize(media);
+      naturalSizeRef.current = natural;
       const containerWidth = container.clientWidth;
       const containerHeight = container.clientHeight;
       setContainerSize({ width: containerWidth, height: containerHeight });
@@ -1892,12 +1918,14 @@ export function MediaViewer({
       )}
 
       {/* Idle state badges: when the controls fade out, keep the favorite/reject
-          state visible by parking a bare icon in the image's bottom corners —
-          reject bottom-left, favorite bottom-right. Cross-fades with the action
-          bar (which shows the same state as buttons while active). */}
-      {idleStateBadgePositions && (currentIsRejected || currentIsFavorited) && (
+          state visible by parking a bare icon in the viewer frame's bottom
+          corners — reject bottom-left, favorite bottom-right. Pinned to the
+          frame, not the image, so letterboxed media (landscape in portrait)
+          doesn't strand the icons mid-screen. Cross-fades with the action bar
+          (which shows the same state as buttons while active). */}
+      {(currentIsRejected || currentIsFavorited) && (
         <div
-          className={`absolute inset-x-0 top-0 pointer-events-none transition-opacity duration-300 ${
+          className={`media-viewer-idle-state-badges absolute inset-x-0 top-0 pointer-events-none transition-opacity duration-300 ${
             chromeIdle ? 'opacity-100' : 'opacity-0'
           }`}
           style={{
@@ -1905,19 +1933,16 @@ export function MediaViewer({
             zIndex: MEDIA_VIEWER_OVERLAY_Z_INDEX,
           }}
         >
+          {/* 16px offsets centre the 28px icons on the same point as the
+              36px action-bar discs (12px inset), so the badge sits exactly
+              where the button circle fades out. */}
           {currentIsRejected && (
-            <div
-              className="absolute"
-              style={idleStateBadgePositions.reject}
-            >
+            <div className="absolute bottom-4 left-4">
               <RejectedIcon className="w-7 h-7 drop-shadow-lg" />
             </div>
           )}
           {currentIsFavorited && (
-            <div
-              className="absolute"
-              style={idleStateBadgePositions.favorite}
-            >
+            <div className="absolute bottom-4 right-4">
               <HeartIcon className="w-7 h-7 text-red-500 drop-shadow-lg" />
             </div>
           )}
@@ -1961,13 +1986,15 @@ export function MediaViewer({
             <MediaViewerActions
               isVideo={isVideo}
               canLoadWorkflow={canLoadWorkflow}
-              showMetadataToggle={showMetadataToggle}
+              showMetadataToggle={metadataToggleAvailable}
               canToggleMetadata={canToggleMetadata}
               canFavorite={canFavoriteCurrent}
               isFavorited={currentIsFavorited}
               canReject={canRejectCurrent}
               isRejected={currentIsRejected}
               canDownload={canDownloadCurrent}
+              pickLabel={canPickCurrent ? pickAction?.label : undefined}
+              onPick={canPickCurrent ? handlePickClick : undefined}
               // Favorited items can't be deleted — keep the button visible but
               // disabled so the protection is discoverable.
               deleteDisabled={currentIsFavorited}
@@ -2001,7 +2028,7 @@ export function MediaViewer({
             )}
             <MediaViewerMetadata
               isVideo={isVideo}
-              showMetadataToggle={showMetadataToggle}
+              showMetadataToggle={metadataToggleAvailable}
               showMetadataOverlay={showMetadataOverlay}
               metadataIsLoading={metadataIsLoading}
               metadata={metadata}

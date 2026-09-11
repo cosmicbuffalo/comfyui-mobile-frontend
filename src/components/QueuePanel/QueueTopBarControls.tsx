@@ -5,6 +5,7 @@ import { useHistoryStore } from '@/hooks/useHistory';
 import { useQueueStore } from '@/hooks/useQueue';
 import { useOutputsStore } from '@/hooks/useOutputs';
 import { useDismissOnOutsideClick } from '@/hooks/useDismissOnOutsideClick';
+import { useDeleteRejectedShortcut } from '@/hooks/useDeleteRejectedShortcut';
 import {
   deleteRejectedOutputs,
   QUEUE_REJECT_SOURCES,
@@ -34,6 +35,14 @@ export function QueueTopBarControls() {
     onDismiss: () => setMenuOpen(false),
     triggerRef: buttonRef,
     contentRef: menuRef,
+  });
+
+  // Mounted only while the queue panel owns the top bar, so the same chord
+  // reaches the queue's own delete-rejected (outputs + temp) here and the
+  // outputs panel's source-scoped one there.
+  useDeleteRejectedShortcut({
+    enabled: rejectedCount > 0,
+    onTrigger: () => setDeleteRejectedConfirmOpen(true),
   });
 
   return (

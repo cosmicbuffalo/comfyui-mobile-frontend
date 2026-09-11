@@ -784,6 +784,76 @@ describe('WorkflowPanel bookmark navigation', () => {
     expect(container.querySelectorAll('.desktop-bookmark-entry')).toHaveLength(2);
   });
 
+  it('shows a bookmarked subgraph placeholder in the bar', async () => {
+    // A subgraph is bookmarked through its placeholder card, and NodeCard
+    // toggles the placeholder NODE's key. The bar used to key its subgraph
+    // entries by the subgraph DEFINITION's key instead, so the mark matched
+    // nothing and never appeared — the toggle looked like it did nothing.
+    vi.stubGlobal('matchMedia', vi.fn(() => ({
+      matches: true,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    })));
+    const placeholderKey = makeLocationPointer({ type: 'node', nodeId: 5, subgraphId: null });
+    const subgraphKey = makeLocationPointer({ type: 'subgraph', subgraphId: 'sg-a' });
+    const innerKey = makeLocationPointer({ type: 'node', nodeId: 10, subgraphId: 'sg-a' });
+    const workflow: Workflow = {
+      id: 'subgraph-bookmark',
+      last_node_id: 10,
+      last_link_id: 0,
+      nodes: [
+        makeNode(5, { itemKey: placeholderKey, type: 'sg-a', title: 'Nested workflow' }),
+      ],
+      links: [],
+      groups: [],
+      config: {},
+      version: 1,
+      definitions: {
+        subgraphs: [{
+          id: 'sg-a',
+          itemKey: subgraphKey,
+          name: 'Fallback subgraph name',
+          nodes: [makeNode(10, { itemKey: innerKey, type: 'KSampler' })],
+          groups: [],
+          links: [],
+        }],
+      },
+    };
+
+    useWorkflowStore.setState({
+      workflow,
+      mobileLayout: {
+        root: [{ type: 'subgraph', id: 'sg-a', nodeId: 5 }],
+        groups: {},
+        groupParents: {},
+        subgraphs: { 'sg-a': [{ type: 'node', id: 10 }] },
+        hiddenBlocks: {},
+      },
+      itemKeyByPointer: {
+        [placeholderKey]: placeholderKey,
+        [subgraphKey]: subgraphKey,
+        [innerKey]: innerKey,
+      },
+      pointerByHierarchicalKey: {
+        [placeholderKey]: placeholderKey,
+        [subgraphKey]: subgraphKey,
+        [innerKey]: innerKey,
+      },
+    });
+    useBookmarksStore.setState({ bookmarkedItems: [placeholderKey], bookmarkBarCollapsed: false });
+
+    await act(async () => {
+      root.render(<WorkflowPanel visible={true} />);
+    });
+
+    const entries = Array.from(container.querySelectorAll('.desktop-bookmark-entry'));
+    expect(entries).toHaveLength(1);
+    expect(entries[0].querySelector('button[title]')?.textContent).toBe('Nested workflow');
+    // And the entry is addressable by the same key the card toggles, so the
+    // gutter's own remove control takes the mark back off.
+    expect(entries[0].getAttribute('data-bookmark-flash-key')).toBe(placeholderKey);
+  });
+
   // A three-node root workflow with every node bookmarked, rendered on mobile
   // (no matchMedia stub, so the form factor is phone-sized).
   function renderMobileBookmarkBar() {

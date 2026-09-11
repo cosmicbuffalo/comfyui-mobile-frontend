@@ -1,3 +1,5 @@
+import { markProgrammaticScroll } from '@/utils/scrollInterrupt';
+
 export interface QueueScrollAnchor {
   itemId: string;
   offsetTop: number;
@@ -119,6 +121,10 @@ export function restoreQueueScrollAnchor(
   if (Math.abs(drift) < 0.5) return false;
 
   const before = container.scrollTop;
+  // Declared before the write, not after: the compensation runs on every
+  // arriving image while the reader sits still, and an open menu must not read
+  // the app steadying the list under it as a request to close.
+  markProgrammaticScroll();
   container.scrollTop += drift;
   // The shift grew/shrank the content above the anchor, moving the scroll
   // coordinate baseline with it. Re-baseline the captured reference past the

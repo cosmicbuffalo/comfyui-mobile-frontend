@@ -6,6 +6,7 @@ import type { RefObject } from 'react';
 import { CheckIcon, ClipboardIcon, CloseIcon } from '@/components/icons';
 import { copyTextToClipboard } from '@/utils/clipboard';
 import { useI18n } from '@/i18n';
+import { shouldDismissOnScroll } from '@/utils/scrollInterrupt';
 
 // Cap how much of a single error renders inline; the rest is available via Copy.
 const ERROR_TEXT_CLAMP_LINES = 6;
@@ -65,6 +66,10 @@ export function NodeCardErrorPopover({
   const [position, setPosition] = useState<{ top: number; left: number } | null>(null);
   const [copied, setCopied] = useState(false);
   const popoverRef = useRef<HTMLDivElement>(null);
+  const openedAtRef = useRef(0);
+  useEffect(() => {
+    if (open) openedAtRef.current = Date.now();
+  }, [open, nodeId]);
   const currentPanel = useNavigationStore((s) => s.currentPanel);
 
   const handleCopyClick = async (event: React.MouseEvent<HTMLButtonElement>) => {
@@ -98,6 +103,7 @@ export function NodeCardErrorPopover({
 
     updatePosition();
 
+    const openedAt = openedAtRef.current;
     const handleClickOutside = (event: PointerEvent) => {
       if (!event.target) return;
       // If clicking the anchor (error icon), let the anchor's click handler handle it
@@ -110,6 +116,10 @@ export function NodeCardErrorPopover({
       onClose();
     };
     const handleScroll = () => {
+      // Momentum from a fling is not a dismissal gesture — see
+      // shouldDismissOnScroll. Without this the popover opened and vanished
+      // whenever the list was still coasting.
+      if (!shouldDismissOnScroll(openedAt)) return;
       onClose();
     };
     document.addEventListener('pointerdown', handleClickOutside);

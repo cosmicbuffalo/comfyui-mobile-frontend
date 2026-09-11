@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react';
 import type { RefObject } from 'react';
 import { useNavigationStore } from '@/hooks/useNavigation';
+import { shouldDismissOnScroll } from '@/utils/scrollInterrupt';
 
 interface DismissOnOutsideClickOptions {
   open: boolean;
@@ -15,12 +16,16 @@ interface DismissOnOutsideClickOptions {
  * than a gesture to dismiss by.
  *
  * Opening a menu can itself provoke a scroll — the browser bringing the trigger
- * into view, a layout correction after the list changed height, or momentum
- * from the scroll that preceded the tap still settling. Those land within a
- * frame or two and used to close the menu instantly, which reads as the tap
- * being swallowed: the menu appears and vanishes before it is seen. Measured at
- * 10ms in the wild; this leaves an order of magnitude of headroom while keeping
- * a deliberate scroll-to-dismiss intact.
+ * into view, or a layout correction after the list changed height. Those land
+ * within a frame or two and used to close the menu instantly, which reads as
+ * the tap being swallowed: the menu appears and vanishes before it is seen.
+ * Measured at 10ms in the wild; this leaves an order of magnitude of headroom.
+ *
+ * The window alone was never enough for the case it was written for. Momentum
+ * from a fling runs for SECONDS after the finger lifts, so a menu opened during
+ * one was still killed by the next momentum frame once the grace expired. That
+ * is `shouldDismissOnScroll`'s other half: a scroll only dismisses when a real
+ * gesture — a wheel, a touchmove, a pointer drag — happened after the open.
  */
 const SCROLL_DISMISS_GRACE_MS = 150;
 
@@ -36,8 +41,12 @@ export function useDismissOnOutsideClick({
   // the outputs or the queue with nothing underneath it to act on.
   const currentPanel = useNavigationStore((s) => s.currentPanel);
   const openedOnPanel = useRef(currentPanel);
+  const openedAtRef = useRef(0);
   useEffect(() => {
-    if (open) openedOnPanel.current = currentPanel;
+    if (open) {
+      openedOnPanel.current = currentPanel;
+      openedAtRef.current = Date.now();
+    }
     // Deliberately keyed on `open` alone: recording the panel on every panel
     // change would make the check below compare a value with itself.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -63,7 +72,9 @@ export function useDismissOnOutsideClick({
 
   useEffect(() => {
     if (!open) return;
-    const openedAt = performance.now();
+    // Callback changes can reinstall listeners while the menu stays open.
+    // They must not restart the grace period or erase a newer scroll gesture.
+    const openedAt = openedAtRef.current;
     const handleClick = (event: MouseEvent) => {
       const target = event.target as Node | null;
       if (
@@ -75,7 +86,7 @@ export function useDismissOnOutsideClick({
       onDismiss();
     };
     const handleScroll = (event: Event) => {
-      if (performance.now() - openedAt < SCROLL_DISMISS_GRACE_MS) return;
+      if (!shouldDismissOnScroll(openedAt, SCROLL_DISMISS_GRACE_MS)) return;
       if (ignoreScrollWithinContent) {
         const target = event.target as Node | null;
         if (contentRef.current && target && contentRef.current.contains(target)) {

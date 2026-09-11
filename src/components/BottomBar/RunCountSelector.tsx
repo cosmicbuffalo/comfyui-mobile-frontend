@@ -34,9 +34,15 @@ export function RunCountSelector() {
   };
 
   return (
+    // `select-none` on the whole control, not just its buttons: holding − or +
+    // to halve/double is a first-class gesture here, and iOS answers a long
+    // press over any of this by starting a text selection — the glyph and the
+    // count between them come up highlighted, with selection handles on top of
+    // the buttons. The app-wide `-webkit-touch-callout: none` in index.css only
+    // suppresses the share sheet; selection is governed separately.
     <div
       id="run-count-selector"
-      className="flex items-center gap-1 bg-slate-900/95 border border-white/10 rounded-lg p-1"
+      className="flex select-none touch-manipulation items-center gap-1 bg-slate-900/95 border border-white/10 rounded-lg p-1"
     >
       <button
         onClick={stepOnClick(consumeDecrementHold, () => setRunCount(runCount - 1))}

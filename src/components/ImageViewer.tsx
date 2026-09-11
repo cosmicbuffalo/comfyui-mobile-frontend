@@ -7,6 +7,8 @@ import { useImageViewerStore } from '@/hooks/useImageViewer';
 import { useQueueStore } from '@/hooks/useQueue';
 import { useHistoryStore } from '@/hooks/useHistory';
 import { useOutputsStore } from '@/hooks/useOutputs';
+import { useShowHiddenStore } from '@/hooks/useShowHidden';
+import { HIDDEN_WORKFLOW_EXTRA_DATA_KEY } from '@/utils/workflowHidden';
 import { useOverallProgress } from '@/hooks/useOverallProgress';
 import { useHistoryWorkflowByFileId } from '@/hooks/useHistoryWorkflowByFileId';
 import { buildOutputPreferredViewerImages, buildViewerImages, getHistoryImageFileId, type ViewerImage } from '@/utils/viewerImages';
@@ -50,6 +52,7 @@ export function ImageViewer({ onClose }: ImageViewerProps) {
   const initialTranslate = useImageViewerStore((s) => s.viewerTranslate);
   const followQueueActive = useWorkflowStore((s) => s.followQueue);
   const setViewerState = useImageViewerStore((s) => s.setViewerState);
+  const pickAction = useImageViewerStore((s) => s.viewerPickAction);
   const workflow = useWorkflowStore((s) => s.workflow);
   const originalWorkflow = useWorkflowStore((s) => s.originalWorkflow);
   const sessions = useWorkflowStore((s) => s.sessions);
@@ -74,6 +77,7 @@ export function ImageViewer({ onClose }: ImageViewerProps) {
   const removeOutputImages = useHistoryStore((s) => s.removeOutputImages);
   const favorites = useOutputsStore((s) => s.favorites);
   const rejected = useOutputsStore((s) => s.rejected);
+  const showHidden = useShowHiddenStore((s) => s.showHidden);
   const favoriteItem = useOutputsStore((s) => s.favoriteItem);
   const unfavoriteItem = useOutputsStore((s) => s.unfavoriteItem);
   const toggleRejected = useOutputsStore((s) => s.toggleRejected);
@@ -201,6 +205,34 @@ export function ImageViewer({ onClose }: ImageViewerProps) {
     });
   }, [followQueueActive, open, history, livePromptOutputs, running, pending, promptToSession, activeSessionId]);
 
+  /**
+   * Prompts belonging to a hidden workflow.
+   *
+   * Follow mode and the history gallery are built straight from the history and
+   * live-output stores, not from the queue panel's list — so the panel filtering
+   * its own cards did nothing for them, and the newest generation of a hidden
+   * workflow was the first thing the viewer jumped to. A run announces itself
+   * through `extra` while it is queued and through the history entry once it
+   * lands, and the two do not overlap in time, so both are read.
+   */
+  const hiddenPromptIds = useMemo(() => {
+    const ids = new Set<string>();
+    if (showHidden) return ids;
+    for (const entry of [...running, ...pending]) {
+      if (entry.extra?.[HIDDEN_WORKFLOW_EXTRA_DATA_KEY] === true) ids.add(entry.prompt_id);
+    }
+    for (const item of history) {
+      if (item.hidden && item.prompt_id) ids.add(item.prompt_id);
+    }
+    return ids;
+  }, [showHidden, running, pending, history]);
+
+  /** The history this viewer may browse, with hidden runs left out. */
+  const visibleHistory = useMemo(
+    () => (showHidden ? history : history.filter((item) => !item.hidden)),
+    [showHidden, history],
+  );
+
   // The active session's just-finished outputs (newest first), built from the
   // queue store's live outputs. Scoped to the active session so a run finishing
   // in another tab doesn't yank this viewer. Only final `output` images count —
@@ -210,6 +242,7 @@ export function ImageViewer({ onClose }: ImageViewerProps) {
     if (!open || !followQueueActive) return [];
     const historyByPromptId = new Map(history.map((item) => [item.prompt_id, item]));
     return Object.entries(livePromptOutputs)
+      .filter(([promptId]) => !hiddenPromptIds.has(promptId))
       .filter(([promptId]) => {
         // Unknown prompts (e.g. queued from the desktop frontend) are attributed
         // to the active session, matching the websocket routing fallback.
@@ -242,16 +275,16 @@ export function ImageViewer({ onClose }: ImageViewerProps) {
         outputs: { images: outputs },
         prompt: {},
       }));
-  }, [open, followQueueActive, history, livePromptOutputs, localPromptOrder, followFinishOrder, promptToSession, activeSessionId]);
+  }, [open, followQueueActive, history, hiddenPromptIds, livePromptOutputs, localPromptOrder, followFinishOrder, promptToSession, activeSessionId]);
 
   // History entries for prompts we saw finish while following (their live
   // outputs were handed off to history and deleted from livePromptOutputs).
   const followQueueFinishedHistoryItems = useMemo(() => {
     if (!open || !followQueueActive) return [];
-    return history.filter(
+    return visibleHistory.filter(
       (item) => item.prompt_id && followFinishOrder[item.prompt_id] != null,
     );
-  }, [followFinishOrder, followQueueActive, history, open]);
+  }, [followFinishOrder, followQueueActive, visibleHistory, open]);
 
   // Browsable list. The followed items — live outputs plus finished-while-
   // following history — are MERGED and sorted by a single completion-order map so
@@ -272,9 +305,9 @@ export function ImageViewer({ onClose }: ImageViewerProps) {
     const followedPromptIds = new Set(followed.map((item) => item.prompt_id));
     return [
       ...followed,
-      ...history.filter((item) => !followedPromptIds.has(item.prompt_id)),
+      ...visibleHistory.filter((item) => !followedPromptIds.has(item.prompt_id)),
     ];
-  }, [open, followQueueActive, followQueueLiveItems, followQueueFinishedHistoryItems, followFinishOrder, history]);
+  }, [open, followQueueActive, followQueueLiveItems, followQueueFinishedHistoryItems, followFinishOrder, visibleHistory]);
 
   const followQueueViewerImages = useMemo(
     () => buildOutputPreferredViewerImages(followQueueItems, { alt: t('Generation') }),
@@ -289,14 +322,14 @@ export function ImageViewer({ onClose }: ImageViewerProps) {
   // what renders), so without the guard every new generation and every history
   // page rebuilt URL objects for the whole loaded history while nothing was on
   // screen to use them.
-  const queueHistoryViewerImages = useMemo(() => open ? history.flatMap((item) => {
+  const queueHistoryViewerImages = useMemo(() => open ? visibleHistory.flatMap((item) => {
     const previewsVisible = item.prompt_id
       ? previewVisibility[item.prompt_id] ?? previewVisibilityDefault
       : previewVisibilityDefault;
     return previewsVisible
       ? buildViewerImages([item], { alt: t('Generation') })
       : buildOutputPreferredViewerImages([item], { alt: t('Generation') });
-  }) : [], [open, history, previewVisibility, previewVisibilityDefault, t]);
+  }) : [], [open, visibleHistory, previewVisibility, previewVisibilityDefault, t]);
 
   const isQueueHistoryViewer = useMemo(
     () => images.some((item) => Boolean(item.promptId)),
@@ -675,6 +708,7 @@ export function ImageViewer({ onClose }: ImageViewerProps) {
         onReject={handleReject}
         isRejected={isItemRejected}
         onDownload={handleDownload}
+        pickAction={pickAction}
         showMetadataToggle
         showLoadingPlaceholder={showLoadingPlaceholder}
         loadingPreviewSrc={loadingPreviewSrc}
