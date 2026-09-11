@@ -2,6 +2,7 @@ import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { UnifiedItem } from '../types';
+import type { QueueWorkflowDiff } from '@/utils/workflowDiff';
 
 const mocks = vi.hoisted(() => ({
   queueState: {
@@ -29,7 +30,7 @@ const mocks = vi.hoisted(() => ({
         }],
         nodeChanges: [],
       },
-    },
+    } as Record<string, QueueWorkflowDiff>,
     setQueueItemExpanded: vi.fn(),
     setQueueItemUserToggled: vi.fn(),
   },
@@ -114,6 +115,7 @@ describe('QueueCard active prompt preview', () => {
     mocks.queueState.queueItemUserToggled = {};
     mocks.queueState.setQueueItemExpanded.mockClear();
     mocks.queueState.setQueueItemUserToggled.mockClear();
+    delete mocks.queueState.workflowDiffs['active-prompt'].seeds;
   });
 
   afterEach(async () => {
@@ -343,4 +345,70 @@ describe('QueueCard active prompt preview', () => {
       );
     },
   );
+
+  it('lists the seeds the run executed with, including one inside a subgraph', async () => {
+    // The seeds a run is given never have to reach widgets_values — a promoted
+    // or special-value seed is applied as an override at queue time, and a seed
+    // on a node inside a subgraph definition is invisible to the node diff — so
+    // the preview renders the list recorded from the built prompt.
+    mocks.queueState.workflowDiffs['active-prompt'].seeds = [
+      { nodeId: '3', label: 'Sampler', field: 'seed', value: 987654321 },
+      { nodeId: '50:7', label: 'Video model / High noise', field: 'noise_seed', value: 4242 },
+    ];
+
+    await act(async () => {
+      root.render(
+        <QueueCard
+          item={makeItem('running')}
+          isActuallyRunning
+          progress={0}
+          viewerImages={[]}
+          runningImages={[]}
+          onOpenMenu={() => {}}
+          isTopDoneItem={false}
+        />,
+      );
+    });
+
+    const rows = [...container.querySelectorAll('.queue-seed-row')];
+    expect(rows.map((row) => row.textContent)).toEqual([
+      'Sampler987654321',
+      'Video model / High noise4242',
+    ]);
+  });
+
+  it('reads the seeds back out of the stored prompt when none were recorded', async () => {
+    // Runs queued before the recording shipped (or from another device) have no
+    // seeds in their diff — but the server still hands back the API prompt they
+    // executed, and every seed in it is already resolved.
+    const item: UnifiedItem = {
+      id: 'active-prompt',
+      status: 'done',
+      data: {
+        prompt_id: 'active-prompt',
+        timestamp: Date.now(),
+        outputs: { images: [] },
+        prompt: {
+          '3': { class_type: 'KSampler', inputs: { seed: 24680, steps: 20 } },
+        },
+      },
+    };
+
+    await act(async () => {
+      root.render(
+        <QueueCard
+          item={item}
+          isActuallyRunning={false}
+          progress={0}
+          viewerImages={[]}
+          runningImages={[]}
+          onOpenMenu={() => {}}
+          isTopDoneItem={false}
+        />,
+      );
+    });
+
+    const rows = [...container.querySelectorAll('.queue-seed-row')];
+    expect(rows.map((row) => row.textContent)).toEqual(['KSampler24680']);
+  });
 });

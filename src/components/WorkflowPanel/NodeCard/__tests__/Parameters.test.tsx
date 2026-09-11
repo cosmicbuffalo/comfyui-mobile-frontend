@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Workflow, WorkflowNode } from '@/api/types';
 import { useParameterSectionFoldsStore } from '@/hooks/useParameterSectionFolds';
 import { useSeedStore } from '@/hooks/useSeed';
+import { useRowMenuStore } from '@/hooks/useRowMenuStore';
 import { useWorkflowStore } from '@/hooks/useWorkflow';
 import { NodeCardParameters } from '../Parameters';
 
@@ -290,7 +291,6 @@ describe('NodeCardParameters seed controls', () => {
           toggleWidgetPin={vi.fn()}
           showFastGroupConfig={false}
           setShowFastGroupConfig={vi.fn()}
-          boundaryTargetNames={{ 0: ['seed'] }}
           onRenameBoundarySlot={vi.fn()}
         />,
       );
@@ -300,6 +300,223 @@ describe('NodeCardParameters seed controls', () => {
     expect(container.querySelector('.number-control-seed')).toBeNull();
     expect(container.textContent).toContain('interpolation_seed');
     expect(container.textContent).not.toContain('interpolation_seed ⇢ seed');
+  });
+
+  it('draws no inner-widget mapping on a placeholder card', async () => {
+    // From outside the scope, which inner widget a boundary slot drives is
+    // the subgraph's business — the card shows only the slot's own label.
+    // (The Krea-2 template's slot is auto-uniqued to `seed_1` but labelled
+    // `seed`, driving an inner `seed`; it used to read "seed ⇢ seed".)
+    const node: WorkflowNode = {
+      id: 30,
+      itemKey: 'node:30',
+      type: 'subgraph-placeholder',
+      pos: [0, 0],
+      size: [320, 200],
+      flags: {},
+      order: 0,
+      mode: 0,
+      inputs: [{
+        name: 'seed_1',
+        label: 'seed',
+        type: 'INT',
+        widget: { name: 'seed_1' },
+        link: null,
+      }],
+      outputs: [],
+      properties: {},
+      widgets_values: [594361197674106],
+    };
+    useWorkflowStore.setState({
+      workflow: {
+        last_node_id: node.id,
+        last_link_id: 0,
+        nodes: [node],
+        links: [],
+        groups: [],
+        config: {},
+        version: 1,
+      },
+      nodeTypes: {},
+      scopeStack: [{ type: 'root' }],
+    });
+
+    await act(async () => {
+      root.render(
+        <NodeCardParameters
+          node={node}
+          isBypassed={false}
+          isKSampler={false}
+          workflowExists
+          nodeTypesExists
+          visibleInputWidgets={[]}
+          visibleWidgets={[{
+            widgetIndex: 0,
+            name: 'seed',
+            inputName: 'seed_1',
+            inputIndex: 0,
+            type: 'INT',
+            value: 594361197674106,
+          }]}
+          errorInputNames={new Set()}
+          onUpdateNodeWidget={vi.fn()}
+          onUpdateNodeWidgets={vi.fn()}
+          getWidgetIndexForInput={() => null}
+          findSeedWidgetIndex={() => 0}
+          findSeedControlWidgetIndex={() => null}
+          isPlaceholder
+          setSeedMode={vi.fn()}
+          isWidgetPinned={() => false}
+          toggleWidgetPin={vi.fn()}
+          showFastGroupConfig={false}
+          setShowFastGroupConfig={vi.fn()}
+          boundaryTargetNames={{ 0: ['seed'] }}
+          onRenameBoundarySlot={vi.fn()}
+        />,
+      );
+    });
+
+    expect(container.textContent).toContain('seed');
+    expect(container.textContent).not.toContain('⇢');
+
+    // The mapping is still checkable without entering the scope: the row's
+    // "…" menu names the inner widget beside the row name on its first line.
+    const trigger = container.querySelector<HTMLButtonElement>('button.row-actions-button');
+    expect(trigger).not.toBeNull();
+    await act(async () => trigger!.click());
+    const menu = document.querySelector('.row-actions-menu');
+    expect(menu?.querySelector('.row-actions-mapping')?.textContent).toBe('⇢ seed');
+    expect(menu?.querySelector('.row-actions-type')?.textContent).toBe('INT');
+  });
+
+  it('enters the instance scope and jumps to the mapped inner widget from the menu heading', async () => {
+    useRowMenuStore.setState({ openKey: null });
+    const jumpToWorkflowItem = vi.fn();
+    const enterSubgraph = vi.fn();
+    const innerNode = {
+      id: 3,
+      itemKey: 'root/subgraph:subgraph-placeholder/node:3',
+      type: 'TestSeeded',
+      pos: [0, 0],
+      size: [200, 100],
+      flags: {},
+      order: 0,
+      mode: 0,
+      inputs: [{ name: 'seed', type: 'INT', widget: { name: 'seed' }, link: 207 }],
+      outputs: [],
+      properties: {},
+      widgets_values: [594361197674106],
+    };
+    const node: WorkflowNode = {
+      id: 30,
+      itemKey: 'node:30',
+      type: 'subgraph-placeholder',
+      pos: [0, 0],
+      size: [320, 200],
+      flags: {},
+      order: 0,
+      mode: 0,
+      inputs: [{
+        name: 'seed_1',
+        label: 'seed',
+        type: 'INT',
+        widget: { name: 'seed_1' },
+        link: null,
+      }],
+      outputs: [],
+      properties: {},
+      widgets_values: [594361197674106],
+    };
+    useWorkflowStore.setState({
+      workflow: {
+        last_node_id: node.id,
+        last_link_id: 207,
+        nodes: [node],
+        links: [],
+        groups: [],
+        config: {},
+        version: 1,
+        definitions: {
+          subgraphs: [{
+            id: 'subgraph-placeholder',
+            name: 'SG',
+            nodes: [innerNode],
+            links: [{ id: 207, origin_id: -10, origin_slot: 0, target_id: 3, target_slot: 0, type: 'INT' }],
+            inputs: [{ name: 'seed_1', type: 'INT', linkIds: [207] }],
+            outputs: [],
+          }],
+        },
+      } as unknown as Workflow,
+      nodeTypes: {
+        TestSeeded: {
+          input: { required: { seed: ['INT', { default: 0 }] }, optional: {} },
+          input_order: { required: ['seed'], optional: [] },
+          output: [],
+          output_name: [],
+          name: 'TestSeeded',
+          display_name: 'TestSeeded',
+          description: '',
+          python_module: '',
+          category: 'test',
+        },
+      } as never,
+      scopeStack: [{ type: 'root' }],
+      jumpToWorkflowItem,
+      enterSubgraph,
+    } as never);
+
+    await act(async () => {
+      root.render(
+        <NodeCardParameters
+          node={node}
+          isBypassed={false}
+          isKSampler={false}
+          workflowExists
+          nodeTypesExists
+          visibleInputWidgets={[]}
+          visibleWidgets={[{
+            widgetIndex: 0,
+            name: 'seed',
+            inputName: 'seed_1',
+            inputIndex: 0,
+            type: 'INT',
+            value: 594361197674106,
+          }]}
+          errorInputNames={new Set()}
+          onUpdateNodeWidget={vi.fn()}
+          onUpdateNodeWidgets={vi.fn()}
+          getWidgetIndexForInput={() => null}
+          findSeedWidgetIndex={() => 0}
+          findSeedControlWidgetIndex={() => null}
+          isPlaceholder
+          setSeedMode={vi.fn()}
+          isWidgetPinned={() => false}
+          toggleWidgetPin={vi.fn()}
+          showFastGroupConfig={false}
+          setShowFastGroupConfig={vi.fn()}
+          boundaryTargetNames={{ 0: ['seed'] }}
+          onRenameBoundarySlot={vi.fn()}
+        />,
+      );
+    });
+
+    const trigger = container.querySelector<HTMLButtonElement>('button.row-actions-button');
+    await act(async () => trigger!.click());
+    const heading = document.querySelector<HTMLButtonElement>('.row-actions-heading-jump');
+    expect(heading).not.toBeNull();
+    // textContent joins the name and the ml-1-spaced annotation without a gap.
+    expect(heading!.textContent).toBe('seed⇢ seed');
+
+    await act(async () => heading!.click());
+
+    // THIS instance's scope, then the inner widget's own row.
+    expect(enterSubgraph).toHaveBeenCalledWith(30);
+    expect(jumpToWorkflowItem).toHaveBeenCalledWith({
+      kind: 'widget',
+      itemKey: 'root/subgraph:subgraph-placeholder/node:3',
+      nodeId: 3,
+      domId: 'widget-row-3-0',
+    });
   });
 
   it('keeps the instance seed controls on an inner node after widget promotion', async () => {

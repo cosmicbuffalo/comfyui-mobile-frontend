@@ -5,6 +5,7 @@ import { Collapsible } from '@/components/Collapsible';
 import { FoldIcon } from '@/components/FoldIcon';
 import { useI18n } from '@/i18n';
 import {
+  collectQueueSeeds,
   computeQueueWorkflowDiff,
   type DiffSegment,
   type QueueWorkflowDiff,
@@ -31,8 +32,13 @@ interface PromptPreviewProps {
   // pinned individually when the user is scrolled to one of them.
   anchorBaseId: string;
   // The workflow embedded in the queue item, used as a fallback to show full
-  // prompt text (without highlights) when no diff was recorded at enqueue time.
+  // prompt text (without highlights) when no diff was recorded at enqueue time,
+  // and to name the nodes the seeds below belong to.
   workflow?: Workflow;
+  // The API prompt this item was queued with, as the server hands it back. It
+  // is where the seeds a run actually used are readable for an item that
+  // predates the enqueue-time recording, or came from another device.
+  prompt?: Record<string, unknown>;
   // Input images for this prompt, rendered as a folded "Inputs" chunk at the
   // bottom of the preview box.
   inputImages?: PromptPreviewInputImage[];
@@ -109,6 +115,7 @@ export function PromptPreview({
   promptId,
   anchorBaseId,
   workflow,
+  prompt,
   inputImages = [],
   onInputImageClick,
 }: PromptPreviewProps) {
@@ -122,11 +129,21 @@ export function PromptPreview({
     return null;
   }, [storedDiff, workflow]);
 
+  // Recorded at enqueue time when this client queued the run; otherwise read
+  // back out of the prompt the server kept, which is what makes the seeds
+  // readable for runs queued before this shipped or from another device.
+  const seeds = useMemo(() => {
+    const recorded = diff?.seeds;
+    if (recorded && recorded.length > 0) return recorded;
+    return prompt ? collectQueueSeeds(prompt, workflow) : [];
+  }, [diff, prompt, workflow]);
+
   const hasNodeChanges = Boolean(diff && diff.nodeChanges.length > 0);
   const hasPrompts = Boolean(diff && diff.prompts.length > 0);
+  const hasSeeds = seeds.length > 0;
   const hasInputs = inputImages.length > 0;
 
-  if (!hasNodeChanges && !hasPrompts && !hasInputs) {
+  if (!hasNodeChanges && !hasPrompts && !hasSeeds && !hasInputs) {
     return null;
   }
 
@@ -205,6 +222,30 @@ export function PromptPreview({
                 </FoldChunk>
               ))}
             </div>
+          )}
+
+          {hasSeeds && (
+            <FoldChunk
+              label={t('Seeds')}
+              anchorId={`${anchorBaseId}::seeds`}
+              labelClassName="text-[11px] font-semibold text-violet-300"
+              iconClassName="text-violet-300/70"
+            >
+              <div className="space-y-1">
+                {seeds.map((seed) => (
+                  <div
+                    key={`${seed.nodeId}::${seed.field}`}
+                    className="queue-seed-row flex items-baseline justify-between gap-2 rounded bg-black/20 px-2 py-1 text-xs"
+                  >
+                    <span className="text-slate-400 [overflow-wrap:anywhere]">{seed.label}</span>
+                    {/* select-all so a seed worth keeping can be tapped and copied. */}
+                    <span className="queue-seed-value shrink-0 select-all font-mono text-slate-200">
+                      {seed.value}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </FoldChunk>
           )}
 
           {hasInputs && (

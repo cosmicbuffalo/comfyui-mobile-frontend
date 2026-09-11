@@ -1,13 +1,12 @@
 import { useState, useEffect, type ReactNode } from "react";
 import { MinusIcon, PlusIcon } from "../icons";
-import { PromotedWidgetIcon } from "../icons";
 import {
   controlInputBaseClassName,
   controlInputDarkClassName,
   controlInputFocusClassNameForState,
-  controlLabelRowClassName,
   controlStateClassName,
 } from "./controlStyles";
+import { ControlLabelRow } from "./ControlLabelRow";
 import { useI18n } from "@/i18n";
 import { FullscreenWidgetModal } from "../modals/FullscreenWidgetModal";
 
@@ -29,6 +28,9 @@ interface NumberControlProps {
   hasError?: boolean;
   isPromoted?: boolean;
   labelAccessory?: ReactNode;
+  /** "⇠ slot" boundary annotation and its jump — see ControlLabelRow. */
+  boundaryAnnotation?: string;
+  onBoundaryJump?: () => void;
   forceModalOpen?: boolean;
   onModalClose?: () => void;
   // Reserved for future seed mode UI
@@ -55,6 +57,8 @@ export function NumberControl({
   hasError = false,
   isPromoted = false,
   labelAccessory,
+  boundaryAnnotation,
+  onBoundaryJump,
   forceModalOpen = false,
   onModalClose,
 }: NumberControlProps) {
@@ -100,8 +104,14 @@ export function NumberControl({
     .filter(Boolean)
     .join(" ");
 
+  // `select-none` on the steppers, not just the app-wide callout suppression in
+  // index.css: holding one of these on iOS starts a text selection that spills
+  // onto the number beside it, leaving the field highlighted blue and the
+  // selection handles on screen. The <input> itself stays selectable — that is
+  // how you edit the value by hand — so this cannot be lifted to the row.
+  // `touch-manipulation` drops the 300ms double-tap delay along the way.
   const buttonClassName = [
-    "w-10 h-10 flex items-center justify-center rounded-full bg-slate-950/80 border border-white/10 text-slate-200 flex-shrink-0",
+    "w-10 h-10 flex select-none touch-manipulation items-center justify-center rounded-full bg-slate-950/80 border border-white/10 text-slate-200 flex-shrink-0",
     disabled
       ? "opacity-60 cursor-not-allowed"
       : "active:scale-95 transition-all",
@@ -112,15 +122,14 @@ export function NumberControl({
   const control = (
     <div className={`${containerClass ?? ""} number-control-${name} pt-2`}>
       {!hideLabel && (
-        <div className={`${controlLabelRowClassName} mb-1`}>
-            <label className="inline-flex min-w-0 items-center gap-1">
-              <span>{displayLabel ?? name}</span>
-            {isPromoted && (
-              <PromotedWidgetIcon className="w-3.5 h-3.5 text-pink-500" />
-            )}
-            </label>
-            {labelAccessory}
-          </div>
+        <ControlLabelRow
+          name={name}
+          displayLabel={displayLabel}
+          isPromoted={isPromoted}
+          boundaryAnnotation={boundaryAnnotation}
+          onBoundaryJump={onBoundaryJump}
+          labelAccessory={labelAccessory}
+        />
       )}
 
       <div

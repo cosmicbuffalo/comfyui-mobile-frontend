@@ -98,7 +98,7 @@ export function ConnectionRow({
         labelEditor ? (
           <span className="flex-1 min-w-0">{labelEditor}</span>
         ) : (
-          <span className="flex flex-1 min-w-0 items-center gap-1">
+          <span className="connection-slot-label flex flex-1 min-w-0 items-center gap-1">
             {labelAdornment}
             <span
               className={`text-sm text-slate-300 min-w-0 ${
@@ -159,7 +159,7 @@ export function ConnectionRow({
       </button>
 
       {!isInput && hideLabel ? null : isInput && !hideLabel && (
-        <span className="flex flex-1 min-w-0 items-center gap-1">
+        <span className="connection-slot-label flex flex-1 min-w-0 items-center gap-1">
           <span
             className={`text-sm min-w-0 ${
               shouldWrapResolvedLabel ? 'whitespace-pre-line break-words leading-tight' : 'truncate'

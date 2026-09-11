@@ -1032,7 +1032,7 @@ export function createNodeControlActions(set: WorkflowSet, get: WorkflowGet) {
           get().setItemCollapsed(target.itemKey, false);
           useParameterSectionFoldsStore.getState().expand(target.itemKey);
           retryReveal(
-            () => revealJumpTarget({ kind: "connection", domId: target.domId }),
+            () => revealJumpTarget({ kind: "widgetRow", domId: target.domId }),
             // Never drawn — a widget promoted to a subgraph boundary lives on
             // the placeholder, and the specialised control rows (seed pairs,
             // grouped stacks) carry no row id. The card is the honest landing.

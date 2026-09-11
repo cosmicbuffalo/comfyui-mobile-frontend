@@ -1,10 +1,19 @@
 
+import { isSeedInputName } from '@/utils/seedUtils';
+
+// How many distinct seeds the overlay is willing to name before it stops
+// counting. A workflow can carry a seed on a dozen nodes; the badge exists to
+// answer "what made this image", not to inventory the graph.
+const MAX_SEEDS = 4;
+
 interface Metadata {
   model?: string;
   sampler?: string;
   steps?: number | string;
   cfg?: number | string;
   scheduler?: string;
+  /** Every distinct seed the run executed with, in node order. */
+  seeds?: number[];
 }
 
 interface PromptNode {
@@ -118,6 +127,20 @@ export function extractMetadata(prompt: unknown): Metadata {
   const nodes = nodeEntries
     .sort((a, b) => Number(a[0]) - Number(b[0]))
     .map(([, node]) => node as PromptNode);
+
+  // Seeds are read off every node rather than a known sampler class: the value
+  // that produced the image often lives on a dedicated seed node (rgthree) or
+  // inside an expanded subgraph, and the prompt has it resolved either way.
+  const seeds: number[] = [];
+  for (const node of nodes) {
+    for (const [field, value] of Object.entries(node.inputs ?? {})) {
+      if (seeds.length >= MAX_SEEDS) break;
+      if (!isSeedInputName(field)) continue;
+      if (typeof value !== 'number' || !Number.isFinite(value)) continue;
+      if (!seeds.includes(value)) seeds.push(value);
+    }
+  }
+  if (seeds.length > 0) metadata.seeds = seeds;
 
   for (const node of nodes) {
     const classType = getNodeClass(node);

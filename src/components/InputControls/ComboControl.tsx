@@ -4,7 +4,7 @@ import Select, { components, createFilter } from "react-select";
 import type { InputActionMeta, OnChangeValue, OptionProps } from "react-select";
 import { FullscreenWidgetModal } from "../modals/FullscreenWidgetModal";
 import { PinButton } from "./PinButton";
-import { ChevronDownIcon, PlusIcon, FolderIcon, PromotedWidgetIcon, FunnelIcon, CheckIcon, EyeIcon, EyeOffIcon } from "@/components/icons";
+import { ChevronDownIcon, PlusIcon, FolderIcon, FunnelIcon, CheckIcon, EyeIcon, EyeOffIcon } from "@/components/icons";
 import { getImagePreviewUrl, setFileState, uploadImageFile } from "@/api/client";
 import { useWorkflowStore } from "@/hooks/useWorkflow";
 import { useWorkflowErrorsStore } from "@/hooks/useWorkflowErrors";
@@ -41,11 +41,12 @@ import {
   type ComboSelectOption,
 } from "./ModelComboOption";
 import {
-  controlLabelRowClassName,
   controlSecondaryButtonDisabledClassName,
   controlSecondaryButtonEnabledClassName,
   controlStateClassName,
+  controlJumpSurfaceClassName,
 } from "./controlStyles";
+import { ControlLabelRow } from "./ControlLabelRow";
 import { useWorkflowHiddenStore } from "@/hooks/useWorkflowHidden";
 import { isWorkflowHidden } from "@/utils/workflowHidden";
 import {
@@ -83,6 +84,9 @@ interface ComboControlProps {
   displayLabel?: string;
   /** The row's "…" menu, rendered after the label like the other controls. */
   labelAccessory?: ReactNode;
+  /** "⇠ slot" boundary annotation and its jump — see ControlLabelRow. */
+  boundaryAnnotation?: string;
+  onBoundaryJump?: () => void;
   hasPin: boolean;
   isPinned?: boolean;
   onTogglePin?: () => void;
@@ -111,6 +115,8 @@ export function ComboControl({
   hideLabel = false,
   displayLabel,
   labelAccessory,
+  boundaryAnnotation,
+  onBoundaryJump,
   hasPin,
   isPinned = false,
   onTogglePin,
@@ -750,13 +756,15 @@ export function ComboControl({
     return (
       <div className={`${containerClass} combo-control-root combo-control-input-browser pt-2`}>
         {!hideLabel && (
-          <div className={`${controlLabelRowClassName} mb-1`}>
-            <label className="inline-flex min-w-0 items-center gap-1">
-              <span>{displayLabel ?? name}</span>
-              {isPromoted && <PromotedWidgetIcon className="w-5 h-5 text-pink-500" />}
-            </label>
-            {labelAccessory}
-          </div>
+          <ControlLabelRow
+            name={name}
+            displayLabel={displayLabel}
+            isPromoted={isPromoted}
+            boundaryAnnotation={boundaryAnnotation}
+          onBoundaryJump={onBoundaryJump}
+            labelAccessory={labelAccessory}
+            iconClassName="w-5 h-5 text-pink-500"
+          />
         )}
         <div
           role="button"
@@ -817,15 +825,15 @@ export function ComboControl({
         className={`${containerClass} combo-control-root combo-control-modal pt-2`}
       >
         {!hideLabel && (
-          <div className={`${controlLabelRowClassName} mb-1`}>
-            <label className="inline-flex min-w-0 items-center gap-1">
-              <span>{displayLabel ?? name}</span>
-              {isPromoted && (
-                <PromotedWidgetIcon className="w-5 h-5 text-pink-500" />
-              )}
-            </label>
-            {labelAccessory}
-          </div>
+          <ControlLabelRow
+            name={name}
+            displayLabel={displayLabel}
+            isPromoted={isPromoted}
+            boundaryAnnotation={boundaryAnnotation}
+          onBoundaryJump={onBoundaryJump}
+            labelAccessory={labelAccessory}
+            iconClassName="w-5 h-5 text-pink-500"
+          />
         )}
 
         <div
@@ -914,6 +922,7 @@ export function ComboControl({
             <Select<SelectOption, boolean>
               className={modalSelectClassName}
               classNamePrefix="rs"
+          classNames={{ control: () => controlJumpSurfaceClassName }}
               options={modalSelectOptions}
               value={selectValue}
               onChange={handleModalSelectChange}
@@ -1095,15 +1104,14 @@ export function ComboControl({
       ref={inlineRootRef}
     >
       {!hideLabel && (
-        <div className={`${controlLabelRowClassName} mb-1`}>
-            <label className="inline-flex min-w-0 items-center gap-1">
-              <span>{displayLabel ?? name}</span>
-            {isPromoted && (
-              <PromotedWidgetIcon className="w-3.5 h-3.5 text-pink-500" />
-            )}
-            </label>
-            {labelAccessory}
-          </div>
+        <ControlLabelRow
+          name={name}
+          displayLabel={displayLabel}
+          isPromoted={isPromoted}
+          boundaryAnnotation={boundaryAnnotation}
+          onBoundaryJump={onBoundaryJump}
+          labelAccessory={labelAccessory}
+        />
       )}
       {inlineScrimVisible && (
         <InlineComboScrim
@@ -1121,6 +1129,7 @@ export function ComboControl({
         <Select<SelectOption, boolean>
           className={selectClassName}
           classNamePrefix="rs"
+          classNames={{ control: () => controlJumpSurfaceClassName }}
           options={visibleSelectOptions}
           value={selectValue}
           onChange={handleSelectChange}

@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { NodeTypes, Workflow, WorkflowNode } from '@/api/types';
 import { createEmptyMobileLayout, makeLocationPointer } from '@/utils/mobileLayout';
 import { inferSeedMode } from '@/hooks/useWorkflow/seedExpansion';
+import { useQueueStore } from '../useQueue';
 import { useSeedStore } from '../useSeed';
 import { useWorkflowStore } from '../useWorkflow';
 import { useWorkflowErrorsStore } from '../useWorkflowErrors';
@@ -191,6 +192,10 @@ beforeEach(() => {
   useWorkflowStore.setState({
     workflow: null,
     originalWorkflow: null,
+    // The rolling prompt-preview base outlives a workflow load, so leaving it
+    // behind would diff one test's workflow against another's.
+    diffBaseWorkflow: null,
+    lastEnqueuedWorkflow: null,
     nodeTypes: null,
     hiddenItems: {},
     collapsedItems: {},
@@ -473,6 +478,51 @@ describe('changing an rgthree Seed’s mode from the UI', () => {
     expect(seedWidget()).toBe(777);
   });
 
+  it('never reads the widget after a promoted seed as its control (regression)', () => {
+    // A subgraph that promotes [seed, unet_name]. The slot after the seed holds
+    // a model filename, and "is this a control_after_generate?" is answered by
+    // "is it a non-empty string" — so guessing seedIndex + 1 wrote the mode
+    // string over the model. Clicking "New fixed random" on the placeholder
+    // silently set unet_name to "fixed".
+    const placeholder = makeNode(99, {
+      type: 'a-subgraph-uuid',
+      widgets_values: [321, 'minimax_model.safetensors'],
+    });
+    const workflow = {
+      ...makeWorkflow([placeholder]),
+      definitions: {
+        subgraphs: [{ id: 'a-subgraph-uuid', name: 'Minimax', nodes: [], links: [] }],
+      },
+    } as unknown as Workflow;
+    const updateNodeWidgets = vi.fn();
+
+    // The caller knows of no control slot and says nothing about one.
+    useSeedStore.getState().setSeedMode(99, 'fixed', {
+      workflow,
+      nodeTypes: NODE_TYPES,
+      node: placeholder,
+      seedWidgetIndex: 0,
+      updateNodeWidgets,
+    });
+
+    // 321 is already a concrete seed, so "fixed" has nothing to write anywhere.
+    expect(updateNodeWidgets).not.toHaveBeenCalled();
+
+    useSeedStore.getState().setSeedMode(99, 'randomize', {
+      workflow,
+      nodeTypes: NODE_TYPES,
+      node: placeholder,
+      seedWidgetIndex: 0,
+      updateNodeWidgets,
+    });
+
+    // The mode lives in the seedModes store; the concrete seed stays where
+    // it is and the model is untouched. (Only rgthree-style nodes encode the
+    // mode in the value itself.)
+    expect(updateNodeWidgets).not.toHaveBeenCalled();
+    expect(useSeedStore.getState().seedModes[99]).toBe('randomize');
+  });
+
   it('encodes a promoted instance mode without treating its next widget as a control', () => {
     const placeholder = makeNode(99, {
       type: 'subgraph-placeholder',
@@ -490,7 +540,11 @@ describe('changing an rgthree Seed’s mode from the UI', () => {
       updateNodeWidgets,
     });
 
-    expect(updateNodeWidgets).toHaveBeenCalledWith(99, { 1: -1 });
+    // Nothing is written: the mode is recorded in the store, the promoted
+    // seed keeps its concrete value, and the neighbouring widgets are never
+    // touched.
+    expect(updateNodeWidgets).not.toHaveBeenCalled();
+    expect(useSeedStore.getState().seedModes[99]).toBe('randomize');
   });
 });
 
@@ -505,6 +559,44 @@ describe('a bare seed widget with no control_after_generate', () => {
       outputs: [{ name: 'seed', type: 'INT', links: null }],
       widgets_values: [seed],
     });
+
+  function setMode(nodeId: number, mode: 'fixed' | 'randomize' | 'increment' | 'decrement') {
+    const workflow = useWorkflowStore.getState().workflow!;
+    useSeedStore.getState().setSeedMode(nodeId, mode, {
+      workflow,
+      nodeTypes: NODE_TYPES,
+      updateNodeWidgets: (_id, updates) =>
+        useWorkflowStore.getState().updateNodeWidgets(pointer(nodeId), updates),
+    });
+  }
+
+  function seedWidget(nodeId = 1): unknown {
+    const node = useWorkflowStore.getState().workflow!.nodes.find((n) => n.id === nodeId)!;
+    return (node.widgets_values as unknown[])[0];
+  }
+
+  it('choosing randomize keeps a concrete, stock-valid seed in widgets_values', async () => {
+    // Only rgthree-style nodes encode the mode in the value. Writing the -1
+    // sentinel here would persist a seed stock rejects (min 0) into any
+    // workflow saved before the next run.
+    loadWorkflow([bare(321)]);
+    setMode(1, 'randomize');
+
+    expect(seedWidget()).toBe(321);
+    const seeds = await queueRepeatedly(3);
+    expect(new Set(seeds).size).toBe(3);
+    expect(seeds).not.toContain(-1);
+  });
+
+  it('choosing a mode replaces a leftover sentinel with a concrete seed', () => {
+    // A -1 that reached the slot some other way (an older save, a hand edit)
+    // would override the store's mode at queue time, so a mode change clears
+    // it rather than leaving the two sources disagreeing.
+    loadWorkflow([bare(-1)], { seedLastValues: { 1: 4242 } });
+    setMode(1, 'increment');
+
+    expect(seedWidget()).toBe(4242);
+  });
 
   it('defaults to fixed with no mode recorded', async () => {
     loadWorkflow([bare(321)]);
@@ -529,13 +621,16 @@ describe('a bare seed widget with no control_after_generate', () => {
     expect(await queueRepeatedly(3)).toEqual([49, 48, 47]);
   });
 
-  it('leaves the saved widget value alone when randomizing', async () => {
-    // No control widget means no "advance in place" — the override is
-    // ephemeral, so the authored value survives a queue.
+  it('writes the executed seed back into the widget when randomizing', async () => {
+    // What stock's control_after_generate does: the card must show the seed
+    // the run actually used, not the load-time value forever while every run
+    // quietly executes another. (Sentinel-valued slots are the exception —
+    // for them the value is the mode — covered by the rgthree tests.)
     loadWorkflow([bare(321)], { seedModes: { 1: 'randomize' } });
-    await queueRepeatedly(1);
+    const [executed] = await queueRepeatedly(1);
     expect((useWorkflowStore.getState().workflow!.nodes[0].widgets_values as unknown[])[0])
-      .toBe(321);
+      .toBe(executed);
+    expect(executed).not.toBe(321);
   });
 });
 
@@ -590,5 +685,43 @@ describe('bypassed seed nodes', () => {
     const prompt = await queueAndReadSeeds();
     expect(prompt['1']).toBeUndefined();
     expect(prompt['2'].seed).toBe(20);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// What the queue card says the run used.
+// ═══════════════════════════════════════════════════════════════════════════
+
+describe('the seeds recorded for the queue prompt preview', () => {
+  it('records a seed that never reaches widgets_values', async () => {
+    // rgthree's -1 means "randomize", and the seed it resolves to is applied as
+    // an ephemeral override while the prompt is built — the node's
+    // widgets_values still read -1 afterwards. Diffing the workflow can
+    // therefore never show the seed the image was actually made with.
+    loadWorkflow([rgthreeSeedNode(-1)]);
+    const prompt = await queueAndReadSeeds();
+
+    const diff = useQueueStore.getState().workflowDiffs['p-test'];
+    expect(diff?.seeds).toEqual([
+      { nodeId: '1', label: RGTHREE_SEED, field: 'seed', value: prompt['1'].seed },
+    ]);
+    expect(prompt['1'].seed).not.toBe(-1);
+  });
+
+  it('reports a rolled control_after_generate seed once, as a seed', async () => {
+    loadWorkflow([makeNode(1, { type: 'KSampler', widgets_values: [42, 'randomize'] })]);
+    // A recorded base is what makes the diff report widget changes at all.
+    useWorkflowStore.setState({
+      originalWorkflow: structuredClone(useWorkflowStore.getState().workflow),
+    });
+    const prompt = await queueAndReadSeeds();
+
+    const diff = useQueueStore.getState().workflowDiffs['p-test'];
+    expect(diff?.seeds).toEqual([
+      { nodeId: '1', label: 'KSampler', field: 'seed', value: prompt['1'].seed },
+    ]);
+    // This seed does land in widgets_values, so without the de-dup it would
+    // also read as an "old -> new" change the user never made.
+    expect(diff?.nodeChanges).toEqual([]);
   });
 });

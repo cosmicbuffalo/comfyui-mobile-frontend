@@ -58,6 +58,11 @@ export function MediaViewerMetadata({
               cfg: {metadata.cfg}
             </div>
           )}
+          {metadata.seeds && metadata.seeds.length > 0 && (
+            <div className="viewer-seed-badge px-1.5 py-0.5 bg-black/50 text-white text-[10px] rounded backdrop-blur-sm">
+              {metadata.seeds.length > 1 ? 'seeds' : 'seed'}: {metadata.seeds.join(', ')}
+            </div>
+          )}
           {durationLabel && (
             <div className="px-1.5 py-0.5 bg-black/50 text-white text-[10px] rounded backdrop-blur-sm">
               time: {durationLabel}

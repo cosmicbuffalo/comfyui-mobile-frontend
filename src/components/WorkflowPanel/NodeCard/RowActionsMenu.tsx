@@ -32,6 +32,18 @@ interface RowActionsMenuProps {
   /** Named in the trigger's accessible label, so screen readers get the row. */
   rowName: string;
   /**
+   * Drawn after the name on the heading's first line — on a placeholder, the
+   * inner widget(s) this row's boundary slot drives ("⇢ seed"), so the mapping
+   * can be checked without entering the scope.
+   */
+  rowNameAnnotation?: string;
+  /**
+   * Makes the heading's first line a button. On a placeholder widget row this
+   * enters the subgraph instance and jumps to the inner widget the row's
+   * boundary slot drives — the mapping the annotation names.
+   */
+  onHeadingClick?: () => void;
+  /**
    * The row's data type, shown above the actions. A widget's type decides what
    * it can be wired to and what a promotion produces, and it is otherwise only
    * inferable from the control's shape — a combo of two options looks like a
@@ -68,6 +80,8 @@ const MENU_WIDTH_PX = 208;
 export function RowActionsMenu({
   menuKey,
   rowName,
+  rowNameAnnotation,
+  onHeadingClick,
   typeLabel,
   note,
   sections,
@@ -111,7 +125,33 @@ export function RowActionsMenu({
         key: 'row-type',
         render: (
           <div className="row-actions-heading px-3 pb-1 pt-2">
-            <div className="truncate text-xs font-medium text-slate-200">{rowName}</div>
+            {onHeadingClick ? (
+              <button
+                type="button"
+                className="row-actions-heading-jump block w-full truncate text-left text-xs font-medium text-slate-200 transition-colors hover:text-cyan-300"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onHeadingClick();
+                  closeMenu();
+                }}
+              >
+                {rowName}
+                {rowNameAnnotation && (
+                  <span className="row-actions-mapping ml-1 font-normal text-slate-400">
+                    {rowNameAnnotation}
+                  </span>
+                )}
+              </button>
+            ) : (
+              <div className="truncate text-xs font-medium text-slate-200">
+                {rowName}
+                {rowNameAnnotation && (
+                  <span className="row-actions-mapping ml-1 font-normal text-slate-400">
+                    {rowNameAnnotation}
+                  </span>
+                )}
+              </div>
+            )}
             <div className="row-actions-type truncate font-mono text-[10px] uppercase tracking-wide text-slate-400">
               {typeLabel}
             </div>
@@ -144,7 +184,7 @@ export function RowActionsMenu({
       }
     }
     return result;
-  }, [closeMenu, note, rowName, sections, typeLabel]);
+  }, [closeMenu, note, onHeadingClick, rowName, rowNameAnnotation, sections, typeLabel]);
 
   // A heading with nothing under it is not a menu.
   if (items.every((item) => item.type === 'custom' || item.type === 'divider')) return null;

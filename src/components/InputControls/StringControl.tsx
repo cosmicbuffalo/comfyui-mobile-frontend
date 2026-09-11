@@ -3,7 +3,6 @@ import { TextareaActions } from './TextareaActions';
 import { TagAutocompleteTextarea } from './TagAutocompleteTextarea';
 import { FullscreenWidgetModal } from '../modals/FullscreenWidgetModal';
 import { PinButton } from './PinButton';
-import { PromotedWidgetIcon } from '../icons';
 import { useCoarsePointer } from '@/hooks/useCoarsePointer';
 import { themeColors } from '@/theme/colors';
 import {
@@ -11,11 +10,11 @@ import {
   controlInputDarkClassName,
   controlInputFocusClassNameForState,
   controlLabelClassName,
-  controlLabelRowClassName,
   controlModalFocusClassName,
   controlModalInputBaseClassName,
   controlStateClassName,
 } from './controlStyles';
+import { ControlLabelRow } from './ControlLabelRow';
 
 // How long after the last keystroke the draft is committed to the store.
 const DRAFT_COMMIT_DELAY_MS = 300;
@@ -96,6 +95,9 @@ interface StringControlProps {
   onRequestModalOpen?: () => void;
   onModalClose?: () => void;
   labelAccessory?: ReactNode;
+  /** "⇠ slot" boundary annotation and its jump — see ControlLabelRow. */
+  boundaryAnnotation?: string;
+  onBoundaryJump?: () => void;
 }
 
 export function StringControl({
@@ -113,6 +115,8 @@ export function StringControl({
   hasError = false,
   isPromoted = false,
   labelAccessory,
+  boundaryAnnotation,
+  onBoundaryJump,
   forceModalOpen = false,
   onRequestModalOpen,
   onModalClose
@@ -198,15 +202,15 @@ export function StringControl({
           <>
             <div className="string-control-label-container flex items-center justify-between mb-1 min-h-[18px]">
               {!hideLabel ? (
-                <div className={controlLabelRowClassName}>
-            <label className="inline-flex min-w-0 items-center gap-1">
-              <span>{displayLabel ?? name}</span>
-                    {isPromoted && (
-                      <PromotedWidgetIcon className="w-3.5 h-3.5 text-pink-500" />
-                    )}
-            </label>
-            {labelAccessory}
-          </div>
+                <ControlLabelRow
+                  name={name}
+                  displayLabel={displayLabel}
+                  isPromoted={isPromoted}
+                  boundaryAnnotation={boundaryAnnotation}
+          onBoundaryJump={onBoundaryJump}
+                  labelAccessory={labelAccessory}
+                  className=""
+                />
               ) : (
                 <span className={controlLabelClassName} />
               )}
@@ -240,15 +244,14 @@ export function StringControl({
         ) : (
           <>
             {!hideLabel && (
-              <div className={`${controlLabelRowClassName} mb-1`}>
-            <label className="inline-flex min-w-0 items-center gap-1">
-              <span>{displayLabel ?? name}</span>
-                  {isPromoted && (
-                    <PromotedWidgetIcon className="w-3.5 h-3.5 text-pink-500" />
-                  )}
-            </label>
-            {labelAccessory}
-          </div>
+              <ControlLabelRow
+                name={name}
+                displayLabel={displayLabel}
+                isPromoted={isPromoted}
+                boundaryAnnotation={boundaryAnnotation}
+          onBoundaryJump={onBoundaryJump}
+                labelAccessory={labelAccessory}
+              />
             )}
             <div
               className={`relative ${controlInputBaseClassName} min-h-[46px] flex items-center cursor-text ${hasPin ? 'pr-16' : 'pr-6'} ${controlStateClassName({ disabled, hasError, isPromoted })}`}
@@ -321,15 +324,15 @@ export function StringControl({
       <div className={`${containerClass} group ${!hideLabel ? 'pt-2' : ''}`} data-textarea-root="true">
         <div className="string-control-label-container flex items-center justify-between mb-1 min-h-[18px]" data-textarea-header="true">
           {!hideLabel && (
-            <div className={controlLabelRowClassName}>
-            <label className="inline-flex min-w-0 items-center gap-1">
-              <span>{displayLabel ?? name}</span>
-                {isPromoted && (
-                  <PromotedWidgetIcon className="w-3.5 h-3.5 text-pink-500" />
-                )}
-            </label>
-            {labelAccessory}
-          </div>
+            <ControlLabelRow
+              name={name}
+              displayLabel={displayLabel}
+              isPromoted={isPromoted}
+              boundaryAnnotation={boundaryAnnotation}
+          onBoundaryJump={onBoundaryJump}
+              labelAccessory={labelAccessory}
+              className=""
+            />
           )}
           <TextareaActions
             allowEdit={!disabled}
@@ -363,15 +366,14 @@ export function StringControl({
   return (
     <div className={`${containerClass} ${!hideLabel ? 'pt-2' : ''}`}>
       {!hideLabel && (
-        <div className={`${controlLabelRowClassName} mb-1`}>
-            <label className="inline-flex min-w-0 items-center gap-1">
-              <span>{displayLabel ?? name}</span>
-            {isPromoted && (
-              <PromotedWidgetIcon className="w-3.5 h-3.5 text-pink-500" />
-            )}
-            </label>
-            {labelAccessory}
-          </div>
+        <ControlLabelRow
+          name={name}
+          displayLabel={displayLabel}
+          isPromoted={isPromoted}
+          boundaryAnnotation={boundaryAnnotation}
+          onBoundaryJump={onBoundaryJump}
+          labelAccessory={labelAccessory}
+        />
       )}
       <div className="relative">
         <input

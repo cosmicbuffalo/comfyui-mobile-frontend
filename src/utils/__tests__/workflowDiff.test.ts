@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import type { Workflow, WorkflowNode } from '@/api/types';
 import {
+  collectQueueSeeds,
   computeQueueWorkflowDiff,
   nonSeedWidgetsDiffer,
   selectDiffBase,
+  withoutSeedFieldChanges,
   wordDiff,
 } from '../workflowDiff';
 
@@ -172,6 +174,62 @@ function wf(text: string, steps: number, seed: number): Workflow {
   );
 }
 
+describe('subgraph placeholder labels', () => {
+  // A placeholder's `type` is its definition's UUID. Untitled instances used to
+  // read as that raw UUID in the preview, which names nothing to a reader.
+  function placeholderWorkflow(
+    seed: number,
+    title?: string,
+    instanceNumber?: number,
+  ): Workflow {
+    return {
+      ...mkWf([
+        mkNode({
+          id: 814,
+          type: 'a-subgraph-uuid',
+          title,
+          properties: instanceNumber === undefined
+            ? {}
+            : { mobileInstanceNumber: instanceNumber },
+          widgets_values: [seed],
+        }),
+      ]),
+      definitions: {
+        subgraphs: [{
+          id: 'a-subgraph-uuid',
+          name: 'Section {n}',
+          nodes: [],
+          links: [],
+        }],
+      },
+    } as Workflow;
+  }
+
+  it('names an untitled instance after its definition, {n} resolved', () => {
+    const diff = computeQueueWorkflowDiff(
+      placeholderWorkflow(1, undefined, 3),
+      placeholderWorkflow(2, undefined, 3),
+    );
+    expect(diff.nodeChanges.map((change) => change.label)).toEqual(['Section 3']);
+  });
+
+  it('drops the {n} token when the instance carries no number', () => {
+    const diff = computeQueueWorkflowDiff(
+      placeholderWorkflow(1),
+      placeholderWorkflow(2),
+    );
+    expect(diff.nodeChanges.map((change) => change.label)).toEqual(['Section']);
+  });
+
+  it('still prefers a title the user set on the instance', () => {
+    const diff = computeQueueWorkflowDiff(
+      placeholderWorkflow(1, 'Opening shot', 3),
+      placeholderWorkflow(2, 'Opening shot', 3),
+    );
+    expect(diff.nodeChanges.map((change) => change.label)).toEqual(['Opening shot']);
+  });
+});
+
 describe('nonSeedWidgetsDiffer', () => {
   it('ignores seed-only differences', () => {
     expect(nonSeedWidgetsDiffer(wf('a cat', 20, 111), wf('a cat', 20, 222))).toBe(false);
@@ -218,5 +276,176 @@ describe('selectDiffBase (enqueue-time base rule)', () => {
     const current = wf('a big cat', 30, 444); // only seed changed since last enqueue
     const { base } = selectDiffBase(current, lastEnqueued, advancedBase, original);
     expect(base).toBe(advancedBase);
+  });
+});
+
+describe('collectQueueSeeds', () => {
+  // The canonical workflow the prompt was built from: a top-level sampler and a
+  // subgraph placeholder (node 50) whose definition holds an inner sampler.
+  const workflow: Workflow = {
+    ...mkWf([
+      mkNode({ id: 3, type: 'KSampler', title: 'Sampler' }),
+      mkNode({ id: 50, type: 'a-subgraph-uuid', title: 'Video model' }),
+    ]),
+    definitions: {
+      subgraphs: [{
+        id: 'a-subgraph-uuid',
+        name: 'Video model',
+        nodes: [mkNode({ id: 7, type: 'KSampler', title: 'High noise' })],
+        links: [],
+      }],
+    },
+  } as Workflow;
+
+  it('reads the seed each node actually ran with off the built prompt', () => {
+    const seeds = collectQueueSeeds(
+      {
+        '3': { class_type: 'KSampler', inputs: { seed: 987, steps: 20 } },
+        '50:7': { class_type: 'KSampler', inputs: { noise_seed: 4242 } },
+      },
+      workflow,
+    );
+
+    expect(seeds).toEqual([
+      { nodeId: '3', label: 'Sampler', field: 'seed', value: 987 },
+      // Named after the placeholder as well, so two samplers inside the same
+      // subgraph stay tellable apart.
+      { nodeId: '50:7', label: 'Video model / High noise', field: 'noise_seed', value: 4242 },
+    ]);
+  });
+
+  it('names an untitled placeholder in a seed label by its instance name', () => {
+    const untitled = {
+      ...mkWf([mkNode({ id: 50, type: 'a-subgraph-uuid', properties: { mobileInstanceNumber: 2 } })]),
+      definitions: {
+        subgraphs: [{
+          id: 'a-subgraph-uuid',
+          name: 'Section {n}',
+          nodes: [mkNode({ id: 7, type: 'KSampler', title: 'High noise' })],
+          links: [],
+        }],
+      },
+    } as Workflow;
+
+    const seeds = collectQueueSeeds(
+      { '50:7': { class_type: 'KSampler', inputs: { noise_seed: 4242 } } },
+      untitled,
+    );
+    expect(seeds.map((seed) => seed.label)).toEqual(['Section 2 / High noise']);
+  });
+
+  it('falls back to the class type when no workflow came with the item', () => {
+    // History from another client can arrive without an embedded workflow; the
+    // seed is still in the prompt, so the row is still worth showing.
+    const seeds = collectQueueSeeds(
+      { '3': { class_type: 'KSampler', inputs: { seed: 987 } } },
+    );
+    expect(seeds).toEqual([
+      { nodeId: '3', label: 'KSampler', field: 'seed', value: 987 },
+    ]);
+  });
+
+  it('ignores a connected seed and fields that merely mention seed', () => {
+    const seeds = collectQueueSeeds(
+      {
+        '3': {
+          class_type: 'KSampler',
+          // A linked seed is [sourceNodeId, slot] — not a value this run owns.
+          inputs: { seed: [9, 0], seed_mode: 'randomize', seed_offset: 5 },
+        },
+      },
+      workflow,
+    );
+
+    expect(seeds).toEqual([]);
+  });
+});
+
+describe('withoutSeedFieldChanges', () => {
+  const seeds = [{ nodeId: '3', label: 'Sampler', field: 'seed', value: 987 }];
+
+  it('drops the widget change the seeds list already reports', () => {
+    const changes = withoutSeedFieldChanges(
+      [
+        {
+          nodeId: '3',
+          label: 'Sampler',
+          order: 3,
+          changes: [
+            { field: 'seed', before: '123', after: '987' },
+            { field: 'steps', before: '20', after: '30' },
+          ],
+        },
+      ],
+      seeds,
+    );
+
+    expect(changes).toEqual([
+      {
+        nodeId: '3',
+        label: 'Sampler',
+        order: 3,
+        changes: [{ field: 'steps', before: '20', after: '30' }],
+      },
+    ]);
+  });
+
+  it('drops a node whose only change was its seed', () => {
+    const changes = withoutSeedFieldChanges(
+      [
+        {
+          nodeId: '3',
+          label: 'Sampler',
+          order: 3,
+          changes: [{ field: 'seed', before: '123', after: '987' }],
+        },
+      ],
+      seeds,
+    );
+
+    expect(changes).toEqual([]);
+  });
+
+  it('drops a placeholder seed change reported under a hierarchical execution id', () => {
+    // The executed seed reports under "30:3" (the inner node that ran), but
+    // the widget its write-back changed sits on placeholder 30 — whose slot
+    // has no resolvable name, so the diff labels it "widget 6".
+    const changes = withoutSeedFieldChanges(
+      [
+        {
+          nodeId: '30',
+          label: 'Text to Image',
+          order: 0,
+          changes: [{ field: 'widget 6', before: '594361197674106', after: '976226005' }],
+        },
+      ],
+      [{ nodeId: '30:3', label: 'Text to Image / KSampler', field: 'seed', value: 976226005 }],
+    );
+
+    expect(changes).toEqual([]);
+  });
+
+  it('keeps a non-seed edit on the seed node that collides with the seed value', () => {
+    const nodeChanges = [
+      {
+        nodeId: '3',
+        label: 'Sampler',
+        order: 3,
+        changes: [{ field: 'steps', before: '20', after: '987' }],
+      },
+    ];
+    expect(withoutSeedFieldChanges(nodeChanges, seeds)).toEqual(nodeChanges);
+  });
+
+  it('keeps the same value on a different node', () => {
+    const nodeChanges = [
+      {
+        nodeId: '4',
+        label: 'Other sampler',
+        order: 4,
+        changes: [{ field: 'seed', before: '1', after: '987' }],
+      },
+    ];
+    expect(withoutSeedFieldChanges(nodeChanges, seeds)).toEqual(nodeChanges);
   });
 });

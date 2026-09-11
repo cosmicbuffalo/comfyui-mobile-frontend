@@ -351,12 +351,21 @@ function QueueMediaEntry({
     mediaElementStyle.aspectRatio = String(knownAspect);
   }
 
-  // Hover always exposes both actions. A chosen state also gets a persistent
-  // bare corner indicator, which fades while the full hover controls are shown.
-  // Keeping the actions consistent avoids making a viewed/favorited/rejected
-  // image look as though its controls have disappeared.
+  // Always on for touch; hover-revealed from `lg` up.
+  //
+  // These were hover-only, and a phone never hovers — so on the layout where
+  // the queue is mostly read, favourite and reject were unreachable from the
+  // card and the only route to them was opening the viewer. Only the bare
+  // state indicator ever showed, which made the actions look absent rather
+  // than hidden. The breakpoint split is the one the outputs grid already uses
+  // for the same decision (see FileCard).
   const hoverRevealClass =
-    'opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto';
+    'opacity-100 pointer-events-auto lg:opacity-0 lg:pointer-events-none '
+    + 'lg:group-hover:opacity-100 lg:group-hover:pointer-events-auto';
+  // The persistent bare corner mark is the desktop non-hover state, and sits
+  // exactly where the favourite button now permanently is. On touch the button
+  // draws that state itself, so the mark would only double it.
+  const stateIndicatorClass = 'hidden lg:block';
   return (
     <div
       key={entry.key}
@@ -549,12 +558,12 @@ function QueueMediaEntry({
             <FavoriteButton onClick={onToggleFavorite} isFavorited={favorited} />
           </div>
           {favorited && (
-            <div className="favorite-state-indicator pointer-events-none absolute bottom-2 right-2 z-10 transition-opacity group-hover:opacity-0">
+            <div className={`favorite-state-indicator pointer-events-none absolute bottom-2 right-2 z-10 transition-opacity group-hover:opacity-0 ${stateIndicatorClass}`}>
               <FavoriteButton onClick={onToggleFavorite} isFavorited bare />
             </div>
           )}
           {rejected && (
-            <div className="rejected-state-indicator pointer-events-none absolute bottom-2 right-2 z-10 transition-opacity group-hover:opacity-0">
+            <div className={`rejected-state-indicator pointer-events-none absolute bottom-2 right-2 z-10 transition-opacity group-hover:opacity-0 ${stateIndicatorClass}`}>
               <RejectButton onClick={onToggleReject} isRejected isFavorited={false} bare />
             </div>
           )}
@@ -583,7 +592,12 @@ function QueueMediaEntry({
       )}
       {metadata && (
         <div className={`absolute right-2 flex flex-col-reverse items-end gap-1 pointer-events-none ${
-          favorited ? 'bottom-10' : 'bottom-2'
+          favorited
+            ? 'bottom-10'
+            // On touch the favourite/reject buttons are always in that corner,
+            // so the chips start above them rather than only once something is
+            // favourited. Desktop keeps the corner until a hover reveals them.
+            : isManageableOutput ? 'bottom-10 lg:bottom-2' : 'bottom-2'
         }`}>
           {metadata.model && <div className="px-1.5 py-0.5 bg-black/50 text-white text-[10px] rounded backdrop-blur-sm">model: {metadata.model}</div>}
           {metadata.sampler && <div className="px-1.5 py-0.5 bg-black/50 text-white text-[10px] rounded backdrop-blur-sm">sampler: {metadata.sampler}</div>}
@@ -1072,21 +1086,59 @@ function QueueCardComponent({
   const durationLabel = formatDuration(durationSeconds);
   const displayNodeProgress = overallProgress === 100 ? 100 : progress;
 
-  const metadata = useMemo(() => {
-    if (!showQueueMetadata || !item.data.prompt) return null;
-    return extractMetadata(item.data.prompt);
-  }, [showQueueMetadata, item.data.prompt]);
+  // What the viewer shows in its info panel. Independent of the card's own
+  // metadata row, which the user can switch off.
+  const viewerMetadata = useMemo(
+    () => (item.data.prompt ? extractMetadata(item.data.prompt) : undefined),
+    [item.data.prompt],
+  );
+  const metadata = showQueueMetadata ? viewerMetadata ?? null : null;
 
+  // The viewer identifies media by `file`, not by URL: without it the title
+  // falls back to the alt text ("Generation") and favourite/reject/download are
+  // inert, because every one of them is gated on `currentItem.file`. This list
+  // is what opens for a running card, and the fallback for any click whose src
+  // isn't in the panel-wide list, so it has to carry the same identity the
+  // panel's own buildViewerImages attaches.
   const cardViewerImages = useMemo(() => (
-    visibleImages.map((img: HistoryOutputImage) => ({
-      src: getImageUrl(img.filename, img.subfolder, img.type, img.cacheToken),
-      displaySrc: isVideoFilename(img.filename)
-        ? undefined
-        : getQueueImagePreviewUrl(img.filename, img.subfolder, img.type, img.cacheToken),
-      alt: t('Generation'),
-      mediaType: getMediaType(img.filename)
-    }))
-  ), [visibleImages, t]);
+    visibleImages.map((img: HistoryOutputImage) => {
+      const fullUrl = getImageUrl(img.filename, img.subfolder, img.type, img.cacheToken);
+      const mediaType = getMediaType(img.filename);
+      return {
+        src: fullUrl,
+        displaySrc: isVideoFilename(img.filename)
+          ? undefined
+          : getQueueImagePreviewUrl(img.filename, img.subfolder, img.type, img.cacheToken),
+        alt: t('Generation'),
+        mediaType,
+        filename: img.filename,
+        promptId: item.data.prompt_id || item.id,
+        metadata: viewerMetadata,
+        workflow: queuedWorkflow,
+        executedPrompt: item.data.prompt,
+        durationSeconds,
+        success,
+        file: {
+          id: getHistoryImageFileId(img),
+          name: img.filename,
+          type: mediaType === 'video' ? ('video' as const) : ('image' as const),
+          fullUrl,
+          hidden: historyData?.hidden,
+        },
+      };
+    })
+  ), [
+    visibleImages,
+    t,
+    item.data.prompt_id,
+    item.data.prompt,
+    item.id,
+    viewerMetadata,
+    queuedWorkflow,
+    durationSeconds,
+    success,
+    historyData?.hidden,
+  ]);
   const queueViewerImages = useMemo(() => (
     isRunning ? cardViewerImages : viewerImages
   ), [cardViewerImages, isRunning, viewerImages]);
@@ -1815,6 +1867,7 @@ function QueueCardComponent({
               promptId={previewPromptId}
               anchorBaseId={item.id}
               workflow={queuedWorkflow}
+              prompt={item.data.prompt}
               inputImages={promptInputImages}
               onInputImageClick={(src, index) => handleMediaClick(src, index, isTopDoneItem)()}
             />

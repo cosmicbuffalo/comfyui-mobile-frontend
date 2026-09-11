@@ -55,12 +55,12 @@ export function buildSubgraphSeedWidgetDescriptors(
  * subgraphs to build the queued prompt — never assign the result back to the
  * persisted workflow.
  *
- * Context: a subgraph placeholder's promoted seed with no real
- * control_after_generate on the boundary gets its randomized value recorded
- * in `seedOverrides` (keyed by the placeholder's own node id) rather than
- * written into its widgets_values directly — mutating it there would bake a
- * concrete number into the saved workflow and lose the "always randomize"
- * mode setting, unlike a node with a real control_after_generate widget.
+ * Context: a subgraph placeholder's promoted seed whose slot holds a special
+ * sentinel (-1/-2/-3) gets its resolved value recorded in `seedOverrides`
+ * (keyed by the placeholder's own node id) rather than written into its
+ * widgets_values — for those slots the value IS the mode, so it must stay.
+ * (A concrete slot is written back by processSeedNode and needs no patch;
+ * its override is applied here as a harmless no-op.)
  *
  * But expandWorkflowSubgraphs treats a promoted widget's value on the
  * placeholder as authoritative and pushes it down into the inner node it
