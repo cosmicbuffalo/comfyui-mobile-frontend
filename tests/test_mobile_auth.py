@@ -28,7 +28,7 @@ def _install_fake_auth_node(**overrides):
     api = types.ModuleType("comfyui_multiuser.api")
     defaults = {
         "is_enabled": lambda: True,
-        "current_user": lambda: {"id": "u1", "username": "nick"},
+        "current_user": lambda: {"id": "u1", "username": "tester"},
         "scope_path": lambda kind, path: f"users/u1/{path}",
         "can_access_model": lambda rel: rel.startswith("public/"),
         "filter_files": lambda paths, user=None: [p for p in paths if p.startswith("users/u1/")],
@@ -82,7 +82,7 @@ def test_absence_is_cached_rather_than_retried_per_call(monkeypatch):
 def test_delegates_to_the_auth_node_when_installed():
     _install_fake_auth_node()
     assert mobile_auth.is_enabled()
-    assert mobile_auth.current_user()["username"] == "nick"
+    assert mobile_auth.current_user()["username"] == "tester"
     assert mobile_auth.scope_path("output", "a.png") == "users/u1/a.png"
     assert mobile_auth.can_access_model("public/x.safetensors")
     assert not mobile_auth.can_access_model("private/x.safetensors")

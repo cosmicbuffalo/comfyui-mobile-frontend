@@ -1,5 +1,35 @@
 # Changelog
 
+## 3.3.2 - 2026-09-11
+
+### Added
+
+- **Prompt previews now show seeds**, and they show up in the viewer metadata overlay too
+- **Favorite and reject buttons on mobile queue items**, previously only showed up on hover for desktop
+- **Opening an image in a picker now offers a way to select the currently displayed image**, instead of making you back out to the list to select it
+- **Select mode now offers the hide action**
+- **Command+Delete shortcut to trigger deletion of rejected items**
+
+### Changed
+
+- **Cosmetic improvements to subgraph placeholder nodes** - widgets no longer name labels they route to internally on the placeholder, instead the mapped node is in the context menu header, and clickable for a jump to the widget.
+- **Jumping to promoted widgets inside subgraphs looks better** with highlight flashes on arrival, and reverse jumps available by clicking the mapped input slot
+
+### Fixed
+
+- **A menu opened while the list is still coasting stays open.** Momentum from the fling that preceded the tap no longer reads as scroll-to-dismiss
+- **Stepping through the queue viewer with follow mode on is no longer undone by the next completion.** Browsing away from the front ends the follow mode
+- **A run inherits hiddenness from what it consumes** 
+- **Auto-hide no longer leaves the outputs panel standing inside a folder it just hid**, and follow queue no longer jumps to hidden runs
+- **Choosing randomize on a promoted or bare seed keeps the workflow stock-valid.** The mode used to be written into the seed slot itself — as rgthree's -1, or on a subgraph placeholder as a mode string over whatever widget came next — so a save before the next run carried a value stock rejects. The mode is carried outside the workflow now; only rgthree's Seed, whose value is its mode, still writes it
+- **A video no longer claims a same-basename image's metadata as its own** in the viewer metadata overlay
+- **Seeds promoted onto a subgraph placeholder can be restored from the run that made an output**
+- **Bookmarks on a subgraph placeholder node actually work now**
+- **Holding a +/- stepper no longer starts an iOS text selection**
+- **The idle favorite/reject badges sit in the viewer frame's corners.** They used to track the image itself, so a landscape image in portrait parked them mid-screen
+- **A folder is dated by the newest thing in it, not by its own inode**, so sorting outputs folders by date reflects what they hold
+- **An enqueue that dies on the network names the real problem**, instead of a bare "Load failed"
+
 ## 3.3.1 - 2026-09-07
 
 ### Added

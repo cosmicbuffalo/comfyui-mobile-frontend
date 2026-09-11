@@ -528,7 +528,7 @@ def test_notification_disable_preserves_but_hides_live_target(monkeypatch):
 def test_live_activity_disable_preserves_notification_target(monkeypatch):
     monkeypatch.setattr(m.requests, "post", lambda *a, **k: _Resp(200))
     assert m.add_target(
-        "https://relay.example/", "ABCD-EFGH", label="Nick's iPhone",
+        "https://relay.example/", "ABCD-EFGH", label="iPhone",
         server_id="server-uuid-1",
     )
     assert m.add_target(
