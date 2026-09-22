@@ -56,7 +56,11 @@ jobs:
       contents: write
       pull-requests: write
     steps:
+      # Full history: this job pushes a re-bless branch, and a push out of a
+      # depth-1 clone is the kind of thing that works until the day it doesn't.
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: "22.12.0"
@@ -173,9 +177,20 @@ jobs:
           echo "::warning::Pushed $BRANCH but could not open or update its pull request."
           echo "Open it here: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/compare/$BRANCH?expand=1"
 
+      # Which failure this was is already known — say that, rather than making
+      # whoever opens the run guess between an audit that found something and
+      # a git push that did not go through.
       - name: Explain a failure
         if: failure()
+        env:
+          VERDICT: ${{ steps.triage.outputs.verdict }}
         run: |
-          echo "::warning::An edit we make to a workflow no longer loads in the stock frontend, or stock's own loader started rejecting a template it used to accept."
-          echo "This job re-blesses the corpus manifest by itself when upstream merely"
-          echo "released templates, so a red run here is not that: read the triage step."
+          if [ "$VERDICT" = "drift" ]; then
+            echo "::warning::The audit passed and the drift was benign; re-blessing the manifest or pushing the branch is what failed."
+            echo "Nothing is wrong with the templates. Re-bless by hand with:"
+            echo "  UPDATE_TEMPLATE_MANIFEST=1 npx vitest run src/utils/__tests__/stockFrontendCompatibility.test.ts"
+          else
+            echo "::warning::An edit we make to a workflow no longer loads in the stock frontend, or stock's own loader started rejecting a template it used to accept."
+            echo "This job re-blesses the corpus manifest by itself when upstream merely"
+            echo "released templates, so a red run here is not that: read the triage step."
+          fi
