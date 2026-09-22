@@ -43,3 +43,11 @@ __pycache__
 
 # Local demo capture artifacts (deliverables live in images/videos)
 demos/
+
+# Scratch output of the template-drift triage (scripts/triage-template-drift.mjs),
+# written by the Upstream parity job and by anyone reproducing it locally.
+/template-audit.json
+/template-drift.json
+/template-drift.md
+/template-drift.commit
+/pr-body.md
