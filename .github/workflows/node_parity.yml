@@ -150,12 +150,16 @@ jobs:
 
   # The only job that can write, and the only one a pull request cannot reach.
   #
-  # `main` three times over, because the branch this force-pushes is shared and
-  # a wrong ref here would be quiet and ugly: it runs only when the ref is main,
-  # checks main out explicitly rather than trusting the ref it was dispatched
-  # on, and bases the PR on main. Dispatching this workflow from a feature
-  # branch audits that branch — which is useful — but must never be able to
-  # force-push it into the re-bless branch and open a PR full of unrelated work.
+  # The ref guard is what keeps this honest. Dispatching this workflow from a
+  # feature branch audits that branch — which is useful — but must never be
+  # able to force-push it into the shared re-bless branch and open a PR full of
+  # unrelated work, so publishing happens only when the ref is main.
+  #
+  # One at a time, across every trigger. The branch below is shared and
+  # force-pushed, so two of these running at once — a manual dispatch crossing
+  # the Monday cron, or a re-run of an older run — would race, and the loser
+  # would be whichever audit was newer. Queue rather than cancel: a bless job
+  # interrupted between its push and its PR leaves a branch nobody opened.
   bless:
     needs: templates
     if: >-
@@ -163,15 +167,25 @@ jobs:
       && github.event_name != 'pull_request'
       && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    concurrency:
+      group: bless-template-corpus
+      cancel-in-progress: false
     permissions:
       contents: write
       pull-requests: write
     steps:
+      # The commit the audit actually ran against, not whatever main has become
+      # since. `main` moving between the two jobs is unlikely and would be
+      # quiet: the manifest was validated against one tree and would be
+      # committed onto another, and this PR has no checks to catch it. The `if`
+      # above already established that this ref is main, so taking the run's
+      # SHA gives up nothing.
+      #
       # Full history: this job pushes a branch, and a push out of a depth-1
       # clone is the kind of thing that works until the day it doesn't.
       - uses: actions/checkout@v4
         with:
-          ref: main
+          ref: ${{ github.sha }}
           fetch-depth: 0
 
       # Lands the re-blessed manifest on top of the checkout, exactly where the
