@@ -14,6 +14,7 @@ on:
     paths:
       - "scripts/node-parity/**"
       - "scripts/check-node-parity.mjs"
+      - "scripts/triage-template-drift.mjs"
       - ".github/workflows/node_parity.yml"
       - "src/utils/__tests__/stockFrontendCompatibility.test.ts"
       - "src/utils/__tests__/templateCorpus.manifest.json"
@@ -21,6 +22,8 @@ on:
 jobs:
   parity:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -46,21 +49,25 @@ jobs:
   #
   # Upstream releasing templates is not, by itself, news. When it happens the
   # audit cases re-run against the new templates and pass, and the only thing
-  # left failing is the manifest recording which corpus we last audited — which
-  # this job then re-blesses and opens a PR for, rather than going red weekly
-  # for something nobody has to act on. Red here means the audit itself failed,
-  # or stock's own loader started rejecting a template it used to accept.
+  # left failing is the manifest recording which corpus we last audited. This
+  # job re-blesses that manifest and hands it to `bless` below to commit,
+  # rather than going red weekly for something nobody has to act on. Red here
+  # means the audit itself failed, or stock's own loader started rejecting a
+  # template it used to accept.
+  #
+  # Read-only, deliberately. It runs `npm ci` and a test file, which on a
+  # pull_request run is code the pull request controls, and nothing it does
+  # needs to write to the repository. Committing is `bless`'s job and no PR
+  # ever reaches it.
   templates:
     runs-on: ubuntu-latest
     permissions:
-      contents: write
-      pull-requests: write
+      contents: read
+    outputs:
+      verdict: ${{ steps.triage.outputs.verdict }}
+      title: ${{ steps.triage.outputs.title }}
     steps:
-      # Full history: this job pushes a re-bless branch, and a push out of a
-      # depth-1 clone is the kind of thing that works until the day it doesn't.
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: "22.12.0"
@@ -105,7 +112,7 @@ jobs:
       # Benign drift only. The manifest case writes the new corpus out when
       # UPDATE_TEMPLATE_MANIFEST is set, and the run right after it proves the
       # file it wrote is one the whole suite passes against — without that, a
-      # re-bless could commit a manifest nobody has actually checked.
+      # re-bless could hand `bless` a manifest nobody has actually checked.
       - name: Re-bless the corpus manifest
         if: steps.triage.outputs.verdict == 'drift'
         env:
@@ -119,11 +126,64 @@ jobs:
           REQUIRE_TEMPLATE_CORPUS: "1"
         run: npx vitest run src/utils/__tests__/stockFrontendCompatibility.test.ts
 
+      # The manifest and the prose about it, for `bless` to commit. Passing
+      # three files between jobs is the price of keeping the job that runs the
+      # test suite away from a write-capable token.
+      - name: Hand the re-blessed manifest to the publishing job
+        if: steps.triage.outputs.verdict == 'drift'
+        uses: actions/upload-artifact@v4
+        with:
+          name: template-rebless
+          path: |
+            src/utils/__tests__/templateCorpus.manifest.json
+            template-drift.md
+            template-drift.commit
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Explain a failure
+        if: failure()
+        run: |
+          echo "::warning::An edit we make to a workflow no longer loads in the stock frontend, or stock's own loader started rejecting a template it used to accept."
+          echo "This job re-blesses the corpus manifest by itself when upstream merely"
+          echo "released templates, so a red run here is not that: read the triage step."
+
+  # The only job that can write, and the only one a pull request cannot reach.
+  #
+  # `main` three times over, because the branch this force-pushes is shared and
+  # a wrong ref here would be quiet and ugly: it runs only when the ref is main,
+  # checks main out explicitly rather than trusting the ref it was dispatched
+  # on, and bases the PR on main. Dispatching this workflow from a feature
+  # branch audits that branch — which is useful — but must never be able to
+  # force-push it into the re-bless branch and open a PR full of unrelated work.
+  bless:
+    needs: templates
+    if: >-
+      needs.templates.outputs.verdict == 'drift'
+      && github.event_name != 'pull_request'
+      && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      # Full history: this job pushes a branch, and a push out of a depth-1
+      # clone is the kind of thing that works until the day it doesn't.
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      # Lands the re-blessed manifest on top of the checkout, exactly where the
+      # audit job wrote it, plus the two scratch files (both gitignored).
+      - uses: actions/download-artifact@v4
+        with:
+          name: template-rebless
+          path: .
+
       # One long-lived branch, force-pushed: upstream ships templates most
-      # weeks, and a fresh PR every week would be noise. Skipped on pull_request
-      # runs, where the point is to check this workflow, not to open PRs.
+      # weeks, and a fresh PR every week would be noise.
       - name: Open a pull request for the re-blessed manifest
-        if: steps.triage.outputs.verdict == 'drift' && github.event_name != 'pull_request'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           MANIFEST: src/utils/__tests__/templateCorpus.manifest.json
@@ -132,7 +192,7 @@ jobs:
           # below. The title is built from counts by a script in this repo, so
           # it is safe today; taking a `run:` block's text from an expression
           # is the habit worth not having.
-          PR_TITLE: ${{ steps.triage.outputs.title }}
+          PR_TITLE: ${{ needs.templates.outputs.title }}
         run: |
           set -euo pipefail
           if git diff --quiet -- "$MANIFEST"; then
@@ -177,20 +237,12 @@ jobs:
           echo "::warning::Pushed $BRANCH but could not open or update its pull request."
           echo "Open it here: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/compare/$BRANCH?expand=1"
 
-      # Which failure this was is already known — say that, rather than making
-      # whoever opens the run guess between an audit that found something and
-      # a git push that did not go through.
+      # The audit already passed by the time this job runs, so a failure here
+      # is never a template problem — say so, rather than sending whoever opens
+      # the run looking for one.
       - name: Explain a failure
         if: failure()
-        env:
-          VERDICT: ${{ steps.triage.outputs.verdict }}
         run: |
-          if [ "$VERDICT" = "drift" ]; then
-            echo "::warning::The audit passed and the drift was benign; re-blessing the manifest or pushing the branch is what failed."
-            echo "Nothing is wrong with the templates. Re-bless by hand with:"
-            echo "  UPDATE_TEMPLATE_MANIFEST=1 npx vitest run src/utils/__tests__/stockFrontendCompatibility.test.ts"
-          else
-            echo "::warning::An edit we make to a workflow no longer loads in the stock frontend, or stock's own loader started rejecting a template it used to accept."
-            echo "This job re-blesses the corpus manifest by itself when upstream merely"
-            echo "released templates, so a red run here is not that: read the triage step."
-          fi
+          echo "::warning::The audit passed and the drift was benign; committing or pushing the re-blessed manifest is what failed."
+          echo "Nothing is wrong with the templates. Re-bless by hand with:"
+          echo "  UPDATE_TEMPLATE_MANIFEST=1 npx vitest run src/utils/__tests__/stockFrontendCompatibility.test.ts"
