@@ -320,8 +320,41 @@ function buildManifest(list: Template[]): CorpusManifest {
   };
 }
 
-/** What changed between the blessed corpus and the installed one, in words. */
-function describeCorpusDrift(blessed: CorpusManifest, found: CorpusManifest): string {
+/**
+ * What changed between the blessed corpus and the installed one.
+ *
+ * Split by consequence, not by shape. Upstream adding, removing or rewriting a
+ * template is the ordinary weekly churn of somebody else's release train: the
+ * audit cases below re-run against the new set, and if they pass the corpus is
+ * simply newer than the manifest. `newlyRejected` is the one that means
+ * something — a template stock's own loader would refuse says either upstream
+ * shipped a broken workflow or the rules we read out of stock's source have
+ * drifted from what stock now does, and both want a person.
+ */
+interface CorpusDrift {
+  added: string[];
+  removed: string[];
+  rewritten: string[];
+  newlyRejected: string[];
+  noLongerRejected: string[];
+}
+
+function corpusDrift(blessed: CorpusManifest, found: CorpusManifest): CorpusDrift {
+  const blessedFiles = Object.keys(blessed.templates);
+  const foundFiles = Object.keys(found.templates);
+  return {
+    added: foundFiles.filter((file) => !(file in blessed.templates)),
+    removed: blessedFiles.filter((file) => !(file in found.templates)),
+    rewritten: foundFiles.filter(
+      (file) => file in blessed.templates && blessed.templates[file] !== found.templates[file],
+    ),
+    newlyRejected: found.stockRejects.filter((file) => !blessed.stockRejects.includes(file)),
+    noLongerRejected: blessed.stockRejects.filter((file) => !found.stockRejects.includes(file)),
+  };
+}
+
+/** The same drift, in words, for whoever is reading the failure. */
+function describeCorpusDrift(drift: CorpusDrift): string {
   const lines: string[] = [];
   const list = (what: string, files: string[]) => {
     if (files.length === 0) return;
@@ -330,24 +363,11 @@ function describeCorpusDrift(blessed: CorpusManifest, found: CorpusManifest): st
     lines.push(`${what} (${files.length}): ${shown}${rest}`);
   };
 
-  const blessedFiles = Object.keys(blessed.templates);
-  const foundFiles = Object.keys(found.templates);
-  list('added upstream', foundFiles.filter((file) => !(file in blessed.templates)));
-  list('removed upstream', blessedFiles.filter((file) => !(file in found.templates)));
-  list(
-    'rewritten upstream',
-    foundFiles.filter(
-      (file) => file in blessed.templates && blessed.templates[file] !== found.templates[file],
-    ),
-  );
-  list(
-    'newly rejected by stock itself',
-    found.stockRejects.filter((file) => !blessed.stockRejects.includes(file)),
-  );
-  list(
-    'no longer rejected by stock',
-    blessed.stockRejects.filter((file) => !found.stockRejects.includes(file)),
-  );
+  list('added upstream', drift.added);
+  list('removed upstream', drift.removed);
+  list('rewritten upstream', drift.rewritten);
+  list('newly rejected by stock itself', drift.newlyRejected);
+  list('no longer rejected by stock', drift.noLongerRejected);
   return lines.join('\n  ');
 }
 
@@ -380,13 +400,26 @@ describe.skipIf(!CORPUS)('workflows we edit still load in the stock frontend', (
     ).toBe(true);
 
     const blessed = JSON.parse(fs.readFileSync(MANIFEST_PATH, 'utf8')) as CorpusManifest;
-    const drift = describeCorpusDrift(blessed, found);
+    const drift = corpusDrift(blessed, found);
+
+    // CI has to tell benign churn apart from a change that needs a person, and
+    // it should not do that by parsing the prose below. `TEMPLATE_DRIFT_REPORT`
+    // names a file to drop the same finding into as data; nothing else about
+    // this case changes, so a dev run still just fails with the message.
+    if (process.env.TEMPLATE_DRIFT_REPORT) {
+      fs.writeFileSync(
+        process.env.TEMPLATE_DRIFT_REPORT,
+        `${JSON.stringify({ ...drift, blessed: blessed.templateCount, found: found.templateCount }, null, 2)}\n`,
+      );
+    }
+
+    const description = describeCorpusDrift(drift);
     expect(
-      drift,
+      description,
       [
         "ComfyUI's official templates have changed since this corpus was blessed.",
         '',
-        `  ${drift}`,
+        `  ${description}`,
         '',
         'The other cases in this file audited the new set. If they passed, the',
         'change is compatible — re-bless it and commit the manifest:',
