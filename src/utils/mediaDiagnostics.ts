@@ -58,3 +58,15 @@ export function reportVideoPlaybackIssue(
     errorMessage: video.error?.message ?? null,
   });
 }
+
+export function videoErrorCode(video: HTMLVideoElement): number | null {
+  return video.error?.code ?? null;
+}
+
+// Only these two codes can mean "the browser can't handle this format". A
+// network error (2) or an abort (1) says nothing about the file itself.
+const FORMAT_ERROR_CODES = new Set([3, 4]); // MEDIA_ERR_DECODE, MEDIA_ERR_SRC_NOT_SUPPORTED
+
+export function isVideoFormatError(code: number | null): boolean {
+  return code !== null && FORMAT_ERROR_CODES.has(code);
+}

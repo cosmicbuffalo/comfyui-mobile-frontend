@@ -392,7 +392,23 @@ interface OutputsState {
   navigateUp: () => void;
   fetchFolders: () => Promise<void>;
   hydrateFileState: (source?: AssetSource) => Promise<boolean>;
-  fetchFiles: () => Promise<void>;
+  /**
+   * Reload the current folder's listing. `quiet` skips the loading flag, so a
+   * reconcile that follows a change the client has already applied corrects
+   * the counts in the background instead of blanking the grid to arrive at a
+   * list the user is already looking at.
+   */
+  fetchFiles: (options?: { quiet?: boolean }) => Promise<void>;
+  /**
+   * Drop files the server has already deleted, in place.
+   *
+   * A delete knows exactly what it removed, so the listing can be corrected
+   * without asking for it again. Refetching instead throws the grid away and
+   * rebuilds it behind `isLoading` — a round trip and a flicker to reach a
+   * list the client could compute. Callers that also want the derived counts
+   * on subfolder cards refreshed follow this with a quiet `fetchFiles`.
+   */
+  removeFilesLocally: (ids: string[]) => void;
   setFilter: (filter: Partial<FilterState>) => void;
   cycleStatusFilter: (key: StatusFilterKey) => void;
   setSearchOpen: (open: boolean) => void;
@@ -747,10 +763,10 @@ export const useOutputsStore = create<OutputsState>()(
         }
       },
 
-      fetchFiles: async () => {
+      fetchFiles: async (options) => {
         const { source, currentFolder } = get();
         const showHidden = useShowHiddenStore.getState().showHidden;
-        set({ isLoading: true, error: null });
+        set(options?.quiet ? { error: null } : { isLoading: true, error: null });
 
         try {
           // Hydrate the same lightweight state index Queue uses before fetching
@@ -1051,6 +1067,29 @@ export const useOutputsStore = create<OutputsState>()(
           promptSearchResults: showHidden
             ? state.promptSearchResults.map(mark)
             : state.promptSearchResults.filter((file) => file.id !== id),
+        }));
+      },
+
+      removeFilesLocally: (ids) => {
+        if (ids.length === 0) return;
+        const gone = new Set(ids);
+        const keep = (file: FileItem) => !gone.has(file.id);
+        const without = (list: string[]) => {
+          const next = list.filter((id) => !gone.has(id));
+          // Same array back when nothing matched, so a delete that touched no
+          // marks doesn't invalidate every selector reading these.
+          return next.length === list.length ? list : next;
+        };
+        set((state) => ({
+          files: state.files.filter(keep),
+          promptSearchResults: state.promptSearchResults.filter(keep),
+          // The marks and the selection are keyed by the same ids. A file that
+          // no longer exists must not keep a heart, a reject badge or a place
+          // in a bulk action it would silently fail.
+          favorites: without(state.favorites),
+          rejected: without(state.rejected),
+          hiddenIds: without(state.hiddenIds),
+          selectedIds: without(state.selectedIds),
         }));
       },
 

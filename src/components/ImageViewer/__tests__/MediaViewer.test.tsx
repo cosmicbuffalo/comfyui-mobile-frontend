@@ -1,4 +1,4 @@
-import { act } from 'react';
+import { act, useLayoutEffect } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ViewerImage } from '@/utils/viewerImages';
@@ -139,6 +139,64 @@ describe('MediaViewer workflow availability', () => {
       document.querySelector('button[aria-label="Unmute"]')?.parentElement?.className,
     ).toContain('top-14');
     expect(document.querySelector('input[aria-label="Video timeline"]')).not.toBeNull();
+  });
+
+  it('keeps the timeline tracking when metadata arrives before the item reset effect', async () => {
+    // Deliver metadata after the video mounts but before passive effects run.
+    // A fast load can otherwise have its duration erased by the item reset,
+    // leaving the timeline disabled even as timeupdate keeps arriving.
+    function EarlyMetadata() {
+      useLayoutEffect(() => {
+        const video = document.querySelector<HTMLVideoElement>('#media-viewer-overlay video')!;
+        Object.defineProperties(video, {
+          duration: { configurable: true, value: 12.5 },
+          currentTime: { configurable: true, writable: true, value: 2.5 },
+        });
+        video.dispatchEvent(new Event('durationchange'));
+        video.dispatchEvent(new Event('loadedmetadata'));
+      }, []);
+      return null;
+    }
+
+    const renderViewer = (item: ViewerImage, earlyMetadata = false) => act(async () => {
+      root.render(
+        <>
+          <MediaViewer
+            open={true}
+            items={[item]}
+            index={0}
+            onIndexChange={() => {}}
+            onClose={() => {}}
+            onDelete={() => {}}
+            onLoadWorkflow={() => {}}
+            onLoadInWorkflow={() => {}}
+          />
+          {earlyMetadata && <EarlyMetadata />}
+        </>,
+      );
+    });
+
+    await renderViewer(makeVideoItem(), true);
+    const video = document.querySelector<HTMLVideoElement>('#media-viewer-overlay video')!;
+    const timeline = document.querySelector<HTMLInputElement>('input[aria-label="Video timeline"]')!;
+    expect(timeline.disabled).toBe(false);
+    expect(timeline.max).toBe('12.5');
+    expect(Number(timeline.value)).toBe(2.5);
+
+    await act(async () => {
+      video.currentTime = 5;
+      video.dispatchEvent(new Event('timeupdate'));
+    });
+    expect(Number(timeline.value)).toBe(5);
+    expect(timeline.style.getPropertyValue('--video-progress')).toBe('40%');
+    expect(document.querySelector('.video-scrubber')!.textContent).toBe('0:050:12');
+
+    // A new video without metadata must not inherit the previous duration.
+    await renderViewer({ ...makeVideoItem(), src: '/next.mp4' });
+    expect(document.querySelector('#media-viewer-overlay video')).not.toBe(video);
+    expect(timeline.disabled).toBe(true);
+    expect(timeline.max).toBe('0');
+    expect(Number(timeline.value)).toBe(0);
   });
 
   it('drives play, mute, elapsed time, and seeking through custom overlay controls', async () => {

@@ -9,6 +9,7 @@ import { usePinnedWidgetStore } from '@/hooks/usePinnedWidget';
 import { useIsDesktop } from '@/hooks/useIsDesktop';
 import type { ViewerImage } from '@/utils/viewerImages';
 import type { DownloadOutcome } from '@/utils/downloads';
+import { VideoPlaybackUnavailable } from '@/components/VideoPlaybackUnavailable';
 import { MediaViewerHeader } from './MediaViewer/Header';
 import { classifySwipe } from './swipeGesture';
 import { compareClipPath, DEFAULT_COMPARE_CLIP } from './compareClip';
@@ -33,7 +34,7 @@ import {
   getCachedWorkflowAvailability,
   probeWorkflowAvailability,
 } from '@/utils/workflowAvailability';
-import { reportVideoPlaybackIssue } from '@/utils/mediaDiagnostics';
+import { reportVideoPlaybackIssue, videoErrorCode } from '@/utils/mediaDiagnostics';
 
 interface MediaViewerProps {
   open: boolean;
@@ -250,7 +251,8 @@ export function MediaViewer({
   const [metadataById, setMetadataById] = useState<Record<string, ReturnType<typeof extractMetadata> | null>>({});
   const [metadataLoading, setMetadataLoading] = useState<Record<string, boolean>>({});
   const [workflowAvailableById, setWorkflowAvailableById] = useState<Record<string, boolean>>({});
-  const [videoError, setVideoError] = useState(false);
+  // Holds the failed element's MediaError code (null when it gave none).
+  const [videoError, setVideoError] = useState<{ code: number | null } | null>(null);
   const [videoPlaying, setVideoPlaying] = useState(true);
   const [videoMuted, setVideoMuted] = useState(true);
   const [videoCurrentTime, setVideoCurrentTime] = useState(0);
@@ -997,11 +999,15 @@ export function MediaViewer({
 
   /* eslint-disable react-hooks/set-state-in-effect */
   useEffect(() => {
-    setVideoError(false);
+    setVideoError(null);
     setVideoPlaying(true);
     setVideoMuted(true);
-    setVideoCurrentTime(0);
-    setVideoDuration(0);
+    // Metadata can arrive before this passive effect. Read the mounted video
+    // so the reset cannot erase its duration and leave the timeline disabled.
+    // The element is keyed by src, so a new clip still starts with its own state.
+    const video = renderIsVideo ? videoRef.current : null;
+    setVideoCurrentTime(video && Number.isFinite(video.currentTime) ? video.currentTime : 0);
+    setVideoDuration(video && Number.isFinite(video.duration) ? video.duration : 0);
     if (renderIsVideo) {
       naturalSizeRef.current = null;
       setBaseSize(null);
@@ -1758,7 +1764,7 @@ export function MediaViewer({
                   onDragStart={(event) => event.preventDefault()}
                   onError={(event) => {
                     reportVideoPlaybackIssue('media viewer', 'error', event.currentTarget);
-                    setVideoError(true);
+                    setVideoError({ code: videoErrorCode(event.currentTarget) });
                     probeMissingMedia(renderItem);
                   }}
                   onStalled={(event) => {
@@ -1792,9 +1798,11 @@ export function MediaViewer({
                   onVolumeChange={(event) => setVideoMuted(event.currentTarget.muted)}
                 />
                 {videoError && (
-                  <div className="absolute inset-0 flex items-center justify-center text-white text-sm bg-black/60">
-                    {t('Unable to play this video.')}
-                  </div>
+                  <VideoPlaybackUnavailable
+                    errorCode={videoError.code}
+                    missing={isMissingItem(renderItem)}
+                    className="absolute inset-0 flex flex-col items-center justify-center bg-black/75 px-6 text-center text-sm text-white"
+                  />
                 )}
               </>
             ) : renderComparison ? (

@@ -919,7 +919,8 @@ export function useWebSocket() {
           const errorRecord = asRecord(errorData);
           const errorObject = asRecord(errorRecord?.error);
           const promptId = asText(errorData.prompt_id);
-          const nodeId = asNodeId(errorData.node);
+          // Core execution errors use node_id; keep node as a compatibility fallback.
+          const nodeId = asNodeId(errorData.node_id) ?? asNodeId(errorData.node);
           const nodeType = asText(errorData.node_type);
           const message = asText(errorData.exception_message)
             || asText(errorData.msg)

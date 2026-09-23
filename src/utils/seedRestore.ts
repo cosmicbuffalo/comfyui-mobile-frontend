@@ -12,7 +12,7 @@ import {
   getPlaceholderValueIndexForBoundarySlot,
   getSubgraphBoundaryWidgetSlots,
 } from '@/utils/widgetDefinitions';
-import { isSpecialSeedValue, SPECIAL_SEED_RANDOM } from '@/utils/seedUtils';
+import { isSpecialSeedValue, mentionsSeed, SPECIAL_SEED_RANDOM } from '@/utils/seedUtils';
 
 type PromptNode = {
   class_type?: unknown;
@@ -90,10 +90,6 @@ type SeedWidgetBinding = {
   widgetIndex: number;
 };
 
-function isSeedInputName(name: string): boolean {
-  return name.toLowerCase().includes('seed');
-}
-
 function getSeedWidgetBindings(
   workflow: Workflow,
   nodeTypes: NodeTypes | null,
@@ -111,7 +107,7 @@ function getSeedWidgetBindings(
       if (
         definition.widgetIndex === null ||
         String(inputType).toUpperCase() !== 'INT' ||
-        !isSeedInputName(definition.name)
+        !mentionsSeed(definition.name)
       ) {
         return [];
       }
@@ -126,7 +122,7 @@ function getSeedWidgetBindings(
   // A workflow-level or per-node widget index map is enough to restore custom
   // seed widgets even when object_info for that custom node is unavailable.
   const bindings = Object.entries(widgetIndexMap ?? {}).flatMap(([name, index]) => (
-    Number.isInteger(index) && index >= 0 && isSeedInputName(name)
+    Number.isInteger(index) && index >= 0 && mentionsSeed(name)
       ? [{ inputName: name, widgetIndex: index }]
       : []
   ));
@@ -222,7 +218,7 @@ function restorePlaceholderNode(
   for (const { boundarySlot } of getSubgraphBoundaryWidgetSlots(subgraph)) {
     const boundaryInput = subgraph.inputs?.[boundarySlot];
     const name = boundaryInput?.name;
-    if (!name || !isSeedInputName(name)) continue;
+    if (!name || !mentionsSeed(name)) continue;
     if (String(boundaryInput?.type ?? 'INT').toUpperCase() !== 'INT') continue;
     const valueIndex = getPlaceholderValueIndexForBoundarySlot(node, subgraph, boundarySlot);
     if (valueIndex === null) continue;

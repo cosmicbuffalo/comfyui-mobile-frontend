@@ -403,8 +403,10 @@ describe('NodeCardOutputPreview', () => {
     expect(pauseSpy.mock.instances).toContain(video);
   });
 
-  it('shows a recoverable error over a video whose playback fails', async () => {
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+  const FORMAT_HINT =
+    "Your browser can't play this video format. Save videos as H.264 MP4 to play them here.";
+
+  const renderBrokenVideo = async () => {
     await act(async () => {
       root.render(
         <NodeCardOutputPreview
@@ -417,21 +419,53 @@ describe('NodeCardOutputPreview', () => {
         />
       );
     });
+    return document.querySelector<HTMLVideoElement>('video')!;
+  };
 
-    const video = document.querySelector<HTMLVideoElement>('video');
-    await act(async () => {
-      video?.dispatchEvent(new Event('error', { bubbles: true }));
+  const failVideo = async (video: HTMLVideoElement, code: number | null) => {
+    Object.defineProperty(video, 'error', {
+      configurable: true,
+      value: code === null ? null : { code, message: '' },
     });
+    await act(async () => {
+      video.dispatchEvent(new Event('error', { bubbles: true }));
+    });
+  };
+
+  it('shows a recoverable error over a video whose playback fails', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const video = await renderBrokenVideo();
+
+    await failVideo(video, 4); // MEDIA_ERR_SRC_NOT_SUPPORTED
     expect(container.textContent).toContain('Unable to play this video.');
+    expect(container.textContent).toContain(FORMAT_HINT);
     expect(warn).toHaveBeenCalledWith(
       '[video] Playback issue',
-      expect.objectContaining({ context: 'workflow output preview', kind: 'error' }),
+      expect.objectContaining({ context: 'workflow output preview', kind: 'error', errorCode: 4 }),
     );
 
     await act(async () => {
-      video?.dispatchEvent(new Event('canplay', { bubbles: true }));
+      video.dispatchEvent(new Event('canplay', { bubbles: true }));
     });
     expect(container.textContent).not.toContain('Unable to play this video.');
+    expect(container.textContent).not.toContain(FORMAT_HINT);
+  });
+
+  it('gives format advice only for decode or unsupported-source errors', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const video = await renderBrokenVideo();
+
+    await failVideo(video, 3); // MEDIA_ERR_DECODE
+    expect(container.textContent).toContain(FORMAT_HINT);
+
+    for (const code of [2, null]) { // MEDIA_ERR_NETWORK, and no MediaError at all
+      await act(async () => {
+        video.dispatchEvent(new Event('canplay', { bubbles: true }));
+      });
+      await failVideo(video, code);
+      expect(container.textContent).toContain('Unable to play this video.');
+      expect(container.textContent).not.toContain(FORMAT_HINT);
+    }
   });
 
   it('autoplays only when initially visible and pauses when the preview is hidden', async () => {

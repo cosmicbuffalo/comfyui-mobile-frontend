@@ -553,6 +553,7 @@ export const zhTW: Record<string, string> = {
   'Delete node': '刪除節點',
   'Control mode': '控制模式',
   'Seed control': '種子控制',
+  'Control after generate': '生成後控制',
   'Enabled': '已啟用',
   'Disabled': '已停用',
   'Selected LoRA': '所選 LoRA',
@@ -1018,6 +1019,8 @@ export const zhTW: Record<string, string> = {
   'Install missing node': '安裝缺少的節點',
   'Loading tag suggestions…': '正在載入標籤建議…',
   'Unable to play this video.': '無法播放此影片。',
+  "Your browser can't play this video format. Save videos as H.264 MP4 to play them here.":
+    '您的瀏覽器無法播放此影片格式。請將影片儲存為 H.264 MP4 以在此播放。',
   'Unable to load this image.': '無法載入此圖片。',
   'It may have been moved, renamed, or deleted.': '它可能已被移動、重新命名或刪除。',
   'Show video preview': '顯示影片預覽',

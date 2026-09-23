@@ -1,6 +1,6 @@
 # ComfyUI Mobile User Guide
 
-This guide walks through every feature in the mobile frontend as of `v3.3.1`
+This guide walks through every feature in the mobile frontend as of `v3.3.3`
 
 ## Table of Contents
 
@@ -1171,8 +1171,9 @@ Outputs from an A/B comparison node (rgthree's **Image Comparer**) can be inspec
 
 - Video outputs play inline with the viewer's own controls: play/pause, a scrubbable timeline with elapsed and total time, and a mute toggle. Playback speed opens in its own panel with a one-tap reset, and the rate you pick is shared by every video the viewer plays — swiping to the next clip, or closing and reopening the viewer, keeps it.
 - Videos zoom and pan like images, and follow mode is preserved.
-- Local videos stream through a seekable playback cache, and posters come from cached still frames, so playback starts quickly instead of waiting on a full download. Videos whose index sits at the end of the file no longer restart their download before they can begin playing.
-- Regenerating a video under a filename you've used before invalidates both the playback and poster caches, so you never see the previous video's thumbnail on the new one.
+- Local videos stream from their original files with byte-range support, while posters still come from cached still frames. The Registry package does not remux or transcode videos on the server.
+- If the browser cannot decode a video's format, the player says so and suggests saving videos as H.264 MP4. MP4s saved without "faststart" (index at the end of the file) may take longer to start. Advanced users who need the former converter can manually check out the preserved `v3.3.2` tag; that version remains Registry-flagged and misses later fixes.
+- Regenerating a video under a filename you've used before invalidates its poster cache and playback URL, so you never see the previous video's thumbnail on the new one.
 
 ### Workflow Controls
 

@@ -1,4 +1,5 @@
 import { useEffect } from 'react';
+import { useImageViewerStore } from '@/hooks/useImageViewer';
 
 interface DeleteRejectedShortcutOptions {
   /**
@@ -56,6 +57,15 @@ export function useDeleteRejectedShortcut({
       ) {
         return;
       }
+      // The panel's TopBar stays mounted underneath the full-screen viewer, so
+      // without these the chord still fires there, and the confirmation it
+      // opens sits below the viewer's overlay: invisible, unclickable, with
+      // focus already on its autoFocus Delete button and Dialog's
+      // Enter-activates-default binding live. A destructive action one blind
+      // keypress away.
+      if (useImageViewerStore.getState().viewerOpen) return;
+      if (document.querySelector('[data-dialog-root="true"], [role="dialog"]')) return;
+
       event.preventDefault();
       onTrigger();
     };

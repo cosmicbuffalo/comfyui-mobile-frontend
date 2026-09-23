@@ -3,8 +3,8 @@ import { persist, createJSONStorage } from 'zustand/middleware';
 import type { NodeTypes, Workflow } from '@/api/types';
 import type { SeedMode } from '@/hooks/useWorkflow';
 import { isSubgraphPlaceholder } from '@/utils/canonicalWorkflowOps';
+import { resolveSeedWidgetIndex } from '@/hooks/useWorkflow/seedExpansion';
 import {
-  findSeedWidgetIndex,
   getSpecialSeedValueForMode,
   hasSeedControlWidget,
   isSpecialSeedValue,
@@ -49,7 +49,7 @@ export const useSeedStore = create<SeedState>()(
             const seedWidgetIndex =
               typeof context.seedWidgetIndex === 'number'
                 ? context.seedWidgetIndex
-                : findSeedWidgetIndex(workflow, nodeTypes, node);
+                : resolveSeedWidgetIndex(workflow, nodeTypes, node);
             if (seedWidgetIndex !== null && Array.isArray(node.widgets_values)) {
               // The slot after a seed is its control_after_generate only on a
               // real ComfyUI node, which adds that pairing implicitly. A

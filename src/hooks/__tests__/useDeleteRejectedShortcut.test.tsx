@@ -2,6 +2,7 @@ import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useDeleteRejectedShortcut } from '@/hooks/useDeleteRejectedShortcut';
+import { useImageViewerStore } from '@/hooks/useImageViewer';
 
 function Harness({ enabled, onTrigger }: { enabled: boolean; onTrigger: () => void }) {
   useDeleteRejectedShortcut({ enabled, onTrigger });
@@ -109,5 +110,55 @@ describe('useDeleteRejectedShortcut', () => {
 
     expect(onTrigger).not.toHaveBeenCalled();
     expect(event.defaultPrevented).toBe(false);
+  });
+});
+
+describe('useDeleteRejectedShortcut guards against a hidden confirmation', () => {
+  let container: HTMLDivElement;
+  let root: Root;
+  const onTrigger = vi.fn();
+
+  beforeEach(() => {
+    container = document.createElement('div');
+    document.body.appendChild(container);
+    root = createRoot(container);
+    onTrigger.mockClear();
+    useImageViewerStore.setState({ viewerOpen: false });
+  });
+
+  afterEach(() => {
+    act(() => root.unmount());
+    container.remove();
+    useImageViewerStore.setState({ viewerOpen: false });
+    document.querySelectorAll('[role="dialog"]').forEach((el) => el.remove());
+  });
+
+  it('does not fire while the full-screen viewer is open', () => {
+    // The panel's TopBar stays mounted underneath the viewer, so without this
+    // the chord opened a confirmation below the overlay: invisible,
+    // unclickable, and already focused on its Delete button.
+    act(() => root.render(<Harness enabled onTrigger={onTrigger} />));
+    useImageViewerStore.setState({ viewerOpen: true });
+
+    const event = dispatchShortcut();
+    expect(onTrigger).not.toHaveBeenCalled();
+    expect(event.defaultPrevented).toBe(false);
+  });
+
+  it('does not fire while another dialog is already open', () => {
+    act(() => root.render(<Harness enabled onTrigger={onTrigger} />));
+    const dialog = document.createElement('div');
+    dialog.setAttribute('role', 'dialog');
+    document.body.appendChild(dialog);
+
+    dispatchShortcut();
+    expect(onTrigger).not.toHaveBeenCalled();
+    dialog.remove();
+  });
+
+  it('still fires with the viewer closed and no dialog up', () => {
+    act(() => root.render(<Harness enabled onTrigger={onTrigger} />));
+    dispatchShortcut();
+    expect(onTrigger).toHaveBeenCalledTimes(1);
   });
 });

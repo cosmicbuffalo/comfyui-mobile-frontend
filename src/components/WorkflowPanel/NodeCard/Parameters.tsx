@@ -38,7 +38,12 @@ import { RowActionsMenu, type RowMenuAction } from './RowActionsMenu';
 import type { PromotableWidget } from '@/utils/promotableWidgets';
 import { widgetRowDomId } from '@/utils/workflowJumpTargets';
 import type { PromotedWidgetForm } from '@/utils/promotedWidgetForm';
-import { RGTHREE_SEED_NODE_TYPE, hasSeedControlWidget } from '@/utils/seedUtils';
+import { RGTHREE_SEED_NODE_TYPE, hasSeedControlWidget, mentionsSeed } from '@/utils/seedUtils';
+import {
+  promotedSeedValueSource,
+  resolvePromotedSeedControls,
+  type PromotedSeedControl,
+} from '@/utils/promotedSeedControls';
 import { useLoraManagerStore } from '@/hooks/useLoraManager';
 import { useSeedStore } from '@/hooks/useSeed';
 import {
@@ -238,6 +243,7 @@ export function NodeCardParameters({
   const [renameDraft, setRenameDraft] = useState('');
   const workflow = useWorkflowStore((state) => state.workflow);
   const scopeStack = useWorkflowStore((state) => state.scopeStack);
+  const updateSubgraphInnerNodeWidget = useWorkflowStore((state) => state.updateSubgraphInnerNodeWidget);
   const confirmPopOut = () => {
     const widget = popOutTarget;
     setPopOutTarget(null);
@@ -271,6 +277,20 @@ export function NodeCardParameters({
   const seedWidgetIndex = !isKSampler && workflowExists && nodeTypesExists
     ? findSeedWidgetIndex()
     : null;
+  // On a placeholder, every promoted seed whose interior widget carries
+  // control_after_generate is drawn in its own boundary row as a value + mode
+  // pair, and the mode is that interior widget's -- where stock keeps it
+  // (promotedWidgetControl.ts). Keyed by the slot each value occupies, so two
+  // promoted seeds never share a control and no name decides which is which.
+  const interiorSeedControls = useMemo(
+    () => new Map<number, PromotedSeedControl>(
+      (isPlaceholder && workflow ? resolvePromotedSeedControls(workflow, nodeTypes, node) : [])
+        .map((control) => [control.valueIndex, control]),
+    ),
+    [isPlaceholder, workflow, nodeTypes, node],
+  );
+  const primarySeedHasInteriorControl =
+    seedWidgetIndex !== null && interiorSeedControls.has(seedWidgetIndex);
   // Subgraph placeholders never promote a stock control_after_generate widget
   // adjacent to a promoted seed by position (subgraphs don't carry that
   // pairing across the boundary) — the widget right after the seed in
@@ -295,6 +315,7 @@ export function NodeCardParameters({
   const rendersSpecializedSeedBlock = kSamplerSeedIndex !== null || (
     !isKSampler &&
     seedWidgetIndex !== null &&
+    !primarySeedHasInteriorControl &&
     ((seedInputEntry?.link ?? null) === null || promotedSeedModeNodeId !== undefined)
   );
   const hasSeedControl = hasSeedControlWidget(node, seedControlValue);
@@ -329,7 +350,10 @@ export function NodeCardParameters({
     ) {
       return false;
     }
-    if (!hideSeedInputWidget) return true;
+    // Never by name on a placeholder: it can promote several seeds, and the
+    // block above draws exactly one of them, already excluded by index.
+    // Hiding every `seed`/`noise_seed` left the others with no row at all.
+    if (!hideSeedInputWidget || isPlaceholder) return true;
     const baseName = widget.name.split(': ').pop() ?? widget.name;
     return baseName !== 'seed' && baseName !== 'noise_seed';
   };
@@ -1297,7 +1321,7 @@ export function NodeCardParameters({
     !isKSampler && workflowExists && nodeTypesExists
       ? (() => {
           const seedIndex = seedWidgetIndex;
-          if (seedIndex === null) return null;
+          if (seedIndex === null || primarySeedHasInteriorControl) return null;
           const baseChoices = ['fixed', 'randomize', 'increment', 'decrement'];
           const choices = typeof seedControlValue === 'string' && !baseChoices.includes(seedControlValue)
             ? [...baseChoices, seedControlValue]
@@ -1496,8 +1520,66 @@ export function NodeCardParameters({
     </WidgetRow>
   );
 
+  /**
+   * A promoted INT paired with its interior control_after_generate. Usually a
+   * seed, but stock controls any INT that carries one (a PrimitiveInt's
+   * value, say), so only the label depends on the name.
+   */
+  const renderInteriorSeedRow = (
+    widget: WidgetDescriptor,
+    control: PromotedSeedControl,
+  ): ReactNode => {
+    const options = (widget.options ?? {}) as Record<string, unknown>;
+    // The value that runs: the placeholder's own when it holds one, otherwise
+    // the inner widget's (a template often ships the placeholder empty). The
+    // queue advances the same one, so the card never shows a seed that
+    // isn't the one executing.
+    const { value } = promotedSeedValueSource(node, control);
+    return (
+      <WidgetRow
+        key={getWidgetKey(widget, 'widget')}
+        nodeId={node.id} widgetIndex={widget.widgetIndex}
+        className="seed-control-widget"
+      >
+        <NumberControl
+          name={widgetDisplayLabel(widget) ?? widget.name}
+          value={Number(value ?? 0)}
+          onChange={handleWidgetChange(widget)}
+          disabled={isBypassed}
+          boundaryAnnotation={widgetBoundaryAnnotation(widget)}
+          onBoundaryJump={widgetBoundaryJump(widget)}
+          labelAccessory={rowMenuFor(widget)}
+          min={typeof options.min === 'number' ? options.min : undefined}
+          max={typeof options.max === 'number' ? options.max : undefined}
+          step={typeof options.step === 'number' ? options.step : undefined}
+          hasError={hasWidgetError(widget)}
+          isPromoted={isPromotedWidget(widget.name)}
+        />
+        <WidgetControl
+          name={mentionsSeed(widget.inputName ?? widget.name)
+            ? t('Seed control')
+            : t('Control after generate')}
+          type="COMBO"
+          value={control.mode}
+          options={['fixed', 'randomize', 'increment', 'decrement']}
+          onChange={(value) => updateSubgraphInnerNodeWidget(
+            control.subgraphId,
+            control.node.id,
+            control.controlWidgetIndex,
+            value,
+            'control_after_generate',
+          )}
+          disabled={isBypassed}
+          compactTrailingControls
+        />
+      </WidgetRow>
+    );
+  };
+
   /** One non-COMBO row. */
   const renderValueRow = (widget: WidgetDescriptor): ReactNode => {
+    const interiorControl = interiorSeedControls.get(widget.widgetIndex);
+    if (interiorControl) return renderInteriorSeedRow(widget, interiorControl);
     const canPopOut =
       !isBypassed && !isSingleWidgetOnlyNode && Boolean(node.itemKey) && canPopOutWidget(widget);
     return (

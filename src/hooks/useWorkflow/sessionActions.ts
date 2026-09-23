@@ -12,6 +12,7 @@ import {readLineageStamp, withLineageStamp} from "@/utils/workflowLineage";
 import {useSeedStore} from "@/hooks/useSeed";
 import {hasRecognizedPathAliasShape, restoreWorkflowPathAliases} from "@/utils/inputPathAliases";
 import {buildWorkflowCacheKey} from "@/utils/workflowCacheKey";
+import {materializeControlledPromotedValues} from "@/utils/promotedSeedControls";
 import {addInputFileOptionToNodeTypes} from "@/utils/nodeTypeOptions";
 import {computeTidyWorkflowGeometry} from "@/utils/tidyLayout";
 import {isMarketingNote} from "@/utils/marketingNote";
@@ -399,6 +400,12 @@ const loadWorkflow: WorkflowState["loadWorkflow"] = (
       });
     return;
   }
+
+  // A controlled promoted value its placeholder does not hold (templates ship
+  // widgets_values: []) is filled with the value it runs, so each instance
+  // advances its own seed and a queue-time write is never read as an edit.
+  // Before any baseline below, so the filled workflow IS the loaded one.
+  workflow = materializeControlledPromotedValues(workflow, aliasNodeTypes);
 
   // Session bookkeeping: decide whether this load opens a new tab or
   // replaces the active one in place (reload/revert callers pass

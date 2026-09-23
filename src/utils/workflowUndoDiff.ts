@@ -1,5 +1,5 @@
 import type { NodeTypes, Workflow, WorkflowGroup, WorkflowNode } from "@/api/types";
-import { findSeedWidgetIndex } from "@/utils/seedUtils";
+import { resolveSeedWidgetIndices } from "@/hooks/useWorkflow/seedExpansion";
 
 // Classify the change between two workflow states for the undo system:
 //  - meaningful: anything changed other than seed widget values (seed-only
@@ -107,7 +107,7 @@ function collectNodes(workflow: Workflow): Map<string, WorkflowNode> {
 function widgetsDifferIgnoringSeed(
   a: unknown,
   b: unknown,
-  seedIndex: number,
+  seedIndices: ReadonlySet<number>,
 ): { differs: boolean; indices: number[] } {
   if (a === b) return { differs: false, indices: [] };
   const av = Array.isArray(a) ? a : null;
@@ -118,7 +118,7 @@ function widgetsDifferIgnoringSeed(
   if (av.length !== bv.length) return { differs: true, indices: [] };
   const indices: number[] = [];
   for (let i = 0; i < av.length; i += 1) {
-    if (i === seedIndex) continue;
+    if (seedIndices.has(i)) continue;
     if (av[i] !== bv[i] && JSON.stringify(av[i]) !== JSON.stringify(bv[i])) indices.push(i);
   }
   return { differs: indices.length > 0, indices };
@@ -250,8 +250,8 @@ export function diffWorkflowChange(
       structural = true;
       continue;
     }
-    const seedIndex = findSeedWidgetIndex(next, nodeTypes, b) ?? -1;
-    const widgets = widgetsDifferIgnoringSeed(a.widgets_values, b.widgets_values, seedIndex);
+    const seedIndices = resolveSeedWidgetIndices(next, nodeTypes, b);
+    const widgets = widgetsDifferIgnoringSeed(a.widgets_values, b.widgets_values, seedIndices);
     if (widgets.differs) {
       // One row changed and nothing else did, so the row is what the edit was:
       // a multi-widget write (a paste, a Power Puter's output list) has no

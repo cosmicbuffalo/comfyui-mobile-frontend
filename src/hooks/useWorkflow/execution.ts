@@ -10,13 +10,14 @@ import {useGenerationSettingsStore} from "@/hooks/useGenerationSettings";
 import {obfuscateQueuedInputPaths} from "@/utils/inputPathAliases";
 import {buildWorkflowPromptInputs, getNodeWidgetIndexMap} from "@/utils/workflowInputs";
 import {expandWorkflowSubgraphs, isInertMode} from "@/utils/expandWorkflowSubgraphs";
-import {type SeedMode, DEFAULT_SPECIAL_SEED_RANGE, isSpecialSeedValue, findSeedWidgetIndex, generateSeedFromNode, clampSeedToNodeBounds, hasSeedControlWidget, findSeedControlWidgetIndex, nodeTypeStripsSeedControl, resolveSpecialSeedToUse} from "@/utils/seedUtils";
+import {type SeedMode, DEFAULT_SPECIAL_SEED_RANGE, isSpecialSeedValue, findSeedWidgetIndex, getWidgetIndexForInput, generateSeedFromNode, clampSeedToNodeBounds, hasSeedControlWidget, findSeedControlWidgetIndex, nodeTypeStripsSeedControl, resolveSpecialSeedToUse} from "@/utils/seedUtils";
 import {injectMarketingNote} from "@/utils/marketingNote";
 import {collectOasisPreviewIoIds, ensureOasisPreviewIoIds} from "@/utils/nodeFrontendPreviews";
 import {isSetGetNode} from "@/utils/setGetNodes";
 import {isUseEverywhereNode, resolveUseEverywhereForPrompt} from "@/utils/useEverywhere";
 import {isNetworkFetchError} from "@/utils/networkFetchError";
 import {isSubgraphPlaceholder} from "@/utils/canonicalWorkflowOps";
+import {materializePromotedValues, promotedSeedValueBelowHost, promotedSeedValueSource, resolvePromotedSeedControls, type PromotedSeedControl} from "@/utils/promotedSeedControls";
 import {resolveNodeIdentityFromHierarchicalKey} from "@/utils/workflowHierarchy";
 import {validateAndNormalizeWorkflow} from "@/utils/workflowValidator";
 import {applyWidgetVariation, formatVariationValue} from "@/utils/widgetVariations";
@@ -680,6 +681,11 @@ const queueWorkflow: WorkflowState["queueWorkflow"] = async (
     );
     if (currentWorkflow !== sourceWorkflow) writeWorkflow(currentWorkflow);
     let nextSeedLastValues: SeedLastValues = { ...seedLastValues };
+    // Promoted seeds whose placeholder holds no value execute the inner
+    // widget's own value, so that is the one a control advances. Collected
+    // while the placeholders are processed ("subgraphId:nodeId" -> index ->
+    // seed) and applied once every definition has been walked.
+    let pendingInteriorSeeds = new Map<string, Map<number, number>>();
 
     // Process seed mode for a single node; mutates seedOverrides and
     // nextSeedLastValues in-place. Overrides are keyed by scoped key
@@ -687,11 +693,76 @@ const queueWorkflow: WorkflowState["queueWorkflow"] = async (
     // root node and an inner node sharing a numeric ID can't clobber
     // each other; queueing remaps them to expanded node IDs.
     const processSeedNode = (
-      node: WorkflowNode,
+      sourceNode: WorkflowNode,
       seedOverrides: Record<string, number>,
       scopeSubgraphId: string | null,
     ): WorkflowNode => {
-      const isPlaceholder = isSubgraphPlaceholder(node, currentWorkflow);
+      const isPlaceholder = isSubgraphPlaceholder(sourceNode, currentWorkflow);
+      // Every promoted seed whose interior widget carries control_after_generate
+      // advances on its own, from THAT control -- stock's
+      // applyPromotedWidgetControl. The placeholder owns each value; the
+      // interior node owns each mode. The single-seed path below is left with
+      // the seeds this does not cover (no interior control, or a legacy
+      // sentinel still in the slot).
+      const controlledSeedIndices = new Set<number>();
+      let node = sourceNode;
+      if (isPlaceholder && Array.isArray(sourceNode.widgets_values)) {
+        const writes: Array<{ control: PromotedSeedControl; next: number }> = [];
+        for (const control of resolvePromotedSeedControls(currentWorkflow, nodeTypes, sourceNode)) {
+          const source = promotedSeedValueSource(sourceNode, control);
+          // A legacy sentinel (-1/-2/-3, written by older mobile versions) is a
+          // mode, not a value. The interior control now says what the mode is,
+          // and stock would send the sentinel verbatim and fail validation, so
+          // step from the value beneath it and give the slot a concrete one.
+          const heldSentinel =
+            source.holder === "placeholder" && isSpecialSeedValue(Number(source.value));
+          const current = Number(heldSentinel ? promotedSeedValueBelowHost(control) : source.value);
+          controlledSeedIndices.add(control.valueIndex);
+          const usable = Number.isFinite(current) && !isSpecialSeedValue(current);
+          let next: number;
+          switch (control.mode) {
+            case "randomize": next = generateSeedFromNode(nodeTypes, control.node); break;
+            case "increment": next = (usable ? current : 0) + 1; break;
+            case "decrement": next = (usable ? current : 0) - 1; break;
+            default:
+              if (!heldSentinel) continue;
+              next = usable ? current : generateSeedFromNode(nodeTypes, control.node);
+          }
+          writes.push({ control, next: clampSeedToNodeBounds(next, nodeTypes, control.node) });
+        }
+        if (writes.length > 0) {
+          // Each instance keeps its own value on the placeholder, as stock
+          // does, so a host that holds none gets its empty slots filled with
+          // the values they run rather than null.
+          const length = Math.max(...writes.map(({ control }) => control.valueIndex)) + 1;
+          const values = materializePromotedValues(currentWorkflow, nodeTypes, sourceNode, length);
+          if (values) {
+            for (const { control, next } of writes) values[control.valueIndex] = next;
+            node = { ...sourceNode, widgets_values: values };
+          } else {
+            // Some slot below could not be traced, so filling the host would
+            // leave a null behind. Write each value where it currently lives.
+            const hostValues = [...sourceNode.widgets_values];
+            for (const { control, next } of writes) {
+              if (promotedSeedValueSource(sourceNode, control).holder === "placeholder") {
+                hostValues[control.valueIndex] = next;
+                continue;
+              }
+              const hop = control.trace.hops.find((candidate) => (
+                Array.isArray(candidate.node.widgets_values) &&
+                candidate.node.widgets_values[candidate.valueIndex] != null
+              ));
+              const key = hop
+                ? `${hop.subgraphId}:${hop.node.id}`
+                : `${control.subgraphId}:${control.node.id}`;
+              const pending = pendingInteriorSeeds.get(key) ?? new Map<number, number>();
+              pending.set(hop ? hop.valueIndex : control.seedWidgetIndex, next);
+              pendingInteriorSeeds.set(key, pending);
+            }
+            node = { ...sourceNode, widgets_values: hostValues };
+          }
+        }
+      }
       // Subgraph placeholders (e.g. a promoted noise_seed on a video
       // model's subgraph) aren't real ComfyUI node types, so nodeTypes
       // has no schema for them — findSeedWidgetIndex needs the same
@@ -704,6 +775,19 @@ const queueWorkflow: WorkflowState["queueWorkflow"] = async (
       });
       if (seedIndex === null) return node;
       if (!Array.isArray(node.widgets_values)) return node;
+      if (controlledSeedIndices.has(seedIndex)) return node;
+      // Stock never runs a control whose widget is fed by a link
+      // (applyWidgetControl returns early), so neither the seed nor its mode
+      // matters here: the value comes from upstream. That includes an interior
+      // seed the subgraph boundary feeds -- advancing it would only rewrite a
+      // dead value inside the definition.
+      if (!isPlaceholder && (node.inputs ?? []).some((input) =>
+        input.link != null &&
+        Boolean(input.widget?.name) &&
+        getWidgetIndexForInput(currentWorkflow, nodeTypes, node, input.widget!.name) === seedIndex
+      )) {
+        return node;
+      }
 
       // Subgraphs never promote a stock control_after_generate widget
       // adjacent to the seed by position — only an explicit
@@ -806,6 +890,7 @@ const queueWorkflow: WorkflowState["queueWorkflow"] = async (
       // variation lives only in the per-iteration clone below, so the user's
       // widget still reads what it read before they pressed Run variations.
       if (!variations) {
+        pendingInteriorSeeds = new Map();
         // Handle seed modes for root nodes and inner subgraph nodes.
         const updatedNodes = currentWorkflow.nodes.map((node) =>
           processSeedNode(node, seedOverrides, null),
@@ -817,6 +902,18 @@ const queueWorkflow: WorkflowState["queueWorkflow"] = async (
           );
           const changed = updatedSgNodes.some((n, idx) => n !== (sg.nodes ?? [])[idx]);
           return changed ? { ...sg, nodes: updatedSgNodes } : sg;
+        }).map((sg) => {
+          if (![...pendingInteriorSeeds.keys()].some((key) => key.startsWith(`${sg.id}:`))) return sg;
+          return {
+            ...sg,
+            nodes: (sg.nodes ?? []).map((node) => {
+              const writes = pendingInteriorSeeds.get(`${sg.id}:${node.id}`);
+              if (!writes || !Array.isArray(node.widgets_values)) return node;
+              const values = [...node.widgets_values];
+              for (const [index, seed] of writes) values[index] = seed;
+              return { ...node, widgets_values: values };
+            }),
+          };
         });
 
         // Update current workflow with new seeds for this iteration

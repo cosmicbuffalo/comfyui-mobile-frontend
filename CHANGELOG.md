@@ -1,5 +1,57 @@
 # Changelog
 
+## 3.3.3 - 2026-09-22
+
+### Changed
+
+- **Videos are now served directly in their original format.** Automatic
+  server-side remuxing and transcoding has been removed from the Registry
+  package so video playback no longer launches a child process from a web
+  request.
+- **A video the browser can't decode now says how to fix it.** When playback
+  fails with a decode or unsupported-format error, the notice suggests saving
+  videos as H.264 MP4. Other failures, such as a dropped connection, show only
+  the plain error.
+  Advanced users who need the previous converter can manually check out the
+  `v3.3.2` tag.
+- **MP4s with their index at the end of the file may start slowly again.** 3.3.2
+  rewrote these so playback could begin before the whole file downloaded. They
+  are now served as saved, so some browsers (notably iOS Safari) may wait for
+  more of the file first. Files written with ffmpeg's `+faststart` flag are
+  unaffected.
+
+### Fixed
+
+- **Every value a subgraph exposes follows its own "control after generate",
+  as it does in ComfyUI's desktop editor.** A subgraph that exposes two seeds
+  now shows a mode control beside each one, read from and written to the node
+  inside the subgraph that owns it. The same goes for any exposed number fed by
+  a node that carries one, such as the Int primitive nodes many official
+  templates use for width and height. Each advances on
+  its own at queue time, nested subgraphs included. Previously mobile ignored
+  those controls: a subgraph's seed set to randomize ran the same seed every
+  time, and a second exposed seed was hidden from the card. A -1/-2/-3 that an
+  older mobile version stored in an exposed seed is replaced with a real seed
+  the first time it runs, instead of reaching ComfyUI and failing validation.
+  Subgraphs that ship without their own copies of these values (as many
+  official templates do) get them filled in when opened, so every copy of a
+  subgraph advances its own seed, as it does on desktop.
+- **A seed set to randomize on a subgraph placeholder keeps that setting** when
+  you switch workflows and come back. Previously the mode was dropped and every
+  run reused the same seed with nothing in the UI to say so.
+- **Command+Delete no longer opens a confirmation you cannot see** while an
+  output is full-screen. The shortcut is ignored while the viewer or another
+  dialog is open, and the confirmation now sits above the viewer.
+- **Execution errors point at the node that failed** again, so the error banner
+  can jump to it.
+- **The video timeline no longer stays disabled** when a clip's length loads
+  before the viewer finishes resetting.
+- **A node added from a connection picker joins its neighbour's group** instead
+  of landing beside it but outside the group, inside subgraphs as well as at the
+  top level.
+- **Deleting rejected outputs updates the list in place.** The outputs grid no
+  longer blanks and reloads, and the queue panel's listing no longer goes stale.
+
 ## 3.3.2 - 2026-09-11
 
 ### Added

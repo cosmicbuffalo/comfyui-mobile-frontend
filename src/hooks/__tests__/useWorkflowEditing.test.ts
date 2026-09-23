@@ -804,6 +804,81 @@ describe('useWorkflow editing actions', () => {
     expect(next.mobileLayout!.groups[makeLocationPointer({ type: 'group', groupId: 10, subgraphId: null })]).toContainEqual({ type: 'node', id: 2 });
   });
 
+  it('adds a connection-picker node to the receiving node\'s group', () => {
+    const target = makeNode(1, {
+      pos: [140, 150],
+      type: 'TestNode',
+      inputs: [{ name: 'model', type: 'MODEL', link: null }],
+    });
+    const groupKey = makeLocationPointer({ type: 'group', groupId: 10, subgraphId: null });
+    useWorkflowStore.setState({
+      workflow: makeWorkflow([target], []),
+      nodeTypes,
+      ...rootNodeStableRegistry([1]),
+      mobileLayout: {
+        root: [{ type: 'group', id: 10, subgraphId: null, itemKey: groupKey }],
+        groups: { [groupKey]: [{ type: 'node', id: 1 }] },
+        subgraphs: {},
+        hiddenBlocks: {},
+      },
+    });
+
+    const newId = useWorkflowStore.getState().addNodeAndConnect(
+      'TestNode', rootNodeHierarchicalKey(1), 0,
+    );
+    const next = useWorkflowStore.getState();
+
+    expect(newId).toBe(2);
+    expect(next.mobileLayout!.groups[groupKey]).toContainEqual({ type: 'node', id: 2 });
+    expect(next.workflow?.links).toContainEqual([1, 2, 0, 1, 0, 'MODEL']);
+  });
+
+  it('adds a connection-picker node to the receiving node\'s group inside a subgraph', () => {
+    // The scope view addNode builds for positioning swaps the root node list
+    // for the subgraph's, so resolving the neighbour against it read an inner
+    // node as a root one -- and the group was never inherited in a subgraph.
+    const sgId = 'sg-a';
+    const innerKey = makeLocationPointer({ type: 'node', nodeId: 7, subgraphId: sgId });
+    const target = makeNode(7, {
+      itemKey: innerKey,
+      pos: [140, 150],
+      type: 'TestNode',
+      inputs: [{ name: 'model', type: 'MODEL', link: null }],
+    });
+    const groupKey = makeLocationPointer({ type: 'group', groupId: 20, subgraphId: sgId });
+    const registry = rootNodeStableRegistry([50]);
+    useWorkflowStore.setState({
+      workflow: {
+        ...makeWorkflow([makeNode(50, { type: sgId })], []),
+        definitions: {
+          subgraphs: [{
+            id: sgId,
+            nodes: [target],
+            links: [],
+            groups: [{ id: 20, itemKey: groupKey, title: 'Inner', color: '#fff', bounding: [100, 100, 500, 300] }],
+          }],
+        },
+      } as Workflow,
+      nodeTypes,
+      itemKeyByPointer: { ...registry.itemKeyByPointer, [innerKey]: innerKey },
+      pointerByHierarchicalKey: { ...registry.pointerByHierarchicalKey, [innerKey]: innerKey },
+      mobileLayout: {
+        root: [{ type: 'subgraph', id: sgId, nodeId: 50 }],
+        groups: { [groupKey]: [{ type: 'node', id: 7 }] },
+        subgraphs: { [sgId]: [{ type: 'group', id: 20, subgraphId: sgId, itemKey: groupKey }] },
+        hiddenBlocks: {},
+      },
+    });
+
+    const newId = useWorkflowStore.getState().addNodeAndConnect('TestNode', innerKey, 0);
+    const next = useWorkflowStore.getState();
+
+    expect(newId).not.toBeNull();
+    expect(next.mobileLayout!.groups[groupKey]).toContainEqual({ type: 'node', id: newId });
+    // And it stays out of the root scope's layout.
+    expect(next.mobileLayout!.root).not.toContainEqual({ type: 'node', id: newId });
+  });
+
   it('addNode gives V3 string-typed combos widget values and coexisting sockets', () => {
     // A V3 node: one real socket, a DynamicCombo whose default option adds two
     // sub-inputs, a plain V3 COMBO, an INT seed (implicit control slot), and a

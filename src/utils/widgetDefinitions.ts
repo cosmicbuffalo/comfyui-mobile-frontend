@@ -1,3 +1,4 @@
+import { mentionsSeed } from '@/utils/seedUtils';
 import type { WorkflowInput, WorkflowLink, WorkflowNode, NodeTypes, NodeTypeDefinition, NodeInputEntry, Workflow, WorkflowSubgraphLink, WorkflowSubgraphDefinition } from '@/api/types';
 import { getDefaultWidgetValue, getNodePropertyWidgetIndexMap, getWidgetValue, isComboType, isV3ComboType, isWidgetInputType, getComboOptions, getDynamicComboSubInputs, occupiesWidgetSlot, skipImplicitSeedControlSlot } from '@/utils/workflowInputs';
 import { findLoraListIndex, isLoraList, isLoraManagerNodeType, isPowerLoraLoaderNodeType } from '@/utils/loraManager';
@@ -283,7 +284,7 @@ function collectWidgetDefinitions(
         return triggerWordDefs;
       }
       const hasSeedOutput = node.outputs?.some((output) =>
-        String(output.name || '').toLowerCase().includes('seed') &&
+        mentionsSeed(String(output.name || '')) &&
         String(output.type || '').toUpperCase().includes('INT')
       );
       if (hasSeedOutput && Array.isArray(node.widgets_values) && node.widgets_values.length > 0) {
