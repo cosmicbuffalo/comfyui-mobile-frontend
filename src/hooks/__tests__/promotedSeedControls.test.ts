@@ -397,21 +397,23 @@ describe('what stock leaves alone', () => {
 });
 
 describe('where each promoted seed is recorded', () => {
-  it('writes the seed that ran back into the placeholder, one slot per seed', async () => {
+  it('sends each seed as it stands, then advances it on the placeholder, one slot per seed', async () => {
+    // Stock's default timing: the run gets the current values, and each
+    // control moves its own slot afterwards, ready for the next run.
     load(flatWorkflow('increment', 'decrement'));
     const prompt = await queueOnce();
+    expect(prompt['100:10'].seed).toBe(SEED_A);
+    expect(prompt['100:11'].noise_seed).toBe(SEED_B);
 
     const after = useWorkflowStore.getState().workflow!.nodes[0].widgets_values as unknown[];
-    expect(after[0]).toBe(prompt['100:10'].seed);
-    expect(after[1]).toBe(prompt['100:11'].noise_seed);
+    expect(after).toEqual([SEED_A + 1, SEED_B - 1]);
   });
 
   it('keeps two instances of one subgraph on their own values under the shared mode', async () => {
     // The mode lives on the definition's interior widget, so both instances
     // follow it. The values live on each host, so they never merge.
     const workflow = flatWorkflow('increment', 'fixed');
-    const second = placeholderNode(101, 'sg-two', [5000, 6000]);
-    workflow.nodes.push(second);
+    workflow.nodes.push(placeholderNode(101, 'sg-two', [5000, 6000]));
     useWorkflowStore.setState({
       workflow,
       nodeTypes: NODE_TYPES,
@@ -421,10 +423,15 @@ describe('where each promoted seed is recorded', () => {
 
     const prompt = await queueOnce();
 
-    expect(prompt['100:10'].seed).toBe(SEED_A + 1);
-    expect(prompt['101:10'].seed).toBe(5001);
+    expect(prompt['100:10'].seed).toBe(SEED_A);
+    expect(prompt['101:10'].seed).toBe(5000);
     expect(prompt['100:11'].noise_seed).toBe(SEED_B);
     expect(prompt['101:11'].noise_seed).toBe(6000);
+    const next = await queueOnce();
+    expect(next['100:10'].seed).toBe(SEED_A + 1);
+    expect(next['101:10'].seed).toBe(5001);
+    expect(next['100:11'].noise_seed).toBe(SEED_B);
+    expect(next['101:11'].noise_seed).toBe(6000);
   });
 });
 
@@ -456,18 +463,22 @@ describe('the shapes real templates ship', () => {
     const runs = await queueRuns(3, '100:10', '100:11');
     expectFollows(runs.map((r) => r.a), 'increment', SEED_A);
     expectFollows(runs.map((r) => r.b), 'randomize', SEED_B);
-    expect(runs[0].a).toBe(SEED_A + 1);
+    expect(runs[0].a).toBe(SEED_A);
+    expect(runs[0].b).toBe(SEED_B);
   });
 
-  it('records the seeds that ran on the placeholder, never padding with null', async () => {
+  it('keeps the advanced seeds on the placeholder, never padding with null', async () => {
     // Stock keeps each instance's value on the host and serializes it after a
     // run. A null entry would be worse than none: stock writes it over the
     // inner widget's default the next time the file opens on desktop.
     load(templateShaped('randomize', 'increment'));
     const prompt = await queueOnce();
+    expect(prompt['100:10'].seed).toBe(SEED_A);
     const after = useWorkflowStore.getState().workflow!.nodes[0].widgets_values as unknown[];
-    expect(after).toEqual([prompt['100:10'].seed, prompt['100:11'].noise_seed]);
+    expect(after).toHaveLength(2);
     expect(after).not.toContain(null);
+    expect(after[0]).not.toBe(SEED_A);
+    expect(after[1]).toBe(SEED_B + 1);
   });
 
   it('fills an empty slot below a written seed with the value it runs', async () => {
@@ -491,14 +502,15 @@ describe('the shapes real templates ship', () => {
       pointerByHierarchicalKey: Object.fromEntries(workflow.nodes.map((n) => [n.itemKey!, n.itemKey!])),
     });
 
+    // Both run the shipped values first, then each rolls its own.
     const first = await queueOnce();
-    expect(first['100:10'].seed).not.toBe(first['101:10'].seed);
-    expect(first['100:11'].noise_seed).toBe(SEED_B + 1);
-    expect(first['101:11'].noise_seed).toBe(SEED_B + 1);
+    expect([first['100:10'].seed, first['101:10'].seed]).toEqual([SEED_A, SEED_A]);
+    expect([first['100:11'].noise_seed, first['101:11'].noise_seed]).toEqual([SEED_B, SEED_B]);
 
     const second = await queueOnce();
-    expect(second['100:11'].noise_seed).toBe(SEED_B + 2);
-    expect(second['101:11'].noise_seed).toBe(SEED_B + 2);
+    expect(second['100:10'].seed).not.toBe(second['101:10'].seed);
+    expect(second['100:11'].noise_seed).toBe(SEED_B + 1);
+    expect(second['101:11'].noise_seed).toBe(SEED_B + 1);
     // The shared definition is left as it was.
     const [, inner] = useWorkflowStore.getState().workflow!.definitions!.subgraphs![0].nodes!;
     expect((inner.widgets_values as unknown[])[0]).toBe(SEED_B);
@@ -514,8 +526,8 @@ describe('the shapes real templates ship', () => {
     load(workflow);
 
     const runs = await queueRuns(3, '200:50:10', '200:50:11');
-    expect(runs.map((r) => r.a)).toEqual([7001, 7002, 7003]);
-    expect(runs.map((r) => r.b)).toEqual([7999, 7998, 7997]);
+    expect(runs.map((r) => r.a)).toEqual([7000, 7001, 7002]);
+    expect(runs.map((r) => r.b)).toEqual([8000, 7999, 7998]);
   });
 
   it('fills the placeholder on load, so neither the load nor a run reads as an edit', async () => {
@@ -588,8 +600,9 @@ describe('a legacy sentinel left in a promoted slot', () => {
     const prompt = await queueOnce();
 
     expect(prompt['100:10'].seed).toBe(SEED_A);
-    // The sentinel is no value, so the inner widget's is the one it steps from.
-    expect(prompt['100:11'].noise_seed).toBe(SEED_B + 1);
+    // The sentinel is no value, so the run is sent the value beneath it, and
+    // the control steps on from there afterwards.
+    expect(prompt['100:11'].noise_seed).toBe(SEED_B);
     const after = useWorkflowStore.getState().workflow!.nodes[0].widgets_values as unknown[];
     expect(after).toEqual([SEED_A, SEED_B + 1]);
   });

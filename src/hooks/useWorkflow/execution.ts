@@ -692,10 +692,19 @@ const queueWorkflow: WorkflowState["queueWorkflow"] = async (
     // ("nodeId" at root, "subgraphId:nodeId" inside a definition) so a
     // root node and an inner node sharing a numeric ID can't clobber
     // each other; queueing remaps them to expanded node IDs.
+    // Seeds are handled in two passes, the order stock uses by default
+    // (Comfy.WidgetControlMode "after"): a control_after_generate never
+    // changes the seed a run is sent with -- the run executes the value as it
+    // stands, and the control advances it for the NEXT run once this one is
+    // queued. "prepare" runs before the prompt is built and settles only what
+    // can never be sent as-is (-1/-2/-3 values, and seeds whose mode is our
+    // own store's rather than a control widget's). "advance" runs after a
+    // successful queue and applies every control_after_generate.
     const processSeedNode = (
       sourceNode: WorkflowNode,
       seedOverrides: Record<string, number>,
       scopeSubgraphId: string | null,
+      phase: "prepare" | "advance",
     ): WorkflowNode => {
       const isPlaceholder = isSubgraphPlaceholder(sourceNode, currentWorkflow);
       // Every promoted seed whose interior widget carries control_after_generate
@@ -720,13 +729,18 @@ const queueWorkflow: WorkflowState["queueWorkflow"] = async (
           controlledSeedIndices.add(control.valueIndex);
           const usable = Number.isFinite(current) && !isSpecialSeedValue(current);
           let next: number;
-          switch (control.mode) {
-            case "randomize": next = generateSeedFromNode(nodeTypes, control.node); break;
-            case "increment": next = (usable ? current : 0) + 1; break;
-            case "decrement": next = (usable ? current : 0) - 1; break;
-            default:
-              if (!heldSentinel) continue;
-              next = usable ? current : generateSeedFromNode(nodeTypes, control.node);
+          if (phase === "prepare" || heldSentinel) {
+            // Only a sentinel is settled before the run: it is sent as the
+            // value beneath it, and the control advances that afterwards.
+            if (!heldSentinel) continue;
+            next = usable ? current : generateSeedFromNode(nodeTypes, control.node);
+          } else {
+            switch (control.mode) {
+              case "randomize": next = generateSeedFromNode(nodeTypes, control.node); break;
+              case "increment": next = (usable ? current : 0) + 1; break;
+              case "decrement": next = (usable ? current : 0) - 1; break;
+              default: continue;
+            }
           }
           writes.push({ control, next: clampSeedToNodeBounds(next, nodeTypes, control.node) });
         }
@@ -810,6 +824,7 @@ const queueWorkflow: WorkflowState["queueWorkflow"] = async (
         inferSeedMode(currentWorkflow, nodeTypes, node);
 
       if (hasControlWidget) {
+        if (phase === "prepare") return node;
         if (!mode || mode === "fixed") return node;
         const currentSeed = Number(node.widgets_values[seedIndex]) || 0;
         let nextSeed: number;
@@ -824,6 +839,8 @@ const queueWorkflow: WorkflowState["queueWorkflow"] = async (
         return { ...node, widgets_values: newWidgetValues };
       }
 
+      // Everything below is settled before the run, never after it.
+      if (phase === "advance") return node;
       const rawSeed = Number(node.widgets_values[seedIndex]);
       const lastSeed = nextSeedLastValues[node.id] ?? null;
       let seedToUse: number | null = null;
@@ -879,6 +896,46 @@ const queueWorkflow: WorkflowState["queueWorkflow"] = async (
     // us its authoritative priority; place later members fractionally
     // after it (but before the next integer priority) to retain the
     // workflow/seed order while the whole batch remains at the front.
+    // One seed pass over root nodes and every definition's nodes. Writes that
+    // land beneath a placeholder (see pendingInteriorSeeds) are applied once
+    // every definition has been walked.
+    const runSeedPass = (
+      workflow: Workflow,
+      seedOverrides: Record<string, number>,
+      phase: "prepare" | "advance",
+    ): Workflow => {
+      pendingInteriorSeeds = new Map();
+      const updatedNodes = workflow.nodes.map((node) =>
+        processSeedNode(node, seedOverrides, null, phase),
+      );
+      const updatedSubgraphDefs = (workflow.definitions?.subgraphs ?? []).map((sg) => {
+        const updatedSgNodes = (sg.nodes ?? []).map((node) =>
+          processSeedNode(node, seedOverrides, sg.id, phase),
+        );
+        const changed = updatedSgNodes.some((n, idx) => n !== (sg.nodes ?? [])[idx]);
+        return changed ? { ...sg, nodes: updatedSgNodes } : sg;
+      }).map((sg) => {
+        if (![...pendingInteriorSeeds.keys()].some((key) => key.startsWith(`${sg.id}:`))) return sg;
+        return {
+          ...sg,
+          nodes: (sg.nodes ?? []).map((node) => {
+            const writes = pendingInteriorSeeds.get(`${sg.id}:${node.id}`);
+            if (!writes || !Array.isArray(node.widgets_values)) return node;
+            const values = [...node.widgets_values];
+            for (const [index, seed] of writes) values[index] = seed;
+            return { ...node, widgets_values: values };
+          }),
+        };
+      });
+      return {
+        ...workflow,
+        nodes: updatedNodes,
+        definitions: workflow.definitions
+          ? { ...workflow.definitions, subgraphs: updatedSubgraphDefs }
+          : workflow.definitions,
+      };
+    };
+
     let frontBatchBaseNumber: number | null = null;
     for (let i = 0; i < count; i++) {
       const seedOverrides: Record<string, number> = {};
@@ -890,40 +947,7 @@ const queueWorkflow: WorkflowState["queueWorkflow"] = async (
       // variation lives only in the per-iteration clone below, so the user's
       // widget still reads what it read before they pressed Run variations.
       if (!variations) {
-        pendingInteriorSeeds = new Map();
-        // Handle seed modes for root nodes and inner subgraph nodes.
-        const updatedNodes = currentWorkflow.nodes.map((node) =>
-          processSeedNode(node, seedOverrides, null),
-        );
-        const subgraphDefsForSeed = currentWorkflow.definitions?.subgraphs ?? [];
-        const updatedSubgraphDefs = subgraphDefsForSeed.map((sg) => {
-          const updatedSgNodes = (sg.nodes ?? []).map((node) =>
-            processSeedNode(node, seedOverrides, sg.id),
-          );
-          const changed = updatedSgNodes.some((n, idx) => n !== (sg.nodes ?? [])[idx]);
-          return changed ? { ...sg, nodes: updatedSgNodes } : sg;
-        }).map((sg) => {
-          if (![...pendingInteriorSeeds.keys()].some((key) => key.startsWith(`${sg.id}:`))) return sg;
-          return {
-            ...sg,
-            nodes: (sg.nodes ?? []).map((node) => {
-              const writes = pendingInteriorSeeds.get(`${sg.id}:${node.id}`);
-              if (!writes || !Array.isArray(node.widgets_values)) return node;
-              const values = [...node.widgets_values];
-              for (const [index, seed] of writes) values[index] = seed;
-              return { ...node, widgets_values: values };
-            }),
-          };
-        });
-
-        // Update current workflow with new seeds for this iteration
-        currentWorkflow = {
-          ...currentWorkflow,
-          nodes: updatedNodes,
-          definitions: currentWorkflow.definitions
-            ? { ...currentWorkflow.definitions, subgraphs: updatedSubgraphDefs }
-            : currentWorkflow.definitions,
-        };
+        currentWorkflow = runSeedPass(currentWorkflow, seedOverrides, "prepare");
         writeSeedLastValues(nextSeedLastValues);
         writeWorkflow(currentWorkflow);
       }
@@ -1412,6 +1436,22 @@ const queueWorkflow: WorkflowState["queueWorkflow"] = async (
         // to the active session in the websocket handler.
       }
 
+      // The run is queued with the seeds it was sent; now advance every
+      // control_after_generate for the next one, as stock's afterQueued does.
+      // A run that failed to queue threw above and advances nothing.
+      if (!variations) {
+        // Advance the session's workflow as it is NOW: the user may have
+        // edited it during the request, and writing back the copy captured
+        // before it would silently undo those edits.
+        const target = liveTarget();
+        if (target === "gone") break;
+        const live = target === "active"
+          ? get().workflow
+          : get().parkedSessions[sid!]?.workflow;
+        if (live) currentWorkflow = live;
+        currentWorkflow = runSeedPass(currentWorkflow, {}, "advance");
+        writeWorkflow(currentWorkflow);
+      }
     }
     return true;
   } catch (err) {

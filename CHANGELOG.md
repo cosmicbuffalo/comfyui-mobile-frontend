@@ -14,6 +14,12 @@
   the plain error.
   Advanced users who need the previous converter can manually check out the
   `v3.3.2` tag.
+- **Seed controls now run after a run is queued, as they do in ComfyUI's
+  desktop editor.** A run uses the seed you can see, and "control after
+  generate" then randomizes or steps it, ready for the next run. Previously
+  mobile changed the seed before sending, so a run never used the value shown
+  when you pressed Run. A run that fails to queue no longer moves the seed, and
+  an edit made while a run is being queued is kept.
 - **MP4s with their index at the end of the file may start slowly again.** 3.3.2
   rewrote these so playback could begin before the whole file downloaded. They
   are now served as saved, so some browsers (notably iOS Safari) may wait for
