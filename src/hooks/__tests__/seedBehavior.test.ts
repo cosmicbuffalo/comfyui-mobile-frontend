@@ -244,21 +244,24 @@ describe('stock ComfyUI seed + control_after_generate', () => {
     expect(await queueRepeatedly(3)).toEqual([42, 42, 42]);
   });
 
-  it('sends a different seed each run on "randomize"', async () => {
+  // Stock's default timing (Comfy.WidgetControlMode "after"): a run is sent
+  // the seed as it stands, and the control advances it for the next run.
+
+  it('sends the authored seed first, then a different seed each run on "randomize"', async () => {
     loadWorkflow([ksampler(42, 'randomize')]);
     const seeds = await queueRepeatedly(3);
+    expect(seeds[0]).toBe(42);
     expect(new Set(seeds).size).toBe(3);
-    expect(seeds).not.toContain(42);
   });
 
-  it('steps up by one each run on "increment"', async () => {
+  it('steps up by one after each run on "increment"', async () => {
     loadWorkflow([ksampler(10, 'increment')]);
-    expect(await queueRepeatedly(3)).toEqual([11, 12, 13]);
+    expect(await queueRepeatedly(3)).toEqual([10, 11, 12]);
   });
 
-  it('steps down by one each run on "decrement"', async () => {
+  it('steps down by one after each run on "decrement"', async () => {
     loadWorkflow([ksampler(10, 'decrement')]);
-    expect(await queueRepeatedly(3)).toEqual([9, 8, 7]);
+    expect(await queueRepeatedly(3)).toEqual([10, 9, 8]);
   });
 
   it('lets the control widget beat a stale persisted mode', async () => {
@@ -268,7 +271,7 @@ describe('stock ComfyUI seed + control_after_generate', () => {
     expect(await queueRepeatedly(2)).toEqual([42, 42]);
   });
 
-  it('advances the widget in place, so the workflow records what ran', async () => {
+  it('advances the widget in place after the run, ready for the next one', async () => {
     loadWorkflow([ksampler(10, 'increment')]);
     await queueRepeatedly(1);
     const node = useWorkflowStore.getState().workflow!.nodes[0];
@@ -661,18 +664,22 @@ describe('several seed nodes in one workflow', () => {
     const first = await queueAndReadSeeds();
     const second = await queueAndReadSeeds();
 
-    expect([first['1'].seed, second['1'].seed]).toEqual([11, 12]);
+    expect([first['1'].seed, second['1'].seed]).toEqual([10, 11]);
     expect([first['2'].seed, second['2'].seed]).toEqual([900, 900]);
     expect([first['3'].seed, second['3'].seed]).toEqual([777, 777]);
   });
 
-  it('gives two randomizing nodes different seeds in the same run', async () => {
+  it('gives two randomizing nodes different seeds once their controls have run', async () => {
     loadWorkflow([
       makeNode(1, { type: 'KSampler', widgets_values: [0, 'randomize'] }),
       makeNode(2, { type: 'KSampler', widgets_values: [0, 'randomize'] }),
     ]);
-    const prompt = await queueAndReadSeeds();
-    expect(prompt['1'].seed).not.toBe(prompt['2'].seed);
+    // The first run sends both as authored, as stock does; each control then
+    // rolls its own seed for the next.
+    const first = await queueAndReadSeeds();
+    expect([first['1'].seed, first['2'].seed]).toEqual([0, 0]);
+    const second = await queueAndReadSeeds();
+    expect(second['1'].seed).not.toBe(second['2'].seed);
   });
 });
 
@@ -723,5 +730,88 @@ describe('the seeds recorded for the queue prompt preview', () => {
     // This seed does land in widgets_values, so without the de-dup it would
     // also read as an "old -> new" change the user never made.
     expect(diff?.nodeChanges).toEqual([]);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// When a control_after_generate runs: after the run is queued (stock's
+// default Comfy.WidgetControlMode "after"), never before it is sent.
+// ═══════════════════════════════════════════════════════════════════════════
+
+describe('when the seed control runs', () => {
+  type PromptBody = {
+    prompt?: Record<string, { inputs?: Record<string, unknown> }>;
+    extra_data?: { extra_pnginfo?: { workflow?: Workflow } };
+  };
+
+  function stubPrompt(respond: () => Promise<Response | { ok: boolean; json: () => Promise<unknown> }>) {
+    const bodies: PromptBody[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes('/api/queue')) {
+        return { ok: true, json: async () => ({ queue_running: [], queue_pending: [] }) };
+      }
+      if (url.includes('/api/prompt')) {
+        bodies.push(JSON.parse(String(init?.body ?? '{}')) as PromptBody);
+        return respond();
+      }
+      return { ok: true, json: async () => ({}) };
+    }) as unknown as typeof fetch);
+    return bodies;
+  }
+
+  const ok = async () => ({ ok: true, json: async () => ({ prompt_id: 'p', number: 1 }) });
+  const seedOf = () =>
+    (useWorkflowStore.getState().workflow!.nodes[0].widgets_values as unknown[])[0];
+
+  it('does not advance a seed whose run failed to queue', async () => {
+    loadWorkflow([makeNode(1, { type: 'KSampler', widgets_values: [10, 'increment'] })]);
+    stubPrompt(async () => ({ ok: false, json: async () => ({ error: 'nope' }) }));
+
+    await useWorkflowStore.getState().queueWorkflow(1);
+
+    expect(seedOf()).toBe(10);
+  });
+
+  it('keeps an edit made while the run was being queued', async () => {
+    loadWorkflow([makeNode(1, { type: 'KSampler', widgets_values: [10, 'increment'] })]);
+    stubPrompt(async () => {
+      // The user edits the node during the request round-trip.
+      const current = useWorkflowStore.getState().workflow!;
+      useWorkflowStore.setState({
+        workflow: {
+          ...current,
+          nodes: current.nodes.map((node) => ({ ...node, title: 'Renamed mid-queue' })),
+        },
+      });
+      return ok();
+    });
+
+    await useWorkflowStore.getState().queueWorkflow(1);
+
+    const node = useWorkflowStore.getState().workflow!.nodes[0];
+    expect(node.title).toBe('Renamed mid-queue');
+    expect((node.widgets_values as unknown[])[0]).toBe(11);
+  });
+
+  it('sends a batch in order, advancing between runs', async () => {
+    loadWorkflow([makeNode(1, { type: 'KSampler', widgets_values: [10, 'increment'] })]);
+    const bodies = stubPrompt(ok);
+
+    await useWorkflowStore.getState().queueWorkflow(3);
+
+    expect(bodies.map((body) => body.prompt?.['1']?.inputs?.seed)).toEqual([10, 11, 12]);
+    expect(seedOf()).toBe(13);
+  });
+
+  it('embeds the seed the run used, not the one prepared for the next run', async () => {
+    loadWorkflow([makeNode(1, { type: 'KSampler', widgets_values: [10, 'increment'] })]);
+    const bodies = stubPrompt(ok);
+
+    await useWorkflowStore.getState().queueWorkflow(1);
+
+    const embedded = bodies[0].extra_data?.extra_pnginfo?.workflow;
+    expect((embedded?.nodes[0].widgets_values as unknown[])[0]).toBe(10);
+    expect(seedOf()).toBe(11);
   });
 });

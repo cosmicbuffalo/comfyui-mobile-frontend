@@ -12,6 +12,7 @@ import {
 } from "@/utils/widgetDefinitions";
 import { isSubgraphPlaceholder } from "@/utils/canonicalWorkflowOps";
 import { collectAllWorkflowNodes } from "@/utils/workflowNodes";
+import { resolvePromotedSeedControls } from "@/utils/promotedSeedControls";
 
 /**
  * Seed-mode inference and subgraph-placeholder seed patching. Pure functions
@@ -47,6 +48,56 @@ export function buildSubgraphSeedWidgetDescriptors(
     ...slotPromoted,
     ...boundaryPromoted,
   ];
+}
+
+/**
+ * `findSeedWidgetIndex` that can see a subgraph placeholder's seed.
+ *
+ * A placeholder's `type` is a subgraph UUID, so `nodeTypes` has no schema for
+ * it and the bare lookup returns null — the seed is only findable through the
+ * promoted-widget descriptors built above. Every caller that skipped them was
+ * therefore correct for ordinary nodes and blind for placeholders, which is
+ * subtle enough that three of them got it wrong in different ways: a promoted
+ * seed's randomize mode was dropped on workflow switch, and the executed-seed
+ * write-back registered as a user edit in undo and in the queue-card diff.
+ *
+ * Prefer this over calling `findSeedWidgetIndex` directly unless the caller has
+ * already built descriptors for another reason.
+ */
+export function resolveSeedWidgetIndex(
+  workflow: Workflow,
+  nodeTypes: NodeTypes | null,
+  node: WorkflowNode,
+): number | null {
+  const widgetDescriptors = isSubgraphPlaceholder(node, workflow)
+    ? buildSubgraphSeedWidgetDescriptors(workflow, nodeTypes, node)
+    : undefined;
+  return findSeedWidgetIndex(workflow, nodeTypes, node, { widgetDescriptors });
+}
+
+/**
+ * Every widget slot on `node` that queue time may rewrite as a seed.
+ *
+ * `resolveSeedWidgetIndex` answers for one seed, but a placeholder can expose
+ * several values that follow their own interior control_after_generate, and
+ * queue time advances each of them. Anything deciding "did the user change
+ * this node" (undo, the queue diff's base) has to ignore all of them, or a run
+ * that re-rolls the second seed reads as an edit.
+ */
+export function resolveSeedWidgetIndices(
+  workflow: Workflow,
+  nodeTypes: NodeTypes | null,
+  node: WorkflowNode,
+): Set<number> {
+  const indices = new Set<number>();
+  const primary = resolveSeedWidgetIndex(workflow, nodeTypes, node);
+  if (primary !== null && primary >= 0) indices.add(primary);
+  if (isSubgraphPlaceholder(node, workflow)) {
+    for (const control of resolvePromotedSeedControls(workflow, nodeTypes, node)) {
+      indices.add(control.valueIndex);
+    }
+  }
+  return indices;
 }
 
 /**
@@ -119,7 +170,7 @@ export function inferSeedMode(
     }
   }
 
-  const seedIndex = findSeedWidgetIndex(workflow, nodeTypes, node);
+  const seedIndex = resolveSeedWidgetIndex(workflow, nodeTypes, node);
   if (seedIndex !== null && Array.isArray(node.widgets_values)) {
     const seedValue = Number(node.widgets_values[seedIndex]);
     const specialMode = getSpecialSeedMode(seedValue);
@@ -154,7 +205,7 @@ export function deriveSeedModes(
   if (!nodeTypes) return seedModes;
   const allNodesForSeed = collectAllWorkflowNodes(workflow);
   for (const node of allNodesForSeed) {
-    const seedWidgetIndex = findSeedWidgetIndex(workflow, nodeTypes, node);
+    const seedWidgetIndex = resolveSeedWidgetIndex(workflow, nodeTypes, node);
     if (seedWidgetIndex !== null) {
       seedModes[node.id] = inferSeedMode(workflow, nodeTypes, node);
     }

@@ -40,11 +40,35 @@ const NODE_TYPES_WITHOUT_SEED_CONTROL: ReadonlySet<string> = new Set([
 
 // An API-prompt input name holds a seed when it is exactly "seed" or ends in
 // "_seed" ("noise_seed", "rand_seed"). Deliberately narrow: "seed_mode" and
-// "seed_offset" are not the value that produced the image.
+// "seed_offset" are not the value that produced the image. Use this to decide
+// which prompt-input VALUE is a seed (metadata display, queue-seed reporting).
+// For widget-SLOT detection use `mentionsSeed` — the two predicates give
+// different answers and are both correct at their own call sites.
 const SEED_INPUT_NAME_RE = /^(?:.*_)?seed$/i;
 
 export function isSeedInputName(name: string): boolean {
   return SEED_INPUT_NAME_RE.test(name);
+}
+
+/**
+ * Broad widget-slot seed matcher: any name that mentions "seed" at all —
+ * "seed", "noise_seed", but also "seed_value", "seed_2nd", and relabeled
+ * display names like "Noise Seed". This is the predicate the queue-time
+ * randomizer uses to pick which widget slot to write (see the descriptor
+ * fallback and walkWidgetSlots match in `findSeedWidgetIndex` below), so any
+ * code that must find the slots that write path may have touched — seed
+ * restore's -1 sentinel scan, workflowDiff's seed-slot blanking — must use
+ * this SAME predicate or it silently falls out of lockstep.
+ *
+ * It also matches names that do NOT hold a seed value ("seed_mode",
+ * "seed_offset"), so it must never decide which API-prompt input holds the
+ * executed seed (use `isSeedInputName`), and it must never gate a widget
+ * WRITE by itself — writers either resolve one index via findSeedWidgetIndex
+ * or, in seed restore, additionally require the -1 sentinel plus a concrete
+ * non-special prompt value before touching a slot.
+ */
+export function mentionsSeed(name: string): boolean {
+  return name.toLowerCase().includes('seed');
 }
 
 /**
@@ -204,7 +228,7 @@ export function findSeedWidgetIndex(
   const descriptorSeed = descriptors?.find((entry) => {
     const identity = entry.inputName ?? entry.name;
     return identity === 'seed' || identity === 'noise_seed';
-  }) ?? descriptors?.find((entry) => entry.name.toLowerCase().includes('seed'));
+  }) ?? descriptors?.find((entry) => mentionsSeed(entry.name));
   const descriptorSeedIndex = descriptorSeed?.widgetIndex;
   if (typeof descriptorSeedIndex === 'number') {
     return descriptorSeedIndex;
@@ -217,7 +241,7 @@ export function findSeedWidgetIndex(
 
   if (!nodeTypes) {
     const hasSeedOutput = node.outputs?.some((output) =>
-      String(output.name || '').toLowerCase().includes('seed') &&
+      mentionsSeed(String(output.name || '')) &&
       String(output.type || '').toUpperCase().includes('INT')
     );
     if (hasSeedOutput && Array.isArray(node.widgets_values) && node.widgets_values.length > 0) {
@@ -228,7 +252,7 @@ export function findSeedWidgetIndex(
   const typeDef = nodeTypes[node.type];
   if (!typeDef?.input) {
     const hasSeedOutput = node.outputs?.some((output) =>
-      String(output.name || '').toLowerCase().includes('seed') &&
+      mentionsSeed(String(output.name || '')) &&
       String(output.type || '').toUpperCase().includes('INT')
     );
     if (hasSeedOutput && Array.isArray(node.widgets_values) && node.widgets_values.length > 0) {
@@ -241,7 +265,7 @@ export function findSeedWidgetIndex(
 
   return walkWidgetSlots(node, typeDef, (name, qualifiedName, typeOrOptions, widgetIndex) => {
     // Any INT input with 'seed' in its name (case-insensitive).
-    if (String(typeOrOptions) === 'INT' && name.toLowerCase().includes('seed')) {
+    if (String(typeOrOptions) === 'INT' && mentionsSeed(name)) {
       return widgetIndexMap?.[qualifiedName] ?? widgetIndexMap?.[name] ?? widgetIndex;
     }
     return undefined;

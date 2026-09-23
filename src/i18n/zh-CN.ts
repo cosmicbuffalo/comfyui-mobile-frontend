@@ -554,6 +554,7 @@ export const zhCN: Record<string, string> = {
   'Delete node': '删除节点',
   'Control mode': '控制模式',
   'Seed control': '种子控制',
+  'Control after generate': '生成后控制',
   'Enabled': '已启用',
   'Disabled': '已禁用',
   'Selected LoRA': '所选 LoRA',
@@ -1019,6 +1020,8 @@ export const zhCN: Record<string, string> = {
   'Install missing node': '安装缺失的节点',
   'Loading tag suggestions…': '正在加载标签建议…',
   'Unable to play this video.': '无法播放此视频。',
+  "Your browser can't play this video format. Save videos as H.264 MP4 to play them here.":
+    '您的浏览器无法播放此视频格式。请将视频保存为 H.264 MP4 以在此播放。',
   'Unable to load this image.': '无法加载此图片。',
   'It may have been moved, renamed, or deleted.': '它可能已被移动、重命名或删除。',
   'Show video preview': '显示视频预览',

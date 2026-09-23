@@ -6,11 +6,10 @@ import {useParameterSectionFoldsStore} from "@/hooks/useParameterSectionFolds";
 import {useWorkflowClipboardStore, type WorkflowClipboardPayload} from "@/hooks/useWorkflowClipboard";
 import {applyClipboardPaste, buildGroupClipboardPayload, buildNodeClipboardPayload, buildMultiNodeClipboardPayload, collectGroupMoveSelection, placeGroupsIntoGroup, placePastedNodesIntoGroup} from "@/utils/workflowClipboard";
 import {isComboType, buildDefaultConnectionInputs, buildDefaultWidgetValues} from "@/utils/workflowInputs";
-import {collectAllWorkflowGroups} from "@/utils/workflowNodes";
 import {collectMoveIntoSubgraphTargets} from "@/utils/moveIntoSubgraphTargets";
 import {nodeTypeStripsSeedControl} from "@/utils/seedUtils";
 import {areTypesCompatible} from "@/utils/connectionUtils";
-import {type ItemRef, type MobileLayout, type ContainerId, makeLocationPointer, findItemInLayout, findTopmostMatchingItemInLayout, moveItemInLayout, removeNodeFromLayout, addNodeToLayout, placeLayoutItemAfter, placeLayoutItemBefore} from "@/utils/mobileLayout";
+import {type ItemRef, type MobileLayout, type ContainerId, makeLocationPointer, parseLocationPointer, collectScopedMembership, scopedNodeKey, findItemInLayout, findTopmostMatchingItemInLayout, moveItemInLayout, removeNodeFromLayout, addNodeToLayout, placeLayoutItemAfter, placeLayoutItemBefore} from "@/utils/mobileLayout";
 import {clampPositionToGroup, getBottomPlacement, getBottomPlacementForScope, getPositionNearNode} from "@/utils/nodePositioning";
 import {resolveCurrentScope, resolveScopeForHierarchicalKey, resolveNodeByHierarchicalKey, getLinkId, getLinkOriginId, getLinkOriginSlot, getLinkTargetId, getLinkTargetSlot, getLinkType, isSubgraphPlaceholder, makeScopeLink, maxNodeIdAcrossScopes, updateNodeInScope, type ScopeContext} from "@/utils/canonicalWorkflowOps";
 import {collapseSetGetNodes as collapseSetGetNodesPure} from "@/utils/collapseSetGetNodes";
@@ -545,17 +544,44 @@ const addNode: WorkflowState["addNode"] = (nodeType, options) => {
     ? { ...workflow, nodes: scopedNodes }
     : workflow;
 
+  const nearIdentity = options?.nearNodeHierarchicalKey
+    ? resolveNodeIdentityFromHierarchicalKey(
+        positionWorkflow,
+        options.nearNodeHierarchicalKey,
+        get().pointerByHierarchicalKey,
+      )
+    : null;
+
+  // Connection pickers place a new node beside the node whose slot it will
+  // feed (or consume). Keep that node in its immediate group too. The layout
+  // records the actual mobile grouping, including nested groups, whereas the
+  // canvas bounds are only a fallback for imported workflows.
+  //
+  // Resolved against the FULL workflow: the positioning view above swaps the
+  // root node list for the subgraph's, so it reads an inner node as a root one
+  // (subgraphId null) and the scope check below would never pass in a subgraph.
+  const nearScopedIdentity = options?.nearNodeHierarchicalKey
+    ? resolveNodeIdentityFromHierarchicalKey(
+        workflow,
+        options.nearNodeHierarchicalKey,
+        get().pointerByHierarchicalKey,
+      )
+    : null;
+  let inGroupId = options?.inGroupId;
+  if (inGroupId == null && nearScopedIdentity?.subgraphId === targetSgId) {
+    const groupKey = collectScopedMembership(mobileLayout).get(
+      scopedNodeKey(nearScopedIdentity.nodeId, targetSgId),
+    )?.groupKey;
+    const groupPointer = groupKey ? parseLocationPointer(groupKey) : null;
+    if (groupPointer?.type === "group" && groupPointer.subgraphId === targetSgId) {
+      inGroupId = groupPointer.groupId;
+    }
+  }
+
   // Position near target node or at the bottom of the appropriate scope
   let pos: [number, number] = [0, 0];
-  if (options?.nearNodeHierarchicalKey) {
-    const nearIdentity = resolveNodeIdentityFromHierarchicalKey(
-      positionWorkflow,
-      options.nearNodeHierarchicalKey,
-      get().pointerByHierarchicalKey,
-    );
-    if (nearIdentity) {
-      pos = getPositionNearNode(positionWorkflow, nearIdentity.nodeId) ?? pos;
-    }
+  if (nearIdentity) {
+    pos = getPositionNearNode(positionWorkflow, nearIdentity.nodeId) ?? pos;
   } else if (scopedNodes.length > 0) {
     const maxBottom = Math.max(
       ...scopedNodes.map((n) => n.pos[1] + (n.size?.[1] ?? 100)),
@@ -568,9 +594,9 @@ const addNode: WorkflowState["addNode"] = (nodeType, options) => {
     });
   }
 
-  if (options?.inGroupId != null) {
-    const groups = collectAllWorkflowGroups(workflow);
-    const group = groups.find((g) => g.id === options.inGroupId);
+  if (inGroupId != null) {
+    const groups = targetSg ? (targetSg.groups ?? []) : (workflow.groups ?? []);
+    const group = groups.find((g) => g.id === inGroupId);
     if (group) {
       pos = clampPositionToGroup(pos, group, [200, 100]);
     }
@@ -613,7 +639,7 @@ const addNode: WorkflowState["addNode"] = (nodeType, options) => {
   }
 
   const nextMobileLayout = addNodeToLayout(mobileLayout, newId, {
-    groupId: options?.inGroupId ?? undefined,
+    groupId: inGroupId,
     subgraphId: options?.inSubgraphId ?? undefined,
   });
   const { itemKeyByPointer, pointerByHierarchicalKey } = get();

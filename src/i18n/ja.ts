@@ -553,6 +553,7 @@ export const ja: Record<string, string> = {
   'Delete node': 'ノードを削除',
   'Control mode': '制御モード',
   'Seed control': 'シード制御',
+  'Control after generate': '生成後の制御',
   'Enabled': '有効',
   'Disabled': '無効',
   'Selected LoRA': '選択中の LoRA',
@@ -1018,6 +1019,8 @@ export const ja: Record<string, string> = {
   'Install missing node': '不明なノードをインストール',
   'Loading tag suggestions…': 'タグの候補を読み込み中…',
   'Unable to play this video.': 'この動画を再生できません。',
+  "Your browser can't play this video format. Save videos as H.264 MP4 to play them here.":
+    'お使いのブラウザはこの動画形式を再生できません。ここで再生するには H.264 MP4 で保存してください。',
   'Unable to load this image.': 'この画像を読み込めません。',
   'It may have been moved, renamed, or deleted.': '移動、名前変更、または削除された可能性があります。',
   'Show video preview': '動画プレビューを表示',

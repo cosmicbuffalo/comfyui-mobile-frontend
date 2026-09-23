@@ -26,9 +26,44 @@ describe('deleteRejectedOutputs', () => {
   beforeEach(() => {
     mockDeleteFile.mockReset();
     mockDeleteFile.mockResolvedValue(undefined);
-    useOutputsStore.setState({ rejected: [] });
+    useOutputsStore.setState({
+      rejected: [], files: [], selectedIds: [], hiddenIds: [], favorites: [],
+    });
     useHistoryStore.setState({ history: [] });
     vi.spyOn(useHistoryStore.getState(), 'removeOutputImages').mockResolvedValue(undefined);
+  });
+
+  // The grid used to catch up only because the outputs menu refetched the whole
+  // folder afterwards: a round trip and a blank screen to reach a listing the
+  // batch could already describe. It names every id it removed, so it prunes.
+  it('takes the deleted files out of the listing without a refetch', async () => {
+    const file = (id: string, name: string) => ({ id, name, type: 'image' as const });
+    useOutputsStore.setState({
+      rejected: ['output/run/bad.png'],
+      files: [file('output/run/bad.png', 'bad.png'), file('output/run/good.png', 'good.png')],
+      selectedIds: ['output/run/bad.png', 'output/run/good.png'],
+      hiddenIds: ['output/run/bad.png'],
+    });
+
+    await deleteRejectedOutputs(['output']);
+
+    expect(useOutputsStore.getState().files.map((f) => f.id)).toEqual(['output/run/good.png']);
+    // A file that is gone keeps no marks and no place in a bulk action.
+    expect(useOutputsStore.getState().selectedIds).toEqual(['output/run/good.png']);
+    expect(useOutputsStore.getState().hiddenIds).toEqual([]);
+    expect(useOutputsStore.getState().rejected).toEqual([]);
+  });
+
+  it('leaves a file whose delete failed in the listing, still marked', async () => {
+    mockDeleteFile.mockRejectedValue(new Error('in use'));
+    const stuck = { id: 'output/run/stuck.png', name: 'stuck.png', type: 'image' as const };
+    useOutputsStore.setState({ rejected: [stuck.id], files: [stuck] });
+
+    const result = await deleteRejectedOutputs(['output']);
+
+    expect(result.failed).toBe(1);
+    expect(useOutputsStore.getState().files.map((f) => f.id)).toEqual([stuck.id]);
+    expect(useOutputsStore.getState().rejected).toEqual([stuck.id]);
   });
 
   it('does nothing when nothing is rejected', async () => {

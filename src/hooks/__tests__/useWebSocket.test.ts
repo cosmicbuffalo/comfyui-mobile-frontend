@@ -960,11 +960,20 @@ describe('orphaned closed-tab run routing', () => {
     });
   }
 
-  it('flags an execution error as a RUN error, not a load error', async () => {
+  it.each([
+    { fields: { node_id: '7' }, expectedId: '7' },
+    { fields: { node_id: 7 }, expectedId: '7' },
+    { fields: { node_id: '57:3' }, expectedId: '57:3' },
+    { fields: { node_id: '7', node: '9' }, expectedId: '7' },
+    { fields: { node: '7' }, expectedId: '7' },
+    { fields: { node_id: null, node: '7' }, expectedId: '7' },
+  ])('associates a run error with its navigation target: $fields', async ({ fields, expectedId }) => {
     // BottomStatusOverlay derives isWorkflowLoadError from node errors that are
     // NOT fromRun, and suppresses the toast for those on every panel except the
     // workflow one. Without the flag a run that died while the user watched the
     // queue or outputs failed silently.
+    const itemKey = expectedId === '57:3' ? 'root/subgraph:test/node:3' : 'root/node:7';
+    useWorkflowStore.setState({ expandedNodeIdMap: { [expectedId]: itemKey } });
     await act(async () => {
       root.render(createElement(WebSocketHarness));
       await Promise.resolve();
@@ -974,14 +983,21 @@ describe('orphaned closed-tab run routing', () => {
       type: 'execution_error',
       data: {
         prompt_id: 'active-prompt',
-        node: '7',
-        node_type: 'KSampler',
-        exception_message: 'CUDA out of memory',
+        ...fields,
+        node_type: 'GIMMVFI_interpolate',
+        exception_message: "'NoneType' object has no attribute 'permute'",
+        exception_type: 'AttributeError',
       },
     });
 
     const errors = useWorkflowErrorsStore.getState();
-    expect(Object.keys(errors.nodeErrors)).toContain('7');
+    expect(Object.keys(errors.nodeErrors)).toEqual([expectedId]);
+    expect(errors.nodeErrorsByItemKey[itemKey]).toEqual([{
+      type: 'execution_error',
+      message: "'NoneType' object has no attribute 'permute'",
+      details: 'AttributeError',
+      inputName: undefined,
+    }]);
     expect(errors.nodeErrorsFromRun).toBe(true);
   });
 

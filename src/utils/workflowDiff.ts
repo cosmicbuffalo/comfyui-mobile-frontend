@@ -7,7 +7,8 @@ import type {
 import { getInstanceNumber } from '@/utils/canonicalWorkflowOps';
 import { interpolateInstanceLabel } from '@/utils/subgraphInstanceLabels';
 import { getNodeWidgetIndexMap } from '@/utils/workflowInputs';
-import { findSeedWidgetIndex, isSeedInputName } from '@/utils/seedUtils';
+import { isSeedInputName, mentionsSeed } from '@/utils/seedUtils';
+import { resolveSeedWidgetIndices } from '@/hooks/useWorkflow/seedExpansion';
 
 // A queue item's prompt-preview / diff is computed once at enqueue time
 // (see useWorkflow.queueWorkflow) and stored keyed by prompt_id in the queue
@@ -303,12 +304,11 @@ function seedWidgetIndices(
   const indexMap = getNodeWidgetIndexMap(workflow, node);
   if (indexMap) {
     for (const [name, index] of Object.entries(indexMap)) {
-      if (name.toLowerCase().includes('seed')) indices.add(index);
+      if (mentionsSeed(name)) indices.add(index);
     }
   }
   if (nodeTypes) {
-    const seedIndex = findSeedWidgetIndex(workflow, nodeTypes, node);
-    if (seedIndex != null && seedIndex >= 0) indices.add(seedIndex);
+    for (const index of resolveSeedWidgetIndices(workflow, nodeTypes, node)) indices.add(index);
   }
   return indices;
 }

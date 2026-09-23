@@ -1,9 +1,8 @@
 """Media-serving routes.
 
-Thumbnails, previews, playable video, image metadata/dimensions, and
-workflow availability. Split out of ``__init__.py`` — handler bodies are
-unchanged. Video decoding runs in a subprocess via
-``mobile_video_playback``; these handlers only orchestrate and serve bytes.
+Thumbnails, previews, direct video playback, image metadata/dimensions, and
+workflow availability. Video responses preserve the original bytes; optional
+conversion support, if it returns in the future, lives outside this package.
 """
 
 import asyncio
@@ -25,7 +24,6 @@ import mobile_image_dimensions as _mobile_image_dimensions
 import mobile_image_preview as _mobile_image_preview
 import mobile_push as _mobile_push
 import mobile_video_metadata as _mobile_video_metadata
-import mobile_video_playback as _mobile_video_playback
 import mobile_video_thumbs as _mobile_video_thumbs
 from aiohttp import web
 from mobile_common import (
@@ -339,7 +337,13 @@ async def api_get_preview(request):
         return web.Response(status=500, headers=no_store)
 
 async def api_get_playable_video(request):
-    """Serve an original or cached browser-safe MP4 with byte-range support."""
+    """Serve the original video with byte-range support.
+
+    Versions through 3.3.2 remuxed or transcoded incompatible media in a child
+    process. Registry release 3.3.3 deliberately contains no process-launching
+    conversion path; browsers receive the original bytes and report a playback
+    error when they cannot decode them.
+    """
     no_store = {'Cache-Control': 'no-store'}
     try:
         filename = request.query.get('filename')
@@ -350,7 +354,7 @@ async def api_get_playable_video(request):
             return web.Response(status=400, text='filename is required', headers=no_store)
         if source not in _ASSET_SOURCES:
             return web.Response(status=400, text='invalid asset source', headers=no_store)
-        if not _mobile_video_playback.is_video(filename):
+        if not _mobile_video_thumbs.is_video(filename):
             return web.Response(status=415, text='unsupported video type', headers=no_store)
 
         base_dir = _source_base_dir(source)
@@ -360,10 +364,6 @@ async def api_get_playable_video(request):
         if not os.path.isfile(file_path):
             return web.Response(status=404, headers=no_store)
 
-        loop = asyncio.get_event_loop()
-        playable = await loop.run_in_executor(
-            None, _mobile_video_playback.get_or_prepare, file_path
-        )
         # This URL is keyed only by filename/subfolder/type, and ComfyUI
         # reuses output filenames after a delete — so a far-future max-age is
         # only safe when the caller supplied a cache-bust token that makes the
@@ -378,54 +378,20 @@ async def api_get_playable_video(request):
             else 'private, no-cache'
         )
         return web.FileResponse(
-            playable.path,
+            file_path,
             headers={
                 # aiohttp FileResponse implements Range/If-Range and emits
                 # ETag/Last-Modified.
                 'Cache-Control': cache_control,
-                # Only a prepared file is guaranteed to be MP4. When the
-                # original is served as-is (mode 'unprepared') it can be
-                # webm/mkv/mov/avi, and mislabelling it video/mp4 makes any
-                # engine that trusts the declared type refuse to play it —
-                # /view derived this from the extension, so match that.
-                'Content-Type': (
-                    mimetypes.guess_type(file_path)[0] or 'video/mp4'
-                    if playable.mode == 'unprepared'
-                    else 'video/mp4'
-                ),
+                # The response is never converted, so its declared type must
+                # follow the original extension rather than promise MP4.
+                'Content-Type': mimetypes.guess_type(file_path)[0] or 'video/mp4',
                 # Saving straight from the video element (long-press → Save,
                 # "Save video as…") otherwise names the file after the last
-                # URL path segment — "playable.mp4". The served bytes may be
-                # a remuxed cache copy, so name it after the original.
+                # URL path segment — "playable.mp4". Keep the source name.
                 'Content-Disposition': _file_utils.content_disposition(filename),
-                'X-Mobile-Video-Mode': playable.mode,
+                'X-Mobile-Video-Mode': 'direct',
             },
-        )
-    except _mobile_video_playback.PlaybackPreparationError as exc:
-        # Preparation failed (decode error, worker killed by signal, timeout).
-        # The client routes ALL video through this endpoint with no fallback
-        # to /view, so refusing here makes a file unplayable that 3.0.x
-        # served straight from disk. Hand over the original bytes and let the
-        # browser decide — same outcome as before this gateway existed.
-        print('[Mobile Frontend] Could not prepare video {} ({}); serving it as-is.'.format(
-            request.query.get('filename', ''), exc
-        ))
-        try:
-            return web.FileResponse(
-                file_path,
-                headers={
-                    'Cache-Control': 'private, no-cache',
-                    'Content-Type': mimetypes.guess_type(file_path)[0] or 'video/mp4',
-                    'Content-Disposition': _file_utils.content_disposition(filename),
-                    'X-Mobile-Video-Mode': 'unprepared',
-                },
-            )
-        except Exception:
-            pass
-        return web.Response(
-            status=422,
-            text='Video could not be prepared for browser playback',
-            headers=no_store,
         )
     except Exception as exc:
         print('[Mobile Frontend] Playable video error: {}'.format(exc))

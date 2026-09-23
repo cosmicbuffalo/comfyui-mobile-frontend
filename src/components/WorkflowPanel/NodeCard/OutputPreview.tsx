@@ -12,9 +12,11 @@ import { isVideoFilename } from '@/utils/media';
 import {
   reportVideoAutoplayRejection,
   reportVideoPlaybackIssue,
+  videoErrorCode,
 } from '@/utils/mediaDiagnostics';
 import { useI18n } from '@/i18n';
 import { MaskIcon } from '@/components/MaskEditor/icons';
+import { VideoPlaybackUnavailable } from '@/components/VideoPlaybackUnavailable';
 
 export interface NodeCardBatchPreview {
   displaySrc: string;
@@ -90,9 +92,9 @@ function WorkflowVideoPreview({
   playbackRate?: number;
   onEnded?: () => void;
 }) {
-  const { t } = useI18n();
   const videoRef = useRef<HTMLVideoElement>(null);
-  const [playbackError, setPlaybackError] = useState(false);
+  // Holds the failed element's MediaError code (null when it gave none).
+  const [playbackError, setPlaybackError] = useState<{ code: number | null } | null>(null);
   const viewerOpen = useImageViewerStore((state) => state.viewerOpen);
 
   useEffect(() => {
@@ -172,14 +174,14 @@ function WorkflowVideoPreview({
         playsInline
         loop={loop}
         preload={autoPlay ? 'metadata' : 'none'}
-        onCanPlay={() => setPlaybackError(false)}
+        onCanPlay={() => setPlaybackError(null)}
         onPlay={(event) => {
-          setPlaybackError(false);
+          setPlaybackError(null);
           pauseOtherWorkflowPreviews(event.currentTarget);
         }}
         onError={(event) => {
           reportVideoPlaybackIssue('workflow output preview', 'error', event.currentTarget);
-          setPlaybackError(true);
+          setPlaybackError({ code: videoErrorCode(event.currentTarget) });
         }}
         onStalled={(event) => {
           reportVideoPlaybackIssue('workflow output preview', 'stalled', event.currentTarget);
@@ -187,9 +189,10 @@ function WorkflowVideoPreview({
         onEnded={onEnded}
       />
       {playbackError && (
-        <div className="pointer-events-none absolute inset-0 flex items-center justify-center rounded-lg bg-black/65 px-4 text-center text-sm text-white">
-          {t('Unable to play this video.')}
-        </div>
+        <VideoPlaybackUnavailable
+          errorCode={playbackError.code}
+          className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center rounded-lg bg-black/75 px-4 text-center text-sm text-white"
+        />
       )}
     </div>
   );

@@ -78,6 +78,11 @@ export async function deleteRejectedOutputs(
   useOutputsStore.setState((state) => ({
     rejected: state.rejected.filter((id) => !deletedSet.has(id)),
   }));
+  // Take the deleted files out of the listing in place. The batch names every
+  // id it removed, so the grid can be corrected without asking the server for
+  // a folder the client can already describe — and both panels get it, not
+  // just whichever one happened to refetch afterwards.
+  useOutputsStore.getState().removeFilesLocally(deletedIds);
   if (failedIds.length > 0) {
     console.error(
       'Some rejected outputs could not be deleted:',

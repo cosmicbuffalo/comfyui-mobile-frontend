@@ -14,6 +14,7 @@ import { FavoriteButton } from '@/components/buttons/FavoriteButton';
 import { RejectButton } from '@/components/buttons/RejectButton';
 import { useIsDesktop } from '@/hooks/useIsDesktop';
 import { LoadingSpinner } from '@/components/LoadingSpinner';
+import { VideoPlaybackUnavailable } from '@/components/VideoPlaybackUnavailable';
 import type { HistoryOutputImage } from '@/api/types';
 import { isHistoryEntryData, type ItemStatus, type QueueItemData, type UnifiedItem, type ViewerImage } from './types';
 import { getMediaType, isVideoFilename } from '@/utils/media';
@@ -39,6 +40,7 @@ import {
   reportQueueAutoplayDecision,
   reportVideoAutoplayRejection,
   reportVideoPlaybackIssue,
+  videoErrorCode,
 } from '@/utils/mediaDiagnostics';
 
 const IMAGE_RETRY_DELAYS_MS = [300, 900] as const;
@@ -177,6 +179,8 @@ function QueueMediaEntry({
   // glyph. A display failure never mutates history: a transient network or
   // browser decoding failure is not proof that the underlying output is gone.
   const [mediaError, setMediaError] = useState(false);
+  // MediaError code of the last failed <video>; null after an image failure.
+  const [videoFailureCode, setVideoFailureCode] = useState<number | null>(null);
   const src = entry.rawSrc ?? getImageUrl(
     img.filename,
     img.subfolder,
@@ -298,6 +302,7 @@ function QueueMediaEntry({
   }, [onMediaReady]);
 
   const handleMediaError = (recoverableImage: boolean) => {
+    if (recoverableImage) setVideoFailureCode(null);
     // Blob previews and video elements have different lifecycles. Only an
     // actual <img> receives request-cancellation recovery; this includes the
     // lightweight poster used by inactive video cards.
@@ -407,7 +412,12 @@ function QueueMediaEntry({
           style={mediaElementStyle}
           onClick={isVideo ? onMediaClick(src, index, isTopDoneItem) : undefined}
         >
-          {isVideo ? t('Video preview unavailable') : t('Image unavailable')}
+          {isVideo && videoActive ? (
+            <VideoPlaybackUnavailable
+              errorCode={videoFailureCode}
+              className="px-4 py-5 text-center text-sm text-white"
+            />
+          ) : isVideo ? t('Video preview unavailable') : t('Image unavailable')}
         </div>
       ) : isVideo && !videoActive ? (
         <>
@@ -467,6 +477,7 @@ function QueueMediaEntry({
             onPlay={onVideoPlay(src)}
             onError={(event) => {
               reportVideoPlaybackIssue('queue card', 'error', event.currentTarget);
+              setVideoFailureCode(videoErrorCode(event.currentTarget));
               handleMediaError(false);
             }}
             onStalled={(event) => {

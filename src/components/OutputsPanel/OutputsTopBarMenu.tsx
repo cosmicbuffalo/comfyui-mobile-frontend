@@ -1,6 +1,8 @@
 import type { RefObject } from 'react';
 import { useState } from 'react';
 import { useOutputsStore } from '@/hooks/useOutputs';
+import { useImageViewerStore } from '@/hooks/useImageViewer';
+import { MEDIA_VIEWER_Z_INDEX } from '@/components/ImageViewer/MediaViewer';
 import { useShowHiddenStore } from '@/hooks/useShowHidden';
 import { useDeleteRejectedShortcut } from '@/hooks/useDeleteRejectedShortcut';
 import { deleteRejectedOutputs, rejectedIdsForSources } from '@/utils/deleteRejectedOutputs';
@@ -45,8 +47,9 @@ export function OutputsTopBarMenu({
   // Only what this source holds — the count in the label, the visibility of the
   // entry, and the delete itself all read the same list.
   const rejectedHere = rejectedIdsForSources(rejected, [source]);
-  const refresh = useOutputsStore((s) => s.refresh);
+  const fetchFiles = useOutputsStore((s) => s.fetchFiles);
   const [deleteRejectedOpen, setDeleteRejectedOpen] = useState(false);
+  const viewerOpen = useImageViewerStore((state) => state.viewerOpen);
 
   const handleDeleteRejectedClick = () => {
     setDeleteRejectedOpen(true);
@@ -68,7 +71,12 @@ export function OutputsTopBarMenu({
         `Deleted ${result.deleted} of ${result.attempted} rejected outputs. ${result.failed} could not be deleted and remain marked.`,
       );
     }
-    refresh();
+    // The deleted files are already out of the grid — deleteRejectedOutputs
+    // prunes them. This reconciles what the client cannot derive: the item and
+    // reject counts on subfolder cards, when the batch reached into folders
+    // other than the one on screen. Quiet, so it corrects those numbers in the
+    // background instead of blanking the folder the user is looking at.
+    void fetchFiles({ quiet: true });
     setDeleteRejectedOpen(false);
   };
 
@@ -176,7 +184,12 @@ export function OutputsTopBarMenu({
           description={rejectedHere.length === 1
             ? t('This will permanently delete {count} rejected output from the server. This cannot be undone.', { count: rejectedHere.length })
             : t('This will permanently delete {count} rejected outputs from the server. This cannot be undone.', { count: rejectedHere.length })}
-          zIndex={1800}
+          // Above the viewer whenever it is open. The keyboard shortcut is
+          // guarded from firing there at all, so this is the second line: a
+          // confirmation that mounts below the viewer's overlay is invisible,
+          // unclickable, and focused on its Delete button. Same expression the
+          // outputs panel's own dialogs use.
+          zIndex={viewerOpen ? MEDIA_VIEWER_Z_INDEX + 100 : 1800}
           actions={[
             {
               label: t('Cancel'),

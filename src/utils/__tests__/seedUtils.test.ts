@@ -16,6 +16,7 @@ import {
   DEFAULT_SPECIAL_SEED_RANGE
 } from '../seedUtils';
 import type { NodeTypes, WorkflowNode } from '@/api/types';
+import { isSeedInputName, mentionsSeed } from '@/utils/seedUtils';
 
 function makeSeedNode(type: string, widgetsValues: unknown[]): WorkflowNode {
   return {
@@ -341,5 +342,31 @@ describe('findSeedWidgetIndex', () => {
         widgetIndex: 0,
       }],
     })).toBe(0);
+  });
+});
+
+
+describe('the two seed-name predicates diverge on purpose', () => {
+  // Same question, two different jobs: which prompt-input VALUE is a seed
+  // (narrow), vs which widget SLOT might the seed write path touch (broad).
+  // A caller grabbing the wrong one corrupts seeds subtly — these pin the
+  // boundary so the divergence stays deliberate.
+  it('narrow accepts only names that hold the executed seed', () => {
+    for (const name of ['seed', 'noise_seed', 'rand_seed', 'SEED']) {
+      expect(isSeedInputName(name)).toBe(true);
+      expect(mentionsSeed(name)).toBe(true);
+    }
+  });
+
+  it('broad also matches slot names the narrow one must reject', () => {
+    for (const name of ['seed_mode', 'seed_offset', 'seed_value', 'Noise Seed']) {
+      expect(isSeedInputName(name)).toBe(false);
+      expect(mentionsSeed(name)).toBe(true);
+    }
+  });
+
+  it('neither matches an unrelated widget', () => {
+    expect(isSeedInputName('steps')).toBe(false);
+    expect(mentionsSeed('steps')).toBe(false);
   });
 });
