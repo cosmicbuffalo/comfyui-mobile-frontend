@@ -174,6 +174,30 @@ describe('restoreExecutedSeedWidgets', () => {
     expect(original.nodes[0].widgets_values).toEqual([-1, 20]);
   });
 
+  it.each([
+    ['links', { nodes: [] }],
+    ['nodes', { links: [] }],
+    ['both arrays', {}],
+  ])('survives a subgraph definition missing its %s', (_missing, arrays) => {
+    // A hand-authored or truncated file. This runs inside loadWorkflow, which
+    // has no catch around it, so a throw here lost the whole workflow rather
+    // than one seed.
+    const original = {
+      ...workflow([node(50, 'subgraph-a', [-1, 20])]),
+      definitions: {
+        subgraphs: [{
+          id: 'subgraph-a',
+          inputs: [{ name: 'seed', type: 'INT', linkIds: [207] }],
+          ...arrays,
+        }],
+      },
+    } as unknown as Workflow;
+
+    expect(() => restoreExecutedSeedWidgets(original, {
+      '50:7': promptNode('KSampler', { seed: 4242 }),
+    }, nodeTypes)).not.toThrow();
+  });
+
   it('leaves a placeholder seed alone when the nodes inside it disagreed', () => {
     const original: Workflow = {
       ...workflow([node(50, 'subgraph-a', [-1])]),

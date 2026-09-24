@@ -450,7 +450,9 @@ export const NodeCard = memo(function NodeCard({
   const isKSampler = node.type === 'KSampler';
   const isLoraManagerNode = isLoraManagerNodeType(node.type);
   const isFastGroupsBypasser = /fast\s+groups/i.test(node.type) && /\(rgthree\)/i.test(node.type);
-  const isImageComparer = /image\s*comparer/i.test(node.type);
+  // rgthree's Image Comparer, and core's Compare Images (`ImageCompare`), which
+  // reports its two sides the same way (a_images / b_images).
+  const isImageComparer = /image\s*comparer/i.test(node.type) || node.type === 'ImageCompare';
   const isDenoVideoCompare = node.type === 'DenoVideoCompare';
   // SetNode/GetNode (KJNodes wireless relays) render a compact relay control in
   // place of their parameters; their real slots still use the connections section.

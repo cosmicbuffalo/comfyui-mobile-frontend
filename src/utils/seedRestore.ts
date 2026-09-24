@@ -186,7 +186,7 @@ function restorePlaceholderNode(
       if (candidate === node) paths.push(path);
       const definition = definitions.get(candidate.type);
       if (definition && !ancestors.has(definition.id)) {
-        visit(definition.nodes, path, new Set([...ancestors, definition.id]));
+        visit(definition.nodes ?? [], path, new Set([...ancestors, definition.id]));
       }
     }
   };
@@ -196,9 +196,14 @@ function restorePlaceholderNode(
     definition: typeof subgraph, slot: number, prefix: string, seeds: Set<number>, depth = 0,
   ) => {
     if (depth > 32) return;
+    // A definition from a hand-authored or truncated file can be missing
+    // either array. This runs inside loadWorkflow, which has no catch around
+    // it, so a throw here loses the whole workflow rather than one seed.
+    const links = definition.links ?? [];
+    const nodes = definition.nodes ?? [];
     for (const id of definition.inputs?.[slot]?.linkIds ?? []) {
-      const link = definition.links.find((entry) => entry.id === id);
-      const target = definition.nodes.find((entry) => entry.id === link?.target_id);
+      const link = links.find((entry) => entry.id === id);
+      const target = nodes.find((entry) => entry.id === link?.target_id);
       if (!link || !target) continue;
       const path = `${prefix}:${target.id}`;
       const nested = definitions.get(target.type);

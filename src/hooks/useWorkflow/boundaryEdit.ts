@@ -609,6 +609,11 @@ const promoteWidget: WorkflowState["promoteWidget"] = (target, options) => {
         name: boundaryName,
         type: inputType,
         linkIds: [newLinkId],
+        // Stock copies the inner slot's label onto the input it creates
+        // (promoteValueWidgetViaSubgraphInput), so a renamed widget keeps its
+        // name on the placeholder. Normalization carries it to the placeholder
+        // input the same way stock sets the host input's label.
+        ...(existingInput?.label !== undefined ? { label: existingInput.label } : {}),
       },
     ],
   }));

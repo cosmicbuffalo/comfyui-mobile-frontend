@@ -5,6 +5,7 @@ import { isPowerPuterNodeType, readPowerPuterWidgets, toPowerPuterOutputsValue, 
 import { extractTriggerWordList, extractTriggerWordListLoose, isTriggerWordList, extractTriggerWordMessage, findTriggerWordListIndex, findTriggerWordMessageIndex, isTriggerWordToggleNodeType } from '@/utils/triggerWordToggle';
 import { getComboOptions, isComboType, isMultiSelectCombo, normalizeComboValue, normalizeWidgetValue } from './comboValues';
 import { getActiveNodeInputDefinitions } from './dynamicComboRebuild';
+import { isUnsavedWidgetType, unsavedWidgetInitialValue } from './defaultInputs';
 import { finalizeInputValue } from './textReplacements';
 import { getPrimitiveInlineValue, getWidgetValue, isRecord } from './widgetSlots';
 
@@ -175,6 +176,18 @@ function findKJSetterNode(
   );
 }
 
+/**
+ * In a prompt, an array is a `[node_id, slot]` link. Stock therefore wraps
+ * every array widget value as `{ __value__: [...] }` (graphToPrompt), and the
+ * backend unwraps it before the node sees it. A bare array value is validated
+ * as a link instead, which fails or throws.
+ */
+function wrapArrayWidgetValues(inputs: Record<string, unknown>, linkKeys: Set<string>): void {
+  for (const [name, value] of Object.entries(inputs)) {
+    if (Array.isArray(value) && !linkKeys.has(name)) inputs[name] = { __value__: value };
+  }
+}
+
 export function buildWorkflowPromptInputs(
   workflow: Workflow,
   nodeTypes: NodeTypes,
@@ -187,6 +200,7 @@ export function buildWorkflowPromptInputs(
   ueLinks?: UeLinkMap
 ): Record<string, unknown> {
   const inputs: Record<string, unknown> = {};
+  const linkKeys = new Set<string>();
 
   for (const [slotIndex, input] of node.inputs.entries()) {
     // An input with no link may still be fed by a Use Everywhere broadcast. UE
@@ -198,6 +212,7 @@ export function buildWorkflowPromptInputs(
       if (!allowedNodeIds.has(broadcast.originId)) continue;
       const nodeKey = promptKeyMap?.get(broadcast.originId) ?? String(broadcast.originId);
       inputs[input.name] = [nodeKey, broadcast.originSlot];
+      linkKeys.add(input.name);
       continue;
     }
     const resolved = resolveSource(workflow, input.link, new Set(), promptKeyMap);
@@ -205,6 +220,7 @@ export function buildWorkflowPromptInputs(
     if (allowedNodeIds.has(resolved.nodeId)) {
       const nodeKey = promptKeyMap?.get(resolved.nodeId) ?? String(resolved.nodeId);
       inputs[input.name] = [nodeKey, resolved.slotIndex];
+      linkKeys.add(input.name);
       continue;
     }
     const sourceNode = workflow.nodes.find((n) => n.id === resolved.nodeId);
@@ -229,6 +245,7 @@ export function buildWorkflowPromptInputs(
     // Power Puter's widgets are invisible to the schema walk below, so they are
     // appended unconditionally rather than being lost to this early return.
     appendPowerPuterInputs(node, classType, inputs);
+    wrapArrayWidgetValues(inputs, linkKeys);
     return inputs;
   }
 
@@ -239,6 +256,13 @@ export function buildWorkflowPromptInputs(
     const { name, qualifiedName, inputDef, widgetIndex, connected, value } = definition;
     try {
       const [typeOrOptions, inputOptions] = inputDef;
+      // No widgets_values slot to read, but stock still sends its value.
+      if (isUnsavedWidgetType(typeOrOptions)) {
+        if (!connected && !(qualifiedName in inputs)) {
+          inputs[qualifiedName] = unsavedWidgetInitialValue(typeOrOptions);
+        }
+        continue;
+      }
       if (widgetIndex === null || connected || qualifiedName in inputs) continue;
 
       // Apply the seed override for either conventional seed name. Dynamic seed
@@ -332,6 +356,7 @@ export function buildWorkflowPromptInputs(
   appendLoraManagerInputs(node, inputs, widgetValuesArray, widgetIndexMap);
   appendTriggerWordToggleInputs(node, inputs, widgetValuesArray, widgetIndexMap);
   appendPowerPuterInputs(node, classType, inputs);
+  wrapArrayWidgetValues(inputs, linkKeys);
 
   return inputs;
 }

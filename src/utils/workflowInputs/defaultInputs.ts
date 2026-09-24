@@ -2,6 +2,29 @@ import type { NodeTypeDefinition } from '@/api/types';
 import { DYNAMIC_COMBO_V3, getComboOptions, getDynamicComboSubInputs, isComboType, isMultiSelectCombo, normalizeComboValue, orderedInputNames } from './comboValues';
 import { isWidgetInputType } from './widgetSlots';
 
+/**
+ * Widget types stock creates but never saves into widgets_values
+ * (`widget.serialize = false`), each with the value such a widget starts at.
+ * They take no widgets_values slot, yet still go into the prompt -- a required
+ * one missing from it fails validation.
+ */
+const UNSAVED_WIDGET_INITIAL_VALUES: Record<string, () => unknown> = {
+  // Core ImageCompare's `compare_view` (stock `useImageCompareWidget`). The
+  // node ignores the value, but ComfyUI rejects the output without it.
+  IMAGECOMPARE: () => ['', ''],
+};
+
+export function isUnsavedWidgetType(typeOrOptions: string | unknown[]): boolean {
+  return typeof typeOrOptions === 'string'
+    && Object.prototype.hasOwnProperty.call(UNSAVED_WIDGET_INITIAL_VALUES, typeOrOptions.toUpperCase());
+}
+
+/** The prompt value of an unsaved widget type; undefined for any other type. */
+export function unsavedWidgetInitialValue(typeOrOptions: string | unknown[]): unknown {
+  if (!isUnsavedWidgetType(typeOrOptions)) return undefined;
+  return UNSAVED_WIDGET_INITIAL_VALUES[(typeOrOptions as string).toUpperCase()]();
+}
+
 export function isWidgetBackedInput(
   typeOrOptions: string | unknown[],
   inputOptions?: Record<string, unknown>
@@ -98,6 +121,7 @@ export function buildDefaultWidgetValues(
   const emit = (inputDef: [string | unknown[], Record<string, unknown>?], name: string) => {
     const [typeOrOptions, inputOptions] = inputDef;
     if (!isWidgetBackedInput(typeOrOptions, inputOptions)) return;
+    if (isUnsavedWidgetType(typeOrOptions)) return;
     const value = getDefaultWidgetValue(typeOrOptions, inputOptions);
     values.push(value);
     const seedControl = inputOptions?.control_after_generate;

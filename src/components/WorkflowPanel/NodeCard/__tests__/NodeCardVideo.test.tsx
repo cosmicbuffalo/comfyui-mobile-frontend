@@ -245,6 +245,47 @@ describe('NodeCard emitted video output', () => {
     ]);
   });
 
+  it('shows core Compare Images results in the A/B comparer, without a compare_view row', async () => {
+    node = {
+      ...node,
+      type: 'ImageCompare',
+      inputs: [
+        { name: 'image_a', type: 'IMAGE', link: null },
+        { name: 'image_b', type: 'IMAGE', link: null },
+      ],
+      // Stock never saves compare_view.
+      widgets_values: [],
+    };
+    const current = useWorkflowStore.getState().workflow!;
+    useWorkflowStore.setState({
+      workflow: { ...current, nodes: [node] },
+      nodeTypes: {
+        ...useWorkflowStore.getState().nodeTypes,
+        ImageCompare: {
+          input: {
+            required: { compare_view: ['IMAGECOMPARE', { socketless: true }] },
+            optional: { image_a: ['IMAGE', {}], image_b: ['IMAGE', {}] },
+          },
+          input_order: { required: ['compare_view'], optional: ['image_a', 'image_b'] },
+          output: [], output_node: true,
+          name: 'ImageCompare', display_name: 'Compare Images',
+          description: '', python_module: 'comfy_extras.nodes_image_compare', category: 'image',
+        },
+      },
+      nodeComparerOutputs: {
+        '91': {
+          a: [{ filename: 'comfy.compare.a_00001_.png', subfolder: '', type: 'temp' }],
+          b: [{ filename: 'comfy.compare.b_00001_.png', subfolder: '', type: 'temp' }],
+        },
+      },
+      nodeOutputs: {},
+    });
+    await act(async () => root.render(<NodeCard node={node} />));
+
+    expect(container.querySelector('.image-comparer, .image-comparer-fallback')).not.toBeNull();
+    expect(container.textContent).not.toMatch(/compare[ _]view/i);
+  });
+
   it('renders a VHS FFmpeg Path frontend preview without an executed media payload', async () => {
     node = {
       ...node,

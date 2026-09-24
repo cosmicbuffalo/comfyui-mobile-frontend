@@ -897,6 +897,39 @@ function getComboEntryOptions(
  * promoted-input order. When ComfyUI serializes the promoted input as a linked
  * primitive/control node, values live on that linked source instead.
  */
+/**
+ * The value a promoted widget runs with when its placeholder holds none: the
+ * inner widget's own, walking through nested placeholders (each of which may
+ * hold its own value) down to the concrete widget. Stock initializes the host
+ * widget from its interior widget in exactly this case and skips a missing
+ * entry on load, so the interior value is what it shows too. Cycle-guarded.
+ */
+function resolveInnerBoundaryValue(
+  placeholder: WorkflowNode,
+  boundaryName: string,
+  canonical: Workflow,
+  nodeTypes: NodeTypes | null,
+  visited = new Set<string>(),
+): unknown {
+  if (visited.has(placeholder.type)) return undefined;
+  visited.add(placeholder.type);
+  const definition = canonical.definitions?.subgraphs?.find((entry) => entry.id === placeholder.type);
+  const target = resolveInnerWidgetForBoundaryName(definition, boundaryName);
+  if (!target) return undefined;
+  const { innerNode, widgetName } = target;
+  const nested = canonical.definitions?.subgraphs?.find((entry) => entry.id === innerNode.type);
+  if (nested) {
+    const input = innerNode.inputs.find((entry) => entry.widget?.name === widgetName);
+    if (!input) return undefined;
+    const slot = nested.inputs?.findIndex((entry) => entry.name === input.name) ?? -1;
+    const index = getPlaceholderValueIndexForBoundarySlot(innerNode, nested, slot);
+    const ownValue = index == null ? undefined : resolvePlaceholderInlineWidgetValue(innerNode, input, index);
+    return ownValue ?? resolveInnerBoundaryValue(innerNode, input.name, canonical, nodeTypes, visited);
+  }
+  return [...getWidgetDefinitions(nodeTypes, innerNode), ...getInputWidgetDefinitions(nodeTypes, innerNode)]
+    .find((widget) => (widget.inputName ?? widget.name) === widgetName)?.value;
+}
+
 function resolveAllSubgraphPlaceholderWidgetDefs(
   placeholderNode: WorkflowNode,
   canonical: Workflow,
@@ -955,7 +988,13 @@ function resolveAllSubgraphPlaceholderWidgetDefs(
       ?? getSubgraphBoundaryWidgetIndexForInput(sg, inp)
       ?? promotedIndex;
     const inlineValue = resolvePlaceholderInlineWidgetValue(placeholderNode, inp, widgetIndex);
-    const value = inlineValue !== undefined ? inlineValue : linkedSource?.value;
+    // No entry on the placeholder (templates ship widgets_values: []) means the
+    // inner widget's value is the one that runs -- show it rather than an empty
+    // field. null reads as "no value" too, as it does when the prompt is built.
+    const value = inlineValue ?? linkedSource?.value
+      ?? (inp.link == null
+        ? resolveInnerBoundaryValue(placeholderNode, inp.name, canonical, nodeTypes)
+        : undefined);
     const inputIndex = placeholderNode.inputs.indexOf(inp);
     // A promoted widget whose value is populated by a connection (the input has
     // a link) is not an editable widget — it must render as a connection button

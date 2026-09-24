@@ -345,6 +345,39 @@ describe('boundary edit actions', () => {
       expect(currentDef()?.inputs).toHaveLength(2);
     });
 
+    it.each([
+      ['a renamed widget keeps its label', 'Sampling steps'],
+      ['an unrenamed widget gets none', undefined],
+    ])('promoteWidget: %s on the input it creates, as stock does', (_case, label) => {
+      // Stock's promoteValueWidgetViaSubgraphInput copies the inner slot's label
+      // onto the new boundary input and the host input. Without it a widget the
+      // author renamed came out under its raw name on the placeholder.
+      const workflow = withInstance(makeSubgraphWorkflow());
+      workflow.definitions!.subgraphs![0].nodes.push(innerNode(5, {
+        type: 'Sampler',
+        inputs: [{
+          name: 'steps', type: 'INT', link: null, widget: { name: 'steps' },
+          ...(label ? { label } : {}),
+        }],
+        widgets_values: [12],
+      }));
+      enterScope(workflow);
+
+      expect(useWorkflowStore.getState().promoteWidget({
+        nodeKey: innerKey(5),
+        inputName: 'steps',
+        inputType: 'INT',
+        value: 12,
+      })).toBe(true);
+
+      const created = currentDef()?.inputs?.at(-1);
+      expect(created?.name).toBe('steps');
+      expect(created?.label).toBe(label);
+      expect('label' in (created ?? {})).toBe(label !== undefined);
+      const placeholder = useWorkflowStore.getState().workflow?.nodes.find((n) => n.id === 99);
+      expect(placeholder?.inputs.at(-1)?.label).toBe(label);
+    });
+
     // A subgraph holding one Sampler with a `steps` widget, plus a second
     // placeholder instance, is enough to exercise both promotion forms.
     function withSampler() {
