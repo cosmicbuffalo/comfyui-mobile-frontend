@@ -44,8 +44,7 @@ export function getImageUrl(
 }
 
 // Small still image for any output/input media item. For videos, the backend
-// serves a matching sidecar image when one exists and otherwise extracts +
-// caches an early frame. Keeping this URL separate from `/view` is important:
+// extracts and caches the video's first frame. Keeping this URL separate from `/view` is important:
 // a video whose metadata sits at the end of the file may otherwise require an
 // almost-complete download just to paint a tiny thumbnail.
 export function getMediaThumbnailUrl(

@@ -85,7 +85,8 @@ function WorkflowVideoPreview({
   onEnded,
 }: {
   src: string;
-  poster: string;
+  /** Omitted rather than empty: poster="" makes the browser fetch the page URL. */
+  poster?: string;
   label: string;
   autoPlay: boolean;
   loop?: boolean;
@@ -267,7 +268,7 @@ function FrontendMediaPlaylist({
         <WorkflowVideoPreview
           key={selected.src}
           src={selected.src}
-          poster={selected.poster ?? ''}
+          poster={selected.poster}
           label={`${displayName} video preview`}
           autoPlay={autoPlaySelection || selected.autoPlay}
           loop={playMode === 'loop' || (playMode === 'cycle' && items.length === 1)
@@ -396,7 +397,7 @@ export function NodeCardOutputPreview({
               <WorkflowVideoPreview
                 key={media.displaySrc}
                 src={media.displaySrc}
-                poster={media.poster ?? ''}
+                poster={media.poster}
                 label={`${media.alt} output ${i + 1}`}
                 autoPlay={false}
               />

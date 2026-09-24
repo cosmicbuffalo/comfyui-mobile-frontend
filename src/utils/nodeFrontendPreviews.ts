@@ -11,6 +11,7 @@ import {
 } from '@/api/client';
 import { getWidgetIndexForInput } from '@/utils/seedUtils';
 import { getMediaType } from '@/utils/media';
+import { splitPathAnnotation } from '@/utils/annotatedPath';
 import { collectScopedWorkflowNodes } from '@/utils/workflowNodes';
 
 const VHS_VIDEO_UPLOAD_NODES = new Set([
@@ -202,12 +203,28 @@ function resolveVhsPreview(
   const primaryValue = primaryName
     ? getNodeWidgetValue(workflow, nodeTypes, node, primaryName)
     : undefined;
-  const filename = typeof primaryValue === 'string' && primaryValue.trim()
+  const rawFilename = typeof primaryValue === 'string' && primaryValue.trim()
     ? primaryValue.trim()
     : typeof savedParams.filename === 'string'
       ? savedParams.filename.trim()
       : '';
-  if (!filename) return null;
+  if (!rawFilename) return null;
+
+  // An uploaded video can be named `sub/clip.mp4 [input]` -- the shape mobile's
+  // pickers write. VHS's resolver honours the annotation but keeps only the
+  // basename of `filename`, so a folder must travel as its own `subfolder`
+  // parameter (the server supports it; VHS's desktop widget never sends one,
+  // so desktop cannot preview a file in a subfolder at all). Path and folder
+  // variants are resolved by VHS as given.
+  let filename = rawFilename;
+  let subfolder = '';
+  if (primaryName === 'video' && type !== 'path') {
+    const annotated = splitPathAnnotation(rawFilename);
+    if (annotated.type) type = annotated.type;
+    const parts = splitInputPath(annotated.path);
+    filename = parts.filename;
+    subfolder = parts.subfolder;
+  }
 
   const extension = filenameExtension(filename);
   // Loader source widgets are authoritative, including their extension. A
@@ -225,6 +242,7 @@ function resolveVhsPreview(
   params.filename = filename;
   params.type = type;
   params.format = format;
+  if (subfolder) params.subfolder = subfolder;
   for (const name of VHS_PARAMETER_NAMES) {
     const current = getNodeWidgetValue(workflow, nodeTypes, node, name);
     if (current !== undefined) params[name] = current;
@@ -273,7 +291,7 @@ function resolveVhsPreview(
   // remain visible. Path and folder variants always require VHS's resolver.
   if (isAnimatedImage && type === 'input' && extension !== 'gif') {
     return {
-      src: getImageUrl(filename, '', type),
+      src: getImageUrl(filename, subfolder, type),
       mediaType: 'image',
       autoPlay: false,
       loop: true,
@@ -282,6 +300,12 @@ function resolveVhsPreview(
   }
   return {
     src: buildVhsPreviewUrl(params),
+    // The stream is transcoded on demand, so without a poster the card is
+    // blank until it starts. A real file in input/output has one: its first
+    // frame. Path and folder sources are not files the thumbnail route serves.
+    poster: type === 'input' || type === 'output'
+      ? getMediaThumbnailUrl(filename, subfolder, type)
+      : undefined,
     mediaType: 'video',
     autoPlay: !paused,
     loop: true,
@@ -375,8 +399,13 @@ export function resolveNodeFrontendMediaPreview(
   if (node.type === 'LoadVideo') {
     const file = getNodeWidgetValue(workflow, nodeTypes, node, 'file');
     if (typeof file !== 'string' || !file.trim()) return null;
-    const { filename, subfolder } = splitInputPath(file.trim());
-    return descriptorPreview({ filename, subfolder, type: 'input' }, 'builtin-input', {
+    // Mobile's pickers write `sub/clip.mp4 [input]`. The annotation names the
+    // directory and is not part of the filename -- left on, the preview asked
+    // for a file literally ending in " [input]" and, reading its extension as
+    // "mp4 [input]", drew it as an image.
+    const annotated = splitPathAnnotation(file.trim());
+    const { filename, subfolder } = splitInputPath(annotated.path);
+    return descriptorPreview({ filename, subfolder, type: annotated.type ?? 'input' }, 'builtin-input', {
       autoPlay: false,
       loop: true,
     });

@@ -58,6 +58,8 @@ import { useI18n } from "@/i18n";
 import { annotateInputPath, isAnnotatedPath, splitPathAnnotation } from "@/utils/annotatedPath";
 import { useShowHiddenStore } from "@/hooks/useShowHidden";
 import { hasDotHiddenPathSegment } from "@/utils/hiddenPath";
+import { isInNativeApp } from "@/utils/nativeApp";
+import { useInputFileRevisions } from "@/hooks/useInputFileRevisions";
 
 const VIDEO_EXTENSIONS = new Set(["mp4", "webm", "mkv", "gif", "mov", "avi", "wmv"]);
 /** Keys that close the list without a pointer gesture still to play out. */
@@ -197,7 +199,11 @@ export function ComboControl({
   const supportsUpload = supportsImageUpload || supportsVideoUpload;
   const uploadFolder = resolveUploadFolder(supportsVideoUpload, imageFolder);
   const uploadAccept = supportsVideoUpload ? "video/*" : "image/*";
-  const uploadLabel = supportsVideoUpload ? t("Upload video from device") : t("Load from camera roll");
+  // Only the iOS app picks from the camera roll; a browser opens its own file
+  // picker, which may be a desktop folder.
+  const uploadLabel = supportsVideoUpload
+    ? t("Upload video from device")
+    : isInNativeApp() ? t("Load from camera roll") : t("Load from device");
   const [inputPickerOpen, setInputPickerOpen] = useState(false);
   const stripSafetensorsSuffix = Boolean(getOption("stripSafetensorsSuffix"));
   const modelLookup = getOption("modelLookup") as ModelLookup | undefined;
@@ -653,6 +659,9 @@ export function ComboControl({
       setUploadedChoices((prev) =>
         prev.includes(nextValue) ? prev : [...prev, nextValue],
       );
+      // The file under this name just changed (or first appeared), which a
+      // preview addressed by that name alone would never notice.
+      useInputFileRevisions.getState().bumpInputFileRevision(result.type || uploadFolder, uploadedPath);
       onChange(nextValue);
       // Register the upload as a real combo choice in-memory instead of blocking
       // the assignment on a multi-MB /object_info refetch. Image pickers only.

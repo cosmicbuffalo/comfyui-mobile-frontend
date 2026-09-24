@@ -26,6 +26,14 @@ describe('getMediaType', () => {
     expect(getMediaType('noext')).toBe('image');
   });
 
+  it('sees through a directory annotation', () => {
+    // `clip.mp4 [input]` is what mobile's pickers write; the annotation names
+    // the directory and is not part of the extension.
+    expect(getMediaType('clip.mp4 [input]')).toBe('video');
+    expect(getMediaType('sub/clip.webm [output]')).toBe('video');
+    expect(getMediaType('pic.png [temp]')).toBe('image');
+  });
+
   it('handles filenames with multiple dots', () => {
     expect(getMediaType('my.video.file.mp4')).toBe('video');
     expect(getMediaType('my.image.file.png')).toBe('image');

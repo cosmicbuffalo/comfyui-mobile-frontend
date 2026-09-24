@@ -1,3 +1,5 @@
+import { splitPathAnnotation } from '@/utils/annotatedPath';
+
 const VIDEO_EXTENSIONS = new Set([
   'mp4',
   'webm',
@@ -10,7 +12,9 @@ const VIDEO_EXTENSIONS = new Set([
 export type MediaType = 'image' | 'video';
 
 export function getMediaType(filename: string): MediaType {
-  const ext = filename.split('.').pop()?.toLowerCase() ?? '';
+  // `clip.mp4 [input]` names its directory after the extension; the
+  // annotation is not part of the filename, so it must not hide the type.
+  const ext = splitPathAnnotation(filename).path.split('.').pop()?.toLowerCase() ?? '';
   return VIDEO_EXTENSIONS.has(ext) ? 'video' : 'image';
 }
 

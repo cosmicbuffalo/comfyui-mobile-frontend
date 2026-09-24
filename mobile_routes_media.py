@@ -253,35 +253,21 @@ async def api_get_thumbnail(request):
         # same file still avoid re-downloading and re-decoding it.
         cache_headers = {'Cache-Control': 'public, max-age=86400'}
 
-        # For videos, look for an image with the same name
-        ext = os.path.splitext(filename)[1].lower()
+        # A video's still is always its own first frame. This used to prefer
+        # any image sharing the video's basename (VHS writes one beside each
+        # output), but a folder is free to hold an unrelated `clip.png` next
+        # to `clip.mp4` -- common in input/ -- and the video then showed that
+        # picture until it was played. The decode is CPU-heavy, so it runs off
+        # the event loop; the helper caches the frame and dedupes concurrent
+        # decodes of the same video.
         if _mobile_video_thumbs.is_video(filename):
-            base_name = os.path.splitext(filename)[0]
-            folder_path = os.path.join(base_dir, subfolder) if subfolder else base_dir
-            image_extensions = ['.png', '.jpg', '.jpeg', '.webp', '.gif']
-
-            # Look for matching image file
-            matching_image = None
-            for img_ext in image_extensions:
-                candidate = os.path.join(folder_path, base_name + img_ext)
-                if os.path.exists(candidate):
-                    matching_image = candidate
-                    break
-
-            if not matching_image:
-                # No sidecar image: extract a frame from the video itself and
-                # serve it (cached) so the grid shows a real thumbnail. The
-                # decode is CPU-heavy, so run it off the event loop; the
-                # helper dedupes concurrent decodes of the same video.
-                loop = asyncio.get_event_loop()
-                rendered = await loop.run_in_executor(
-                    None, _mobile_video_thumbs.get_or_render_thumbnail, file_path
-                )
-                if rendered is None:
-                    return web.Response(status=400, text="No thumbnail image found for video", headers=no_store)
-                return web.Response(body=rendered, content_type='image/jpeg', headers=cache_headers)
-
-            file_path = matching_image
+            loop = asyncio.get_event_loop()
+            rendered = await loop.run_in_executor(
+                None, _mobile_video_thumbs.get_or_render_thumbnail, file_path
+            )
+            if rendered is None:
+                return web.Response(status=400, text="No thumbnail image found for video", headers=no_store)
+            return web.Response(body=rendered, content_type='image/jpeg', headers=cache_headers)
 
         loop = asyncio.get_event_loop()
         body, content_type = await loop.run_in_executor(

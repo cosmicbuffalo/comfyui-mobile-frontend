@@ -10,7 +10,7 @@ import {useWorkflowHiddenStore} from "@/hooks/useWorkflowHidden";
 import {useWorkflowLineageStore} from "@/hooks/useWorkflowLineage";
 import {readLineageStamp, withLineageStamp} from "@/utils/workflowLineage";
 import {useSeedStore} from "@/hooks/useSeed";
-import {hasRecognizedPathAliasShape, restoreWorkflowPathAliases} from "@/utils/inputPathAliases";
+import {annotateWorkflowInputPaths, hasRecognizedPathAliasShape, restoreWorkflowPathAliases} from "@/utils/inputPathAliases";
 import {buildWorkflowCacheKey} from "@/utils/workflowCacheKey";
 import {materializeControlledPromotedValues} from "@/utils/promotedSeedControls";
 import {addInputFileOptionToNodeTypes} from "@/utils/nodeTypeOptions";
@@ -376,6 +376,13 @@ const loadWorkflow: WorkflowState["loadWorkflow"] = (
     );
   }
   const aliasNodeTypes = get().nodeTypes;
+  // Converge legacy bare subfolder input values on the annotated shape the
+  // pickers write (`sub/img.png [input]`). Before the baselines below, so the
+  // normalized value IS the loaded value — and again on the alias-restore
+  // re-entry, whose resolved paths come back bare from the alias table.
+  if (aliasNodeTypes) {
+    workflow = annotateWorkflowInputPaths(workflow, aliasNodeTypes);
+  }
   if (
     !options?.pathAliasesResolved
     && aliasNodeTypes

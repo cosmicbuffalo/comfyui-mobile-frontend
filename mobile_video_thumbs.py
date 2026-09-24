@@ -1,9 +1,9 @@
 """Extract a representative still frame from a video file for use as a thumbnail.
 
-Used by the /mobile/api/thumbnail endpoint when a video has no sidecar image
-(an image with the same basename). Heavy decoding deps are imported lazily and
-each backend is tried in turn, so the node still loads (and image thumbnails
-still work) even when no video backend is available.
+Used by the /mobile/api/thumbnail endpoint for every video: its first frame is
+the still, never an image that happens to share its basename. Heavy decoding
+deps are imported lazily and each backend is tried in turn, so the node still
+loads (and image thumbnails still work) even when no video backend is available.
 
 Extracted frames are cached as JPEGs under ComfyUI's temp directory, keyed by
 the source path plus its file identity (see ``file_utils.file_cache_token``),

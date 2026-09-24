@@ -696,6 +696,7 @@ export const ja: Record<string, string> = {
   // 入力コントロール
   'Upload video from device': 'デバイスから動画をアップロード',
   'Load from camera roll': 'カメラロールから読み込み',
+  'Load from device': 'デバイスから読み込み',
   'None': 'なし',
   'Filter templates': 'テンプレートを絞り込む',
   'API': 'API',

@@ -696,6 +696,7 @@ export const ko: Record<string, string> = {
   // 입력 컨트롤
   'Upload video from device': '기기에서 동영상 업로드',
   'Load from camera roll': '카메라 롤에서 불러오기',
+  'Load from device': '기기에서 불러오기',
   'None': '없음',
   'Filter templates': '템플릿 필터',
   'API': 'API',

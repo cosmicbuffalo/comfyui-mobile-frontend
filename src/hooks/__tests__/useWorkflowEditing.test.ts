@@ -2198,8 +2198,11 @@ describe('useWorkflow editing actions', () => {
     });
 
     await vi.waitFor(() => {
+      // Annotated on the way in: the alias table stores bare relative paths,
+      // and a bare subfolder value reads as "Missing on ComfyUI server" (the
+      // combo's option list only ever holds top-level input files).
       expect(useWorkflowStore.getState().workflow?.nodes[0].widgets_values)
-        .toEqual(['private/photo.png', 'image']);
+        .toEqual(['private/photo.png [input]', 'image']);
     });
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect((aliased.nodes[0].widgets_values as unknown[])[0]).toBe('.mi-deadbeef.png');
