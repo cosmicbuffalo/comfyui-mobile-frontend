@@ -1,0 +1,82 @@
+name: Release
+
+# A version bump on main drafts the GitHub release and publishes to the Comfy
+# registry, but only once the frontend and backend test suites have passed on
+# that exact commit. These used to be two independent workflows triggered by
+# the same push, so both finished well before the tests did and a release
+# could ship code whose tests were failing.
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "pyproject.toml"
+  # Manual re-publish (for example after a registry outage). Still gated on
+  # the tests; it does not touch the GitHub release.
+  workflow_dispatch:
+
+jobs:
+  tests:
+    name: Frontend tests
+    uses: ./.github/workflows/test.yml
+
+  backend-tests:
+    name: Backend tests
+    uses: ./.github/workflows/test_backend.yml
+
+  draft-release:
+    name: Create Draft Release
+    needs: [tests, backend-tests]
+    runs-on: ubuntu-latest
+    if: ${{ github.repository_owner == 'cosmicbuffalo' && github.event_name == 'push' }}
+    permissions:
+      contents: write
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Extract version from pyproject.toml
+        id: version
+        run: |
+          VERSION=$(grep -m1 '^version' pyproject.toml | sed 's/version *= *"\(.*\)"/\1/')
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Ensure version tag exists
+        run: |
+          TAG="${{ steps.version.outputs.tag }}"
+          git fetch --tags origin
+          if git ls-remote --exit-code --tags origin "refs/tags/${TAG}" >/dev/null 2>&1; then
+            echo "Tag ${TAG} already exists on origin"
+            exit 0
+          fi
+          git tag "${TAG}" "${GITHUB_SHA}"
+          git push origin "refs/tags/${TAG}"
+
+      - name: Create or update draft release
+        uses: ncipollo/release-action@v1
+        with:
+          tag: ${{ steps.version.outputs.tag }}
+          name: ${{ steps.version.outputs.tag }}
+          commit: ${{ github.sha }}
+          draft: true
+          generateReleaseNotes: true
+          allowUpdates: true
+          updateOnlyUnreleased: true
+          removeArtifacts: true
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+  publish-node:
+    name: Publish Custom Node to registry
+    needs: [tests, backend-tests]
+    runs-on: ubuntu-latest
+    if: ${{ github.repository_owner == 'cosmicbuffalo' }}
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+      - name: Publish Custom Node
+        uses: Comfy-Org/publish-node-action@main
+        with:
+          personal_access_token: ${{ secrets.REGISTRY_ACCESS_TOKEN }}

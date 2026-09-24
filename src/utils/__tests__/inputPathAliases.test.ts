@@ -7,6 +7,7 @@ import {
   resolveInputAliases,
 } from "@/api/client";
 import {
+  annotateWorkflowInputPaths,
   hasRecognizedFilePrefixAliasShape,
   hasRecognizedInputAliasShape,
   hasRecognizedPathAliasShape,
@@ -714,5 +715,108 @@ describe("chained promotion (a promoted widget promoted again one level up)", ()
       .toBe("private/MID-stale.png");
     expect((subgraph(result, INNER_ID).nodes[0].widgets_values as unknown[])[0])
       .toBe("private/INNER-stale.png");
+  });
+});
+
+/**
+ * Legacy bare subfolder values. Workflows saved before the annotation
+ * convention -- and alias restores, whose table stores bare relative paths --
+ * carry `sub/img.png` where the pickers now write `sub/img.png [input]`.
+ * object_info only enumerates top-level input files, so the bare shape read
+ * as "Missing on ComfyUI server" for a file that is right there.
+ */
+describe("annotateWorkflowInputPaths", () => {
+  const bareWorkflow = (value: unknown): Workflow => ({
+    ...workflow,
+    nodes: [
+      { ...workflow.nodes[0], widgets_values: [value, "image"] },
+      workflow.nodes[1],
+    ],
+  });
+
+  it("annotates a bare subfolder value on a LoadImage widget", () => {
+    const result = annotateWorkflowInputPaths(bareWorkflow("gallery/pose.png"), nodeTypes);
+    expect((result.nodes[0].widgets_values as unknown[])[0])
+      .toBe("gallery/pose.png [input]");
+  });
+
+  // Reproduced against a live server: a bare path into a hidden folder read as
+  // "Missing on ComfyUI server" whatever its name, and the annotated one did not.
+  // The name never mattered -- these are the awkward shapes that were checked.
+  it.each([
+    "hidden-folder/%leading-percent.png",
+    "hidden-folder/%zz-invalid-escape.png",
+    "hidden-folder/%25already-encoded.png",
+    "hidden-folder/a+b&c #d.png",
+  ])("annotates the bare hidden-folder value %s as-is", (value) => {
+    const result = annotateWorkflowInputPaths(bareWorkflow(value), nodeTypes);
+    expect((result.nodes[0].widgets_values as unknown[])[0]).toBe(`${value} [input]`);
+  });
+
+  it("annotates a bare subfolder value even when a same-named file sits at the top level", () => {
+    // The combo also accepts a bare-basename match, so `sub/pose.png` resolved
+    // to the unrelated top-level `pose.png` and the card previewed that file.
+    // The annotation pins it to the file the workflow actually names.
+    const result = annotateWorkflowInputPaths(bareWorkflow("gallery/pose.png"), nodeTypes);
+    expect((result.nodes[0].widgets_values as unknown[])[0]).toBe("gallery/pose.png [input]");
+  });
+
+  it("leaves a top-level value bare, as desktop ComfyUI writes it", () => {
+    const source = bareWorkflow("pose.png");
+    expect(annotateWorkflowInputPaths(source, nodeTypes)).toBe(source);
+  });
+
+  it("is idempotent on an already-annotated value", () => {
+    const source = bareWorkflow("gallery/pose.png [input]");
+    expect(annotateWorkflowInputPaths(source, nodeTypes)).toBe(source);
+  });
+
+  it("never touches an output- or temp-annotated value", () => {
+    const source = bareWorkflow("renders/final.png [output]");
+    expect(annotateWorkflowInputPaths(source, nodeTypes)).toBe(source);
+  });
+
+  it("annotates record-form widget values too", () => {
+    const source = bareWorkflow(null);
+    source.nodes[0] = {
+      ...source.nodes[0],
+      widgets_values: { image: "gallery/pose.png" } as never,
+    };
+    const result = annotateWorkflowInputPaths(source, nodeTypes);
+    expect((result.nodes[0].widgets_values as Record<string, unknown>).image)
+      .toBe("gallery/pose.png [input]");
+  });
+
+  it("ignores nodes that are not LoadImage-like", () => {
+    const source: Workflow = {
+      ...workflow,
+      nodes: [{
+        ...workflow.nodes[1],
+        widgets_values: ["runs/batch"],
+      }],
+    };
+    expect(annotateWorkflowInputPaths(source, nodeTypes)).toBe(source);
+  });
+
+  it("handles a subgraph definition without a nodes list through load-time path checks", async () => {
+    const incomplete = { id: "incomplete-subgraph" };
+    const source = {
+      ...bareWorkflow("gallery/pose.png"),
+      definitions: { subgraphs: [incomplete] },
+    } as unknown as Workflow;
+
+    const result = annotateWorkflowInputPaths(source, nodeTypes);
+    expect((result.nodes[0].widgets_values as unknown[])[0]).toBe("gallery/pose.png [input]");
+    expect(result.definitions?.subgraphs?.[0]).toBe(incomplete);
+    expect(hasRecognizedPathAliasShape(result, nodeTypes)).toBe(false);
+
+    const aliased = {
+      ...source,
+      nodes: [{ ...source.nodes[0], widgets_values: [".mi-deadbeef.png", "image"] }],
+    };
+    expect(hasRecognizedPathAliasShape(aliased, nodeTypes)).toBe(true);
+    const restored = await restoreWorkflowPathAliases(aliased, nodeTypes);
+    expect((restored.nodes[0].widgets_values as unknown[])[0]).toBe("private/photo.png");
+    expect(restored.definitions?.subgraphs?.[0]).toBe(incomplete);
   });
 });

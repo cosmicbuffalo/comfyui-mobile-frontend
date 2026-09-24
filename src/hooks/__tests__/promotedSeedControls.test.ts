@@ -52,6 +52,28 @@ function samplerType(name: string, seedInput: string): NodeTypes[string] {
 const NODE_TYPES: NodeTypes = {
   KSampler: samplerType('KSampler', 'seed'),
   KSamplerAdvanced: samplerType('KSamplerAdvanced', 'noise_seed'),
+  BoundedInt: {
+    input: {
+      required: {
+        value: ['INT', { default: 10, min: 10, max: 20, step: 5, control_after_generate: true }],
+      },
+      optional: {},
+    },
+    input_order: { required: ['value'], optional: [] },
+    output: ['INT'], output_name: ['INT'],
+    name: 'BoundedInt', display_name: 'Bounded Int', description: '', python_module: '', category: 'test',
+  },
+  BoundedFloat: {
+    input: {
+      required: {
+        value: ['FLOAT', { default: 0.5, min: 0, max: 1, step: 0.25, control_after_generate: true }],
+      },
+      optional: {},
+    },
+    input_order: { required: ['value'], optional: [] },
+    output: ['FLOAT'], output_name: ['FLOAT'],
+    name: 'BoundedFloat', display_name: 'Bounded Float', description: '', python_module: '', category: 'test',
+  },
 };
 
 const SEED_A = 1111;
@@ -136,6 +158,47 @@ function flatWorkflow(controlA: Control, controlB: Control): Workflow {
     nodes: [placeholderNode(FLAT_PLACEHOLDER, 'sg-two', [SEED_A, SEED_B])],
     links: [], groups: [], config: {}, version: 0.4,
     definitions: { subgraphs: [twoSeedDefinition(controlA, controlB)] },
+  } as unknown as Workflow;
+}
+
+function numericControlWorkflow(
+  type: 'BoundedInt' | 'BoundedFloat',
+  value: number,
+  control: Control,
+): Workflow {
+  const valueType = type === 'BoundedInt' ? 'INT' : 'FLOAT';
+  const placeholder = {
+    id: 300,
+    itemKey: makeLocationPointer({ type: 'node', nodeId: 300, subgraphId: null }),
+    type: 'sg-number',
+    pos: [0, 0], size: [200, 100], flags: {}, order: 0, mode: 0,
+    inputs: [{ name: 'value', type: valueType, widget: { name: 'value' }, link: null }],
+    outputs: [], properties: {}, widgets_values: [value],
+  } as unknown as WorkflowNode;
+  const inner = {
+    id: 20,
+    type,
+    pos: [0, 0], size: [200, 100], flags: {}, order: 0, mode: 0,
+    inputs: [{ name: 'value', type: valueType, widget: { name: 'value' }, link: 700 }],
+    outputs: [{ name: valueType, type: valueType, links: [] }],
+    properties: {}, widgets_values: [value, control],
+  } as unknown as WorkflowNode;
+  return {
+    last_node_id: 300, last_link_id: 700,
+    nodes: [placeholder], links: [], groups: [], config: {}, version: 0.4,
+    definitions: {
+      subgraphs: [{
+        id: 'sg-number', name: 'Controlled number', nodes: [inner],
+        links: [{
+          id: 700, origin_id: -10, origin_slot: 0,
+          target_id: 20, target_slot: 0, type: valueType,
+        }],
+        inputs: [{ name: 'value', type: valueType, linkIds: [700] }],
+        outputs: [],
+        inputNode: { id: -10, bounding: [0, 0, 10, 10] },
+        outputNode: { id: -20, bounding: [0, 0, 10, 10] },
+      }],
+    },
   } as unknown as Workflow;
 }
 
@@ -432,6 +495,66 @@ describe('where each promoted seed is recorded', () => {
     expect(next['101:10'].seed).toBe(5001);
     expect(next['100:11'].noise_seed).toBe(SEED_B);
     expect(next['101:11'].noise_seed).toBe(6000);
+  });
+
+  it('keeps a promoted value edited while its run is being queued', async () => {
+    load(flatWorkflow('increment', 'fixed'));
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input).includes('/api/queue')) {
+        return { ok: true, json: async () => ({ queue_running: [], queue_pending: [] }) };
+      }
+      const current = useWorkflowStore.getState().workflow!;
+      useWorkflowStore.setState({
+        workflow: {
+          ...current,
+          nodes: current.nodes.map((node) => ({
+            ...node,
+            widgets_values: [5000, SEED_B],
+          })),
+        },
+      });
+      return { ok: true, json: async () => ({ prompt_id: 'p-test', number: 1 }) };
+    }) as unknown as typeof fetch);
+
+    await useWorkflowStore.getState().queueWorkflow(1);
+
+    expect(useWorkflowStore.getState().workflow!.nodes[0].widgets_values).toEqual([5000, SEED_B]);
+  });
+});
+
+describe('promoted non-seed numeric controls', () => {
+  const placeholderValue = () => (
+    useWorkflowStore.getState().workflow!.nodes[0].widgets_values as unknown[]
+  )[0];
+
+  it('uses the concrete INT step and clamps at its maximum', async () => {
+    load(numericControlWorkflow('BoundedInt', 20, 'increment'));
+
+    const first = await queueOnce();
+    const second = await queueOnce();
+
+    expect(first['300:20'].value).toBe(20);
+    expect(second['300:20'].value).toBe(20);
+    expect(placeholderValue()).toBe(20);
+  });
+
+  it('randomizes inside the concrete INT range on its step grid', async () => {
+    vi.spyOn(Math, 'random').mockReturnValue(0.75);
+    load(numericControlWorkflow('BoundedInt', 10, 'randomize'));
+
+    const prompt = await queueOnce();
+
+    expect(prompt['300:20'].value).toBe(10);
+    expect(placeholderValue()).toBe(15);
+  });
+
+  it('supports FLOAT controls with the concrete step', async () => {
+    load(numericControlWorkflow('BoundedFloat', 0.5, 'increment'));
+
+    const prompt = await queueOnce();
+
+    expect(prompt['300:20'].value).toBe(0.5);
+    expect(placeholderValue()).toBe(0.75);
   });
 });
 

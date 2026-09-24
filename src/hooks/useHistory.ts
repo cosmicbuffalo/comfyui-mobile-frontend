@@ -9,6 +9,7 @@ import { HIDDEN_WORKFLOW_EXTRA_DATA_KEY } from '@/utils/workflowHidden';
 import { useOutputsStore } from '@/hooks/useOutputs';
 import { bustImageCache } from '@/utils/imageCacheBust';
 import { getHistoryImageFileId } from '@/utils/viewerImages';
+import { isMediaMissing, useMissingMediaStore, type MissingMediaRef } from '@/hooks/useMissingMedia';
 import { t } from '@/i18n';
 
 // Invalidate the browser cache for a deleted entry's output images so a later
@@ -187,6 +188,7 @@ const HISTORY_MEDIA_KEYS = ['images', 'gifs', 'videos'] as const;
 function collectHistoryOutputImages(
   outputs: HistoryItem['outputs'],
   executionCacheToken: string,
+  promptId: string = executionCacheToken,
 ): HistoryOutputImage[] {
   const images: HistoryOutputImage[] = [];
   const seen = new Set<string>();
@@ -200,6 +202,10 @@ function collectHistoryOutputImages(
         const id = getHistoryImageFileId(candidate);
         if (seen.has(id)) continue;
         seen.add(id);
+        // A deleted output stays in ComfyUI's history forever: only an entry
+        // that lost all of its media is deleted server-side. Keyed by run, so
+        // a later run that reuses this filename is never hidden with it.
+        if (isMediaMissing(promptId, id)) continue;
         // ComfyUI can reuse an output path after the previous file is moved or
         // deleted outside this app. Tie the media URL to the prompt that wrote
         // it so a new run never inherits the older run's browser cache entry.
@@ -433,7 +439,7 @@ export const useHistoryStore = create<HistoryState>((set, get) => ({
       };
 
       const entries: HistoryEntry[] = Object.entries(data).map(([prompt_id, item]) => {
-        const images = collectHistoryOutputImages(item.outputs, prompt_id);
+        const images = collectHistoryOutputImages(item.outputs, prompt_id, prompt_id);
 
         // Extract timestamp and duration from status messages if available
         let timestamp = Date.now();
@@ -595,6 +601,7 @@ export const useHistoryStore = create<HistoryState>((set, get) => ({
     // be deleted server-side). The actual store mutation happens below against
     // the latest state.
     const emptiedPromptIds: string[] = [];
+    const removedRefs: MissingMediaRef[] = [];
     let changed = false;
 
     for (const entry of history) {
@@ -602,6 +609,7 @@ export const useHistoryStore = create<HistoryState>((set, get) => ({
       for (const img of entry.outputs.images) {
         if (deleted.has(getHistoryImageFileId(img))) {
           removedHere += 1;
+          removedRefs.push({ promptId: entry.prompt_id, fileId: getHistoryImageFileId(img) });
           bustImageCache(img.filename, img.subfolder, img.type);
         }
       }
@@ -626,6 +634,11 @@ export const useHistoryStore = create<HistoryState>((set, get) => ({
     }
 
     if (!changed) return;
+
+    // Remember each deletion beyond this prune, for the run it came from. An
+    // entry that keeps some of its outputs is never deleted server-side, so the
+    // next history fetch returns every descriptor again -- including these.
+    useMissingMediaStore.getState().markMediaMissing(removedRefs);
 
     // Delete the now-empty entries server-side too, so they don't reappear on
     // the next history fetch. Best-effort: even if the API call fails we still

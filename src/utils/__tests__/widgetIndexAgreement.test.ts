@@ -195,8 +195,11 @@ describe('widget index agreement: widgetDefinitions vs seedUtils', () => {
         const writeIndex = getWidgetIndexForInput(workflow, fullNodes, node, inputName);
         expect(writeIndex, `${label}: seedUtils index for "${inputName}"`).toBe(slot.index);
 
+        // A list value goes out wrapped, as stock sends it: a bare array in a
+        // prompt is a link.
+        const sent = Array.isArray(slot.value) ? { __value__: slot.value } : slot.value;
         expect(prompt[slot.promptKey], `${label}: prompt value for "${slot.promptKey}"`)
-          .toEqual(slot.value);
+          .toEqual(sent);
         checked += 1;
       }
     }

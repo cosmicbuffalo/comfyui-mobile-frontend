@@ -13,6 +13,7 @@ import {
   resolveComboOption,
   orderedInputNames,
 } from "@/utils/workflowInputs";
+import { isAnnotatedPath } from "@/utils/annotatedPath";
 
 /**
  * Widget-value normalization and load-error reporting for imported/restored
@@ -88,7 +89,13 @@ function collectWorkflowLoadErrors(
         const normalizedString = String(normalized);
         const normalizedBase =
           normalizedString.split(/[\\/]/).pop() ?? normalizedString;
+        // `sub/img.png [input]` names its own directory and is resolved by path
+        // on the server -- LoadImage validates it with exists_annotated_filepath,
+        // not against its option list, which only ever holds top-level files.
+        // The combo control accepts it on the same grounds; reporting it here
+        // flagged every file picked out of a folder as missing on load.
         const hasMatch =
+          isAnnotatedPath(normalizedString) ||
           resolved !== undefined ||
           comboOptions.some((opt) => {
             const optString = String(opt);

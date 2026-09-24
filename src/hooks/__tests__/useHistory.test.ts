@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { History, HistoryItem } from '@/api/types';
 import { useHistoryStore } from '@/hooks/useHistory';
+import { useMissingMediaStore } from '@/hooks/useMissingMedia';
 import { useQueueStore } from '@/hooks/useQueue';
 import { useWorkflowErrorsStore } from '@/hooks/useWorkflowErrors';
 import { getHistory, setFileState, deleteHistoryItems } from '@/api/client';
@@ -49,6 +50,9 @@ beforeEach(() => {
     historyLimit: 10,
     hasMoreHistory: true,
   });
+  // Deleted-output marks are session state, and ingest filters against them;
+  // a leftover from one test would hide another's outputs.
+  useMissingMediaStore.setState({ missingKeys: [] });
   useQueueStore.setState({
     running: [],
     pending: [],
@@ -680,6 +684,45 @@ describe('useHistoryStore', () => {
       expect(history.map((h) => h.prompt_id)).toEqual(['p2']);
       expect(vi.mocked(deleteHistoryItems)).toHaveBeenCalledWith(['p1']);
       expect(useHistoryStore.getState().historyTotal).toBe(1);
+    });
+
+    // The prune above is local, and a partially emptied entry is never deleted
+    // server-side, so the next fetch used to hand the card its deleted outputs
+    // straight back, as thumbnails that 404.
+    const serverItem = (promptId: string, filenames: string[]) => {
+      const item = makeHistoryItem(promptId, { status_str: 'success', completed: true, messages: [] });
+      item.outputs = { saver: { images: filenames.map((filename) => ({ filename, subfolder: '', type: 'output' })) } };
+      return item;
+    };
+    const imagesOf = (promptId: string) => useHistoryStore.getState().history
+      .find((h) => h.prompt_id === promptId)?.outputs.images.map((i) => i.filename);
+
+    it('does not let the next history fetch resurrect a deleted output', async () => {
+      useHistoryStore.setState({ history: [entry('p1', ['a.png', 'b.png'])], historyTotal: 1 });
+      await useHistoryStore.getState().removeOutputImages(['output/a.png']);
+
+      // The server still lists both: only the file was deleted, not the run.
+      mockGetHistory.mockResolvedValue({ p1: serverItem('p1', ['a.png', 'b.png']) } satisfies History);
+      await useHistoryStore.getState().fetchHistory();
+
+      expect(imagesOf('p1')).toEqual(['b.png']);
+    });
+
+    it('still shows a later run that reuses the deleted filename', async () => {
+      // ComfyUI's counter hands a deleted file's number straight back, so the
+      // next run writes a NEW a.png. A mark keyed by path alone hid it for the
+      // rest of the session; keyed by run, it belongs to p1 only.
+      useHistoryStore.setState({ history: [entry('p1', ['a.png', 'b.png'])], historyTotal: 1 });
+      await useHistoryStore.getState().removeOutputImages(['output/a.png']);
+
+      mockGetHistory.mockResolvedValue({
+        p1: serverItem('p1', ['a.png', 'b.png']),
+        p2: serverItem('p2', ['a.png']),
+      } satisfies History);
+      await useHistoryStore.getState().fetchHistory();
+
+      expect(imagesOf('p1')).toEqual(['b.png']);
+      expect(imagesOf('p2')).toEqual(['a.png']);
     });
 
     it('is a no-op when no entry references the deleted file', async () => {

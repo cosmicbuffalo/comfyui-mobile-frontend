@@ -454,6 +454,60 @@ describe('markItemHiddenLocally', () => {
   });
 });
 
+describe('hiding from the outputs panel', () => {
+  const listing = () => [
+    makeFile({ id: 'output/keep.png', size: 1 }),
+    makeFile({ id: 'output/private.png', size: 2 }),
+    makeFile({ id: 'output/other.png', size: 3 }),
+  ];
+
+  it('never puts the grid behind a loading state, and applies the hide at once', async () => {
+    useOutputsStore.setState({ files: listing() });
+    const loadingSeen: boolean[] = [];
+    const unsubscribe = useOutputsStore.subscribe((s) => loadingSeen.push(s.isLoading));
+    // The server's view after the write: the hidden file is gone.
+    mockGetUserImages.mockResolvedValue(listing().filter((f) => f.id !== 'output/private.png'));
+
+    const pending = useOutputsStore.getState().setItemsHidden(['output/private.png'], true);
+    // Before the write or the refetch lands.
+    expect(useOutputsStore.getState().files.map((f) => f.id)).toEqual(['output/keep.png', 'output/other.png']);
+    await pending;
+    await vi.waitFor(() => expect(mockGetUserImages).toHaveBeenCalled());
+    await flushFileStateMutations();
+    unsubscribe();
+
+    expect(loadingSeen).not.toContain(true);
+    expect(mockSetFileState).toHaveBeenCalledWith('output', 'private.png', 'hidden', true);
+  });
+
+  it('keeps the untouched files as the same objects through the refetch', async () => {
+    useOutputsStore.setState({ files: listing() });
+    const before = useOutputsStore.getState().files;
+    mockGetUserImages.mockResolvedValue(listing().filter((f) => f.id !== 'output/private.png'));
+
+    await useOutputsStore.getState().setItemsHidden(['output/private.png'], true);
+    await vi.waitFor(() => expect(mockGetUserImages).toHaveBeenCalled());
+    await vi.waitFor(() => expect(useOutputsStore.getState().isLoading).toBe(false));
+
+    const after = useOutputsStore.getState().files;
+    // Cards are memoized on these objects; fresh copies re-render every card.
+    expect(after[0]).toBe(before[0]);
+    expect(after[1]).toBe(before[2]);
+  });
+
+  it('marks instead of removing when hidden items are shown, and unhides the same way', async () => {
+    useShowHiddenStore.setState({ showHidden: true });
+    useOutputsStore.setState({ files: listing() });
+    mockGetUserImages.mockImplementation(async () => useOutputsStore.getState().files);
+
+    await useOutputsStore.getState().setItemsHidden(['output/private.png'], true);
+    expect(useOutputsStore.getState().files[1]).toMatchObject({ hidden: true, hiddenSelf: true });
+
+    await useOutputsStore.getState().setItemsHidden(['output/private.png'], false);
+    expect(useOutputsStore.getState().files[1]).toMatchObject({ hidden: false, hiddenSelf: false });
+  });
+});
+
 describe('favorite/reject mutual exclusivity', () => {
   const ID = 'output/a.png';
 
@@ -568,6 +622,47 @@ describe('favorite/reject mutual exclusivity', () => {
 });
 
 describe('fetchFiles server-state hydration', () => {
+  it('does not let a quiet response from the previous folder replace the current listing', async () => {
+    let resolveAlbum!: (files: FileItem[]) => void;
+    let resolveOther!: (files: FileItem[]) => void;
+    mockGetUserImages.mockImplementation((
+      _source,
+      _count,
+      _offset,
+      _sort,
+      _includeSubfolders,
+      folder,
+    ) => new Promise((resolve) => {
+      if (folder === 'album') resolveAlbum = resolve;
+      else resolveOther = resolve;
+    }));
+    useOutputsStore.setState({
+      source: 'output',
+      currentFolder: 'album',
+      migratedFavoriteSources: ['output'],
+    });
+
+    const staleRequest = useOutputsStore.getState().fetchFiles({ quiet: true });
+    await vi.waitFor(() => expect(mockGetUserImages).toHaveBeenCalledTimes(1));
+
+    useOutputsStore.setState({ currentFolder: 'other' });
+    const currentRequest = useOutputsStore.getState().fetchFiles();
+    await vi.waitFor(() => expect(mockGetUserImages).toHaveBeenCalledTimes(2));
+
+    const currentFile = makeFile({ id: 'output/other/current.png' });
+    resolveOther([currentFile]);
+    await currentRequest;
+    expect(useOutputsStore.getState().files).toEqual([currentFile]);
+
+    resolveAlbum([makeFile({ id: 'output/album/stale.png' })]);
+    await staleRequest;
+    expect(useOutputsStore.getState()).toMatchObject({
+      currentFolder: 'other',
+      files: [currentFile],
+      isLoading: false,
+    });
+  });
+
   it('hydrates server state without requiring a directory listing', async () => {
     mockLoadFileState.mockResolvedValueOnce({
       favorite: ['favorite.png'],

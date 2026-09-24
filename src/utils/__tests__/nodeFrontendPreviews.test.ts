@@ -233,6 +233,84 @@ describe('resolveNodeFrontendMediaPreview', () => {
     expect(resolveNodeFrontendMediaPreview(workflow(current), nodeTypes, current)?.src)
       .toContain('/mobile/api/video/playable?filename=stock%20clip.mp4&subfolder=input');
   });
+
+  const loadVideoTypes = {
+    LoadVideo: {
+      input: { required: { file: [[], { video_upload: true }] } },
+      output: ['VIDEO'],
+      output_node: false,
+      name: 'LoadVideo',
+      display_name: 'Load Video',
+      description: '',
+      python_module: 'comfy_extras.nodes_video',
+      category: 'video',
+    },
+  } as unknown as NodeTypes;
+
+  it.each([
+    ['clip.mp4 [input]', 'clip.mp4', '', 'input'],
+    ['sub/clip.mp4 [input]', 'clip.mp4', 'sub', 'input'],
+    ['renders/clip.mp4 [output]', 'clip.mp4', 'renders', 'output'],
+  ])('reads the annotated LoadVideo value %s as a video in its own directory', (value, filename, subfolder, type) => {
+    // The shape mobile's pickers write. Left annotated, the preview asked for
+    // a file literally named "clip.mp4 [input]" and, reading its extension as
+    // "mp4 [input]", drew it as an image.
+    const current = node('LoadVideo', [value]);
+    current.inputs = [{ name: 'file', type: 'COMBO', link: null, widget: { name: 'file' } }];
+    const preview = resolveNodeFrontendMediaPreview(workflow(current), loadVideoTypes, current)!;
+    expect(preview.mediaType).toBe('video');
+    const src = new URL(preview.src, 'http://localhost');
+    expect(src.searchParams.get('filename')).toBe(filename);
+    expect(src.searchParams.get('subfolder')).toBe(subfolder);
+    expect(src.searchParams.get('type')).toBe(type);
+    const poster = new URL(preview.poster!, 'http://localhost');
+    expect(poster.pathname).toBe('/mobile/api/thumbnail');
+    expect(poster.searchParams.get('filename')).toBe(filename);
+    expect(poster.searchParams.get('source')).toBe(type);
+  });
+
+  it.each([
+    ['clip.mp4', 'clip.mp4', null, 'input'],
+    ['sub/clip.mp4', 'clip.mp4', 'sub', 'input'],
+    ['sub/clip.mp4 [input]', 'clip.mp4', 'sub', 'input'],
+  ])('sends the VHS upload value %s as VHS\'s filename + subfolder', (value, filename, subfolder, type) => {
+    // VHS's resolver keeps only the basename of `filename`, so a folder left
+    // in it resolved to input/clip.mp4 and VHS answered 204 -- "Unable to play".
+    const current = node('VHS_LoadVideo', {
+      video: value,
+      videopreview: { hidden: false, paused: false, params: {} },
+    });
+    const preview = resolveNodeFrontendMediaPreview(workflow(current), null, current)!;
+    const src = new URL(preview.src, 'http://localhost');
+    expect(src.pathname).toBe('/vhs/viewvideo');
+    expect(src.searchParams.get('filename')).toBe(filename);
+    expect(src.searchParams.get('subfolder')).toBe(subfolder);
+    expect(src.searchParams.get('type')).toBe(type);
+    expect(src.searchParams.get('format')).toBe('video/mp4');
+  });
+
+  it('gives a VHS input video its first frame as a poster, and a path source none', () => {
+    // Without one the transcoded stream showed a blank card until it started,
+    // and an empty poster made the browser fetch the page URL as an image.
+    const upload = node('VHS_LoadVideo', {
+      video: 'sub/clip.mp4',
+      videopreview: { hidden: false, paused: false, params: {} },
+    });
+    const poster = new URL(
+      resolveNodeFrontendMediaPreview(workflow(upload), null, upload)!.poster!,
+      'http://localhost',
+    );
+    expect(poster.pathname).toBe('/mobile/api/thumbnail');
+    expect(poster.searchParams.get('filename')).toBe('clip.mp4');
+    expect(poster.searchParams.get('subfolder')).toBe('sub');
+    expect(poster.searchParams.get('source')).toBe('input');
+
+    const path = node('VHS_LoadVideoPath', {
+      video: '/media/clip.mp4',
+      videopreview: { hidden: false, paused: false, params: {} },
+    });
+    expect(resolveNodeFrontendMediaPreview(workflow(path), null, path)!.poster).toBeUndefined();
+  });
 });
 
 describe('Oasis io_id protocol', () => {

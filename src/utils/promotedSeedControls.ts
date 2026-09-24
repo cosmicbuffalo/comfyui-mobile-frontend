@@ -1,6 +1,6 @@
-import type { NodeTypes, Workflow, WorkflowNode, WorkflowSubgraphDefinition } from '@/api/types';
+import type { NodeInputEntry, NodeTypes, Workflow, WorkflowNode, WorkflowSubgraphDefinition } from '@/api/types';
 import type { SeedMode } from '@/utils/seedUtils';
-import { getWidgetIndexForInput, nodeTypeStripsSeedControl } from '@/utils/seedUtils';
+import { getWidgetIndexForInput, isSeedInputName, nodeTypeStripsSeedControl } from '@/utils/seedUtils';
 import { getPlaceholderValueIndexForBoundarySlot } from '@/utils/widgetDefinitions';
 
 /**
@@ -29,6 +29,12 @@ export interface PromotedSeedControl {
   /** That node's control_after_generate slot. */
   controlWidgetIndex: number;
   mode: SeedMode;
+  /** The concrete numeric input this control belongs to. */
+  widgetName: string;
+  numericType: 'INT' | 'FLOAT';
+  numericOptions: Record<string, unknown>;
+  /** Only true seed inputs use sentinel and seed-range compatibility rules. */
+  isSeed: boolean;
   /** How the value travels from the host to that node. */
   trace: PromotedSlotTrace;
 }
@@ -50,10 +56,66 @@ function boundaryLink(definition: WorkflowSubgraphDefinition, slot: number) {
   return links.find((link) => link.origin_id === -10 && link.origin_slot === slot);
 }
 
-function inputDefinitionType(nodeTypes: NodeTypes, node: WorkflowNode, name: string): unknown {
+function inputDefinition(
+  nodeTypes: NodeTypes,
+  node: WorkflowNode,
+  name: string,
+): NodeInputEntry | undefined {
   const input = nodeTypes[node.type]?.input;
-  const definition = input?.required?.[name] ?? input?.optional?.[name];
-  return Array.isArray(definition) ? definition[0] : undefined;
+  return input?.required?.[name] ?? input?.optional?.[name];
+}
+
+const SAFE_NUMERIC_MAX = 1125899906842624;
+const SAFE_NUMERIC_MIN = -SAFE_NUMERIC_MAX;
+
+function finiteOption(
+  options: Record<string, unknown>,
+  name: string,
+  fallback: number,
+): number {
+  const value = options[name];
+  return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
+}
+
+/**
+ * Stock's numeric control-after-generate calculation, using the concrete
+ * input's own range and step rather than seed defaults. object_info normally
+ * exposes `step`; LiteGraph calls the effective increment `step2`, so accept
+ * either representation.
+ */
+export function nextPromotedNumericValue(
+  control: PromotedSeedControl,
+  current: number,
+  random: () => number = Math.random,
+): number | undefined {
+  if (!Number.isFinite(current) || control.mode === 'fixed') return undefined;
+  const rawMin = finiteOption(control.numericOptions, 'min', 0);
+  const rawMax = finiteOption(control.numericOptions, 'max', 1);
+  const min = Math.max(SAFE_NUMERIC_MIN, Math.min(rawMin, rawMax));
+  const max = Math.min(SAFE_NUMERIC_MAX, Math.max(rawMin, rawMax));
+  const rawStep = finiteOption(
+    control.numericOptions,
+    'step2',
+    finiteOption(control.numericOptions, 'step', 1),
+  );
+  const step = rawStep > 0 ? rawStep : 1;
+  let next = current;
+  switch (control.mode) {
+    case 'increment':
+      next += step;
+      break;
+    case 'decrement':
+      next -= step;
+      break;
+    case 'randomize': {
+      const steps = Math.max(0, (max - min) / step);
+      next = Math.floor(random() * steps) * step + min;
+      break;
+    }
+    default:
+      return undefined;
+  }
+  return Math.min(Math.max(next, min), max);
 }
 
 /**
@@ -189,8 +251,17 @@ export function resolvePromotedSeedControls(
     const trace = traceBoundarySlot(workflow, nodeTypes, definition, boundarySlot);
     if (!trace) return;
     const { node, widgetName, widgetIndex } = trace;
-    if (String(inputDefinitionType(nodeTypes, node, widgetName)) !== 'INT') return;
-    if (nodeTypeStripsSeedControl(node.type) || !Array.isArray(node.widgets_values)) return;
+    const definitionEntry = inputDefinition(nodeTypes, node, widgetName);
+    const numericType = String(definitionEntry?.[0]).toUpperCase();
+    if (numericType !== 'INT' && numericType !== 'FLOAT') return;
+    const isSeed = isSeedInputName(widgetName);
+    const declaresControl = definitionEntry?.[1]?.control_after_generate;
+    // Seeds receive the stock control implicitly unless a node opts out.
+    // Other numbers only receive it when object_info explicitly requests one;
+    // otherwise a following combo whose value happens to be "fixed" would be
+    // mistaken for a control widget.
+    if (isSeed ? declaresControl === false : declaresControl !== true) return;
+    if ((isSeed && nodeTypeStripsSeedControl(node.type)) || !Array.isArray(node.widgets_values)) return;
     const mode = node.widgets_values[widgetIndex + 1];
     if (typeof mode !== 'string' || !SEED_MODES.has(mode)) return;
     controls.push({
@@ -201,6 +272,10 @@ export function resolvePromotedSeedControls(
       seedWidgetIndex: widgetIndex,
       controlWidgetIndex: widgetIndex + 1,
       mode: mode as SeedMode,
+      widgetName,
+      numericType,
+      numericOptions: definitionEntry?.[1] ?? {},
+      isSeed,
       trace,
     });
   });

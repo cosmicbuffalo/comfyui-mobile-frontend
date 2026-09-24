@@ -6,6 +6,8 @@ import { useQueueStore } from '@/hooks/useQueue';
 import { useOutputsStore } from '@/hooks/useOutputs';
 import { useDismissOnOutsideClick } from '@/hooks/useDismissOnOutsideClick';
 import { useDeleteRejectedShortcut } from '@/hooks/useDeleteRejectedShortcut';
+import { useAnyMediaViewerOpen } from '@/hooks/useAnyMediaViewerOpen';
+import { MEDIA_VIEWER_Z_INDEX } from '@/components/ImageViewer/MediaViewer';
 import {
   deleteRejectedOutputs,
   QUEUE_REJECT_SOURCES,
@@ -29,6 +31,7 @@ export function QueueTopBarControls() {
   );
   const buttonRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
+  const viewerOpen = useAnyMediaViewerOpen();
 
   useDismissOnOutsideClick({
     open: menuOpen,
@@ -90,6 +93,10 @@ export function QueueTopBarControls() {
             ? t('Delete {count} rejected output?', { count: rejectedCount })
             : t('Delete {count} rejected outputs?', { count: rejectedCount })}
           description={t("This permanently deletes the files marked as rejected from your server's output folder and removes them from the queue. This can't be undone.")}
+          // The chord that opens this works from inside the full-screen viewer
+          // too, where a dialog at the default layer would mount underneath the
+          // overlay: invisible, unclickable, and focused on Delete.
+          zIndex={viewerOpen ? MEDIA_VIEWER_Z_INDEX + 100 : undefined}
           actions={[
             {
               label: t('Cancel'),

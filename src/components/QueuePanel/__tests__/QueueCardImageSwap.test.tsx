@@ -497,3 +497,64 @@ describe('QueueCard image-slot tab swap', () => {
     expect(container.querySelector('.queue-media-unavailable')).not.toBeNull();
   });
 });
+
+describe('QueueCard outputs known to be deleted', () => {
+  let container: HTMLDivElement;
+  let root: Root;
+
+  beforeEach(async () => {
+    const { useMissingMediaStore } = await import('@/hooks/useMissingMedia');
+    useMissingMediaStore.setState({ missingKeys: [] });
+    container = document.createElement('div');
+    document.body.appendChild(container);
+    root = createRoot(container);
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, status: 200, headers: new Headers() })));
+  });
+
+  afterEach(async () => {
+    await act(async () => {
+      root.unmount();
+    });
+    container.remove();
+    vi.unstubAllGlobals();
+  });
+
+  const renderedFiles = () => Array.from(container.querySelectorAll('img'))
+    .map((el) => el.getAttribute('src') ?? '')
+    .filter((src) => /[ab]\.png/.test(src))
+    .map((src) => (src.includes('a.png') ? 'a.png' : 'b.png'));
+
+  it('drops a deleted output for its own run only, without a reload', async () => {
+    const { useMissingMediaStore } = await import('@/hooks/useMissingMedia');
+    const { getHistoryImageFileId } = await import('@/utils/viewerImages');
+    await act(async () => {
+      root.render(
+        <QueueCard
+          item={doneItem}
+          isActuallyRunning={false}
+          progress={0}
+          viewerImages={[]}
+          runningImages={[]}
+          onOpenMenu={() => {}}
+          isTopDoneItem
+        />,
+      );
+    });
+    expect(new Set(renderedFiles())).toEqual(new Set(['a.png', 'b.png']));
+
+    // Another run's a.png (a reused filename) is not this card's output.
+    await act(async () => {
+      useMissingMediaStore.getState().markMediaMissing([
+        { promptId: 'another-run', fileId: getHistoryImageFileId(imageA) },
+      ]);
+    });
+    expect(new Set(renderedFiles())).toEqual(new Set(['a.png', 'b.png']));
+
+    await act(async () => {
+      useMissingMediaStore.getState().markMediaMissing([
+        { promptId: 'swap-prompt', fileId: getHistoryImageFileId(imageA) },
+      ]);
+    });
+    expect(new Set(renderedFiles())).toEqual(new Set(['b.png']));
+  });
+});

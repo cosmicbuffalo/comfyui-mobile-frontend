@@ -1,5 +1,4 @@
 import { useEffect } from 'react';
-import { useImageViewerStore } from '@/hooks/useImageViewer';
 
 interface DeleteRejectedShortcutOptions {
   /**
@@ -34,6 +33,14 @@ function isEditingTarget(target: EventTarget | null): boolean {
  * armed while a text field has focus, where Command+Delete means delete to the
  * start of the line.
  *
+ * Deliberately still armed under the full-screen viewer, which is where a user
+ * culling rejects actually is. That puts a requirement on the caller: the
+ * confirmation it opens MUST paint above the viewer (see `useAnyMediaViewerOpen`
+ * and the `zIndex` both call sites pass). A dialog left at the default layer
+ * mounts below the viewer's overlay — invisible, unclickable, and with focus
+ * already on its Delete button, which is one blind keypress from a destructive
+ * action.
+ *
  * Both delete keys count. On a Mac keyboard the key labelled Delete reports
  * `Backspace`; `Delete` is the forward-delete a full-size keyboard has, and
  * anyone pressing it means the same thing.
@@ -57,13 +64,8 @@ export function useDeleteRejectedShortcut({
       ) {
         return;
       }
-      // The panel's TopBar stays mounted underneath the full-screen viewer, so
-      // without these the chord still fires there, and the confirmation it
-      // opens sits below the viewer's overlay: invisible, unclickable, with
-      // focus already on its autoFocus Delete button and Dialog's
-      // Enter-activates-default binding live. A destructive action one blind
-      // keypress away.
-      if (useImageViewerStore.getState().viewerOpen) return;
+      // A confirmation is already up (this one, or any other): let the user
+      // answer it rather than stacking a second copy on top of it.
       if (document.querySelector('[data-dialog-root="true"], [role="dialog"]')) return;
 
       event.preventDefault();

@@ -13,7 +13,7 @@ import {
   resolveSubgraphPlaceholderInputWidgetDefs,
 } from "@/utils/widgetDefinitions";
 import { isSubgraphPlaceholder } from "@/utils/canonicalWorkflowOps";
-import { splitPathAnnotation, type AnnotatedPath } from "@/utils/annotatedPath";
+import { annotateInputPath, splitPathAnnotation, type AnnotatedPath } from "@/utils/annotatedPath";
 
 const INPUT_KEYS = ["image", "filename", "file"] as const;
 const ALIAS_PREFIX = ".mi-";
@@ -272,7 +272,7 @@ function staleInnerWidgets(
     }
   };
   scan(workflow.nodes);
-  workflow.definitions?.subgraphs?.forEach((other) => scan(other.nodes));
+  workflow.definitions?.subgraphs?.forEach((other) => scan(other.nodes ?? []));
 
   const slotEntry = (placeholder: WorkflowNode, boundaryName: string) =>
     resolveSubgraphPlaceholderInputWidgetDefs(placeholder, workflow, nodeTypes)
@@ -444,7 +444,7 @@ function collectWorkflowPaths(workflow: Workflow, nodeTypes: NodeTypes, paths: S
   workflow.nodes.forEach((node) => collectNodePaths(node, workflow, nodeTypes, paths));
   workflow.definitions?.subgraphs?.forEach((subgraph) => {
     const stale = staleInnerWidgets(workflow, nodeTypes, subgraph);
-    subgraph.nodes.forEach((node) => collectNodePaths(node, workflow, nodeTypes, paths, stale));
+    (subgraph.nodes ?? []).forEach((node) => collectNodePaths(node, workflow, nodeTypes, paths, stale));
   });
 }
 
@@ -484,7 +484,7 @@ function collectWorkflowInputAliases(
 ): void {
   workflow.nodes.forEach((node) => collectNodeInputAliases(node, workflow, nodeTypes, aliases));
   workflow.definitions?.subgraphs?.forEach((subgraph) => {
-    subgraph.nodes.forEach((node) => collectNodeInputAliases(node, workflow, nodeTypes, aliases));
+    (subgraph.nodes ?? []).forEach((node) => collectNodeInputAliases(node, workflow, nodeTypes, aliases));
   });
 }
 
@@ -500,8 +500,9 @@ function replaceWorkflowPaths(
   const rootChanged = nodes.some((node, index) => node !== workflow.nodes[index]);
   const subgraphs = workflow.definitions?.subgraphs?.map((subgraph) => {
     const stale = obfuscating ? staleInnerWidgets(workflow, nodeTypes, subgraph) : undefined;
-    const nextNodes = subgraph.nodes.map((node) => replaceNodePaths(node, workflow, nodeTypes, aliases, stale));
-    return nextNodes.some((node, index) => node !== subgraph.nodes[index])
+    const originalNodes = subgraph.nodes ?? [];
+    const nextNodes = originalNodes.map((node) => replaceNodePaths(node, workflow, nodeTypes, aliases, stale));
+    return nextNodes.some((node, index) => node !== originalNodes[index])
       ? { ...subgraph, nodes: nextNodes }
       : subgraph;
   });
@@ -569,7 +570,7 @@ function replaceNodeFilePrefixes(
 function collectWorkflowFilePrefixes(workflow: Workflow, nodeTypes: NodeTypes, prefixes: Set<string>): void {
   workflow.nodes.forEach((node) => collectNodeFilePrefixes(node, nodeTypes, prefixes));
   workflow.definitions?.subgraphs?.forEach((subgraph) => {
-    subgraph.nodes.forEach((node) => collectNodeFilePrefixes(node, nodeTypes, prefixes));
+    (subgraph.nodes ?? []).forEach((node) => collectNodeFilePrefixes(node, nodeTypes, prefixes));
   });
 }
 
@@ -581,8 +582,9 @@ function replaceWorkflowFilePrefixes(
   const nodes = workflow.nodes.map((node) => replaceNodeFilePrefixes(node, nodeTypes, aliases));
   const rootChanged = nodes.some((node, index) => node !== workflow.nodes[index]);
   const subgraphs = workflow.definitions?.subgraphs?.map((subgraph) => {
-    const nextNodes = subgraph.nodes.map((node) => replaceNodeFilePrefixes(node, nodeTypes, aliases));
-    return nextNodes.some((node, index) => node !== subgraph.nodes[index])
+    const originalNodes = subgraph.nodes ?? [];
+    const nextNodes = originalNodes.map((node) => replaceNodeFilePrefixes(node, nodeTypes, aliases));
+    return nextNodes.some((node, index) => node !== originalNodes[index])
       ? { ...subgraph, nodes: nextNodes }
       : subgraph;
   });
@@ -620,7 +622,7 @@ function collectWorkflowFilePrefixAliases(
     if (typeof value === "string" && isFilePrefixAlias(value)) aliases.add(value);
   };
   workflow.nodes.forEach(collect);
-  workflow.definitions?.subgraphs?.forEach((subgraph) => subgraph.nodes.forEach(collect));
+  workflow.definitions?.subgraphs?.forEach((subgraph) => (subgraph.nodes ?? []).forEach(collect));
 }
 
 async function obfuscateWorkflowFilePrefixes(
@@ -704,6 +706,92 @@ export async function obfuscateQueuedInputPaths(
     // Keep the executable prompt's filename_prefix unchanged so output paths
     // remain exactly as configured. Only the embedded workflow is obfuscated.
     workflow: await obfuscateWorkflowFilePrefixes(inputObfuscatedWorkflow, nodeTypes),
+  };
+}
+
+/**
+ * Give every subfolder input value the ` [input]` annotation the pickers write.
+ *
+ * `object_info` enumerates only TOP-LEVEL input files, so a bare
+ * `sub/img.png` is a value the combo's option list can never account for and
+ * the widget reports "Missing on ComfyUI server" — for a file that is right
+ * there and runs fine. Workflows saved before the annotation convention, and
+ * alias restores (the alias table stores bare relative paths), both produce
+ * exactly that shape. Annotating on load converges them on the one spelling
+ * ComfyUI resolves by path and the combo already recognises as valid.
+ *
+ * Idempotent, and deliberately narrow: only the widgets the alias layer
+ * itself manages (LoadImage-style inputs and promoted placeholder slots), so
+ * a model path or an `[output]`-annotated value is never touched. Alias
+ * values are top-level by construction, so they pass through unchanged for
+ * the restore pass to resolve.
+ */
+export function annotateWorkflowInputPaths(
+  workflow: Workflow,
+  nodeTypes: NodeTypes,
+): Workflow {
+  const annotate = (value: unknown): unknown => (
+    typeof value === "string" ? annotateInputPath(value) : value
+  );
+
+  const annotateNode = (node: WorkflowNode): WorkflowNode => {
+    const promoted = placeholderInputFileWidgets(node, workflow, nodeTypes);
+    if (promoted.length > 0 && Array.isArray(node.widgets_values)) {
+      let nextValues: unknown[] | null = null;
+      for (const { widgetIndex, value } of promoted) {
+        const annotated = annotate(value);
+        if (annotated === value) continue;
+        nextValues ??= [...(node.widgets_values as unknown[])];
+        nextValues[widgetIndex] = annotated;
+      }
+      return nextValues ? { ...node, widgets_values: nextValues } : node;
+    }
+    if (!isLoadImageType(node.type)) return node;
+    if (Array.isArray(node.widgets_values)) {
+      let nextValues: unknown[] | null = null;
+      for (const definition of getInputWidgetDefinitions(nodeTypes, node)) {
+        if (!INPUT_KEYS.includes(definition.name as (typeof INPUT_KEYS)[number])) continue;
+        const value = node.widgets_values[definition.widgetIndex];
+        const annotated = annotate(value);
+        if (annotated === value) continue;
+        nextValues ??= [...node.widgets_values];
+        nextValues[definition.widgetIndex] = annotated;
+      }
+      return nextValues ? { ...node, widgets_values: nextValues } : node;
+    }
+    let nextValues: Record<string, unknown> | null = null;
+    for (const key of INPUT_KEYS) {
+      const value = node.widgets_values?.[key];
+      const annotated = annotate(value);
+      if (annotated === value) continue;
+      nextValues ??= { ...node.widgets_values };
+      nextValues[key] = annotated;
+    }
+    return nextValues ? { ...node, widgets_values: nextValues } : node;
+  };
+
+  const nodes = workflow.nodes.map(annotateNode);
+  const rootChanged = nodes.some((node, index) => node !== workflow.nodes[index]);
+  const subgraphs = workflow.definitions?.subgraphs?.map((subgraph) => {
+    const originalNodes = subgraph.nodes ?? [];
+    const nextNodes = originalNodes.map(annotateNode);
+    return nextNodes.some((node, index) => node !== originalNodes[index])
+      ? { ...subgraph, nodes: nextNodes }
+      : subgraph;
+  });
+  const subgraphsChanged = subgraphs?.some(
+    (subgraph, index) => subgraph !== workflow.definitions?.subgraphs?.[index],
+  ) ?? false;
+  if (!rootChanged && !subgraphsChanged) return workflow;
+  return {
+    ...workflow,
+    nodes,
+    ...(subgraphsChanged ? {
+      definitions: {
+        ...(workflow.definitions ?? {}),
+        subgraphs,
+      },
+    } : {}),
   };
 }
 

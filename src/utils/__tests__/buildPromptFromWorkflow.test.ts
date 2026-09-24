@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { buildPromptFromWorkflow } from '../buildPromptFromWorkflow';
+import { getWidgetDefinitions } from '../widgetDefinitions';
+import { buildDefaultWidgetValues } from '../workflowInputs';
 import type { NodeTypes, Workflow, WorkflowNode } from '@/api/types';
 
 function makeNode(id: number, type: string, overrides?: Partial<WorkflowNode>): WorkflowNode {
@@ -146,5 +148,113 @@ describe('inert nodes (mute / bypass)', () => {
 
     expect(prompt['1']).toBeDefined();
     expect(prompt['2'].inputs.images).toEqual(['1', 0]);
+  });
+});
+
+describe('widget values stock sends but a saved workflow does not hold', () => {
+  const compareTypes: NodeTypes = {
+    ...nodeTypes,
+    ImageCompare: {
+      input: {
+        required: { compare_view: ['IMAGECOMPARE', { socketless: true }] },
+        optional: { image_a: ['IMAGE', {}], image_b: ['IMAGE', {}] },
+      },
+      input_order: { required: ['compare_view'], optional: ['image_a', 'image_b'] },
+      output: [],
+      output_name: [],
+      name: 'ImageCompare',
+      display_name: 'Compare Images',
+      description: '',
+      python_module: '',
+      category: '',
+    },
+    MultiPick: {
+      input: {
+        required: {
+          parts: ['EASY_COMBO', { options: [{ label: 'A', value: 0 }, { label: 'B', value: 1 }], multi_select: {} }],
+        },
+      },
+      input_order: { required: ['parts'], optional: [] },
+      output: [],
+      output_name: [],
+      name: 'MultiPick',
+      display_name: 'Multi Pick',
+      description: '',
+      python_module: '',
+      category: '',
+    },
+  } as NodeTypes;
+
+  // Shaped like the official templates: stock never saves compare_view, so the
+  // node's widgets_values is empty.
+  function compareWorkflow(): Workflow {
+    const base = makeWorkflow('my.png');
+    return {
+      ...base,
+      last_node_id: 3,
+      last_link_id: 2,
+      nodes: [
+        { ...base.nodes[0], outputs: [{ name: 'IMAGE', type: 'IMAGE', links: [1, 2] }] },
+        base.nodes[1],
+        makeNode(3, 'ImageCompare', {
+          inputs: [
+            { name: 'image_a', type: 'IMAGE', link: 2 },
+            { name: 'image_b', type: 'IMAGE', link: null },
+          ],
+          widgets_values: [],
+        }),
+      ],
+      links: [...base.links, [2, 1, 0, 3, 0, 'IMAGE']],
+    };
+  }
+
+  it('sends ImageCompare\'s required compare_view with the value stock starts it at', () => {
+    const prompt = buildPromptFromWorkflow(compareWorkflow(), compareTypes) as Record<string, { inputs: Record<string, unknown> }>;
+    // Without it the backend rejects the whole output: "Required input is
+    // missing: compare_view".
+    expect(prompt['3'].inputs).toEqual({ image_a: ['1', 0], compare_view: { __value__: ['', ''] } });
+  });
+
+  it('wraps a list widget value so it is not read as a link', () => {
+    const workflow: Workflow = {
+      ...makeWorkflow('my.png'),
+      nodes: [makeNode(5, 'MultiPick', { widgets_values: [[0, 1]] })],
+      links: [],
+    };
+    const prompt = buildPromptFromWorkflow(workflow, compareTypes) as Record<string, { inputs: Record<string, unknown> }>;
+    expect(prompt['5'].inputs.parts).toEqual({ __value__: [0, 1] });
+  });
+
+  it('leaves real links as bare [node, slot] pairs', () => {
+    const prompt = buildPromptFromWorkflow(compareWorkflow(), compareTypes) as Record<string, { inputs: Record<string, unknown> }>;
+    expect(prompt['2'].inputs.images).toEqual(['1', 0]);
+  });
+
+  it('gives the unsaved widget no widgets_values slot, so later widgets keep theirs', () => {
+    // Stock sets `widget.serialize = false`, so a widget declared after
+    // compare_view sits at index 0 of a stock-saved node.
+    const types = {
+      ...compareTypes,
+      CompareWithStrength: {
+        ...compareTypes.ImageCompare,
+        input: {
+          required: {
+            compare_view: ['IMAGECOMPARE', { socketless: true }],
+            strength: ['FLOAT', { default: 1 }],
+          },
+        },
+        input_order: { required: ['compare_view', 'strength'], optional: [] },
+        name: 'CompareWithStrength',
+      },
+    } as NodeTypes;
+    const node = makeNode(7, 'CompareWithStrength', { widgets_values: [0.25] });
+
+    const defs = getWidgetDefinitions(types, node);
+    expect(defs.map((d) => [d.name, d.widgetIndex, d.value])).toEqual([['strength', 0, 0.25]]);
+    expect(buildDefaultWidgetValues(types.CompareWithStrength)).toEqual([1]);
+
+    const workflow: Workflow = { ...makeWorkflow('my.png'), nodes: [node], links: [] };
+    const prompt = buildPromptFromWorkflow(workflow, types) as Record<string, { inputs: Record<string, unknown> }>;
+    expect(prompt['7'].inputs).toEqual({ compare_view: { __value__: ['', ''] }, strength: 0.25 });
   });
 });

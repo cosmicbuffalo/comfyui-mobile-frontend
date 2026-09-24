@@ -85,3 +85,54 @@ def test_rejects_bad_requests(output_dir, query, expected):
     assert response.kind == 'plain'
     assert response.status == expected
     assert response.headers['Cache-Control'] == 'no-store'
+
+
+class _FakeThumbWeb(_FakeWeb):
+    @staticmethod
+    def Response(status=200, text=None, headers=None, body=None, content_type=None):
+        return SimpleNamespace(
+            kind='plain', status=status, text=text, headers=headers or {},
+            body=body, content_type=content_type,
+        )
+
+
+@pytest.fixture
+def thumb_dir(tmp_path, monkeypatch):
+    (tmp_path / 'clip.mp4').write_bytes(b'video bytes')
+    # An unrelated image that merely shares the video's basename -- common in
+    # input/, where people keep a reference picture beside a clip.
+    (tmp_path / 'clip.png').write_bytes(b'png bytes')
+    monkeypatch.setattr(routes, 'web', _FakeThumbWeb)
+    monkeypatch.setattr(routes, '_source_base_dir', lambda source: str(tmp_path))
+    rendered_from = []
+    monkeypatch.setattr(
+        routes._mobile_video_thumbs, 'get_or_render_thumbnail',
+        lambda path: rendered_from.append(Path(path)) or b'first-frame-jpeg',
+    )
+    monkeypatch.setattr(
+        routes, '_render_image_thumbnail',
+        lambda path: (b'image-thumb:' + Path(path).name.encode(), 'image/webp'),
+    )
+    return tmp_path, rendered_from
+
+
+def _thumb(query):
+    return asyncio.run(routes.api_get_thumbnail(SimpleNamespace(query=query)))
+
+
+def test_video_thumbnail_is_its_first_frame_even_beside_a_same_name_image(thumb_dir):
+    tmp_path, rendered_from = thumb_dir
+    response = _thumb({'filename': 'clip.mp4', 'source': 'input'})
+
+    assert response.status == 200
+    assert response.body == b'first-frame-jpeg'
+    assert response.content_type == 'image/jpeg'
+    assert rendered_from == [tmp_path / 'clip.mp4']
+
+
+def test_the_same_name_image_still_gets_its_own_thumbnail(thumb_dir):
+    _tmp_path, rendered_from = thumb_dir
+    response = _thumb({'filename': 'clip.png', 'source': 'input'})
+
+    assert response.body == b'image-thumb:clip.png'
+    assert rendered_from == []

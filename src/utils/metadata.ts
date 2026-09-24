@@ -1,9 +1,10 @@
 
 import { isSeedInputName } from '@/utils/seedUtils';
 
-// How many distinct seeds the overlay is willing to name before it stops
-// counting. A workflow can carry a seed on a dozen nodes; the badge exists to
-// answer "what made this image", not to inventory the graph.
+// How many distinct seeds the overlay is willing to name; past this the list
+// ends in a "+N" overflow marker. A workflow can carry a seed on a dozen
+// nodes; the badge exists to answer "what made this image", not to inventory
+// the graph — but it must not pretend four seeds were all there were.
 const MAX_SEEDS = 4;
 
 interface Metadata {
@@ -12,8 +13,14 @@ interface Metadata {
   steps?: number | string;
   cfg?: number | string;
   scheduler?: string;
-  /** Every distinct seed the run executed with, in node order. */
-  seeds?: number[];
+  /**
+   * The distinct seeds the run executed with, in node order, capped at
+   * MAX_SEEDS. When the run carried more, the final element is a `"+N"`
+   * overflow marker naming how many were left out — the badge renders the list
+   * verbatim, so the marker travels in the data rather than asking every
+   * renderer to re-derive it.
+   */
+  seeds?: Array<number | string>;
 }
 
 interface PromptNode {
@@ -24,6 +31,22 @@ interface PromptNode {
 }
 
 type LinkValue = [string | number, number];
+
+/**
+ * Deterministic order for prompt node ids. Plain graphs use numeric ids;
+ * expanded subgraphs produce colon-joined execution ids ("50:7", "50:7:3").
+ * Numeric prefix first (parseInt reads it off either form), full string as the
+ * tiebreak; ids with no numeric prefix at all sort last, among themselves by
+ * string.
+ */
+function compareNodeIds(a: string, b: string): number {
+  const prefixA = parseInt(a, 10);
+  const prefixB = parseInt(b, 10);
+  const numA = Number.isNaN(prefixA) ? Number.POSITIVE_INFINITY : prefixA;
+  const numB = Number.isNaN(prefixB) ? Number.POSITIVE_INFINITY : prefixB;
+  if (numA !== numB) return numA - numB;
+  return a < b ? -1 : a > b ? 1 : 0;
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
@@ -123,9 +146,13 @@ export function extractMetadata(prompt: unknown): Metadata {
   if (!graph) return metadata;
 
   // ComfyUI prompt is a dictionary of nodes: { "node_id": { class_type: "...", inputs: {...} } }
+  // Expanded-subgraph execution ids ("50:7") are not numbers, and a comparator
+  // returning NaN for them makes the whole ordering implementation-defined —
+  // sort by the numeric prefix, then the full id string, so every graph shape
+  // orders the same way on every engine.
   const nodeEntries = Object.entries(graph);
   const nodes = nodeEntries
-    .sort((a, b) => Number(a[0]) - Number(b[0]))
+    .sort((a, b) => compareNodeIds(a[0], b[0]))
     .map(([, node]) => node as PromptNode);
 
   // Seeds are read off every node rather than a known sampler class: the value
@@ -134,13 +161,16 @@ export function extractMetadata(prompt: unknown): Metadata {
   const seeds: number[] = [];
   for (const node of nodes) {
     for (const [field, value] of Object.entries(node.inputs ?? {})) {
-      if (seeds.length >= MAX_SEEDS) break;
       if (!isSeedInputName(field)) continue;
       if (typeof value !== 'number' || !Number.isFinite(value)) continue;
       if (!seeds.includes(value)) seeds.push(value);
     }
   }
-  if (seeds.length > 0) metadata.seeds = seeds;
+  if (seeds.length > MAX_SEEDS) {
+    metadata.seeds = [...seeds.slice(0, MAX_SEEDS), `+${seeds.length - MAX_SEEDS}`];
+  } else if (seeds.length > 0) {
+    metadata.seeds = seeds;
+  }
 
   for (const node of nodes) {
     const classType = getNodeClass(node);

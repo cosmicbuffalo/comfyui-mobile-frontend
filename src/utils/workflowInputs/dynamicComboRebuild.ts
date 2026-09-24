@@ -1,6 +1,6 @@
 import type { WorkflowNode, NodeTypeDefinition } from '@/api/types';
 import { DYNAMIC_COMBO_V3, getDynamicComboSubInputs, orderedInputNames, type DynamicComboSubInput } from './comboValues';
-import { buildDefaultWidgetValues, getDefaultWidgetValue, getDynamicComboConnectionInputs, isWidgetBackedInput } from './defaultInputs';
+import { buildDefaultWidgetValues, getDefaultWidgetValue, getDynamicComboConnectionInputs, isUnsavedWidgetType, isWidgetBackedInput } from './defaultInputs';
 import { getNodePropertyWidgetIndexMap, getWidgetValue, skipImplicitSeedControlSlot } from './widgetSlots';
 
 export function occupiesWidgetSlot(
@@ -11,6 +11,8 @@ export function occupiesWidgetSlot(
 ): boolean {
   const inputEntry = node.inputs.find((i) => i.name === name);
   if (inputOptions?.forceInput === true || inputOptions?.defaultInput === true) return false;
+  // Stock never saves these, so they hold no position in widgets_values.
+  if (isUnsavedWidgetType(typeOrOptions)) return false;
   if (inputEntry?.widget) return true;
   if (isWidgetBackedInput(typeOrOptions, inputOptions)) return true;
   // Saved workflows omit socketless/legacy custom widgets from node.inputs.

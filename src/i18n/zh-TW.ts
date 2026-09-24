@@ -696,6 +696,7 @@ export const zhTW: Record<string, string> = {
   // 輸入控制項
   'Upload video from device': '從裝置上傳影片',
   'Load from camera roll': '從相簿載入',
+  'Load from device': '從裝置載入',
   'None': '無',
   'Filter templates': '篩選範本',
   'API': 'API',

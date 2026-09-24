@@ -58,4 +58,31 @@ describe('ComboControl video upload detection', () => {
     render('video', ['none'], 'none');
     expect(uploadButton()).toBeDefined();
   });
+
+  describe('image upload label', () => {
+    const renderImage = () => act(() => root.render(
+      <ComboControl
+        containerClass=""
+        name="image"
+        value="a.png"
+        options={{ options: ['a.png'], image_upload: true }}
+        onChange={() => {}}
+        hasPin={false}
+      />
+    ));
+    const labels = () => Array.from(container.querySelectorAll('button')).map((b) => b.textContent ?? '');
+
+    it('says "Load from device" in a browser', () => {
+      renderImage();
+      expect(labels().some((l) => l.includes('Load from device'))).toBe(true);
+      expect(labels().some((l) => l.includes('camera roll'))).toBe(false);
+    });
+
+    it('says "Load from camera roll" inside the iOS app', () => {
+      vi.stubGlobal('navigator', { ...navigator, userAgent: `${navigator.userAgent} CueForgeiOS/1.0` });
+      renderImage();
+      expect(labels().some((l) => l.includes('Load from camera roll'))).toBe(true);
+      expect(labels().some((l) => l.includes('Load from device'))).toBe(false);
+    });
+  });
 });

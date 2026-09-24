@@ -12,7 +12,9 @@ import { useImageViewerStore } from '@/hooks/useImageViewer';
  * The check fires when the app returns to the foreground — the moment a tab
  * that sat backgrounded across a server update would otherwise carry on with an
  * index full of deleted chunk names. Chunk prefetch (see lazyPanel) keeps such
- * a tab *working*; this is what gets it back onto the current build.
+ * a tab *working*; this is what gets it back onto the current build. A slow
+ * interval backstops the tab that never backgrounds and so would never fire
+ * visibilitychange at all.
  *
  * Reloading silently is safe only because workflow state — dirty edits, parked
  * sessions, execution progress — persists to IndexedDB and rehydrates. What
@@ -22,6 +24,13 @@ import { useImageViewerStore } from '@/hooks/useImageViewer';
  */
 
 const CHECK_THROTTLE_MS = 60_000;
+
+// Fallback for a tab that never backgrounds (a wall-mounted dashboard, a
+// desktop that stays focused all day): with only the visibilitychange trigger
+// it would never learn of an update at all. Slow on purpose — the foreground
+// check remains the primary path, this just bounds how stale a always-visible
+// tab can get.
+const VISIBLE_POLL_INTERVAL_MS = 45 * 60_000;
 
 // One silent reload per detected update. If the mismatch persists after a
 // reload (a proxy caching the old index.html), reloading again would loop
@@ -36,6 +45,10 @@ export function canReloadSilently(): boolean {
   if (workflow.isExecuting || workflow.infiniteLoop) return false;
   if (useMaskEditorStore.getState().target != null) return false;
   if (useImageViewerStore.getState().viewerOpen) return false;
+  // Any open dialog holds state no store knows about — a half-typed save
+  // name, a fullscreen widget editor's draft. The stores above cover the big
+  // surfaces; this covers everything that announces itself as a dialog.
+  if (document.querySelector('[data-dialog-root="true"], [role="dialog"]')) return false;
   return true;
 }
 
@@ -93,9 +106,16 @@ export function useAppUpdateCheck(): {
       if (document.visibilityState === 'visible') void check();
     };
     document.addEventListener('visibilitychange', onVisibilityChange);
+    // Only while visible: a backgrounded tab gets its check the moment it
+    // returns to the foreground anyway, and polling it in the meantime is
+    // wasted wakeups.
+    const intervalId = window.setInterval(() => {
+      if (document.visibilityState === 'visible') void check();
+    }, VISIBLE_POLL_INTERVAL_MS);
     return () => {
       cancelled = true;
       document.removeEventListener('visibilitychange', onVisibilityChange);
+      window.clearInterval(intervalId);
     };
   }, []);
 

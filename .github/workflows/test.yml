@@ -4,6 +4,8 @@ on:
   push:
     branches: [main, 'release-*']
   pull_request:
+  # Called by release.yml, which publishes only after this passes.
+  workflow_call:
 
 jobs:
   test:

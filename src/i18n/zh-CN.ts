@@ -697,6 +697,7 @@ export const zhCN: Record<string, string> = {
   // 输入控件
   'Upload video from device': '从设备上传视频',
   'Load from camera roll': '从相册加载',
+  'Load from device': '从设备加载',
   'None': '无',
   'Filter templates': '筛选模板',
   'API': 'API',

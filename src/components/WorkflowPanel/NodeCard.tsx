@@ -35,6 +35,7 @@ import { Dialog } from '@/components/modals/Dialog';
 import { UnpromoteSharedWidgetDialog } from '@/components/modals/UnpromoteSharedWidgetDialog';
 import { isLoraManagerNodeType } from '@/utils/loraManager';
 import { useSeedStore } from '@/hooks/useSeed';
+import { inputFileRevisionKey, useInputFileRevisions } from '@/hooks/useInputFileRevisions';
 import { useBookmarksStore } from '@/hooks/useBookmarks';
 import { usePinnedWidgetStore } from '@/hooks/usePinnedWidget';
 import { useWorkflowErrorsStore } from '@/hooks/useWorkflowErrors';
@@ -450,7 +451,9 @@ export const NodeCard = memo(function NodeCard({
   const isKSampler = node.type === 'KSampler';
   const isLoraManagerNode = isLoraManagerNodeType(node.type);
   const isFastGroupsBypasser = /fast\s+groups/i.test(node.type) && /\(rgthree\)/i.test(node.type);
-  const isImageComparer = /image\s*comparer/i.test(node.type);
+  // rgthree's Image Comparer, and core's Compare Images (`ImageCompare`), which
+  // reports its two sides the same way (a_images / b_images).
+  const isImageComparer = /image\s*comparer/i.test(node.type) || node.type === 'ImageCompare';
   const isDenoVideoCompare = node.type === 'DenoVideoCompare';
   // SetNode/GetNode (KJNodes wireless relays) render a compact relay control in
   // place of their parameters; their real slots still use the connections section.
@@ -467,10 +470,26 @@ export const NodeCard = memo(function NodeCard({
   const startEditSetGetName = useSetGetNameEditStore((s) => s.startEdit);
   const expandParametersSection = useParameterSectionFoldsStore((s) => s.expand);
   const isLoadImageNode = /LoadImage/i.test(node.type);
-  const inputImagePreview = useMemo(() => {
+  const resolvedInputImage = useMemo(() => {
     if (!isLoadImageNode || !workflow || !nodeTypes) return null;
     return resolveLoadImagePreview(workflow, nodeTypes, node);
   }, [isLoadImageNode, node, nodeTypes, workflow]);
+  // Re-uploading under the same name keeps this preview's URL; the revision
+  // makes it a new one. See useInputFileRevisions.
+  const inputFileRevision = useInputFileRevisions((s) => (resolvedInputImage
+    ? s.revisions[inputFileRevisionKey(
+      resolvedInputImage.type,
+      resolvedInputImage.subfolder
+        ? `${resolvedInputImage.subfolder}/${resolvedInputImage.filename}`
+        : resolvedInputImage.filename,
+    )]
+    : undefined));
+  const inputImagePreview = useMemo(
+    () => (resolvedInputImage && inputFileRevision
+      ? { ...resolvedInputImage, cacheToken: `upload-${inputFileRevision}` }
+      : resolvedInputImage),
+    [resolvedInputImage, inputFileRevision],
+  );
   // A LoadImage-style node's preview is its input, so masking it edits the
   // workflow. That is the only place the mask editor is offered: a result --
   // on a card or in the viewer -- has no node to write a mask back to.
