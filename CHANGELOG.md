@@ -1,5 +1,32 @@
 # Changelog
 
+## 3.3.4 - 2026-09-24
+
+### Fixed
+
+- **Closer parity with ComfyUI's desktop editor.** Subgraph settings show the
+  value that actually runs, a renamed setting keeps its name when you promote
+  it, and promoted numbers use their own range and step (decimals follow
+  "control after generate" too). The core Compare Images node now runs and
+  shows its A/B result, and multi-select lists no longer fail when queued.
+- **Input images and videos.** An uploaded image previews right away, even
+  under the name the node already had. Input videos preview on their nodes
+  again, showing their own first frame. Inputs inside folders, hidden ones
+  included, no longer show as missing.
+- **Outputs.** Hiding an item no longer reloads the whole grid, a background
+  refresh can't replace the folder you just opened, and a deleted output stays
+  gone from its queue card.
+- **Viewer.** Command+Delete works in the full-screen viewer.
+- **Everything else.** An app update never reloads the page while a dialog is
+  open. The seed badge shows "+N" when it lists only some seeds, and long seed
+  lists start folded. A workflow with an incomplete subgraph still opens, and a
+  seed you edit while a run is being queued keeps your edit.
+
+### Changed
+
+- **The image upload button says "Load from device" in a browser.** "Load from
+  camera roll" is kept for the iOS app.
+
 ## 3.3.3 - 2026-09-22
 
 ### Changed
