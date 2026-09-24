@@ -1,16 +1,34 @@
-name: Draft GitHub Release
+name: Release
+
+# A version bump on main drafts the GitHub release and publishes to the Comfy
+# registry, but only once the frontend and backend test suites have passed on
+# that exact commit. These used to be two independent workflows triggered by
+# the same push, so both finished well before the tests did and a release
+# could ship code whose tests were failing.
 on:
   push:
     branches:
       - main
     paths:
       - "pyproject.toml"
+  # Manual re-publish (for example after a registry outage). Still gated on
+  # the tests; it does not touch the GitHub release.
+  workflow_dispatch:
 
 jobs:
+  tests:
+    name: Frontend tests
+    uses: ./.github/workflows/test.yml
+
+  backend-tests:
+    name: Backend tests
+    uses: ./.github/workflows/test_backend.yml
+
   draft-release:
     name: Create Draft Release
+    needs: [tests, backend-tests]
     runs-on: ubuntu-latest
-    if: ${{ github.repository_owner == 'cosmicbuffalo' }}
+    if: ${{ github.repository_owner == 'cosmicbuffalo' && github.event_name == 'push' }}
     permissions:
       contents: write
     steps:
@@ -49,3 +67,16 @@ jobs:
           updateOnlyUnreleased: true
           removeArtifacts: true
           token: ${{ secrets.GITHUB_TOKEN }}
+
+  publish-node:
+    name: Publish Custom Node to registry
+    needs: [tests, backend-tests]
+    runs-on: ubuntu-latest
+    if: ${{ github.repository_owner == 'cosmicbuffalo' }}
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+      - name: Publish Custom Node
+        uses: Comfy-Org/publish-node-action@main
+        with:
+          personal_access_token: ${{ secrets.REGISTRY_ACCESS_TOKEN }}
