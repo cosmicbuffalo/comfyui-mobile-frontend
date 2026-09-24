@@ -568,6 +568,47 @@ describe('favorite/reject mutual exclusivity', () => {
 });
 
 describe('fetchFiles server-state hydration', () => {
+  it('does not let a quiet response from the previous folder replace the current listing', async () => {
+    let resolveAlbum!: (files: FileItem[]) => void;
+    let resolveOther!: (files: FileItem[]) => void;
+    mockGetUserImages.mockImplementation((
+      _source,
+      _count,
+      _offset,
+      _sort,
+      _includeSubfolders,
+      folder,
+    ) => new Promise((resolve) => {
+      if (folder === 'album') resolveAlbum = resolve;
+      else resolveOther = resolve;
+    }));
+    useOutputsStore.setState({
+      source: 'output',
+      currentFolder: 'album',
+      migratedFavoriteSources: ['output'],
+    });
+
+    const staleRequest = useOutputsStore.getState().fetchFiles({ quiet: true });
+    await vi.waitFor(() => expect(mockGetUserImages).toHaveBeenCalledTimes(1));
+
+    useOutputsStore.setState({ currentFolder: 'other' });
+    const currentRequest = useOutputsStore.getState().fetchFiles();
+    await vi.waitFor(() => expect(mockGetUserImages).toHaveBeenCalledTimes(2));
+
+    const currentFile = makeFile({ id: 'output/other/current.png' });
+    resolveOther([currentFile]);
+    await currentRequest;
+    expect(useOutputsStore.getState().files).toEqual([currentFile]);
+
+    resolveAlbum([makeFile({ id: 'output/album/stale.png' })]);
+    await staleRequest;
+    expect(useOutputsStore.getState()).toMatchObject({
+      currentFolder: 'other',
+      files: [currentFile],
+      isLoading: false,
+    });
+  });
+
   it('hydrates server state without requiring a directory listing', async () => {
     mockLoadFileState.mockResolvedValueOnce({
       favorite: ['favorite.png'],

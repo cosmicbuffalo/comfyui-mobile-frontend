@@ -794,6 +794,27 @@ describe('when the seed control runs', () => {
     expect((node.widgets_values as unknown[])[0]).toBe(11);
   });
 
+  it('does not advance over a seed edit made while the run was being queued', async () => {
+    loadWorkflow([makeNode(1, { type: 'KSampler', widgets_values: [10, 'increment'] })]);
+    stubPrompt(async () => {
+      const current = useWorkflowStore.getState().workflow!;
+      useWorkflowStore.setState({
+        workflow: {
+          ...current,
+          nodes: current.nodes.map((node) => ({
+            ...node,
+            widgets_values: [500, 'increment'],
+          })),
+        },
+      });
+      return ok();
+    });
+
+    await useWorkflowStore.getState().queueWorkflow(1);
+
+    expect(seedOf()).toBe(500);
+  });
+
   it('sends a batch in order, advancing between runs', async () => {
     loadWorkflow([makeNode(1, { type: 'KSampler', widgets_values: [10, 'increment'] })]);
     const bodies = stubPrompt(ok);

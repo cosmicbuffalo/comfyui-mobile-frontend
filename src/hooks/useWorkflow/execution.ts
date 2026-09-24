@@ -17,7 +17,7 @@ import {isSetGetNode} from "@/utils/setGetNodes";
 import {isUseEverywhereNode, resolveUseEverywhereForPrompt} from "@/utils/useEverywhere";
 import {isNetworkFetchError} from "@/utils/networkFetchError";
 import {isSubgraphPlaceholder} from "@/utils/canonicalWorkflowOps";
-import {materializePromotedValues, promotedSeedValueBelowHost, promotedSeedValueSource, resolvePromotedSeedControls, type PromotedSeedControl} from "@/utils/promotedSeedControls";
+import {materializePromotedValues, nextPromotedNumericValue, promotedSeedValueBelowHost, promotedSeedValueSource, resolvePromotedSeedControls, type PromotedSeedControl} from "@/utils/promotedSeedControls";
 import {resolveNodeIdentityFromHierarchicalKey} from "@/utils/workflowHierarchy";
 import {validateAndNormalizeWorkflow} from "@/utils/workflowValidator";
 import {applyWidgetVariation, formatVariationValue} from "@/utils/widgetVariations";
@@ -705,6 +705,8 @@ const queueWorkflow: WorkflowState["queueWorkflow"] = async (
       seedOverrides: Record<string, number>,
       scopeSubgraphId: string | null,
       phase: "prepare" | "advance",
+      baselineWorkflow?: Workflow,
+      baselineNode?: WorkflowNode,
     ): WorkflowNode => {
       const isPlaceholder = isSubgraphPlaceholder(sourceNode, currentWorkflow);
       // Every promoted seed whose interior widget carries control_after_generate
@@ -717,14 +719,38 @@ const queueWorkflow: WorkflowState["queueWorkflow"] = async (
       let node = sourceNode;
       if (isPlaceholder && Array.isArray(sourceNode.widgets_values)) {
         const writes: Array<{ control: PromotedSeedControl; next: number }> = [];
+        const baselineControls = baselineWorkflow && baselineNode
+          ? resolvePromotedSeedControls(baselineWorkflow, nodeTypes, baselineNode)
+          : [];
         for (const control of resolvePromotedSeedControls(currentWorkflow, nodeTypes, sourceNode)) {
           const source = promotedSeedValueSource(sourceNode, control);
+          if (phase === "advance" && baselineWorkflow && baselineNode) {
+            const baselineControl = baselineControls.find((candidate) => (
+              candidate.inputSlot === control.inputSlot
+              && candidate.valueIndex === control.valueIndex
+            ));
+            const baselineSource = baselineControl
+              ? promotedSeedValueSource(baselineNode, baselineControl)
+              : null;
+            // A user edit made during the request wins. Advance only the value
+            // and mode that actually produced the queued prompt.
+            if (
+              !baselineControl
+              || baselineControl.mode !== control.mode
+              || !baselineSource
+              || !Object.is(baselineSource.value, source.value)
+            ) {
+              continue;
+            }
+          }
           // A legacy sentinel (-1/-2/-3, written by older mobile versions) is a
           // mode, not a value. The interior control now says what the mode is,
           // and stock would send the sentinel verbatim and fail validation, so
           // step from the value beneath it and give the slot a concrete one.
           const heldSentinel =
-            source.holder === "placeholder" && isSpecialSeedValue(Number(source.value));
+            control.isSeed
+            && source.holder === "placeholder"
+            && isSpecialSeedValue(Number(source.value));
           const current = Number(heldSentinel ? promotedSeedValueBelowHost(control) : source.value);
           controlledSeedIndices.add(control.valueIndex);
           const usable = Number.isFinite(current) && !isSpecialSeedValue(current);
@@ -735,14 +761,25 @@ const queueWorkflow: WorkflowState["queueWorkflow"] = async (
             if (!heldSentinel) continue;
             next = usable ? current : generateSeedFromNode(nodeTypes, control.node);
           } else {
-            switch (control.mode) {
-              case "randomize": next = generateSeedFromNode(nodeTypes, control.node); break;
-              case "increment": next = (usable ? current : 0) + 1; break;
-              case "decrement": next = (usable ? current : 0) - 1; break;
-              default: continue;
+            if (control.isSeed) {
+              switch (control.mode) {
+                case "randomize": next = generateSeedFromNode(nodeTypes, control.node); break;
+                case "increment": next = (usable ? current : 0) + 1; break;
+                case "decrement": next = (usable ? current : 0) - 1; break;
+                default: continue;
+              }
+            } else {
+              const controlled = nextPromotedNumericValue(control, current);
+              if (controlled === undefined) continue;
+              next = controlled;
             }
           }
-          writes.push({ control, next: clampSeedToNodeBounds(next, nodeTypes, control.node) });
+          writes.push({
+            control,
+            next: control.isSeed
+              ? clampSeedToNodeBounds(next, nodeTypes, control.node)
+              : next,
+          });
         }
         if (writes.length > 0) {
           // Each instance keeps its own value on the placeholder, as stock
@@ -825,6 +862,17 @@ const queueWorkflow: WorkflowState["queueWorkflow"] = async (
 
       if (hasControlWidget) {
         if (phase === "prepare") return node;
+        if (baselineNode && Array.isArray(baselineNode.widgets_values)) {
+          if (
+            !Object.is(baselineNode.widgets_values[seedIndex], node.widgets_values[seedIndex])
+            || !Object.is(
+              baselineNode.widgets_values[controlWidgetIndex!],
+              node.widgets_values[controlWidgetIndex!],
+            )
+          ) {
+            return node;
+          }
+        }
         if (!mode || mode === "fixed") return node;
         const currentSeed = Number(node.widgets_values[seedIndex]) || 0;
         let nextSeed: number;
@@ -903,15 +951,37 @@ const queueWorkflow: WorkflowState["queueWorkflow"] = async (
       workflow: Workflow,
       seedOverrides: Record<string, number>,
       phase: "prepare" | "advance",
+      baselineWorkflow?: Workflow,
     ): Workflow => {
       pendingInteriorSeeds = new Map();
-      const updatedNodes = workflow.nodes.map((node) =>
-        processSeedNode(node, seedOverrides, null, phase),
-      );
-      const updatedSubgraphDefs = (workflow.definitions?.subgraphs ?? []).map((sg) => {
-        const updatedSgNodes = (sg.nodes ?? []).map((node) =>
-          processSeedNode(node, seedOverrides, sg.id, phase),
+      const updatedNodes = workflow.nodes.map((node) => {
+        const baselineNode = baselineWorkflow?.nodes.find((candidate) => candidate.id === node.id);
+        return processSeedNode(
+          node,
+          seedOverrides,
+          null,
+          phase,
+          baselineWorkflow,
+          baselineNode,
         );
+      });
+      const updatedSubgraphDefs = (workflow.definitions?.subgraphs ?? []).map((sg) => {
+        const baselineDefinition = baselineWorkflow?.definitions?.subgraphs?.find(
+          (candidate) => candidate.id === sg.id,
+        );
+        const updatedSgNodes = (sg.nodes ?? []).map((node) => {
+          const baselineNode = baselineDefinition?.nodes?.find(
+            (candidate) => candidate.id === node.id,
+          );
+          return processSeedNode(
+            node,
+            seedOverrides,
+            sg.id,
+            phase,
+            baselineWorkflow,
+            baselineNode,
+          );
+        });
         const changed = updatedSgNodes.some((n, idx) => n !== (sg.nodes ?? [])[idx]);
         return changed ? { ...sg, nodes: updatedSgNodes } : sg;
       }).map((sg) => {
@@ -959,6 +1029,10 @@ const queueWorkflow: WorkflowState["queueWorkflow"] = async (
       const iterationWorkflow = variations
         ? applyWidgetVariation(currentWorkflow, variations, variationValue) ?? currentWorkflow
         : currentWorkflow;
+      // Immutable snapshot of the values/modes this request is about to use.
+      // Post-queue advancement compares against it so a conflicting live edit
+      // made during the network round trip is never overwritten.
+      const advanceBaseline = currentWorkflow;
 
       // Repair link/slot consistency BEFORE building the executed prompt,
       // not only before embedding the workflow in the PNG (see below). An
@@ -1449,7 +1523,7 @@ const queueWorkflow: WorkflowState["queueWorkflow"] = async (
           ? get().workflow
           : get().parkedSessions[sid!]?.workflow;
         if (live) currentWorkflow = live;
-        currentWorkflow = runSeedPass(currentWorkflow, {}, "advance");
+        currentWorkflow = runSeedPass(currentWorkflow, {}, "advance", advanceBaseline);
         writeWorkflow(currentWorkflow);
       }
     }

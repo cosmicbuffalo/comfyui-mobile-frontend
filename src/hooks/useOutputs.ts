@@ -5,6 +5,8 @@ import * as api from '@/api/client';
 import type { FileItem, AssetSource, SortMode } from '@/api/client';
 import { useShowHiddenStore } from '@/hooks/useShowHidden';
 
+let fetchFilesRequestSequence = 0;
+
 /**
  * The deepest ancestor of `path` that is still visible with hidden files off.
  *
@@ -766,6 +768,14 @@ export const useOutputsStore = create<OutputsState>()(
       fetchFiles: async (options) => {
         const { source, currentFolder } = get();
         const showHidden = useShowHiddenStore.getState().showHidden;
+        const requestSequence = ++fetchFilesRequestSequence;
+        const requestStillCurrent = () => {
+          const current = get();
+          return requestSequence === fetchFilesRequestSequence
+            && current.source === source
+            && current.currentFolder === currentFolder
+            && useShowHiddenStore.getState().showHidden === showHidden;
+        };
         set(options?.quiet ? { error: null } : { isLoading: true, error: null });
 
         try {
@@ -773,6 +783,10 @@ export const useOutputsStore = create<OutputsState>()(
           // the directory contents. Reject has no client→server migration;
           // the server is its source of truth.
           await get().hydrateFileState(source);
+          if (!requestStillCurrent()) {
+            if (requestSequence === fetchFilesRequestSequence) set({ isLoading: false });
+            return;
+          }
           const prefix = sourcePrefix(source);
           // The mobile backend returns the full folder listing (no server-side
           // limit/offset/sort — those positional args are ignored by
@@ -787,6 +801,10 @@ export const useOutputsStore = create<OutputsState>()(
             currentFolder,
             showHidden
           );
+          if (!requestStillCurrent()) {
+            if (requestSequence === fetchFilesRequestSequence) set({ isLoading: false });
+            return;
+          }
           const hydratedState = get();
           const backendFavoriteIds = new Set(
             hydratedState.favorites.filter((id) => id.startsWith(prefix)),
@@ -813,7 +831,13 @@ export const useOutputsStore = create<OutputsState>()(
               : s.hiddenFolderPaths,
           }));
         } catch (err) {
-          set({ error: (err as Error).message, isLoading: false });
+          if (requestStillCurrent()) {
+            set({ error: (err as Error).message, isLoading: false });
+          } else if (requestSequence === fetchFilesRequestSequence) {
+            // The location changed without launching a replacement request.
+            // Do not strand the panel in the loading state owned by this one.
+            set({ isLoading: false });
+          }
         }
       },
 
