@@ -137,6 +137,72 @@ function reconcileReturnedFileState(
   return Array.from(next);
 }
 
+function sameFileValue(a: unknown, b: unknown): boolean {
+  if (a === b) return true;
+  if (!a || !b || typeof a !== 'object' || typeof b !== 'object') return false;
+  return JSON.stringify(a) === JSON.stringify(b);
+}
+
+function sameFile(a: FileItem, b: FileItem): boolean {
+  const aKeys = Object.keys(a) as Array<keyof FileItem>;
+  if (aKeys.length !== Object.keys(b).length) return false;
+  return aKeys.every((key) => sameFileValue(a[key], b[key]));
+}
+
+/**
+ * A fresh listing, with every entry that did not change swapped for the object
+ * already on screen. Cards are memoized on their file, so without this a
+ * refetch re-renders every card even when one item changed -- and returns the
+ * previous array outright when nothing did.
+ */
+export function reuseUnchangedFiles(previous: FileItem[], next: FileItem[]): FileItem[] {
+  if (previous.length === 0) return next;
+  const byId = new Map(previous.map((file) => [file.id, file]));
+  let allReused = previous.length === next.length;
+  const merged = next.map((file, index) => {
+    const prior = byId.get(file.id);
+    if (prior && sameFile(prior, file)) {
+      if (previous[index] !== prior) allReused = false;
+      return prior;
+    }
+    allReused = false;
+    return file;
+  });
+  return allReused ? previous : merged;
+}
+
+/**
+ * Hide or unhide items in a listing the moment it is asked for, rather than
+ * waiting for the server round trip and a refetch. A hidden item leaves the
+ * listing unless hidden items are shown, where it is marked instead.
+ */
+function applyHiddenLocally(
+  files: FileItem[],
+  ids: ReadonlySet<string>,
+  hidden: boolean,
+  showHidden: boolean,
+): FileItem[] {
+  let changed = false;
+  const next: FileItem[] = [];
+  for (const file of files) {
+    if (!ids.has(file.id)) {
+      next.push(file);
+      continue;
+    }
+    changed = true;
+    if (hidden && !showHidden) continue;
+    next.push({
+      ...file,
+      hiddenSelf: hidden,
+      // An item inside a hidden folder stays hidden when its own mark goes.
+      // Whether a self-hidden item is also inside one isn't known here; the
+      // quiet refetch that follows settles it.
+      hidden: hidden || (file.hidden === true && !file.hiddenSelf),
+    });
+  }
+  return changed ? next : files;
+}
+
 function touchFileModifiedDates(
   files: FileItem[],
   ids: string[],
@@ -822,7 +888,7 @@ export const useOutputsStore = create<OutputsState>()(
             .filter((f) => f.type === 'folder' && f.hidden)
             .map((f) => (f.id.startsWith(prefix) ? f.id.slice(prefix.length) : f.id));
           set((s) => ({
-            files,
+            files: reuseUnchangedFiles(s.files, files),
             isLoading: false,
             favorites: replaceSourceFavorites(s.favorites, source, Array.from(backendFavoriteIds)),
             rejected: replaceSourceFavorites(s.rejected, source, Array.from(backendRejectedIds)),
@@ -1124,13 +1190,19 @@ export const useOutputsStore = create<OutputsState>()(
         // Applied before the writes land, so a generation queued in the next
         // breath already inherits the mark. `refresh` below re-reads the
         // server's view and corrects anything that was refused.
+        const targets = new Set(ids);
+        const showHidden = useShowHiddenStore.getState().showHidden;
         set((s) => {
           const marked = new Set(s.hiddenIds);
           for (const id of ids) {
             if (hidden) marked.add(id);
             else marked.delete(id);
           }
-          return { hiddenIds: [...marked] };
+          return {
+            hiddenIds: [...marked],
+            files: applyHiddenLocally(s.files, targets, hidden, showHidden),
+            promptSearchResults: applyHiddenLocally(s.promptSearchResults, targets, hidden, showHidden),
+          };
         });
         const results = await Promise.all(ids.map((id) => {
           const path = id.startsWith(prefix) ? id.slice(prefix.length) : id;
@@ -1144,10 +1216,15 @@ export const useOutputsStore = create<OutputsState>()(
         // set_state refuses a path with nothing on disk, which is what a file
         // deleted in another tab looks like.
         const failure = results.find((result): result is Error => result instanceof Error);
+        // Quietly: a loud refresh takes the whole grid down behind a loading
+        // state and rebuilds it, for a change already on screen.
+        get().fetchFolders();
+        const reconciled = get().fetchFiles({ quiet: true });
         if (failure) {
+          // After the refetch, which starts by clearing `error`.
+          await reconciled;
           set({ error: `Could not ${hidden ? 'hide' : 'unhide'} every item: ${failure.message}` });
         }
-        get().refresh();
       },
 
       toggleSelectionMode: () => {

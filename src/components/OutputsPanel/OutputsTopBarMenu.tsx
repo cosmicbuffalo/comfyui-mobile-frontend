@@ -1,7 +1,7 @@
 import type { RefObject } from 'react';
 import { useState } from 'react';
 import { useOutputsStore } from '@/hooks/useOutputs';
-import { useImageViewerStore } from '@/hooks/useImageViewer';
+import { useAnyMediaViewerOpen } from '@/hooks/useAnyMediaViewerOpen';
 import { MEDIA_VIEWER_Z_INDEX } from '@/components/ImageViewer/MediaViewer';
 import { useShowHiddenStore } from '@/hooks/useShowHidden';
 import { useDeleteRejectedShortcut } from '@/hooks/useDeleteRejectedShortcut';
@@ -49,7 +49,7 @@ export function OutputsTopBarMenu({
   const rejectedHere = rejectedIdsForSources(rejected, [source]);
   const fetchFiles = useOutputsStore((s) => s.fetchFiles);
   const [deleteRejectedOpen, setDeleteRejectedOpen] = useState(false);
-  const viewerOpen = useImageViewerStore((state) => state.viewerOpen);
+  const viewerOpen = useAnyMediaViewerOpen();
 
   const handleDeleteRejectedClick = () => {
     setDeleteRejectedOpen(true);
@@ -184,11 +184,11 @@ export function OutputsTopBarMenu({
           description={rejectedHere.length === 1
             ? t('This will permanently delete {count} rejected output from the server. This cannot be undone.', { count: rejectedHere.length })
             : t('This will permanently delete {count} rejected outputs from the server. This cannot be undone.', { count: rejectedHere.length })}
-          // Above the viewer whenever it is open. The keyboard shortcut is
-          // guarded from firing there at all, so this is the second line: a
-          // confirmation that mounts below the viewer's overlay is invisible,
-          // unclickable, and focused on its Delete button. Same expression the
-          // outputs panel's own dialogs use.
+          // Above the viewer whenever one is open — the chord is meant to
+          // work from inside it, and a confirmation that mounts below the
+          // viewer's overlay is invisible, unclickable, and already focused on
+          // its Delete button. Same expression the outputs panel's own dialogs
+          // use.
           zIndex={viewerOpen ? MEDIA_VIEWER_Z_INDEX + 100 : 1800}
           actions={[
             {

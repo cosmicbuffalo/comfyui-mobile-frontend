@@ -2,6 +2,8 @@ import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Dialog } from '@/components/modals/Dialog';
+import { useImageViewerStore } from '@/hooks/useImageViewer';
+import { useOutputsStore } from '@/hooks/useOutputs';
 
 describe('Dialog keyboard actions', () => {
   let container: HTMLDivElement;
@@ -18,6 +20,8 @@ describe('Dialog keyboard actions', () => {
       root.unmount();
     });
     container.remove();
+    useImageViewerStore.setState({ viewerOpen: false });
+    useOutputsStore.setState({ outputsViewerOpen: false });
   });
 
   it('activates the autofocused action on Enter even when focus is outside the dialog controls', async () => {
@@ -172,6 +176,48 @@ describe('Dialog keyboard actions', () => {
     }));
 
     expect(onSave).not.toHaveBeenCalled();
+  });
+
+  // The top bar sits under the media viewer's overlay, so a dialog that still
+  // inset the backdrop by `--top-bar-offset` left an undimmed strip of viewer
+  // across the top of the screen.
+  it.each([
+    ['the app viewer', () => useImageViewerStore.setState({ viewerOpen: true })],
+    ['the outputs viewer', () => useOutputsStore.setState({ outputsViewerOpen: true })],
+  ])('covers the chrome insets while %s is open', async (_label, openViewer) => {
+    await act(async () => {
+      openViewer();
+    });
+
+    await act(async () => {
+      root.render(
+        <Dialog
+          onClose={() => {}}
+          title="Delete file?"
+          actions={[{ label: 'Delete', onClick: () => {} }]}
+        />,
+      );
+    });
+
+    const dialogRoot = document.querySelector<HTMLElement>('[data-dialog-root="true"]');
+    expect(dialogRoot?.style.top).toBe('0px');
+    expect(dialogRoot?.style.bottom).toBe('0px');
+  });
+
+  it('leaves room for the chrome bars when no viewer is open', async () => {
+    await act(async () => {
+      root.render(
+        <Dialog
+          onClose={() => {}}
+          title="Delete file?"
+          actions={[{ label: 'Delete', onClick: () => {} }]}
+        />,
+      );
+    });
+
+    const dialogRoot = document.querySelector<HTMLElement>('[data-dialog-root="true"]');
+    expect(dialogRoot?.style.top).toBe('var(--top-bar-offset, 0px)');
+    expect(dialogRoot?.style.bottom).toBe('var(--bottom-bar-offset, 0px)');
   });
 
   it('remains interactive when rendered inside a pointer-events-none overlay', async () => {

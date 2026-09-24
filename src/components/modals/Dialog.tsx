@@ -1,5 +1,6 @@
 import { useEffect, useRef, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
+import { useAnyMediaViewerOpen } from '@/hooks/useAnyMediaViewerOpen';
 
 interface DialogAction {
   label: ReactNode;
@@ -33,10 +34,10 @@ interface DialogProps {
   disableClose?: boolean;
   zIndex?: number;
   /**
-   * When true the backdrop covers the entire viewport instead of leaving
-   * space for the top/bottom chrome bars. Use this when the dialog is
-   * rendered above a fullscreen overlay (e.g. the image viewer) where the
-   * chrome is not visible.
+   * Force the backdrop to cover the entire viewport instead of leaving space
+   * for the top/bottom chrome bars. A dialog opened while a media viewer is
+   * on screen does this on its own (see `useAnyMediaViewerOpen` below), so
+   * this is only needed for other fullscreen overlays.
    */
   fullscreen?: boolean;
   background?: DialogBackground;
@@ -72,6 +73,14 @@ export function Dialog({
     }
     return 'px-3 py-2 rounded-lg text-sm font-medium text-slate-200 hover:bg-white/10 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-transparent';
   };
+
+  // The chrome bars are inset out of the backdrop so a dialog never covers
+  // them — except when a full-screen media viewer is up, which paints over the
+  // top bar itself. Leaving the inset in place there cuts a top-bar-sized strip
+  // of un-dimmed viewer out of the top of the backdrop, so ask about the viewer
+  // here rather than relying on every call site to pass `fullscreen`.
+  const mediaViewerOpen = useAnyMediaViewerOpen();
+  const coversChrome = fullscreen || mediaViewerOpen;
 
   const alignClass = align === 'top' ? 'items-start pt-6' : 'items-center';
   const surfaceClass = background === 'opaque' ? 'bg-slate-900' : 'bg-slate-900/95';
@@ -222,8 +231,8 @@ export function Dialog({
       className={`fixed left-0 right-0 pointer-events-auto bg-black/50 flex ${alignClass} justify-center p-4 overscroll-contain`}
       style={{
         zIndex,
-        top: fullscreen ? 0 : 'var(--top-bar-offset, 0px)',
-        bottom: fullscreen ? 0 : 'var(--bottom-bar-offset, 0px)',
+        top: coversChrome ? 0 : 'var(--top-bar-offset, 0px)',
+        bottom: coversChrome ? 0 : 'var(--bottom-bar-offset, 0px)',
       }}
       onClick={handleBackdropClick}
       onTouchMove={(event) => {

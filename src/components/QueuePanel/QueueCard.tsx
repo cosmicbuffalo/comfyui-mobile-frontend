@@ -35,6 +35,7 @@ import { PromptPreview, type PromptPreviewInputImage } from './PromptPreview';
 import { getDisplayName } from '@/components/AppMenu/userWorkflowHelpers';
 import { getQueueCardHeaderGridClass, getQueueCardHeaderLabel } from './queueCardHeader';
 import { getHistoryImageFileId } from '@/utils/viewerImages';
+import { missingMediaKey, probeMissingMedia, useMissingMediaStore } from '@/hooks/useMissingMedia';
 import { preloadQueueMedia } from './queueMediaHandoff';
 import {
   reportQueueAutoplayDecision,
@@ -116,6 +117,8 @@ interface QueueMediaEntryProps {
   // only once its bytes are actually paintable, so the previous image stays
   // on screen until the new one is ready.
   onMediaReady?: () => void;
+  /** The run this output belongs to; scopes a "file is gone" mark to it. */
+  promptId?: string;
 }
 
 // Renders one finished/preview media item with all its overlay badges. Shared by
@@ -147,6 +150,7 @@ function QueueMediaEntry({
   onToggleFavorite,
   onToggleReject,
   onMediaReady,
+  promptId,
 }: QueueMediaEntryProps) {
   const { t } = useI18n();
   const { img, index, isPreview } = entry;
@@ -294,12 +298,17 @@ function QueueMediaEntry({
   const finalizeMediaError = useCallback(() => {
     setMediaLoaded(true); // clear the loading spinner
     setMediaError(true);
+    // The "unavailable" placeholder is for media that fails to load while the
+    // file is still there. Ask whether this run's file is gone instead: if it
+    // is, the card drops the output rather than keeping a slot for it. Only a
+    // 404/410 counts, so a transient failure leaves the entry where it is.
+    if (!isLatent && hasCompleted && promptId) probeMissingMedia(img, promptId);
     // A failed BACK-slot load must still settle the swap: without this the
     // promote never fires, the swap spinner spins forever, and the tapped tab
     // is unreachable until the item changes. Promoting shows the honest
     // "unavailable" placeholder instead.
     onMediaReady?.();
-  }, [onMediaReady]);
+  }, [hasCompleted, img, isLatent, onMediaReady, promptId]);
 
   const handleMediaError = (recoverableImage: boolean) => {
     if (recoverableImage) setVideoFailureCode(null);
@@ -717,6 +726,7 @@ function QueueCardComponent({
   onMediaReady,
 }: QueueCardProps) {
   const { t } = useI18n();
+  const missingMediaKeys = useMissingMediaStore((s) => s.missingKeys);
   const previewVisibility = useQueueStore((s) => s.previewVisibility);
   const previewVisibilityDefault = useQueueStore((s) => s.previewVisibilityDefault);
   const showQueueMetadata = useQueueStore((s) => s.showQueueMetadata);
@@ -1018,14 +1028,23 @@ function QueueCardComponent({
       mediaOrderPromptIdRef.current = item.id;
       mediaOrderRef.current = [];
     }
+    // Outputs this run is known to have lost leave the card entirely rather
+    // than sitting in the tab row as broken images. Scoped to this run, so a
+    // later run that reuses a deleted filename still shows its own output.
+    const runId = item.data.prompt_id || item.id;
+    const missing = new Set(missingMediaKeys);
     const nextImages = getDisplayableQueueOutputs(dedupeQueueImages([
       ...promptSourceInputImages,
       ...(historyData ? historyData.outputs.images : (isRunning ? runningImages : [])),
-    ]), { includeInputImages: showPromptPreview });
+    ]), { includeInputImages: showPromptPreview })
+      .filter((img: HistoryOutputImage) => !missing.has(missingMediaKey(runId, getHistoryImageFileId(img))));
     const orderedImages = preserveQueueImageOrder(mediaOrderRef.current, nextImages);
     mediaOrderRef.current = orderedImages.map(getQueueImageKey);
     return orderedImages;
-  }, [historyData, isRunning, item.id, promptSourceInputImages, runningImages, showPromptPreview]);
+  }, [
+    historyData, isRunning, item.data.prompt_id, item.id, missingMediaKeys,
+    promptSourceInputImages, runningImages, showPromptPreview,
+  ]);
   const previewsVisible = Boolean(
     item.data.prompt_id
       ? previewVisibility[item.data.prompt_id] ?? previewVisibilityDefault
@@ -1775,6 +1794,7 @@ function QueueCardComponent({
         ? { maxHeight: 'var(--queue-media-max-height)', objectFit: 'contain' as const }
         : undefined,
       anchorId: item.id,
+      promptId: item.data.prompt_id || item.id,
       hasCompleted,
       durationLabel,
       success,

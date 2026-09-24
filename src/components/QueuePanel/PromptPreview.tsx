@@ -45,6 +45,10 @@ interface PromptPreviewProps {
   onInputImageClick?: (src: string, index: number) => void;
 }
 
+// Above this many seeds the Seeds fold starts collapsed. Matches MAX_SEEDS in
+// utils/metadata.ts, where the viewer badge truncates to the same count.
+const SEEDS_OPEN_BY_DEFAULT_MAX = 4;
+
 function DiffText({ segments }: { segments: DiffSegment[] }) {
   return (
     <>
@@ -230,6 +234,10 @@ export function PromptPreview({
               anchorId={`${anchorBaseId}::seeds`}
               labelClassName="text-[11px] font-semibold text-violet-300"
               iconClassName="text-violet-300/70"
+              // A couple of seeds are worth a glance and stay open; a
+              // many-sampler workflow would otherwise unfold a wall of rows on
+              // every card (the viewer badge caps at the same count).
+              defaultOpen={seeds.length <= SEEDS_OPEN_BY_DEFAULT_MAX}
             >
               <div className="space-y-1">
                 {seeds.map((seed) => (

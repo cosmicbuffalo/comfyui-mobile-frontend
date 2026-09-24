@@ -411,4 +411,56 @@ describe('QueueCard active prompt preview', () => {
     const rows = [...container.querySelectorAll('.queue-seed-row')];
     expect(rows.map((row) => row.textContent)).toEqual(['KSampler24680']);
   });
+
+  const seedFoldHidden = () => container
+    .querySelector('.queue-seed-row')!
+    .closest('[aria-hidden]')!
+    .getAttribute('aria-hidden');
+
+  it('keeps the Seeds fold open for a handful of seeds', async () => {
+    mocks.queueState.workflowDiffs['active-prompt'].seeds = Array.from(
+      { length: 4 },
+      (_, i) => ({ nodeId: String(i + 1), label: `Sampler ${i + 1}`, field: 'seed', value: i + 1 }),
+    );
+
+    await act(async () => {
+      root.render(
+        <QueueCard
+          item={makeItem('running')}
+          isActuallyRunning
+          progress={0}
+          viewerImages={[]}
+          runningImages={[]}
+          onOpenMenu={() => {}}
+          isTopDoneItem={false}
+        />,
+      );
+    });
+
+    expect(seedFoldHidden()).toBe('false');
+  });
+
+  it('starts the Seeds fold collapsed when a many-sampler run would unfold a wall of rows', async () => {
+    // The rows are still one tap away — they just don't expand on every card.
+    mocks.queueState.workflowDiffs['active-prompt'].seeds = Array.from(
+      { length: 5 },
+      (_, i) => ({ nodeId: String(i + 1), label: `Sampler ${i + 1}`, field: 'seed', value: i + 1 }),
+    );
+
+    await act(async () => {
+      root.render(
+        <QueueCard
+          item={makeItem('running')}
+          isActuallyRunning
+          progress={0}
+          viewerImages={[]}
+          runningImages={[]}
+          onOpenMenu={() => {}}
+          isTopDoneItem={false}
+        />,
+      );
+    });
+
+    expect(seedFoldHidden()).toBe('true');
+  });
 });

@@ -113,7 +113,7 @@ describe('useDeleteRejectedShortcut', () => {
   });
 });
 
-describe('useDeleteRejectedShortcut guards against a hidden confirmation', () => {
+describe('useDeleteRejectedShortcut under the full-screen viewer', () => {
   let container: HTMLDivElement;
   let root: Root;
   const onTrigger = vi.fn();
@@ -133,16 +133,16 @@ describe('useDeleteRejectedShortcut guards against a hidden confirmation', () =>
     document.querySelectorAll('[role="dialog"]').forEach((el) => el.remove());
   });
 
-  it('does not fire while the full-screen viewer is open', () => {
-    // The panel's TopBar stays mounted underneath the viewer, so without this
-    // the chord opened a confirmation below the overlay: invisible,
-    // unclickable, and already focused on its Delete button.
+  it('fires while the viewer is open — culling rejects is what it is for', () => {
+    // The confirmation it opens is the caller's responsibility to paint above
+    // the viewer; below the overlay it would be invisible, unclickable and
+    // already focused on its Delete button.
     act(() => root.render(<Harness enabled onTrigger={onTrigger} />));
     useImageViewerStore.setState({ viewerOpen: true });
 
     const event = dispatchShortcut();
-    expect(onTrigger).not.toHaveBeenCalled();
-    expect(event.defaultPrevented).toBe(false);
+    expect(onTrigger).toHaveBeenCalledTimes(1);
+    expect(event.defaultPrevented).toBe(true);
   });
 
   it('does not fire while another dialog is already open', () => {
@@ -156,7 +156,7 @@ describe('useDeleteRejectedShortcut guards against a hidden confirmation', () =>
     dialog.remove();
   });
 
-  it('still fires with the viewer closed and no dialog up', () => {
+  it('fires with the viewer closed and no dialog up', () => {
     act(() => root.render(<Harness enabled onTrigger={onTrigger} />));
     dispatchShortcut();
     expect(onTrigger).toHaveBeenCalledTimes(1);

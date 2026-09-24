@@ -57,4 +57,26 @@ describe('canReloadSilently', () => {
     useImageViewerStore.setState({ viewerOpen: true });
     expect(canReloadSilently()).toBe(false);
   });
+
+  it('blocks while any dialog is open (a typed save-name is transient too)', () => {
+    const dialog = document.createElement('div');
+    dialog.setAttribute('role', 'dialog');
+    document.body.appendChild(dialog);
+    try {
+      expect(canReloadSilently()).toBe(false);
+    } finally {
+      dialog.remove();
+    }
+  });
+
+  it("blocks on the app's own dialog-root marker", () => {
+    const dialog = document.createElement('div');
+    dialog.setAttribute('data-dialog-root', 'true');
+    document.body.appendChild(dialog);
+    try {
+      expect(canReloadSilently()).toBe(false);
+    } finally {
+      dialog.remove();
+    }
+  });
 });

@@ -195,14 +195,39 @@ describe('extractMetadata', () => {
       expect(extractMetadata(prompt).seeds).toEqual([42]);
     });
 
-    it('stops after four distinct seeds', () => {
+    it('caps at four seeds and says how many were left out', () => {
+      // The badge answers "what made this image", not an inventory — but a
+      // silent cut would present four seeds as all there were.
       const prompt = Object.fromEntries(
         Array.from({ length: 9 }, (_, i) => [
           String(i + 1),
           { class_type: 'KSampler', inputs: { seed: i + 1 } },
         ]),
       );
+      expect(extractMetadata(prompt).seeds).toEqual([1, 2, 3, 4, '+5']);
+    });
+
+    it('carries no overflow marker at exactly the cap', () => {
+      const prompt = Object.fromEntries(
+        Array.from({ length: 4 }, (_, i) => [
+          String(i + 1),
+          { class_type: 'KSampler', inputs: { seed: i + 1 } },
+        ]),
+      );
       expect(extractMetadata(prompt).seeds).toEqual([1, 2, 3, 4]);
+    });
+
+    it('orders subgraph execution ids deterministically', () => {
+      // "50:7" is not a number, and a NaN-returning comparator hands the
+      // ordering to the engine's sort internals. Numeric prefix first, full
+      // id string as the tiebreak.
+      const prompt = {
+        '50:7': { class_type: 'KSampler', inputs: { seed: 507 } },
+        '3': { class_type: 'KSampler', inputs: { seed: 3 } },
+        '50:2': { class_type: 'KSampler', inputs: { seed: 502 } },
+        '12': { class_type: 'KSampler', inputs: { seed: 12 } },
+      };
+      expect(extractMetadata(prompt).seeds).toEqual([3, 12, 502, 507]);
     });
   });
 });
