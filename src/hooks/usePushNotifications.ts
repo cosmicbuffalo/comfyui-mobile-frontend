@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   getPushConfig,
+  PushEndpointNotAllowedError,
   sendSubscription,
   removeSubscription,
   sendTestPush,
@@ -140,10 +141,26 @@ export function usePushNotifications(): PushState {
           applicationServerKey: urlBase64ToUint8Array(config.vapidPublicKey) as BufferSource,
         }));
 
-      await sendSubscription(subscription, locale);
+      try {
+        await sendSubscription(subscription, locale);
+      } catch (err) {
+        // A refused service would leave a browser subscription the server will
+        // never send to, and the next load would read it as "subscribed".
+        if (err instanceof PushEndpointNotAllowedError) {
+          await subscription.unsubscribe().catch(() => false);
+        }
+        throw err;
+      }
       syncedLocaleRef.current = locale;
       setSubscribed(true);
     } catch (err) {
+      if (err instanceof PushEndpointNotAllowedError) {
+        setError(t(
+          "This server doesn't send to this browser's push service ({host}). Ask the server's administrator to add it to COMFYUI_MOBILE_WEB_PUSH_HOSTS.",
+          { host: err.host },
+        ));
+        return;
+      }
       setError(err instanceof Error ? err.message : t('Failed to enable notifications.'));
     } finally {
       setBusy(false);

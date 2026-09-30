@@ -40,6 +40,16 @@ async def api_push_subscribe(request):
         if subscription is None and isinstance(body, dict) and "endpoint" in body:
             subscription = body
         if not _mobile_web_push.add_subscription(subscription, locale):
+            host = _mobile_web_push.refused_host(subscription)
+            if host:
+                # The operator is the only one who can fix this, and the log is
+                # where they will look, so name the host and the setting.
+                print(f"[Mobile Push] refused a subscription to {host}: not a known "
+                      f"push service. If this is the browser's real push service, "
+                      f"add {host} to COMFYUI_MOBILE_WEB_PUSH_HOSTS and restart ComfyUI.",
+                      flush=True)
+                return web.json_response(
+                    {"error": "endpoint_not_allowed", "host": host}, status=400)
             return web.json_response({"error": "invalid_subscription"}, status=400)
         return web.json_response({"ok": True, "subscriptions": _mobile_web_push.subscription_count()})
     except Exception as e:

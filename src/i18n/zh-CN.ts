@@ -967,6 +967,7 @@ export const zhCN: Record<string, string> = {
   'Notifications are blocked in browser settings.': '通知已在浏览器设置中被阻止。',
   'Notification permission was not granted.': '未授予通知权限。',
   'Push is not available on the server (is pywebpush installed?).': '服务器上不可用推送功能（是否已安装 pywebpush？）。',
+  'This server doesn\'t send to this browser\'s push service ({host}). Ask the server\'s administrator to add it to COMFYUI_MOBILE_WEB_PUSH_HOSTS.': '此服务器不会向该浏览器的推送服务（{host}）发送通知。请让服务器管理员将其添加到 COMFYUI_MOBILE_WEB_PUSH_HOSTS。',
   'Failed to enable notifications.': '开启通知失败。',
   'Failed to disable notifications.': '关闭通知失败。',
   'No notification was delivered. Make sure notifications are enabled on this device.': '未收到通知。请确保此设备上已开启通知。',

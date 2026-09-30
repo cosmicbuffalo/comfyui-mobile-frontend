@@ -1,5 +1,21 @@
 # Changelog
 
+## 3.3.5 - 2026-09-26
+
+### Security
+
+- **Web push only sends to real push services.** A browser subscription's
+  endpoint was stored with only an `http` prefix check, so a client could make
+  the server POST to an address of its choosing, including loopback and LAN
+  services. Endpoints must now be HTTPS on a known browser push service
+  (Apple, Google, Mozilla, Microsoft). Subscriptions stored by earlier
+  versions that fall outside the list are dropped without being contacted.
+  If a browser uses a push service that isn't listed, Preferences →
+  Notifications names it, the server log says what to add, and an
+  administrator can allow it with `COMFYUI_MOBILE_WEB_PUSH_HOSTS` (see
+  [Server settings](./README.md#server-settings)). Reported by the Comfy
+  Registry review.
+
 ## 3.3.4 - 2026-09-24
 
 ### Fixed

@@ -1,6 +1,6 @@
 # ComfyUI Mobile User Guide
 
-This guide walks through every feature in the mobile frontend as of `v3.3.4`
+This guide walks through every feature in the mobile frontend as of `v3.3.5`
 
 ## Table of Contents
 
@@ -476,6 +476,8 @@ Push notifications tell you a run finished even when the app is closed or the sc
 
 > [!NOTE]
 > On **iOS**, Safari only allows push for apps installed to the Home Screen. Use Share → **Add to Home Screen**, open the app from that icon, and the enable button becomes available. The panel shows this instruction whenever it detects the situation.
+
+The server only sends notifications through the push services that Safari, Chrome and other Chromium browsers, Firefox, and Edge use. If your browser uses a different one, **Enable notifications** shows *"This server doesn't send to this browser's push service"* along with the service's name. Your server's administrator can allow it; see [Allowing another push service](./README.md#allowing-another-push-service).
 
 Delivery depends on the `pywebpush` package being installed on the server (it ships in this project's `requirements.txt`). If it's missing, the app reports notifications as unavailable and everything else keeps working normally.
 

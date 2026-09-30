@@ -966,6 +966,7 @@ export const ko: Record<string, string> = {
   'Notifications are blocked in browser settings.': '브라우저 설정에서 알림이 차단되었습니다.',
   'Notification permission was not granted.': '알림 권한이 부여되지 않았습니다.',
   'Push is not available on the server (is pywebpush installed?).': '서버에서 푸시 알림을 사용할 수 없습니다（pywebpush가 설치되어 있나요？）.',
+  'This server doesn\'t send to this browser\'s push service ({host}). Ask the server\'s administrator to add it to COMFYUI_MOBILE_WEB_PUSH_HOSTS.': '이 서버는 이 브라우저의 푸시 서비스({host})로 알림을 보내지 않습니다. 서버 관리자에게 COMFYUI_MOBILE_WEB_PUSH_HOSTS에 추가해 달라고 요청하세요.',
   'Failed to enable notifications.': '알림을 켜지 못했습니다.',
   'Failed to disable notifications.': '알림을 끄지 못했습니다.',
   'No notification was delivered. Make sure notifications are enabled on this device.': '알림이 전달되지 않았습니다. 이 기기에서 알림이 활성화되어 있는지 확인하세요.',

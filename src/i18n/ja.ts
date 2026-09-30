@@ -966,6 +966,7 @@ export const ja: Record<string, string> = {
   'Notifications are blocked in browser settings.': 'ブラウザの設定で通知がブロックされています。',
   'Notification permission was not granted.': '通知の許可が得られませんでした。',
   'Push is not available on the server (is pywebpush installed?).': 'サーバーでプッシュ通知を利用できません（pywebpush はインストールされていますか？）。',
+  'This server doesn\'t send to this browser\'s push service ({host}). Ask the server\'s administrator to add it to COMFYUI_MOBILE_WEB_PUSH_HOSTS.': 'このサーバーは、このブラウザーのプッシュサービス（{host}）への送信を許可していません。サーバー管理者に COMFYUI_MOBILE_WEB_PUSH_HOSTS への追加を依頼してください。',
   'Failed to enable notifications.': '通知の有効化に失敗しました。',
   'Failed to disable notifications.': '通知の無効化に失敗しました。',
   'No notification was delivered. Make sure notifications are enabled on this device.': '通知が届きませんでした。このデバイスで通知が有効になっていることを確認してください。',

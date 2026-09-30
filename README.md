@@ -127,6 +127,54 @@ http://<your-comfyui-ip>:8188/mobile
 
 A full walkthrough of the app — gestures, panels, workflow editing, LoRA Manager integration, and everything else — is in [USER_GUIDE.md](./USER_GUIDE.md).
 
+<a id="server-settings"></a>
+### Server settings (environment variables)
+
+Nothing needs configuring for a normal install. These settings are for administrators with a specific need. Each one is read from the environment ComfyUI runs under, so set it where ComfyUI is started, then **restart ComfyUI**.
+
+| Variable | Default | What it does |
+|---|---|---|
+| `COMFYUI_MOBILE_WEB_PUSH_HOSTS` | *(empty)* | Extra push services that browser notifications may be sent to. See [Allowing another push service](#allowing-another-push-service). |
+| `COMFYUI_MOBILE_APP_PUSH_RELAYS` | *(empty)* | Extra relay origins for iOS app notifications, for operators running their own relay. See [CUEFORGE_PRIVACY.md](./CUEFORGE_PRIVACY.md#where-it-can-be-sent). |
+| `COMFYUI_MOBILE_APP_PUSH` | on | Set to `0` to turn off iOS app notification pairing entirely. |
+
+How to set one depends on how you start ComfyUI:
+
+- **From a shell:** `COMFYUI_MOBILE_WEB_PUSH_HOSTS=push.example.org python main.py --listen`
+- **A systemd service:** add `Environment=COMFYUI_MOBILE_WEB_PUSH_HOSTS=push.example.org` under `[Service]`, then `systemctl daemon-reload` and restart the service.
+- **Windows portable (`run_nvidia_gpu.bat` and friends):** add `set COMFYUI_MOBILE_WEB_PUSH_HOSTS=push.example.org` on a line before the one that starts ComfyUI.
+- **Docker:** `-e COMFYUI_MOBILE_WEB_PUSH_HOSTS=push.example.org` on `docker run`, or an `environment:` entry in Compose.
+
+<a id="allowing-another-push-service"></a>
+#### Allowing another push service
+
+Browser notifications are sent by your server to the push service run by the user's browser vendor. The server only sends to the services mainstream browsers use, and refuses any other address. Without that check, anyone who can reach your server could make it send requests to other machines on your network.
+
+The built-in list covers:
+
+| Service | Used by |
+|---|---|
+| `push.apple.com` | Safari on macOS, and Home Screen web apps on iPhone and iPad |
+| `fcm.googleapis.com` | Chrome, and most Chromium-based browsers (Brave, Opera, Vivaldi) |
+| `push.services.mozilla.com` | Firefox |
+| `notify.windows.com` | Edge |
+
+**You only need this setting if** a user's browser uses a push service that isn't listed, for example a Firefox build pointed at a self-hosted push server. When that happens, the user sees *"This server doesn't send to this browser's push service (…)"* in **Preferences → Notifications**, and the ComfyUI log shows the exact host to add:
+
+```
+[Mobile Push] refused a subscription to push.example.org: not a known push service. If this is the browser's real push service, add push.example.org to COMFYUI_MOBILE_WEB_PUSH_HOSTS and restart ComfyUI.
+```
+
+Rules for the value:
+
+- It's a comma-separated list of hostnames, for example `push.example.org,push.example.net`.
+- Each entry also covers its subdomains, so `example.org` allows `push.example.org` as well. `*.example.org` and a pasted `https://…` URL work too; only the hostname is used.
+- Endpoints must use HTTPS on the standard port (443). A push service on any other port can't be allowed.
+- Removing a host takes effect on restart. Subscriptions to that host are deleted the next time a notification is sent, without the server contacting them.
+
+> [!CAUTION]
+> Only add a host you know is a real push service. Every host on this list is somewhere your server will POST to at a client's request. Never add `localhost`, an IP address, or a machine on your own network.
+
 ## Development
 
 Contributions are welcome — see [CONTRIBUTING.md](./CONTRIBUTING.md) for the pull-request checklist and the required localizations for new user-facing text. Or if you'd just like to drop a note for a feature request or bug report, feel free to create an issue any time.
@@ -176,6 +224,7 @@ npm run test:mask-e2e
 - [CHANGELOG.md](./CHANGELOG.md) — release history
 - [CONTRIBUTING.md](./CONTRIBUTING.md) — contribution guidelines
 - [CUEFORGE_PRIVACY.md](./CUEFORGE_PRIVACY.md) — privacy & data-handling notes
+- [Server settings](#server-settings) — environment variables for administrators
 
 ## License
 
