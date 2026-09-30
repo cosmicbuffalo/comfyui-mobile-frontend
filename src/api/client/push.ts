@@ -21,6 +21,21 @@ export async function getPushConfig(): Promise<PushConfig> {
   return response.json();
 }
 
+/**
+ * The server refused this browser's push service: its host is not on the
+ * server's allowlist. Only the server's operator can fix that, so the caller
+ * should say which host and which setting.
+ */
+export class PushEndpointNotAllowedError extends Error {
+  readonly host: string;
+
+  constructor(host: string) {
+    super(`Push service ${host} is not allowed by this server`);
+    this.host = host;
+    this.name = 'PushEndpointNotAllowedError';
+  }
+}
+
 export async function sendSubscription(
   subscription: PushSubscription,
   locale?: string,
@@ -30,7 +45,13 @@ export async function sendSubscription(
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ subscription: subscription.toJSON(), locale }),
   });
-  if (!response.ok) throw new Error('Failed to register subscription');
+  if (!response.ok) {
+    const body = await response.json().catch(() => null);
+    if (body?.error === 'endpoint_not_allowed' && typeof body.host === 'string') {
+      throw new PushEndpointNotAllowedError(body.host);
+    }
+    throw new Error('Failed to register subscription');
+  }
   return response.json();
 }
 

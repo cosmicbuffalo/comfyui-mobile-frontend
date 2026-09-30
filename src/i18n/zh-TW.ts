@@ -966,6 +966,7 @@ export const zhTW: Record<string, string> = {
   'Notifications are blocked in browser settings.': '通知已在瀏覽器設定中被封鎖。',
   'Notification permission was not granted.': '未授予通知權限。',
   'Push is not available on the server (is pywebpush installed?).': '伺服器上無法使用推播功能（是否已安裝 pywebpush？）。',
+  'This server doesn\'t send to this browser\'s push service ({host}). Ask the server\'s administrator to add it to COMFYUI_MOBILE_WEB_PUSH_HOSTS.': '此伺服器不會向這個瀏覽器的推播服務（{host}）傳送通知。請聯絡伺服器管理員將其加入 COMFYUI_MOBILE_WEB_PUSH_HOSTS。',
   'Failed to enable notifications.': '開啟通知失敗。',
   'Failed to disable notifications.': '關閉通知失敗。',
   'No notification was delivered. Make sure notifications are enabled on this device.': '未收到通知。請確認此裝置上已開啟通知。',

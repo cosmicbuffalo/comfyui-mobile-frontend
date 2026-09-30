@@ -1,7 +1,12 @@
 import { act, useEffect } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { getPushConfig, sendSubscription, sendTestPush } from '@/api/client/push';
+import {
+  getPushConfig,
+  PushEndpointNotAllowedError,
+  sendSubscription,
+  sendTestPush,
+} from '@/api/client/push';
 import { usePushNotifications } from '../usePushNotifications';
 
 // A real VAPID key is a base64url-encoded 65-byte EC point; the hook atob()s it,
@@ -9,7 +14,9 @@ import { usePushNotifications } from '../usePushNotifications';
 const VAPID_KEY =
   'AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8gISIjJCUmJygpKissLS4vMDEyMzQ1Njc4OTo7PD0-P0A';
 
-vi.mock('@/api/client/push', () => ({
+vi.mock('@/api/client/push', async (importActual) => ({
+  PushEndpointNotAllowedError: (await importActual<typeof import('@/api/client/push')>())
+    .PushEndpointNotAllowedError,
   getPushConfig: vi.fn(async () => ({ enabled: true, vapidPublicKey: VAPID_KEY })),
   sendSubscription: vi.fn(async () => undefined),
   removeSubscription: vi.fn(async () => undefined),
@@ -128,6 +135,51 @@ describe('usePushNotifications', () => {
 
     expect(subscribe).not.toHaveBeenCalled();
     expect(hook.current!.error).toBe('pywebpush is not installed');
+  });
+
+  it('names the refused push service and the setting that allows it', async () => {
+    // Only the server's operator can fix this, so the message has to carry
+    // what they need: the host and the env var.
+    mockSend.mockRejectedValue(new PushEndpointNotAllowedError('push.example'));
+
+    await act(async () => { await hook.current!.enable(); });
+
+    expect(hook.current!.subscribed).toBe(false);
+    expect(hook.current!.error).toContain('push.example');
+    expect(hook.current!.error).toContain('COMFYUI_MOBILE_WEB_PUSH_HOSTS');
+  });
+
+  it('drops the browser subscription the server refused', async () => {
+    let unsubscribed = false;
+    subscribe.mockImplementationOnce(async () => {
+      subscription = {
+        endpoint: 'https://push.example/abc',
+        unsubscribe: async () => { unsubscribed = true; return true; },
+      };
+      return subscription;
+    });
+    mockSend.mockRejectedValue(new PushEndpointNotAllowedError('push.example'));
+
+    await act(async () => { await hook.current!.enable(); });
+
+    expect(unsubscribed).toBe(true);
+  });
+
+  it('keeps the browser subscription when registration fails for another reason', async () => {
+    let unsubscribed = false;
+    subscribe.mockImplementationOnce(async () => {
+      subscription = {
+        endpoint: 'https://push.example/abc',
+        unsubscribe: async () => { unsubscribed = true; return true; },
+      };
+      return subscription;
+    });
+    mockSend.mockRejectedValue(new Error('Failed to register subscription'));
+
+    await act(async () => { await hook.current!.enable(); });
+
+    expect(unsubscribed).toBe(false);
+    expect(hook.current!.error).toBe('Failed to register subscription');
   });
 
   it('does not claim success when the server delivered nothing', async () => {

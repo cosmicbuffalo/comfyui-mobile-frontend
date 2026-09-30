@@ -18,6 +18,7 @@ import base64
 import json
 import os
 import threading
+from urllib.parse import urlsplit
 
 import folder_paths
 from json_cache_io import atomic_write_json
@@ -95,6 +96,21 @@ except Exception as exc:  # pragma: no cover - depends on environment
 # Contact for the VAPID `sub` claim. Push services want a mailto:/https: here as
 # a way to reach the sender; some (Apple) reject a non-FQDN like "localhost".
 _VAPID_SUB = "mailto:push@comfyui-mobile-frontend.com"
+
+# Where a subscription's endpoint may point. The endpoint comes from the client,
+# and this server later POSTs to it, so without a destination check any caller
+# could aim that POST at a loopback or LAN service (SSRF). Browsers only ever
+# hand out endpoints on their vendor's push service, so the allowlist is those
+# services: an entry matches its own host and any subdomain of it. Operators
+# whose browser uses another push service (a self-hosted autopush, say) add its
+# host with COMFYUI_MOBILE_WEB_PUSH_HOSTS (comma-separated hostnames).
+_PUSH_SERVICE_HOSTS = (
+    "push.apple.com",               # Safari, iOS/iPadOS home-screen apps
+    "fcm.googleapis.com",           # Chrome and most Chromium browsers
+    "push.services.mozilla.com",    # Firefox
+    "notify.windows.com",           # Edge (WNS)
+)
+_EXTRA_HOSTS_ENV = "COMFYUI_MOBILE_WEB_PUSH_HOSTS"
 
 _lock = threading.Lock()
 _vapid = None  # cached {"private_pem": str, "public_key": str, "vapid_obj": Vapid01}
@@ -212,10 +228,78 @@ def subscription_count() -> int:
         return len(_load_subscriptions())
 
 
+def _configured_host(entry: str) -> str:
+    """One COMFYUI_MOBILE_WEB_PUSH_HOSTS entry as a bare hostname.
+
+    The documented form is a hostname, but a pasted endpoint URL or a
+    `*.example.org` wildcard means the same thing, so both are reduced to it
+    rather than silently matching nothing.
+    """
+    entry = entry.strip().lower()
+    if "://" in entry:
+        try:
+            entry = urlsplit(entry).hostname or ""
+        except ValueError:
+            return ""
+    if entry.startswith("*."):
+        entry = entry[2:]
+    return entry.split("/", 1)[0].rstrip(".")
+
+
+def _allowed_hosts() -> set[str]:
+    allowed = set(_PUSH_SERVICE_HOSTS)
+    for configured in os.environ.get(_EXTRA_HOSTS_ENV, "").split(","):
+        host = _configured_host(configured)
+        if host:
+            allowed.add(host)
+    return allowed
+
+
+def endpoint_allowed(endpoint) -> bool:
+    """Whether this server may POST to `endpoint`: HTTPS on the default port,
+    no credentials, and a host on the push-service allowlist."""
+    if not isinstance(endpoint, str) or not endpoint or len(endpoint) >= 2048:
+        return False
+    try:
+        parsed = urlsplit(endpoint)
+        if (
+            parsed.scheme.lower() != "https"
+            or not parsed.hostname
+            or parsed.username is not None
+            or parsed.password is not None
+            or parsed.port not in (None, 443)
+        ):
+            return False
+    except ValueError:
+        return False
+    host = parsed.hostname.lower().rstrip(".")
+    return any(host == allowed or host.endswith("." + allowed)
+               for allowed in _allowed_hosts())
+
+
+def refused_host(subscription):
+    """The host of a well-formed HTTPS endpoint the allowlist refuses, or None.
+
+    Lets the subscribe route tell "this browser's push service is not on the
+    list" (fixable by the operator, so worth naming) apart from a malformed
+    subscription.
+    """
+    endpoint = subscription.get("endpoint") if isinstance(subscription, dict) else None
+    if not isinstance(endpoint, str) or endpoint_allowed(endpoint):
+        return None
+    try:
+        parsed = urlsplit(endpoint)
+        if parsed.scheme.lower() != "https" or not parsed.hostname:
+            return None
+    except ValueError:
+        return None
+    return parsed.hostname.lower()
+
+
 def _endpoint_of(subscription) -> str:
     if isinstance(subscription, dict):
         endpoint = subscription.get("endpoint")
-        if isinstance(endpoint, str) and endpoint.startswith("http"):
+        if endpoint_allowed(endpoint):
             return endpoint
     return ""
 
@@ -287,13 +371,30 @@ def _send_grouped(build_payload, data=None) -> dict:
     if not subs:
         return {"sent": 0, "pruned": 0, "total": 0}
 
+    # A subscription stored before the allowlist existed, or whose host has
+    # since been removed from COMFYUI_MOBILE_WEB_PUSH_HOSTS, is discarded
+    # without being contacted.
+    dead = []
+    for endpoint, subscription in subs.items():
+        target = subscription.get("endpoint") if isinstance(subscription, dict) else None
+        if not endpoint_allowed(endpoint) or target != endpoint:
+            dead.append(endpoint)
+            try:
+                host = urlsplit(endpoint).hostname
+            except (TypeError, ValueError):
+                host = None
+            print(f"{_LOG_PREFIX} dropping subscription to {host or 'an invalid endpoint'}: "
+                  f"not a known push service (add it to {_EXTRA_HOSTS_ENV} if it is one)",
+                  flush=True)
+
     groups = {}
     for endpoint, subscription in subs.items():
+        if endpoint in dead:
+            continue
         locale = subscription.get("locale") if isinstance(subscription, dict) else None
         groups.setdefault(locale or "en", []).append((endpoint, subscription))
 
     sent = 0
-    dead = []
     for locale, group in groups.items():
         title, body = build_payload(locale)
         payload = {"title": title, "body": body}

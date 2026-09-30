@@ -76,3 +76,14 @@ The self-hosted web-push path (`mobile_web_push.py`) does not involve the
 relay or CueForge at all: your server signs and sends notifications directly
 to the browser's own push service using a VAPID keypair generated on your
 machine.
+
+The server only sends to the push services browsers actually use: Apple
+(`push.apple.com`), Google (`fcm.googleapis.com`), Mozilla
+(`push.services.mozilla.com`) and Microsoft (`notify.windows.com`), over HTTPS
+on the default port. A subscription pointing anywhere else is refused, so a
+client cannot make the server POST to a loopback or LAN address. If your
+browser uses a different push service, add its hostname with
+`COMFYUI_MOBILE_WEB_PUSH_HOSTS`; see
+[Allowing another push service](./README.md#allowing-another-push-service)
+for the syntax and how to find the host. A stored subscription that falls
+outside the list is discarded without being contacted.
