@@ -1,5 +1,23 @@
 # Changelog
 
+## 3.3.7 - 2026-10-01
+
+### Fixed
+
+- **Turning CivitAI lookups off now holds in pages that are already open.**
+  With LoRA Manager installed, a page loaded before an admin switched lookups
+  off could keep asking LoRA Manager to look up new models until it was
+  reloaded. It now checks the server's setting before each lookup, and treats
+  an unanswered check as off.
+- **Models skipped while lookups were off are looked up once you turn them
+  back on**, without reloading the page.
+- **Tapping a second notification right after the first opens it too.**
+  Previously the second could be dropped.
+- **The privacy doc no longer says the node only contacts the relay when an
+  iOS device is paired.** Notifications and Live Activities still need a
+  pairing; operational telemetry goes to the relay either way until you turn
+  it off.
+
 ## 3.3.6 - 2026-09-30
 
 ### Added
