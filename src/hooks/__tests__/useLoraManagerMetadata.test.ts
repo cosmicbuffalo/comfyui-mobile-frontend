@@ -280,6 +280,22 @@ describe("useLoraManagerMetadata refresh", () => {
   });
 });
 
+describe("useLoraManagerMetadata refresh with the switch check unanswered", () => {
+  it("looks nothing up on CivitAI, even if the page had lookups on", async () => {
+    const store = useLoraManagerMetadataStore;
+    store.getState().setCivitaiEnabled(true);
+    vi.mocked(getCivitaiStatus).mockRejectedValue(new Error("offline"));
+
+    store.getState().refreshAllMetadata();
+    await vi.waitFor(() => expect(store.getState().refreshing).toBe(false));
+
+    expect(refreshLoraManagerModels).not.toHaveBeenCalled();
+    expect(scanLoraManagerModels).toHaveBeenCalledTimes(3);
+    // Fail closed for this refresh without remembering a blip as "off".
+    expect(store.getState().civitaiEnabled).toBe(true);
+  });
+});
+
 describe("useLoraManagerMetadata refresh with CivitAI lookups off", () => {
   beforeEach(() => {
     vi.mocked(getCivitaiStatus).mockResolvedValue({ enabled: false, forcedByEnvironment: false });
@@ -515,6 +531,38 @@ describe("useLoraManagerMetadata automatic lookup", () => {
     expect(vi.mocked(fetchLoraManagerModel).mock.calls).toEqual([
       ["checkpoints", NEW_MODEL.file_path],
     ]);
+  });
+
+  it("notices lookups were turned back on elsewhere, then asks about what was waiting", async () => {
+    await ready();
+    vi.mocked(fetchAllModels).mockResolvedValue([...SAMPLE, NEW_MODEL]);
+    const store = useLoraManagerMetadataStore;
+    store.getState().setCivitaiEnabled(false);
+    // An admin re-enabled lookups from another client.
+    vi.mocked(getCivitaiStatus).mockResolvedValue({ enabled: true, forcedByEnvironment: false });
+
+    // A control still missing metadata asks; the page re-checks the server.
+    store.getState().requestMissingMetadata("checkpoints", "new_model.safetensors");
+    await vi.waitFor(() => expect(store.getState().civitaiEnabled).toBe(true));
+    // Its effect re-runs on the switch and asks again.
+    store.getState().requestMissingMetadata("checkpoints", "new_model.safetensors");
+
+    await vi.waitFor(() => expect(fetchLoraManagerModel).toHaveBeenCalled(), { timeout: 3000 });
+  });
+
+  it("re-checks a switch that reads off at most once a minute", async () => {
+    await ready();
+    const store = useLoraManagerMetadataStore;
+    store.getState().setCivitaiEnabled(false);
+    vi.mocked(getCivitaiStatus).mockClear();
+    vi.mocked(getCivitaiStatus).mockResolvedValue({ enabled: false, forcedByEnvironment: false });
+
+    for (let i = 0; i < 5; i++) {
+      store.getState().requestMissingMetadata("checkpoints", "new_model.safetensors");
+    }
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(getCivitaiStatus).toHaveBeenCalledTimes(1);
   });
 
   it("stops before asking LoRA Manager if the switch is turned off mid-batch", async () => {

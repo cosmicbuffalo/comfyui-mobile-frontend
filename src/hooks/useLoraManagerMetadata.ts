@@ -142,6 +142,10 @@ const populateStarted: Partial<Record<LoraManagerPrefix, boolean>> = {};
 const REFRESH_DONE_DURATION_MS = 5_000;
 let refreshDoneTimer: ReturnType<typeof setTimeout> | null = null;
 let civitaiProbe: Promise<void> | null = null;
+// While lookups read off, a page re-asks the server at most this often, so an
+// admin turning them back on elsewhere reaches pages that are already open.
+const OFF_REPROBE_INTERVAL_MS = 60_000;
+let lastOffReprobeAt = 0;
 
 // Automatic lookups. Values seen this session (per kind, lower-cased), values
 // waiting for the batch timer, and one chain per kind so batches never overlap.
@@ -158,6 +162,7 @@ function autoFetchKey(prefix: LoraManagerPrefix, value: string): string {
 // Test hook: forget what has been asked about and drop queued batches.
 export function resetAutoFetchForTests(): void {
   autoRequested.clear();
+  lastOffReprobeAt = 0;
   for (const prefix of ALL_PREFIXES) {
     delete autoPending[prefix];
     const timer = autoTimers[prefix];
@@ -441,10 +446,13 @@ export const useLoraManagerMetadataStore = create<LoraManagerMetadataState>(
               throw new Error("Model metadata provider is unavailable");
             }
             // With CivitAI lookups off, the refresh only picks up new files.
-            const civitaiEnabled = await getCivitaiStatus()
+            // An unanswered check means no CivitAI lookups for this refresh,
+            // the same as the automatic path; only an answer is remembered.
+            const answered = await getCivitaiStatus()
               .then((status) => status.enabled)
-              .catch(() => get().civitaiEnabled === true);
-            applyCivitaiEnabled(civitaiEnabled);
+              .catch(() => null);
+            if (answered !== null) applyCivitaiEnabled(answered);
+            const civitaiEnabled = answered === true;
 
             // One bad prefix (an unconfigured checkpoints dir, a transient
             // 500) must not cost the others their refresh: record the
@@ -530,6 +538,20 @@ export const useLoraManagerMetadataStore = create<LoraManagerMetadataState>(
       },
 
       requestMissingMetadata: (prefix, value) => {
+        if (get().civitaiEnabled === false) {
+          // Only asked while a control still lacks metadata, so this stays
+          // quiet on pages that have nothing waiting.
+          const now = Date.now();
+          if (now - lastOffReprobeAt >= OFF_REPROBE_INTERVAL_MS) {
+            lastOffReprobeAt = now;
+            void getCivitaiStatus()
+              .then((status) => {
+                if (status.enabled) applyCivitaiEnabled(true);
+              })
+              .catch(() => {});
+          }
+          return;
+        }
         if (get().civitaiEnabled !== true || !isModelFileName(value)) return;
         const key = autoFetchKey(prefix, value);
         if (autoRequested.has(key)) return;
