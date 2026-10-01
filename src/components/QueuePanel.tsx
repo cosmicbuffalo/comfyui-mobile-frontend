@@ -518,7 +518,9 @@ export const QueuePanel = memo(function QueuePanel({ visible, onImageClick }: Qu
     }
     const entry = history.find((item) => item.prompt_id === deepLinkPromptId);
     if (entry) {
-      disarmDeepLink();
+      // Only this prompt's link: another notification tapped in the meantime
+      // armed a newer one, and clearing that would drop the tap.
+      disarmDeepLink(deepLinkPromptId);
       // Flash the underlying queue card in the same beat as opening the
       // viewer, so closing the viewer lands back on a card that still reads
       // as "that's the one that just finished" instead of an unmarked list.
