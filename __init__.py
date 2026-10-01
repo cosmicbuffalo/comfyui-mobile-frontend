@@ -68,6 +68,7 @@ def _bootstrap():
     import mobile_object_info
     import mobile_progress_ws as _mobile_progress_ws
     import mobile_push as _mobile_push
+    import mobile_telemetry as _mobile_telemetry
     import mobile_latent_shape as _mobile_latent_shape
     import mobile_routes_aliases
     import mobile_routes_files
@@ -131,7 +132,11 @@ def _bootstrap():
 
     # Create a sub-application for the mobile frontend
     mobile_app = web.Application(
-        middlewares=[_reject_malformed_json, _compress_json_responses]
+        middlewares=[
+            _mobile_telemetry.make_error_middleware(web),
+            _reject_malformed_json,
+            _compress_json_responses,
+        ]
     )
 
 
@@ -208,6 +213,15 @@ def _bootstrap():
 
         server.PromptServer.instance.app.on_startup.append(_mobile_progress_ws.on_startup)
         server.PromptServer.instance.app.on_cleanup.append(_mobile_progress_ws.on_cleanup)
+
+        # Operational telemetry (on by default; see mobile_telemetry.py). The
+        # flush loop always runs, so switching it in Preferences needs no
+        # restart; while it is off, every entry point returns immediately.
+        server.PromptServer.instance.app.middlewares.append(
+            _mobile_telemetry.make_prompt_middleware(web)
+        )
+        server.PromptServer.instance.app.on_startup.append(_mobile_telemetry.on_startup)
+        server.PromptServer.instance.app.on_cleanup.append(_mobile_telemetry.on_cleanup)
 
         # Latent preview shape hints. Preview frames reach the client as a flat run
         # of N images whether they are a batch of N results or N frames of one

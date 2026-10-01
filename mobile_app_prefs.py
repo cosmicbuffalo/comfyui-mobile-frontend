@@ -22,6 +22,9 @@ _DEFAULTS = {
     # custom node) in the mobile prompt editors. Off by default; the frontend
     # also gates this on the node actually being installed.
     "autocompleteEnabled": False,
+    # Operational telemetry (mobile_telemetry.py). On by default and switched
+    # off here; COMFYUI_MOBILE_TELEMETRY in the environment overrides it.
+    "telemetryEnabled": True,
 }
 
 _lock = threading.Lock()
