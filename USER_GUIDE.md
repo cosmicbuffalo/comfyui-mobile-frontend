@@ -197,7 +197,7 @@ Open the [Main Menu](#main-menu), expand the **Server** section, and tap **Custo
 <a id="how-do-i-see-previews-and-details-for-models-and-loras"></a>
 ### How do I see previews and details for models and LoRAs?
 
-Model and LoRA dropdowns show a **rich picker** with a thumbnail preview, the model name, its version, and a small badge for the model type and base model (e.g. _LoRA · XL_) — so you can recognize the right file at a glance instead of reading filenames. This works whether or not Lora Manager is installed; without it, the app uses its own metadata fetched from Civitai. To pull down previews and details for your models, open the [Main Menu](#main-menu) → **Server** → **Refresh model metadata**. See [Rich Model Picker](#rich-model-picker) for details (including how to reveal blurred previews).
+Model and LoRA dropdowns show a **rich picker** with a thumbnail preview, the model name, its version, and a small badge for the model type and base model (e.g. _LoRA · XL_) — so you can recognize the right file at a glance instead of reading filenames. This works whether or not Lora Manager is installed; without it, the app uses its own metadata fetched from Civitai. A model you add later is looked up automatically the first time a workflow uses it; to pull down previews and details for your whole library at once, open the [Main Menu](#main-menu) → **Server** → **Refresh model metadata**. See [Rich Model Picker](#rich-model-picker) for details (including how to reveal blurred previews).
 
 <a id="how-do-i-use-an-output-image-in-my-current-workflow"></a>
 ### How do I use an output image in my current workflow?
@@ -798,7 +798,9 @@ Dropdowns that pick a model — checkpoints, LoRAs, VAEs, and similar — show a
 - Each option has a **thumbnail preview**, the model **name**, its **version**, and a compact **badge** showing the model type and base model (for example _LoRA · XL_ or _CKPT · SD1_).
 - The currently-selected model shows the same preview and details in the closed control, so you can tell at a glance what's set.
 - This works **with or without Lora Manager**. When Lora Manager is installed the app reads its metadata; otherwise it uses its own metadata fetched from Civitai (the two share the same sidecar files).
-- To populate or update previews and details, run **Refresh model metadata** from the [Server](#server) menu section.
+- A model with no details yet — one you just added, say — is looked up on CivitAI as soon as a workflow uses it, and its row fills in a few seconds later.
+- To populate or update previews and details for every model, run **Refresh model metadata** from the [Server](#server) menu section.
+- To stop the app looking models up on CivitAI, switch off **Preferences → Fetch model details from CivitAI** (it is on by default). Refresh model metadata then only picks up new files.
 - Previews flagged as sensitive are blurred with a **Reveal** button — tap it to show the image.
 
 > [!NOTE]
