@@ -10,6 +10,7 @@ import {
   menuTextClassName,
 } from './menuStyles';
 import { NotificationsSettings } from './NotificationsSettings';
+import { TelemetrySetting } from './TelemetrySetting';
 import { useAutocompleteStore } from '@/hooks/useAutocompleteStore';
 import {
   AUTO_HIDE_MINUTE_CHOICES,
@@ -240,6 +241,8 @@ export function GenerationSettingsPanel({ onBack }: GenerationSettingsPanelProps
             onToggle={() => void setAutocompleteEnabled(!autocompleteEnabled)}
           />
         )}
+
+        <TelemetrySetting />
 
         <PreferenceSection
           label={t('Re-hide hidden files when you leave')}

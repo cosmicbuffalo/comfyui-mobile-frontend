@@ -1175,4 +1175,8 @@ export const zhTW: Record<string, string> = {
   'Reorder nodes': '重新排序節點',
   'Reorder subgraph slot': '重新排序子圖插槽',
   'Toggle bypass': '切換略過',
+  'Only an admin can change this on this server.': '在此伺服器上只有管理員可以變更。',
+  'Share operational telemetry': '分享運作遙測',
+  'Help improve the mobile frontend by sending anonymous counts of how this server runs. Never prompts, workflows, file names or who uses it.': '傳送此伺服器運作情況的匿名統計，協助改進行動版前端。不會傳送提示詞、工作流程、檔案名稱或使用者資訊。',
+  'Set by the COMFYUI_MOBILE_TELEMETRY environment variable on this server.': '由此伺服器的 COMFYUI_MOBILE_TELEMETRY 環境變數設定。',
 };
