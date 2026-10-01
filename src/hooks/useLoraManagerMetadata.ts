@@ -151,6 +151,10 @@ const autoPending: Partial<Record<LoraManagerPrefix, Set<string>>> = {};
 const autoTimers: Partial<Record<LoraManagerPrefix, ReturnType<typeof setTimeout>>> = {};
 const autoChains: Partial<Record<LoraManagerPrefix, Promise<void>>> = {};
 
+function autoFetchKey(prefix: LoraManagerPrefix, value: string): string {
+  return `${prefix}\u0000${normalizePath(value)}`;
+}
+
 // Test hook: forget what has been asked about and drop queued batches.
 export function resetAutoFetchForTests(): void {
   autoRequested.clear();
@@ -244,10 +248,16 @@ export const useLoraManagerMetadataStore = create<LoraManagerMetadataState>(
       // Our backend refuses its own lookups when the switch is off, but Lora
       // Manager knows nothing about it: this page is the only gate. A value
       // cached here can outlive an admin turning lookups off elsewhere, so ask
-      // again before every batch, and treat an unanswered check as off.
+      // again before every batch. An unanswered check skips this batch only:
+      // storing "off" for a network blip would stop every later lookup on the
+      // page, so these values are forgotten and can be asked about again.
       const enabled = await getCivitaiStatus()
         .then((status) => status.enabled)
-        .catch(() => false);
+        .catch(() => null);
+      if (enabled === null) {
+        for (const value of values) autoRequested.delete(autoFetchKey(prefix, value));
+        return;
+      }
       applyCivitaiEnabled(enabled);
       if (!enabled) return;
       await scanLoraManagerModels(prefix);
@@ -521,7 +531,7 @@ export const useLoraManagerMetadataStore = create<LoraManagerMetadataState>(
 
       requestMissingMetadata: (prefix, value) => {
         if (get().civitaiEnabled !== true || !isModelFileName(value)) return;
-        const key = `${prefix}\u0000${normalizePath(value)}`;
+        const key = autoFetchKey(prefix, value);
         if (autoRequested.has(key)) return;
         autoRequested.add(key);
         (autoPending[prefix] ??= new Set()).add(value);

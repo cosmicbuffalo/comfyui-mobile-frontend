@@ -477,15 +477,24 @@ describe("useLoraManagerMetadata automatic lookup", () => {
     expect(fetchLoraManagerModel).not.toHaveBeenCalled();
   });
 
-  it("treats an unanswered switch check as off before asking LoRA Manager", async () => {
+  it("skips a batch whose switch check goes unanswered, without turning lookups off", async () => {
     await ready();
     vi.mocked(fetchAllModels).mockResolvedValue([...SAMPLE, NEW_MODEL]);
-    vi.mocked(getCivitaiStatus).mockRejectedValue(new Error("offline"));
+    vi.mocked(getCivitaiStatus).mockRejectedValueOnce(new Error("offline"));
+    const store = useLoraManagerMetadataStore;
 
-    useLoraManagerMetadataStore.getState().requestMissingMetadata("checkpoints", "new_model.safetensors");
+    store.getState().requestMissingMetadata("checkpoints", "new_model.safetensors");
     await new Promise((resolve) => setTimeout(resolve, 1200));
-
     expect(fetchLoraManagerModel).not.toHaveBeenCalled();
+    // A network blip is not the server saying "off".
+    expect(store.getState().civitaiEnabled).toBe(true);
+
+    // The same model can be asked about again once the check answers.
+    store.getState().requestMissingMetadata("checkpoints", "new_model.safetensors");
+    await vi.waitFor(() => expect(fetchLoraManagerModel).toHaveBeenCalled(), { timeout: 3000 });
+    expect(vi.mocked(fetchLoraManagerModel).mock.calls).toEqual([
+      ["checkpoints", NEW_MODEL.file_path],
+    ]);
   });
 
   it("asks again about a model skipped while lookups were off once they are back on", async () => {
