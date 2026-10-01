@@ -5,6 +5,7 @@
 export interface AppPreferences {
   autocompleteEnabled: boolean;
   telemetryEnabled?: boolean;
+  civitaiMetadataEnabled?: boolean;
 }
 
 /** GET /mobile/api/telemetry - see mobile_telemetry.status(). */

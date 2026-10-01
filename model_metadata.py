@@ -39,6 +39,11 @@ import urllib.parse
 
 import folder_paths
 
+try:
+    import mobile_app_prefs as _app_prefs
+except Exception:  # pragma: no cover - only absent in stripped-down test setups
+    _app_prefs = None
+
 logger = logging.getLogger("mobile_frontend.model_metadata")
 
 CIVITAI_BY_HASH = "https://civitai.com/api/v1/model-versions/by-hash/{}"
@@ -105,6 +110,56 @@ CIVITAI_CONCURRENCY = 4
 
 # Per-prefix populate progress, surfaced via the fetch-status endpoint.
 _fetch_state = {}
+
+# One lock per model shared by bulk and automatic population. The reference
+# count includes waiters, so a finishing request cannot remove a lock that
+# another request is about to acquire. All access is on the server event loop.
+_populate_locks = {}
+
+
+# --------------------------------------------------------------------------- #
+# The CivitAI switch
+# --------------------------------------------------------------------------- #
+
+ENV_ENABLE = "COMFYUI_MOBILE_CIVITAI_METADATA"
+PREF_KEY = "civitaiMetadataEnabled"
+
+
+def env_override():
+    """True/False when the environment decides, None when it leaves it to the
+    preference."""
+    value = os.environ.get(ENV_ENABLE)
+    if value is None:
+        return None
+    value = value.strip().lower()
+    if value in ("1", "true", "yes", "on"):
+        return True
+    if value in ("0", "false", "no", "off"):
+        return False
+    return None
+
+
+def civitai_enabled():
+    """Whether this node may look models up on CivitAI. On by default."""
+    forced = env_override()
+    if forced is not None:
+        return forced
+    if _app_prefs is None:
+        return True
+    try:
+        return _app_prefs.get_prefs().get(PREF_KEY, True) is not False
+    except Exception:
+        # Can't tell whether the operator turned it off, so don't ask CivitAI.
+        return False
+
+
+def civitai_status():
+    """For the settings UI: whether lookups are on, and whether the environment
+    decided that (in which case the toggle is not the operator's to flip)."""
+    return {
+        "enabled": civitai_enabled(),
+        "forcedByEnvironment": env_override() is not None,
+    }
 
 
 def determine_base_model(version_string):
@@ -266,6 +321,9 @@ def _build_item(model_path, root, default_sub_type, sidecar):
         "sub_type": default_sub_type,
         "favorite": False,
         "civitai": None,
+        # Not yet looked up. False once CivitAI has said it doesn't know the
+        # file, so the frontend stops asking about it.
+        "from_civitai": None,
     }
 
     if sidecar:
@@ -277,6 +335,8 @@ def _build_item(model_path, root, default_sub_type, sidecar):
         item["favorite"] = bool(sidecar.get("favorite"))
         civ = sidecar.get("civitai")
         item["civitai"] = civ if (isinstance(civ, dict) and civ) else None
+        if isinstance(sidecar.get("from_civitai"), bool):
+            item["from_civitai"] = sidecar["from_civitai"]
         # Prefer a sibling preview we can serve; otherwise fall back to a sidecar
         # preview_url that points at an on-disk file (LM stores an absolute path).
         if not preview_path:
@@ -386,6 +446,12 @@ def list_models(prefix, page=1, page_size=500):
     }
 
 
+def rescan_models(prefix):
+    """Discover new local files even within the list-cache TTL. No lookups."""
+    invalidate_list_cache(prefix)
+    return list_models(prefix, page_size=1)["total"]
+
+
 # --------------------------------------------------------------------------- #
 # Population (hash -> Civitai -> sidecar + preview)
 # --------------------------------------------------------------------------- #
@@ -439,14 +505,25 @@ def _needs_fetch(model_path):
     return True
 
 
+# CivitAI answered that it has no model with this hash. Distinct from None,
+# which means the lookup itself failed (offline, rate-limited, a 5xx, a
+# timeout) and says nothing about the model.
+NOT_ON_CIVITAI = object()
+
+
 async def _civitai_by_hash(session, sha256):
+    """The model version CivitAI has for this hash, NOT_ON_CIVITAI when it
+    says it has none (404), or None when the lookup failed."""
     import aiohttp
     url = CIVITAI_BY_HASH.format(sha256)
     try:
         async with session.get(
             url, timeout=aiohttp.ClientTimeout(total=30)
         ) as resp:
+            if resp.status == 404:
+                return NOT_ON_CIVITAI
             if resp.status != 200:
+                logger.warning("Civitai lookup for %s returned HTTP %s", sha256, resp.status)
                 return None
             return await resp.json()
     except Exception as exc:
@@ -532,6 +609,10 @@ async def _populate_model(session, model_path, default_sub_type, sem):
             return False
 
         data = await _civitai_by_hash(session, sha256)
+        if data is None:
+            # A failed lookup is not an answer. Recording it as a miss would
+            # stop every later pass, and the app, from ever asking again.
+            return False
 
         stem = os.path.splitext(os.path.basename(model_path))[0]
         sidecar = _load_sidecar(model_path) or {}
@@ -546,7 +627,7 @@ async def _populate_model(session, model_path, default_sub_type, sem):
         sidecar["sub_type"] = sidecar.get("sub_type") or default_sub_type
         sidecar["last_checked_at"] = time.time()
 
-        if not data:
+        if data is NOT_ON_CIVITAI or not data:
             # Not on Civitai — record the attempt so future passes skip it.
             sidecar.setdefault("model_name", stem)
             sidecar.setdefault("base_model", "Unknown")
@@ -577,6 +658,28 @@ async def _populate_model(session, model_path, default_sub_type, sem):
 
         _save_sidecar(model_path, sidecar)
         return True
+
+
+async def _populate_model_once(session, model_path, sub_type, sem, force=False):
+    """Serialize population of this file across both lookup paths.
+
+    Recheck the sidecar after acquiring the lock: another request may have
+    identified the file (or recorded a CivitAI miss) while this one waited.
+    """
+    real = os.path.realpath(model_path)
+    lock, users = _populate_locks.get(real, (asyncio.Lock(), 0))
+    _populate_locks[real] = (lock, users + 1)
+    try:
+        async with lock:
+            if not force and not _needs_fetch(model_path):
+                return False
+            return await _populate_model(session, model_path, sub_type, sem)
+    finally:
+        _lock, users = _populate_locks[real]
+        if users == 1:
+            del _populate_locks[real]
+        else:
+            _populate_locks[real] = (lock, users - 1)
 
 
 def _public_state(state):
@@ -613,6 +716,10 @@ async def fetch_all_civitai(prefix, force=False):
         return {"error": "unknown prefix"}
 
     state = _fetch_state.setdefault(prefix, {})
+    if not civitai_enabled():
+        # The route checks first; this covers a switch flipped in between.
+        state["running"] = False
+        return {"error": "disabled"}
     state["running"] = True
 
     # Walk the library once and set `total` to the file count up front, so the
@@ -637,7 +744,7 @@ async def fetch_all_civitai(prefix, force=False):
                 ok = False
                 try:
                     if force or _needs_fetch(model_path):
-                        ok = await _populate_model(session, model_path, sub_type, sem)
+                        ok = await _populate_model_once(session, model_path, sub_type, sem, force=force)
                 except Exception as exc:
                     logger.warning("Populate failed for %s: %s", model_path, exc)
                 state["processed"] += 1
@@ -658,3 +765,120 @@ async def fetch_all_civitai(prefix, force=False):
         "updated": state["updated"],
         "total": len(all_files),
     }
+
+
+def resolve_model_value(prefix, value):
+    """Map a combo widget value (``sub/dir/name.safetensors``, either slash) to
+    the model file it names, or None. Only files under one of the prefix's
+    configured roots, with a model extension, resolve."""
+    if not isinstance(value, str) or not value.strip():
+        return None
+    relative = value.strip().replace("\\", "/").lstrip("/")
+    if os.path.splitext(relative)[1].lower() not in MODEL_EXTENSIONS:
+        return None
+    for root, sub_type in _folder_roots(prefix):
+        root_real = os.path.realpath(root)
+        candidate = os.path.join(root, *relative.split("/"))
+        real = os.path.realpath(candidate)
+        if not (real == root_real or real.startswith(root_real + os.sep)):
+            continue
+        if os.path.isfile(real):
+            return candidate, sub_type
+    return None
+
+
+# Automatic lookups waiting or in flight, per prefix: {"pending": {realpath:
+# (model_path, sub_type)}, "task": the drain task}. The request that asks only
+# queues; hashing a multi-GB checkpoint must not hold an HTTP request open.
+_missing_state = {}
+
+
+def _missing(prefix):
+    return _missing_state.setdefault(prefix, {"pending": {}, "task": None})
+
+
+async def fetch_missing(prefix, values):
+    """Queue lookups for just the named models (widget values) that have no
+    metadata yet, and return without waiting for them.
+
+    This is the automatic path: the frontend calls it for models a workflow uses
+    that the picker has nothing on, then polls missing_status() until nothing is
+    pending. Values that don't name a model file, or name one that already has
+    metadata (or that CivitAI is known not to have), are skipped without
+    hashing. Returns ``{"queued": n, "pending": n}``.
+    """
+    if prefix not in PREFIX_FOLDER_KEYS:
+        return {"error": "unknown prefix"}
+    if not civitai_enabled():
+        return {"error": "disabled"}
+
+    state = _missing(prefix)
+    queued = 0
+    resolved_any = False
+    for value in values or []:
+        resolved = resolve_model_value(prefix, value)
+        if resolved is None:
+            continue
+        resolved_any = True
+        model_path, sub_type = resolved
+        real = os.path.realpath(model_path)
+        if real in state["pending"] or not _needs_fetch(model_path):
+            continue
+        state["pending"][real] = (model_path, sub_type)
+        queued += 1
+
+    if resolved_any:
+        # The frontend asks because its list lacks these files, and the scanned
+        # list may predate them by up to the TTL; rescan on the next list call.
+        invalidate_list_cache(prefix)
+    if state["pending"] and (state["task"] is None or state["task"].done()):
+        state["task"] = asyncio.get_running_loop().create_task(_drain_missing(prefix))
+    return {"queued": queued, "pending": len(state["pending"])}
+
+
+def missing_status(prefix):
+    """How many automatic lookups for this prefix are still waiting or running."""
+    if prefix not in PREFIX_FOLDER_KEYS:
+        return {"error": "unknown prefix"}
+    return {"pending": len(_missing(prefix)["pending"])}
+
+
+def missing_task(prefix):
+    """The running drain for this prefix, or None. For tests to await."""
+    return _missing(prefix)["task"]
+
+
+async def _drain_missing(prefix):
+    """Work through the prefix's pending lookups, including any queued while
+    earlier ones ran. Each leaves the queue when it finishes, whatever happened."""
+    import aiohttp
+
+    state = _missing(prefix)
+    sem = asyncio.Semaphore(CIVITAI_CONCURRENCY)
+    headers = {"User-Agent": "comfyui-mobile-frontend"}
+
+    async def worker(real, model_path, sub_type, session):
+        try:
+            # The switch can be turned off while the queue is working through.
+            if civitai_enabled():
+                await _populate_model_once(session, model_path, sub_type, sem)
+        except Exception as exc:
+            logger.warning("Populate failed for %s: %s", model_path, exc)
+        finally:
+            state["pending"].pop(real, None)
+
+    try:
+        async with aiohttp.ClientSession(headers=headers) as session:
+            started = set()
+            while True:
+                batch = [(real, entry) for real, entry in state["pending"].items()
+                         if real not in started]
+                if not batch:
+                    break
+                started.update(real for real, _ in batch)
+                await asyncio.gather(*(
+                    worker(real, model_path, sub_type, session)
+                    for real, (model_path, sub_type) in batch
+                ))
+    finally:
+        state["pending"].clear()

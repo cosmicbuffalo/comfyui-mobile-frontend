@@ -10,6 +10,7 @@ import {
   menuTextClassName,
 } from './menuStyles';
 import { NotificationsSettings } from './NotificationsSettings';
+import { CivitaiMetadataSetting } from './CivitaiMetadataSetting';
 import { TelemetrySetting } from './TelemetrySetting';
 import { useAutocompleteStore } from '@/hooks/useAutocompleteStore';
 import {
@@ -241,6 +242,8 @@ export function GenerationSettingsPanel({ onBack }: GenerationSettingsPanelProps
             onToggle={() => void setAutocompleteEnabled(!autocompleteEnabled)}
           />
         )}
+
+        <CivitaiMetadataSetting />
 
         <TelemetrySetting />
 

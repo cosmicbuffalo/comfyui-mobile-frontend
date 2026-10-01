@@ -1179,4 +1179,7 @@ export const zhTW: Record<string, string> = {
   'Share operational telemetry': '分享運作遙測',
   'Help improve the mobile frontend by sending anonymous counts of how this server runs. Never prompts, workflows, file names or who uses it.': '傳送此伺服器運作情況的匿名統計，協助改進行動版前端。不會傳送提示詞、工作流程、檔案名稱或使用者資訊。',
   'Set by the COMFYUI_MOBILE_TELEMETRY environment variable on this server.': '由此伺服器的 COMFYUI_MOBILE_TELEMETRY 環境變數設定。',
+  'Fetch model details from CivitAI': '從 CivitAI 取得模型詳細資料',
+  'Look up previews, names and base models for your models on CivitAI, including new models as soon as a workflow uses them. Sends a hash of the model file, never its name.': '在 CivitAI 查詢模型的預覽圖、名稱與基礎模型；新模型一被工作流程使用就會查詢。只傳送模型檔案的雜湊值，不傳送檔案名稱。',
+  'Set by the COMFYUI_MOBILE_CIVITAI_METADATA environment variable on this server.': '由此伺服器的 COMFYUI_MOBILE_CIVITAI_METADATA 環境變數設定。',
 };

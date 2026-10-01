@@ -7,6 +7,7 @@
 import asyncio
 import os
 
+import mobile_auth as _mobile_auth
 import model_metadata as _model_metadata
 import mobile_video_thumbs as _mobile_video_thumbs
 from aiohttp import web
@@ -89,6 +90,19 @@ async def api_models_preview(request):
     except Exception:
         return web.Response(status=500)
 
+async def api_models_scan(request):
+    """Rescan local files without hashing them or contacting CivitAI."""
+    try:
+        prefix = request.match_info.get('prefix', '')
+        if prefix not in _model_metadata.PREFIX_FOLDER_KEYS:
+            return web.json_response({"error": "unknown prefix"}, status=400)
+        loop = asyncio.get_event_loop()
+        total = await loop.run_in_executor(None, _model_metadata.rescan_models, prefix)
+        return web.json_response({"status": "success", "total": total})
+    except Exception as e:
+        return web.json_response({"error": str(e)}, status=500)
+
+
 async def api_models_fetch_all(request):
     try:
         prefix = request.match_info.get('prefix', '')
@@ -104,6 +118,8 @@ async def api_models_fetch_all(request):
         # If a pass is already running, just report it. Otherwise mark it
         # running synchronously (dedupe), launch in the background, and return
         # immediately so the client can poll fetch-status for progress.
+        if not _model_metadata.civitai_enabled():
+            return web.json_response({"error": "disabled"}, status=403)
         status = _model_metadata.get_fetch_status(prefix)
         if status['running']:
             return web.json_response(status)
@@ -114,6 +130,54 @@ async def api_models_fetch_all(request):
         return web.json_response(
             {"running": True, "total": 0, "processed": 0, "updated": 0}
         )
+    except Exception as e:
+        return web.json_response({"error": str(e)}, status=500)
+
+async def api_models_fetch_missing(request):
+    """Queue CivitAI lookups for the given widget values' models that have no
+    metadata yet. Returns at once (202); poll GET on the same path until
+    nothing is pending, since hashing a large checkpoint can take minutes."""
+    try:
+        prefix = request.match_info.get('prefix', '')
+        if prefix not in _model_metadata.PREFIX_FOLDER_KEYS:
+            return web.json_response({"error": "unknown prefix"}, status=400)
+        if not _model_metadata.civitai_enabled():
+            return web.json_response({"error": "disabled"}, status=403)
+        try:
+            body = await request.json()
+        except Exception:
+            body = None
+        values = body.get('values') if isinstance(body, dict) else None
+        if not isinstance(values, list):
+            return web.json_response({"error": "values must be a list"}, status=400)
+        # A workflow names a handful of models; cap it so a request can't queue
+        # a hash of the whole library.
+        values = [v for v in values if isinstance(v, str)][:50]
+        result = await _model_metadata.fetch_missing(prefix, values)
+        if result.get('error') == 'disabled':
+            return web.json_response(result, status=403)
+        return web.json_response(result, status=202)
+    except Exception as e:
+        return web.json_response({"error": str(e)}, status=500)
+
+async def api_models_fetch_missing_status(request):
+    """How many queued automatic lookups for this prefix are still pending."""
+    try:
+        prefix = request.match_info.get('prefix', '')
+        if prefix not in _model_metadata.PREFIX_FOLDER_KEYS:
+            return web.json_response({"error": "unknown prefix"}, status=400)
+        return web.json_response(_model_metadata.missing_status(prefix))
+    except Exception as e:
+        return web.json_response({"error": str(e)}, status=500)
+
+async def api_models_civitai_status(request):
+    """Whether CivitAI lookups are on, whether the environment decided, and
+    whether this user is barred from changing it (multiuser, not an admin)."""
+    try:
+        return web.json_response({
+            **_model_metadata.civitai_status(),
+            "adminOnly": not _mobile_auth.may_change_server_settings(),
+        })
     except Exception as e:
         return web.json_response({"error": str(e)}, status=500)
 
@@ -130,5 +194,9 @@ def register_routes(mobile_app):
     mobile_app.router.add_get('/api/models/health-check', api_models_health)
     mobile_app.router.add_get('/api/models/previews', api_models_preview)
     mobile_app.router.add_get('/api/models/{prefix}/list', api_models_list)
+    mobile_app.router.add_post('/api/models/{prefix}/scan', api_models_scan)
     mobile_app.router.add_post('/api/models/{prefix}/fetch-all-civitai', api_models_fetch_all)
+    mobile_app.router.add_post('/api/models/{prefix}/fetch-missing', api_models_fetch_missing)
+    mobile_app.router.add_get('/api/models/{prefix}/fetch-missing', api_models_fetch_missing_status)
+    mobile_app.router.add_get('/api/models/civitai', api_models_civitai_status)
     mobile_app.router.add_get('/api/models/{prefix}/fetch-status', api_models_fetch_status)

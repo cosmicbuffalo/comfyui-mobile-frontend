@@ -14,6 +14,7 @@ import mobile_app_push as _mobile_app_push
 import mobile_auth as _mobile_auth
 import mobile_capabilities as _mobile_capabilities
 import mobile_telemetry as _mobile_telemetry
+import model_metadata as _model_metadata
 import mobile_push_prefs as _mobile_push_prefs
 import mobile_web_push as _mobile_web_push
 # --- Web Push (browser notifications on generation completion) ---
@@ -214,6 +215,9 @@ async def api_app_prefs_set(request):
         if isinstance(body, dict) and (_mobile_telemetry.env_override() is not None
                                        or not _mobile_auth.may_change_server_settings()):
             body = {k: v for k, v in body.items() if k != _mobile_telemetry.PREF_KEY}
+        if isinstance(body, dict) and (_model_metadata.env_override() is not None
+                                       or not _mobile_auth.may_change_server_settings()):
+            body = {k: v for k, v in body.items() if k != _model_metadata.PREF_KEY}
         prefs = _mobile_app_prefs.set_prefs(body)
         if not _mobile_telemetry.is_enabled():
             # Off means the install id goes now, not at the next flush.

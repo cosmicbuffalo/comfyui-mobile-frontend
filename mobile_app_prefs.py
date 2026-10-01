@@ -25,6 +25,10 @@ _DEFAULTS = {
     # Operational telemetry (mobile_telemetry.py). On by default and switched
     # off here; COMFYUI_MOBILE_TELEMETRY in the environment overrides it.
     "telemetryEnabled": True,
+    # Look up model metadata on CivitAI (model_metadata.py). On by default and
+    # switched off here; COMFYUI_MOBILE_CIVITAI_METADATA in the environment
+    # overrides it.
+    "civitaiMetadataEnabled": True,
 }
 
 _lock = threading.Lock()

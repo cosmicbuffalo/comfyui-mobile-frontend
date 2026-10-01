@@ -1,7 +1,10 @@
 import type { ComponentProps } from "react";
 import { ComboControl } from "./ComboControl";
 import type { LoraManagerPrefix } from "@/api/loraManagerClient";
-import { useModelMetadataLookup } from "@/hooks/useLoraManagerMetadata";
+import {
+  useAutoFetchModelMetadata,
+  useModelMetadataLookup,
+} from "@/hooks/useLoraManagerMetadata";
 
 type ModelComboControlProps = ComponentProps<typeof ComboControl> & {
   /**
@@ -25,6 +28,8 @@ export function ModelComboControl({
   ...rest
 }: ModelComboControlProps) {
   const modelLookup = useModelMetadataLookup(modelKind);
+  // A model the workflow uses that has no metadata yet gets looked up.
+  useAutoFetchModelMetadata(modelKind, rest.value);
   const comboOptions = !modelLookup
     ? options
     : Array.isArray(options)

@@ -53,3 +53,22 @@ def test_telemetry_status_says_whether_this_user_may_change_it(stored, monkeypat
     status, body = asyncio.run(routes.api_telemetry_status(_Request(None)))
     assert status == 200
     assert body["adminOnly"] is (not admin)
+
+
+def test_a_non_admin_cannot_flip_civitai_lookups(stored, monkeypatch):
+    _as(monkeypatch, admin=False)
+    monkeypatch.setattr(routes._model_metadata, "env_override", lambda: None)
+    asyncio.run(routes.api_app_prefs_set(_Request({"civitaiMetadataEnabled": False})))
+    assert stored == [{}]
+
+
+@pytest.mark.parametrize("admin", [True, False])
+def test_civitai_status_says_whether_this_user_may_change_it(monkeypatch, admin):
+    import mobile_routes_models as model_routes
+    monkeypatch.setattr(model_routes._mobile_auth, "may_change_server_settings", lambda: admin)
+    monkeypatch.setattr(model_routes, "web", SimpleNamespace(json_response=lambda body, status=200: (status, body)))
+    monkeypatch.setattr(model_routes._model_metadata, "civitai_status",
+                        lambda: {"enabled": True, "forcedByEnvironment": False})
+    status, body = asyncio.run(model_routes.api_models_civitai_status(_Request(None)))
+    assert status == 200
+    assert body["adminOnly"] is (not admin)
