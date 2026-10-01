@@ -5,6 +5,24 @@ import { QueuePanel } from '@/components/QueuePanel';
 import { resetHistoryModuleState, useHistoryStore } from '@/hooks/useHistory';
 import { resetQueueModuleState } from '@/hooks/useQueue';
 import { useNavigationStore } from '@/hooks/useNavigation';
+import {
+  useNotificationDeepLinkListeners,
+  useNotificationDeepLinkStore,
+} from '@/hooks/useNotificationDeepLink';
+
+// App mounts the listeners; the panel only consumes what they arm.
+function Harness(props: Parameters<typeof QueuePanel>[0]) {
+  useNotificationDeepLinkListeners();
+  return <QueuePanel {...props} />;
+}
+
+// App's real shape: the queue panel is lazy and only exists once the queue is
+// the current (or a previously visited) panel.
+function LazyQueueApp(props: Parameters<typeof QueuePanel>[0]) {
+  useNotificationDeepLinkListeners();
+  const currentPanel = useNavigationStore((s) => s.currentPanel);
+  return currentPanel === 'queue' ? <QueuePanel {...props} /> : <div>workflow</div>;
+}
 
 // KNOWN ISSUE — this file is order-dependent. It passes alone and in the
 // default order; under `vitest --sequence.shuffle` roughly three of its cases
@@ -69,6 +87,7 @@ describe('QueuePanel prompt_id deep link', () => {
     }));
     useHistoryStore.setState({ history: [] });
     useNavigationStore.setState({ currentPanel: 'workflow' });
+    useNotificationDeepLinkStore.setState({ pendingPromptId: null });
     // Both hooks memoise at module scope — an in-flight fetch and a signature of
     // the last /history payload — which is deliberate (the caches must survive
     // component remounts within a session) and which also means they survive a
@@ -111,7 +130,7 @@ describe('QueuePanel prompt_id deep link', () => {
     }));
 
     await act(async () => {
-      root.render(<QueuePanel visible />);
+      root.render(<Harness visible />);
       await Promise.resolve();
     });
 
@@ -157,7 +176,7 @@ describe('QueuePanel prompt_id deep link', () => {
     }));
 
     await act(async () => {
-      root.render(<QueuePanel visible />);
+      root.render(<Harness visible />);
       await Promise.resolve();
     });
 
@@ -186,7 +205,7 @@ describe('QueuePanel prompt_id deep link', () => {
     const onImageClick = vi.fn();
 
     await act(async () => {
-      root.render(<QueuePanel visible onImageClick={onImageClick} />);
+      root.render(<Harness visible onImageClick={onImageClick} />);
     });
 
     // Param consumed so a manual reload doesn't replay the deep link.
@@ -213,7 +232,7 @@ describe('QueuePanel prompt_id deep link', () => {
       .mockResolvedValue(true);
 
     await act(async () => {
-      root.render(<QueuePanel visible onImageClick={onImageClick} />);
+      root.render(<Harness visible onImageClick={onImageClick} />);
       await Promise.resolve();
     });
     await act(async () => { await Promise.resolve(); });
@@ -254,7 +273,7 @@ describe('QueuePanel prompt_id deep link', () => {
       .mockResolvedValue(true);
 
     await act(async () => {
-      root.render(<QueuePanel visible onImageClick={onImageClick} />);
+      root.render(<Harness visible onImageClick={onImageClick} />);
       await Promise.resolve();
     });
     await act(async () => { await Promise.resolve(); });
@@ -293,7 +312,7 @@ describe('QueuePanel prompt_id deep link', () => {
     vi.spyOn(useHistoryStore.getState(), 'fetchHistory').mockResolvedValue(true);
 
     await act(async () => {
-      root.render(<QueuePanel visible onImageClick={onImageClick} />);
+      root.render(<Harness visible onImageClick={onImageClick} />);
       await Promise.resolve();
     });
     await act(async () => {
@@ -339,7 +358,7 @@ describe('QueuePanel prompt_id deep link', () => {
       });
 
     await act(async () => {
-      root.render(<QueuePanel visible onImageClick={onImageClick} />);
+      root.render(<Harness visible onImageClick={onImageClick} />);
       await Promise.resolve();
     });
     failFetch = true;
@@ -371,7 +390,7 @@ describe('QueuePanel prompt_id deep link', () => {
   it('handles a notification deep link posted to an already-open app window', async () => {
     const onImageClick = vi.fn();
     await act(async () => {
-      root.render(<QueuePanel visible onImageClick={onImageClick} />);
+      root.render(<Harness visible onImageClick={onImageClick} />);
       await Promise.resolve();
     });
 
@@ -399,7 +418,7 @@ describe('QueuePanel prompt_id deep link', () => {
     // (WebViewPool.swift) rather than forcing a full reload with the param.
     const onImageClick = vi.fn();
     await act(async () => {
-      root.render(<QueuePanel visible onImageClick={onImageClick} />);
+      root.render(<Harness visible onImageClick={onImageClick} />);
       await Promise.resolve();
     });
 
@@ -423,7 +442,7 @@ describe('QueuePanel prompt_id deep link', () => {
   it('ignores an empty prompt id from the native bridge and leaves the panel alone', async () => {
     const onImageClick = vi.fn();
     await act(async () => {
-      root.render(<QueuePanel visible onImageClick={onImageClick} />);
+      root.render(<Harness visible onImageClick={onImageClick} />);
       await Promise.resolve();
     });
 
@@ -438,7 +457,7 @@ describe('QueuePanel prompt_id deep link', () => {
 
   it('removes the native bridge on unmount so a stale page cannot be driven', async () => {
     await act(async () => {
-      root.render(<QueuePanel visible />);
+      root.render(<Harness visible />);
       await Promise.resolve();
     });
     expect('__cueforgeDeepLinkPromptId' in window).toBe(true);
@@ -460,11 +479,49 @@ describe('QueuePanel prompt_id deep link', () => {
     const onImageClick = vi.fn();
 
     await act(async () => {
-      root.render(<QueuePanel visible onImageClick={onImageClick} />);
+      root.render(<Harness visible onImageClick={onImageClick} />);
     });
 
     expect(useNavigationStore.getState().currentPanel).toBe('queue');
     expect(onImageClick).not.toHaveBeenCalled();
+  });
+
+  it('opens the viewer from a cold load that boots on the workflow panel', async () => {
+    // The native app's relaunch path: a full page load with the param, while
+    // the persisted panel is 'workflow', so the queue panel isn't mounted yet.
+    // Reading the link inside the panel meant nobody read it at all.
+    window.history.replaceState({}, '', '/?prompt_id=cold');
+    useHistoryStore.setState({ history: [makeHistoryEntry('cold', true)] as never });
+    const onImageClick = vi.fn();
+
+    await act(async () => {
+      root.render(<LazyQueueApp visible onImageClick={onImageClick} />);
+    });
+
+    expect(window.location.search).not.toContain('prompt_id');
+    expect(useNavigationStore.getState().currentPanel).toBe('queue');
+    expect(onImageClick).toHaveBeenCalledTimes(1);
+    const [images, index] = onImageClick.mock.calls[0];
+    expect(images[index].promptId).toBe('cold');
+    expect(useNotificationDeepLinkStore.getState().pendingPromptId).toBeNull();
+  });
+
+  it('handles the native bridge while the queue panel has never been mounted', async () => {
+    const onImageClick = vi.fn();
+    await act(async () => {
+      root.render(<LazyQueueApp visible onImageClick={onImageClick} />);
+      await Promise.resolve();
+    });
+    expect(container.textContent).toBe('workflow');
+
+    await act(async () => {
+      useHistoryStore.setState({ history: [makeHistoryEntry('warm', true)] as never });
+      (window as unknown as { __cueforgeDeepLinkPromptId: (id: string) => void })
+        .__cueforgeDeepLinkPromptId('warm');
+    });
+
+    expect(useNavigationStore.getState().currentPanel).toBe('queue');
+    expect(onImageClick).toHaveBeenCalledTimes(1);
   });
 
   it('does nothing without the query param', async () => {
@@ -474,7 +531,7 @@ describe('QueuePanel prompt_id deep link', () => {
     const onImageClick = vi.fn();
 
     await act(async () => {
-      root.render(<QueuePanel visible onImageClick={onImageClick} />);
+      root.render(<Harness visible onImageClick={onImageClick} />);
     });
 
     expect(useNavigationStore.getState().currentPanel).toBe('workflow');

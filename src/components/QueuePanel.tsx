@@ -4,6 +4,7 @@ import { useQueueStore } from '@/hooks/useQueue';
 import { useHistoryStore } from '@/hooks/useHistory';
 import { useWorkflowStore } from '@/hooks/useWorkflow';
 import { useNavigationStore } from '@/hooks/useNavigation';
+import { useNotificationDeepLinkStore } from '@/hooks/useNotificationDeepLink';
 import { useOutputsStore } from '@/hooks/useOutputs';
 import { useImageViewerStore } from '@/hooks/useImageViewer';
 import { useIsDesktop } from '@/hooks/useIsDesktop';
@@ -44,32 +45,6 @@ const REVEAL_STALL_TIMEOUT_MS = 4000;
 
 const INITIAL_HISTORY_RETRY_MS = 500;
 const MAX_HISTORY_RETRY_MS = 8000;
-
-// Read-and-consume the `?prompt_id=<id>` deep link the native app navigates
-// here with when a "generation finished" push notification is tapped. The
-// param is stripped from the URL immediately (same convention as
-// ShareHandoffController's handoff params) so a later manual reload doesn't
-// replay the deep link.
-function consumePromptDeepLink(): string | null {
-  const params = new URLSearchParams(window.location.search);
-  const promptId = params.get('prompt_id');
-  if (!promptId) return null;
-  const url = new URL(window.location.href);
-  url.searchParams.delete('prompt_id');
-  window.history.replaceState({}, '', url.toString());
-  return promptId;
-}
-
-function promptIdFromNotificationUrl(value: unknown): string | null {
-  if (typeof value !== 'string') return null;
-  try {
-    const url = new URL(value, window.location.origin);
-    if (url.origin !== window.location.origin || !url.pathname.startsWith('/mobile')) return null;
-    return url.searchParams.get('prompt_id');
-  } catch {
-    return null;
-  }
-}
 
 /**
  * How long a `behavior: smooth` scroll is assumed to keep reporting. The
@@ -361,70 +336,14 @@ export const QueuePanel = memo(function QueuePanel({ visible, onImageClick }: Qu
   }, [isExecuting, visible, fetchHistory]);
 
   // --- Push-notification deep link ------------------------------------------
-  // Arm at most once per page load (ref-guarded for StrictMode's double
-  // effect): show the queue panel right away, then once the prompt's history
-  // entry has loaded, open the image viewer on its outputs — the same action
-  // as manually tapping the finished item's first image.
-  const deepLinkReadRef = useRef(false);
-  const [deepLinkPromptId, setDeepLinkPromptId] = useState<string | null>(null);
-  useEffect(() => {
-    if (deepLinkReadRef.current) return;
-    deepLinkReadRef.current = true;
-    const promptId = consumePromptDeepLink();
-    if (!promptId) return;
-    setDeepLinkPromptId(promptId);
-    setCurrentPanel('queue');
-  }, [setCurrentPanel]);
-
-  // For an already-running app this postMessage is the ONLY path, not a
-  // fallback: sw.js deliberately never calls WindowClient.navigate, because
-  // that is a full document navigation and would reload the app, discarding
-  // undo history and unsaved edits. It focuses the window and hands the deep
-  // link here instead, so this listener opens the prompt in place.
-  useEffect(() => {
-    const serviceWorker = navigator.serviceWorker;
-    if (!serviceWorker) return;
-    const handleNotificationClick = (event: MessageEvent) => {
-      const data = event.data as { type?: unknown; url?: unknown } | null;
-      if (!data || data.type !== 'mobile-notification-click') return;
-      const promptId = promptIdFromNotificationUrl(data.url);
-      if (!promptId) return;
-      setDeepLinkPromptId(promptId);
-      setCurrentPanel('queue');
-    };
-    serviceWorker.addEventListener('message', handleNotificationClick);
-    return () => serviceWorker.removeEventListener('message', handleNotificationClick);
-  }, [setCurrentPanel]);
-
-  // Same idea for the native iOS app: WKWebView has no service worker to
-  // relay through, so the app calls this directly (window.__comfyuiMobile*
-  // bridge, same shape as the savePhoto completion callback in
-  // WebViewPool.swift) when the page is already booted, instead of forcing
-  // the full-page reload `enter()` otherwise falls back to.
-  useEffect(() => {
-    (window as unknown as { __cueforgeDeepLinkPromptId?: (id: string) => void })
-      .__cueforgeDeepLinkPromptId = (promptId: string) => {
-        if (!promptId) return;
-        setDeepLinkPromptId(promptId);
-        setCurrentPanel('queue');
-      };
-    return () => {
-      delete (window as unknown as { __cueforgeDeepLinkPromptId?: (id: string) => void })
-        .__cueforgeDeepLinkPromptId;
-    };
-  }, [setCurrentPanel]);
-
-  // A pending deep link re-asserts the queue panel for as long as it's armed.
-  // Setting it once above isn't enough: startup session restore (loadWorkflow)
-  // and the navigation store's own persisted-state rehydration both land after
-  // this component's mount effect and default back to 'workflow', clobbering
-  // the one-shot set above before the user ever sees the queue.
-  const currentPanel = useNavigationStore((s) => s.currentPanel);
-  useEffect(() => {
-    if (deepLinkPromptId && currentPanel !== 'queue') {
-      setCurrentPanel('queue');
-    }
-  }, [deepLinkPromptId, currentPanel, setCurrentPanel]);
+  // Receiving the link (URL param, service-worker message, native bridge) and
+  // switching to this panel happen at app level in useNotificationDeepLink,
+  // because this panel is lazy and may not be mounted yet. Here we only finish
+  // the job: once the prompt's history entry has loaded, open the image viewer
+  // on its outputs — the same action as manually tapping the finished item's
+  // first image.
+  const deepLinkPromptId = useNotificationDeepLinkStore((s) => s.pendingPromptId);
+  const disarmDeepLink = useNotificationDeepLinkStore((s) => s.disarm);
 
   // Queue view is embedded; no modal scroll locking.
 
@@ -599,7 +518,7 @@ export const QueuePanel = memo(function QueuePanel({ visible, onImageClick }: Qu
     }
     const entry = history.find((item) => item.prompt_id === deepLinkPromptId);
     if (entry) {
-      setDeepLinkPromptId(null);
+      disarmDeepLink();
       // Flash the underlying queue card in the same beat as opening the
       // viewer, so closing the viewer lands back on a card that still reads
       // as "that's the one that just finished" instead of an unmarked list.
@@ -625,7 +544,7 @@ export const QueuePanel = memo(function QueuePanel({ visible, onImageClick }: Qu
     // above). The handler is safe to let finish because it re-reads the store
     // and only clears a deep link still pointing at this same prompt.
     const disarmIfStillPending = () => {
-      setDeepLinkPromptId((current) => (current === deepLinkPromptId ? null : current));
+      disarmDeepLink(deepLinkPromptId);
     };
     void fetchHistory().then(
       () => {
@@ -646,7 +565,7 @@ export const QueuePanel = memo(function QueuePanel({ visible, onImageClick }: Qu
         disarmIfStillPending();
       },
     );
-  }, [deepLinkPromptId, history, viewerImages, fetchHistory, firstDoneItemId, onImageClick]);
+  }, [deepLinkPromptId, disarmDeepLink, history, viewerImages, fetchHistory, firstDoneItemId, onImageClick]);
 
   useEffect(() => {
     if (!visible || !hasLoadedOnce) return;

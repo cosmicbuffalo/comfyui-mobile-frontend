@@ -8,6 +8,7 @@ import { ShareHandoffController } from './components/ShareHandoffController';
 import { NoWorkflowImageDialog } from './components/modals/NoWorkflowImageDialog';
 import { MissingNodesDialog } from './components/modals/MissingNodesDialog';
 import { useWebSocket } from './hooks/useWebSocket';
+import { useNotificationDeepLinkListeners } from './hooks/useNotificationDeepLink';
 import { useWorkflowStore } from './hooks/useWorkflow';
 import { useNavigationStore } from './hooks/useNavigation';
 import { useAppMenuStore } from './hooks/useAppMenu';
@@ -142,6 +143,8 @@ function App() {
   useShowHiddenAutoHide();
 
   useWebSocket();
+  // Always mounted, unlike the lazy QueuePanel that finishes the job.
+  useNotificationDeepLinkListeners();
 
   // Tab favicon: pulsing green while anything is generating, solid cyan idle.
   const isGenerating = useQueueStore((s) => s.running.length > 0);
