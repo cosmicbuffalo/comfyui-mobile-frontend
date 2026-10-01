@@ -1176,4 +1176,11 @@ export const zhCN: Record<string, string> = {
   'Reorder nodes': '重新排序节点',
   'Reorder subgraph slot': '重新排序子图插槽',
   'Toggle bypass': '切换绕过',
+  'Only an admin can change this on this server.': '在此服务器上只有管理员可以更改。',
+  'Share operational telemetry': '共享运行遥测',
+  'Help improve the mobile frontend by sending anonymous counts of how this server runs. Never prompts, workflows, file names or who uses it.': '发送此服务器运行情况的匿名统计，帮助改进移动前端。不会发送提示词、工作流、文件名或使用者信息。',
+  'Set by the COMFYUI_MOBILE_TELEMETRY environment variable on this server.': '由此服务器的 COMFYUI_MOBILE_TELEMETRY 环境变量设置。',
+  'Fetch model details from CivitAI': '从 CivitAI 获取模型详细信息',
+  'Look up previews, names and base models for your models on CivitAI, including new models as soon as a workflow uses them. Sends a hash of the model file, never its name.': '在 CivitAI 查询模型的预览图、名称和基础模型；新模型一被工作流使用就会查询。只发送模型文件的哈希值，不发送文件名。',
+  'Set by the COMFYUI_MOBILE_CIVITAI_METADATA environment variable on this server.': '由此服务器的 COMFYUI_MOBILE_CIVITAI_METADATA 环境变量设置。',
 };

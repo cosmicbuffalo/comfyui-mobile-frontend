@@ -1175,4 +1175,11 @@ export const ko: Record<string, string> = {
   'Reorder nodes': '노드 순서 변경',
   'Reorder subgraph slot': '하위 그래프 슬롯 순서 변경',
   'Toggle bypass': '우회 전환',
+  'Only an admin can change this on this server.': '이 서버에서는 관리자만 변경할 수 있습니다.',
+  'Share operational telemetry': '운영 원격 분석 공유',
+  'Help improve the mobile frontend by sending anonymous counts of how this server runs. Never prompts, workflows, file names or who uses it.': '이 서버의 동작 현황을 익명 집계로 보내 모바일 프런트엔드 개선에 도움을 줍니다. 프롬프트, 워크플로, 파일 이름, 사용자 정보는 보내지 않습니다.',
+  'Set by the COMFYUI_MOBILE_TELEMETRY environment variable on this server.': '이 서버의 COMFYUI_MOBILE_TELEMETRY 환경 변수로 설정되어 있습니다.',
+  'Fetch model details from CivitAI': 'CivitAI에서 모델 정보 가져오기',
+  'Look up previews, names and base models for your models on CivitAI, including new models as soon as a workflow uses them. Sends a hash of the model file, never its name.': '모델의 미리보기, 이름, 기본 모델을 CivitAI에서 조회합니다. 새 모델도 워크플로에서 사용되는 즉시 조회합니다. 모델 파일의 해시만 보내며 파일 이름은 보내지 않습니다.',
+  'Set by the COMFYUI_MOBILE_CIVITAI_METADATA environment variable on this server.': '이 서버의 COMFYUI_MOBILE_CIVITAI_METADATA 환경 변수로 설정되어 있습니다.',
 };

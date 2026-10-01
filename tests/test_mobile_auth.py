@@ -181,3 +181,29 @@ def test_folder_badges_swallow_auth_node_errors():
         raise RuntimeError("db locked")
     _install_fake_auth_node(folder_badges=boom)
     assert mobile_auth.folder_badges(["private"]) == {}
+
+
+# --- who may flip server-wide switches ---------------------------------------
+
+
+def test_anyone_may_change_server_settings_without_the_auth_node():
+    assert mobile_auth.may_change_server_settings()
+
+
+@pytest.mark.parametrize("user, allowed", [
+    ({"id": "u1", "roles": ["admin"]}, True),
+    ({"id": "u1", "roles": ["Admin"]}, True),
+    ({"id": "u1", "roles": ["user"]}, False),
+    ({"id": "u1"}, False),
+    (None, False),
+])
+def test_only_an_admin_may_change_server_settings_under_multiuser(user, allowed):
+    _install_fake_auth_node(current_user=lambda: user)
+    assert mobile_auth.may_change_server_settings() is allowed
+
+
+def test_a_broken_auth_node_may_not_change_server_settings():
+    def broken():
+        raise RuntimeError("auth layer down")
+    _install_fake_auth_node(is_enabled=broken)
+    assert not mobile_auth.may_change_server_settings()

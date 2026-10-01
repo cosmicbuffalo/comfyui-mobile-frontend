@@ -107,6 +107,18 @@ def current_user():
         return None
 
 
+def may_change_server_settings() -> bool:
+    """Whether the requesting user may flip a server-wide switch (telemetry,
+    CivitAI lookups): anyone on a single-user server, only an admin when the
+    auth node is on. Inside a request only. A broken auth layer denies."""
+    if not is_enabled():
+        return True
+    user = current_user()
+    return bool(user) and "admin" in {
+        str(role).casefold() for role in (user.get("roles") or [])
+    }
+
+
 def scope_path(kind: str, path: str) -> str:
     """Rewrite a path into the current user's space. Identity when disabled."""
     api = _resolve()

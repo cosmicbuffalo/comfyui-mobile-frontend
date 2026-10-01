@@ -36,6 +36,10 @@ try:
     import mobile_progress_ws as _mobile_progress_ws
 except Exception:  # pragma: no cover - module should always be importable
     _mobile_progress_ws = None
+try:
+    import mobile_telemetry as _mobile_telemetry
+except Exception:  # pragma: no cover - module should always be importable
+    _mobile_telemetry = None
 
 from urllib.parse import urlencode
 
@@ -156,6 +160,11 @@ async def _handle_completion(prompt_id, entry):
         flush=True,
     )
 
+    # Before the notify-on toggles return early: a run finishing is worth
+    # counting whether or not anyone is notified about it.
+    if _mobile_telemetry is not None:
+        _mobile_telemetry.record_prompt_finished(entry, prompt_id=prompt_id)
+
     # Fire before the push sends below (which hop through a blocking
     # executor + a relay round-trip) so a connected app client can resolve
     # its Live Activity in lockstep with the notification dispatch rather
@@ -192,6 +201,8 @@ async def _handle_completion(prompt_id, entry):
                 None, _mobile_web_push.send_completion,
                 prompt_id, status, outputs, image_url, click_url,
             )
+            if _mobile_telemetry is not None:
+                _mobile_telemetry.record_push_result("web", result)
             if result.get("sent") or result.get("pruned"):
                 print(
                     f"{_LOG_PREFIX} web push sent={result['sent']} "
@@ -207,6 +218,8 @@ async def _handle_completion(prompt_id, entry):
                 None, _mobile_app_push.send_completion,
                 prompt_id, status, outputs, image_url, click_url,
             )
+            if _mobile_telemetry is not None:
+                _mobile_telemetry.record_push_result("app", result)
             if result.get("sent") or result.get("pruned"):
                 print(
                     f"{_LOG_PREFIX} app push sent={result['sent']} "

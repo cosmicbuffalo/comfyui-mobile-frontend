@@ -137,6 +137,9 @@ Nothing needs configuring for a normal install. These settings are for administr
 | `COMFYUI_MOBILE_WEB_PUSH_HOSTS` | *(empty)* | Extra push services that browser notifications may be sent to. See [Allowing another push service](#allowing-another-push-service). |
 | `COMFYUI_MOBILE_APP_PUSH_RELAYS` | *(empty)* | Extra relay origins for iOS app notifications, for operators running their own relay. See [CUEFORGE_PRIVACY.md](./CUEFORGE_PRIVACY.md#where-it-can-be-sent). |
 | `COMFYUI_MOBILE_APP_PUSH` | on | Set to `0` to turn off iOS app notification pairing entirely. |
+| `COMFYUI_MOBILE_TELEMETRY` | *(unset)* | `0` turns anonymous operational telemetry off, `1` forces it on; unset leaves it to **Preferences → Share operational telemetry**, which is on by default. See [CUEFORGE_PRIVACY.md](./CUEFORGE_PRIVACY.md#operational-telemetry). |
+| `COMFYUI_MOBILE_CIVITAI_METADATA` | *(unset)* | `0` stops model-metadata lookups on CivitAI, `1` forces them on; unset leaves it to **Preferences → Fetch model details from CivitAI**, which is on by default. See [CUEFORGE_PRIVACY.md](./CUEFORGE_PRIVACY.md#civitai-model-metadata). |
+| `COMFYUI_MOBILE_TELEMETRY_DEPLOYMENT` | `prod` | Labels this server's telemetry as `dev`, `review` or `prod`, so test servers can be filtered out. |
 
 How to set one depends on how you start ComfyUI:
 
@@ -174,6 +177,16 @@ Rules for the value:
 
 > [!CAUTION]
 > Only add a host you know is a real push service. Every host on this list is somewhere your server will POST to at a client's request. Never add `localhost`, an IP address, or a machine on your own network.
+
+## Privacy
+
+The node makes outbound requests only for features you use: the CueForge push
+relay once you pair the iOS app, your browser's push service for web push,
+CivitAI to look up model metadata by file hash (on by default, turned off in
+Preferences or with `COMFYUI_MOBILE_CIVITAI_METADATA=0`), the feedback form when you
+submit it, and anonymous operational telemetry, which is **on by default** and
+turned off in Preferences or with `COMFYUI_MOBILE_TELEMETRY=0`. [CUEFORGE_PRIVACY.md](./CUEFORGE_PRIVACY.md)
+lists every one and exactly what it carries.
 
 ## Development
 

@@ -10,6 +10,8 @@ import {
   menuTextClassName,
 } from './menuStyles';
 import { NotificationsSettings } from './NotificationsSettings';
+import { CivitaiMetadataSetting } from './CivitaiMetadataSetting';
+import { TelemetrySetting } from './TelemetrySetting';
 import { useAutocompleteStore } from '@/hooks/useAutocompleteStore';
 import {
   AUTO_HIDE_MINUTE_CHOICES,
@@ -240,6 +242,10 @@ export function GenerationSettingsPanel({ onBack }: GenerationSettingsPanelProps
             onToggle={() => void setAutocompleteEnabled(!autocompleteEnabled)}
           />
         )}
+
+        <CivitaiMetadataSetting />
+
+        <TelemetrySetting />
 
         <PreferenceSection
           label={t('Re-hide hidden files when you leave')}

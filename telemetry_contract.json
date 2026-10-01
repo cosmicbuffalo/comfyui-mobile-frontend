@@ -1,0 +1,61 @@
+{
+  "$comment": "What comfyui-mobile-frontend may send as operational telemetry, and all the CueForge relay will forward. One file, read by both: the relay (src/validate.ts) and the node (a vendored copy, telemetry_contract.json). A field or event not listed here is dropped by both. Patterns are written so JavaScript and Python read them identically.",
+  "version": 1,
+  "deployments": ["dev", "review", "prod"],
+  "limits": {
+    "max_events": 50,
+    "max_body_bytes": 32768,
+    "max_age_seconds": 604800,
+    "max_skew_seconds": 600
+  },
+  "patterns": {
+    "install_id": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+    "version": "^\\d{1,4}(\\.\\d{1,4}){0,3}(-[a-z0-9]{1,12})?$",
+    "type_name": "^[A-Za-z_][A-Za-z0-9_]{0,63}$"
+  },
+  "buckets": {
+    "count": ["0", "1-2", "3-5", "6-20", "21-100", "101+"],
+    "duration": ["<2s", "2-10s", "10-30s", "30s-2m", "2-10m", "10m+"],
+    "days": ["0", "1-6", "7-29", "30-89", "90+"]
+  },
+  "common": {
+    "node_version": { "type": "version" },
+    "measurement_version": { "type": "int", "min": 1, "max": 100 }
+  },
+  "events": {
+    "node started": {
+      "platform": { "type": "enum", "values": [
+          "linux", "windows", "darwin", "other"
+        ] },
+      "python_version": { "type": "version" },
+      "comfyui_version": { "type": "version", "also": ["unknown"] },
+      "install_source": { "type": "enum", "values": [
+          "registry", "manager", "git", "other"
+        ] },
+      "multiuser": { "type": "bool" }
+    },
+    "hourly summary": {
+      "opens_ios_app_bucket": { "type": "bucket", "bucket": "count" },
+      "opens_share_extension_bucket": { "type": "bucket", "bucket": "count" },
+      "opens_web_bucket": { "type": "bucket", "bucket": "count" },
+      "queued_ios_app_bucket": { "type": "bucket", "bucket": "count" },
+      "queued_share_extension_bucket": { "type": "bucket", "bucket": "count" },
+      "queued_web_bucket": { "type": "bucket", "bucket": "count" },
+      "succeeded_bucket": { "type": "bucket", "bucket": "count" },
+      "failed_bucket": { "type": "bucket", "bucket": "count" },
+      "interrupted_bucket": { "type": "bucket", "bucket": "count" },
+      "median_duration_bucket": { "type": "bucket", "bucket": "duration" },
+      "top_model_family": { "type": "enum", "values": [
+          "sd15", "sd2", "sdxl", "sd3", "stable_cascade", "stable_video", "flux", "flux2", "chroma", "hidream", "qwen_image", "z_image", "lumina", "auraflow", "pixart", "hunyuan_image", "hunyuan_video", "wan", "ltx", "mochi", "cosmos", "cogvideo", "kandinsky", "audio", "3d", "other"
+        ] },
+      "top_error_class": { "type": "type_name" },
+      "pushes_delivered_bucket": { "type": "bucket", "bucket": "count" },
+      "pushes_failed_bucket": { "type": "bucket", "bucket": "count" },
+      "request_failures_bucket": { "type": "bucket", "bucket": "count" }
+    },
+    "daily summary": {
+      "paired_app": { "type": "bool" },
+      "days_since_install_bucket": { "type": "bucket", "bucket": "days" }
+    }
+  }
+}

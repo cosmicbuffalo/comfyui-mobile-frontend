@@ -11,6 +11,11 @@ from aiohttp import web
 
 from mobile_common import DIST_DIR
 
+try:
+    import mobile_telemetry as _mobile_telemetry
+except Exception:  # pragma: no cover - module should always be importable
+    _mobile_telemetry = None
+
 # Handler to serve index.html for SPA routing (non-API routes only)
 async def serve_index(request):
     # Don't serve index.html for API routes. request.path is the full path
@@ -20,6 +25,11 @@ async def serve_index(request):
     path = request.path
     if '/api/' in path:
         return web.Response(status=404, text='Not found')
+    if _mobile_telemetry is not None:
+        # A full page load of the frontend; in-app navigation never reaches here.
+        _mobile_telemetry.note_frontend_open(
+            _mobile_telemetry.surface_from_user_agent(request.headers.get("User-Agent"))
+        )
     response = web.FileResponse(os.path.join(DIST_DIR, "index.html"))
     response.headers['Cache-Control'] = 'no-cache'
     return response

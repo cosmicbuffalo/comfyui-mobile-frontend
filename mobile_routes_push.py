@@ -11,7 +11,10 @@ from aiohttp import web
 
 import mobile_app_prefs as _mobile_app_prefs
 import mobile_app_push as _mobile_app_push
+import mobile_auth as _mobile_auth
 import mobile_capabilities as _mobile_capabilities
+import mobile_telemetry as _mobile_telemetry
+import model_metadata as _model_metadata
 import mobile_push_prefs as _mobile_push_prefs
 import mobile_web_push as _mobile_web_push
 # --- Web Push (browser notifications on generation completion) ---
@@ -205,7 +208,32 @@ async def api_app_prefs_get(request):
 async def api_app_prefs_set(request):
     try:
         body = await request.json()
-        return web.json_response(_mobile_app_prefs.set_prefs(body))
+        # When the environment decides telemetry, the setting is not the
+        # operator's to flip from a browser; ignore it rather than store a
+        # value that would silently do nothing. Under multiuser it is also
+        # server-wide, so only an admin may flip it.
+        if isinstance(body, dict) and (_mobile_telemetry.env_override() is not None
+                                       or not _mobile_auth.may_change_server_settings()):
+            body = {k: v for k, v in body.items() if k != _mobile_telemetry.PREF_KEY}
+        if isinstance(body, dict) and (_model_metadata.env_override() is not None
+                                       or not _mobile_auth.may_change_server_settings()):
+            body = {k: v for k, v in body.items() if k != _model_metadata.PREF_KEY}
+        prefs = _mobile_app_prefs.set_prefs(body)
+        if not _mobile_telemetry.is_enabled():
+            # Off means the install id goes now, not at the next flush.
+            _mobile_telemetry.forget()
+        return web.json_response(prefs)
+    except Exception as e:
+        return web.json_response({"error": str(e)}, status=500)
+
+async def api_telemetry_status(request):
+    """Whether telemetry is on, whether the environment decided that, and
+    whether this user is barred from changing it (multiuser, not an admin)."""
+    try:
+        return web.json_response({
+            **_mobile_telemetry.status(),
+            "adminOnly": not _mobile_auth.may_change_server_settings(),
+        })
     except Exception as e:
         return web.json_response({"error": str(e)}, status=500)
 
@@ -227,5 +255,6 @@ def register_routes(mobile_app):
     mobile_app.router.add_post('/api/push/preferences', api_push_prefs_set)
     mobile_app.router.add_get('/api/preferences', api_app_prefs_get)
     mobile_app.router.add_post('/api/preferences', api_app_prefs_set)
+    mobile_app.router.add_get('/api/telemetry', api_telemetry_status)
 
     print(f"[Mobile Frontend] app push pairing {'enabled' if _app_push_pairing_enabled else 'disabled'}")

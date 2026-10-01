@@ -2,9 +2,14 @@ import { useEffect, useMemo } from "react";
 import { create } from "zustand";
 import {
   fetchAllModels,
+  fetchLoraManagerModel,
+  fetchMissingStandalone,
+  getCivitaiStatus,
   getPopulateStatus,
   refreshLoraManagerModels,
   resolveModelProvider,
+  scanLoraManagerModels,
+  scanStandaloneModels,
   triggerPopulate,
   type LoraManagerModel,
   type LoraManagerPrefix,
@@ -26,6 +31,10 @@ interface LoraManagerMetadataState {
   // populates Civitai metadata in the background); false for Lora Manager.
   standalone: boolean;
   prefixes: Record<LoraManagerPrefix, PrefixState>;
+  // Whether this app may ask for CivitAI lookups (the server-wide "Fetch model
+  // details from CivitAI" switch). null until the server has said.
+  civitaiEnabled: boolean | null;
+  setCivitaiEnabled: (enabled: boolean) => void;
   // True while a manual "refresh model metadata" pass is running.
   refreshing: boolean;
   // Brief success state shown by the Server-menu button after a completed pass.
@@ -39,9 +48,15 @@ interface LoraManagerMetadataState {
   ensureAvailable: () => void;
   ensurePrefixLoaded: (prefix: LoraManagerPrefix) => void;
   lookup: (prefix: LoraManagerPrefix, value: unknown) => LoraManagerModel | null;
+  // Automatic lookups must identify the actual file, without the display
+  // lookup's filename fallback binding a new path to an older model.
+  lookupExact: (prefix: LoraManagerPrefix, value: unknown) => LoraManagerModel | null;
   // Rescan and fetch missing Civitai metadata across all model kinds. Uses Lora
   // Manager when installed and the built-in standalone provider otherwise.
   refreshAllMetadata: () => void;
+  // A model widget shows a model the catalog has no metadata for: look it up.
+  // Batched per kind, and each value is asked about once per session.
+  requestMissingMetadata: (prefix: LoraManagerPrefix, value: string) => void;
 }
 
 const ALL_PREFIXES: LoraManagerPrefix[] = [
@@ -52,6 +67,27 @@ const ALL_PREFIXES: LoraManagerPrefix[] = [
 
 function emptyPrefixState(): PrefixState {
   return { status: "idle", byPath: new Map(), byFileName: new Map() };
+}
+
+// Mirrors MODEL_EXTENSIONS in model_metadata.py. Combo values without one
+// ("None", a placeholder) aren't model files and are never looked up.
+const MODEL_EXTENSIONS = [
+  ".safetensors", ".ckpt", ".pt", ".pt2", ".pth",
+  ".bin", ".sft", ".gguf", ".pkl",
+];
+
+export function isModelFileName(value: string): boolean {
+  const lower = value.toLowerCase();
+  return MODEL_EXTENSIONS.some((ext) => lower.endsWith(ext));
+}
+
+// True when a catalog entry (or its absence) means there is nothing on this
+// model yet: not in the catalog at all, or in it without CivitAI data and not
+// already known to be missing from CivitAI.
+export function needsMetadata(model: LoraManagerModel | null): boolean {
+  if (!model) return true;
+  if (model.civitai && model.civitai.id) return false;
+  return model.from_civitai !== false;
 }
 
 function normalizePath(value: string): string {
@@ -105,6 +141,28 @@ const prefixProbes: Partial<Record<LoraManagerPrefix, Promise<void>>> = {};
 const populateStarted: Partial<Record<LoraManagerPrefix, boolean>> = {};
 const REFRESH_DONE_DURATION_MS = 5_000;
 let refreshDoneTimer: ReturnType<typeof setTimeout> | null = null;
+let civitaiProbe: Promise<void> | null = null;
+
+// Automatic lookups. Values seen this session (per kind, lower-cased), values
+// waiting for the batch timer, and one chain per kind so batches never overlap.
+const AUTO_FETCH_DEBOUNCE_MS = 1_000;
+const autoRequested = new Set<string>();
+const autoPending: Partial<Record<LoraManagerPrefix, Set<string>>> = {};
+const autoTimers: Partial<Record<LoraManagerPrefix, ReturnType<typeof setTimeout>>> = {};
+const autoChains: Partial<Record<LoraManagerPrefix, Promise<void>>> = {};
+
+// Test hook: forget what has been asked about and drop queued batches.
+export function resetAutoFetchForTests(): void {
+  autoRequested.clear();
+  for (const prefix of ALL_PREFIXES) {
+    delete autoPending[prefix];
+    const timer = autoTimers[prefix];
+    if (timer) clearTimeout(timer);
+    delete autoTimers[prefix];
+    delete autoChains[prefix];
+  }
+  civitaiProbe = null;
+}
 
 export const useLoraManagerMetadataStore = create<LoraManagerMetadataState>(
   (set, get) => {
@@ -164,6 +222,45 @@ export const useLoraManagerMetadataStore = create<LoraManagerMetadataState>(
       await reloadPrefix(prefix);
     };
 
+    // Look up the batched values for one kind. Lora Manager first rescans so a
+    // file added since its last scan is in its catalog, then is asked about each
+    // value still missing metadata; our backend resolves the values itself.
+    const runAutoFetch = async (prefix: LoraManagerPrefix, values: string[]) => {
+      if (get().civitaiEnabled !== true) return;
+      const provider = await resolveModelProvider();
+      if (!provider) return;
+      if (provider.standalone) {
+        if (await fetchMissingStandalone(prefix, values)) await reloadPrefix(prefix);
+        return;
+      }
+      await scanLoraManagerModels(prefix);
+      await reloadPrefix(prefix);
+      let fetched = false;
+      for (const value of values) {
+        // The switch can be turned off while a batch is working through.
+        if (get().civitaiEnabled !== true) break;
+        const model = get().lookupExact(prefix, value);
+        // Not in LM's catalog even after a scan: no such file here.
+        if (!model || !needsMetadata(model) || !model.file_path) continue;
+        if (await fetchLoraManagerModel(prefix, model.file_path)) fetched = true;
+      }
+      if (fetched) await reloadPrefix(prefix);
+    };
+
+    const flushAutoFetch = (prefix: LoraManagerPrefix) => {
+      delete autoTimers[prefix];
+      const values = [...(autoPending[prefix] ?? [])];
+      delete autoPending[prefix];
+      if (values.length === 0) return;
+      const previous = autoChains[prefix] ?? Promise.resolve();
+      const next = previous
+        .then(() => runAutoFetch(prefix, values))
+        .catch((err) => {
+          console.warn(`Automatic metadata lookup for ${prefix} failed:`, err);
+        });
+      autoChains[prefix] = next;
+    };
+
     // Standalone only: trigger a background Civitai population pass for models
     // missing metadata. Runs once per prefix per session.
     const startBackgroundPopulate = (prefix: LoraManagerPrefix) => {
@@ -187,6 +284,8 @@ export const useLoraManagerMetadataStore = create<LoraManagerMetadataState>(
     return {
       available: null,
       standalone: false,
+      civitaiEnabled: null,
+      setCivitaiEnabled: (enabled) => set({ civitaiEnabled: enabled }),
       refreshing: false,
       refreshDone: false,
       refreshError: null,
@@ -199,6 +298,20 @@ export const useLoraManagerMetadataStore = create<LoraManagerMetadataState>(
       },
 
       ensureAvailable: () => {
+        // Ask once whether CivitAI lookups are on; a failure leaves it unknown
+        // (so nothing is looked up automatically) and is retried next call.
+        if (get().civitaiEnabled === null && !civitaiProbe) {
+          civitaiProbe = getCivitaiStatus()
+            .then((status) => {
+              // A Settings change may have landed while this was in flight.
+              if (get().civitaiEnabled === null) {
+                set({ civitaiEnabled: status.enabled });
+              }
+            })
+            .catch(() => {
+              civitaiProbe = null;
+            });
+        }
         // Re-probe while a provider hasn't been confirmed (available null or
         // false) as long as no probe is in flight — a failed/empty first probe
         // (e.g. backend not ready yet) must not permanently disable rich
@@ -262,6 +375,11 @@ export const useLoraManagerMetadataStore = create<LoraManagerMetadataState>(
           });
       },
 
+      lookupExact: (prefix, value) => {
+        if (typeof value !== "string" || !value) return null;
+        return get().prefixes[prefix].byPath.get(normalizePath(value)) ?? null;
+      },
+
       lookup: (prefix, value) => {
         if (value === null || value === undefined) return null;
         const raw = String(value);
@@ -295,6 +413,11 @@ export const useLoraManagerMetadataStore = create<LoraManagerMetadataState>(
             if (!provider) {
               throw new Error("Model metadata provider is unavailable");
             }
+            // With CivitAI lookups off, the refresh only picks up new files.
+            const civitaiEnabled = await getCivitaiStatus()
+              .then((status) => status.enabled)
+              .catch(() => get().civitaiEnabled === true);
+            set({ civitaiEnabled });
 
             // One bad prefix (an unconfigured checkpoints dir, a transient
             // 500) must not cost the others their refresh: record the
@@ -321,6 +444,14 @@ export const useLoraManagerMetadataStore = create<LoraManagerMetadataState>(
               };
 
               try {
+                if (!civitaiEnabled) {
+                  const scanned = provider.standalone
+                    ? await scanStandaloneModels(prefix)
+                    : await scanLoraManagerModels(prefix);
+                  if (!scanned) throw new Error(`Model scan failed for ${prefix}`);
+                  await reloadPrefix(prefix);
+                  continue;
+                }
                 if (!provider.standalone) {
                   // LM's metadata pass reads its own cached catalog, so scan first
                   // to include files copied or downloaded since its last refresh.
@@ -370,6 +501,19 @@ export const useLoraManagerMetadataStore = create<LoraManagerMetadataState>(
           }
         })();
       },
+
+      requestMissingMetadata: (prefix, value) => {
+        if (get().civitaiEnabled !== true || !isModelFileName(value)) return;
+        const key = `${prefix}\u0000${normalizePath(value)}`;
+        if (autoRequested.has(key)) return;
+        autoRequested.add(key);
+        (autoPending[prefix] ??= new Set()).add(value);
+        if (autoTimers[prefix]) clearTimeout(autoTimers[prefix]);
+        autoTimers[prefix] = setTimeout(
+          () => flushAutoFetch(prefix),
+          AUTO_FETCH_DEBOUNCE_MS,
+        );
+      },
     };
   },
 );
@@ -404,4 +548,28 @@ export function useModelMetadataLookup(
     void prefixState;
     return (v: string) => lookup(kind, v);
   }, [kind, available, lookup, prefixState]);
+}
+
+// Watches one model widget's value and asks for a lookup when the loaded
+// catalog has no metadata for it — a model added since the catalog was built,
+// or one never looked up. Does nothing while CivitAI lookups are off.
+export function useAutoFetchModelMetadata(
+  kind: LoraManagerPrefix | null,
+  value: unknown,
+): void {
+  const civitaiEnabled = useLoraManagerMetadataStore((s) => s.civitaiEnabled);
+  const prefixState = useLoraManagerMetadataStore((s) =>
+    kind ? s.prefixes[kind] : undefined,
+  );
+  const lookup = useLoraManagerMetadataStore((s) => s.lookupExact);
+  const requestMissingMetadata = useLoraManagerMetadataStore(
+    (s) => s.requestMissingMetadata,
+  );
+
+  useEffect(() => {
+    if (!kind || civitaiEnabled !== true || prefixState?.status !== "ready") return;
+    if (typeof value !== "string" || !isModelFileName(value)) return;
+    if (!needsMetadata(lookup(kind, value))) return;
+    requestMissingMetadata(kind, value);
+  }, [kind, value, civitaiEnabled, prefixState, lookup, requestMissingMetadata]);
 }

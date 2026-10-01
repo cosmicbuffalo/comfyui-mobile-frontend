@@ -1175,4 +1175,11 @@ export const ja: Record<string, string> = {
   'Reorder nodes': 'ノードを並べ替え',
   'Reorder subgraph slot': 'サブグラフスロットを並べ替え',
   'Toggle bypass': 'バイパスを切り替え',
+  'Only an admin can change this on this server.': 'このサーバーでは管理者だけが変更できます。',
+  'Share operational telemetry': '運用テレメトリーを共有',
+  'Help improve the mobile frontend by sending anonymous counts of how this server runs. Never prompts, workflows, file names or who uses it.': 'このサーバーの動作状況を匿名の集計として送信し、モバイルフロントエンドの改善に役立てます。プロンプト、ワークフロー、ファイル名、利用者の情報は送信しません。',
+  'Set by the COMFYUI_MOBILE_TELEMETRY environment variable on this server.': 'このサーバーの環境変数 COMFYUI_MOBILE_TELEMETRY で設定されています。',
+  'Fetch model details from CivitAI': 'CivitAI からモデルの詳細を取得',
+  'Look up previews, names and base models for your models on CivitAI, including new models as soon as a workflow uses them. Sends a hash of the model file, never its name.': 'モデルのプレビュー、名前、ベースモデルを CivitAI で調べます。新しいモデルもワークフローで使われた時点で調べます。送信するのはモデルファイルのハッシュだけで、ファイル名は送信しません。',
+  'Set by the COMFYUI_MOBILE_CIVITAI_METADATA environment variable on this server.': 'このサーバーの環境変数 COMFYUI_MOBILE_CIVITAI_METADATA で設定されています。',
 };

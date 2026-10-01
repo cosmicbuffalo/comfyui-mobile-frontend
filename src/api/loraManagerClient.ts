@@ -43,6 +43,9 @@ export interface LoraManagerModel {
   sub_type: string; // lora | locon | dora | checkpoint | diffusion_model | embedding
   favorite?: boolean;
   civitai?: LoraManagerCivitai | null;
+  // false once CivitAI has said it doesn't know the file; absent/null/true
+  // otherwise (LM reports true for models it hasn't looked up yet).
+  from_civitai?: boolean | null;
 }
 
 interface ModelListResponse {
@@ -157,7 +160,9 @@ export async function fetchAllModels(
 // Ask Lora Manager to discover newly-added files before fetching metadata for
 // its refreshed catalog. Keeping these as one operation prevents a metadata
 // pass from missing models that have not reached LM's cache yet.
-export async function refreshLoraManagerModels(
+// Ask Lora Manager to pick up files added since its last scan. Local only: it
+// hashes new files but contacts nothing.
+export async function scanLoraManagerModels(
   prefix: LoraManagerPrefix,
 ): Promise<boolean> {
   try {
@@ -171,7 +176,31 @@ export async function refreshLoraManagerModels(
       status?: string;
       error?: string;
     };
-    if (scanResult.status === "cancelled" || scanResult.error) return false;
+    return scanResult.status !== "cancelled" && !scanResult.error;
+  } catch {
+    return false;
+  }
+}
+
+/** Rescan the built-in catalog locally, including when CivitAI is disabled. */
+export async function scanStandaloneModels(
+  prefix: LoraManagerPrefix,
+): Promise<boolean> {
+  try {
+    const response = await fetch(`${STANDALONE_BASE}/${prefix}/scan`, { method: "POST" });
+    if (!response.ok) return false;
+    const result = (await response.json()) as { status?: string };
+    return result.status === "success";
+  } catch {
+    return false;
+  }
+}
+
+export async function refreshLoraManagerModels(
+  prefix: LoraManagerPrefix,
+): Promise<boolean> {
+  try {
+    if (!(await scanLoraManagerModels(prefix))) return false;
 
     const metadataResponse = await fetch(
       `/api/lm/${prefix}/fetch-all-civitai`,
@@ -231,5 +260,74 @@ export async function getPopulateStatus(
     return (await response.json()) as PopulateStatus;
   } catch {
     return null;
+  }
+}
+
+/** GET /mobile/api/models/civitai - see model_metadata.civitai_status(). */
+export interface CivitaiStatus {
+  enabled: boolean;
+  /** COMFYUI_MOBILE_CIVITAI_METADATA decides, so the toggle is not the operator's. */
+  forcedByEnvironment: boolean;
+  /** Multiuser, and this user is not an admin. Absent on older nodes. */
+  adminOnly?: boolean;
+}
+
+export async function getCivitaiStatus(): Promise<CivitaiStatus> {
+  const response = await fetch(`${STANDALONE_BASE}/civitai`);
+  if (!response.ok) throw new Error("Failed to fetch CivitAI status");
+  return response.json();
+}
+
+// Have our standalone backend look up just these widget values' models, if they
+// have no metadata yet. The server queues the lookups and answers at once
+// (hashing a large checkpoint can take minutes), so this polls until nothing
+// is pending. Resolves true once they finish; false on failure or timeout.
+export const FETCH_MISSING_POLL_MS = 2_000;
+const FETCH_MISSING_TIMEOUT_MS = 15 * 60_000;
+
+export async function fetchMissingStandalone(
+  prefix: LoraManagerPrefix,
+  values: string[],
+  pollMs: number = FETCH_MISSING_POLL_MS,
+): Promise<boolean> {
+  const url = `${STANDALONE_BASE}/${prefix}/fetch-missing`;
+  try {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ values }),
+    });
+    if (!response.ok) return false;
+    let { pending } = (await response.json()) as { pending?: number };
+    const deadline = Date.now() + FETCH_MISSING_TIMEOUT_MS;
+    while ((pending ?? 0) > 0) {
+      if (Date.now() > deadline) return false;
+      await new Promise((resolve) => setTimeout(resolve, pollMs));
+      const status = await fetch(url, { cache: "no-store" });
+      if (!status.ok) return false;
+      ({ pending } = (await status.json()) as { pending?: number });
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// Have Lora Manager look up one model it already has in its catalog.
+export async function fetchLoraManagerModel(
+  prefix: LoraManagerPrefix,
+  filePath: string,
+): Promise<boolean> {
+  try {
+    const response = await fetch(`/api/lm/${prefix}/fetch-civitai`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ file_path: filePath }),
+    });
+    if (!response.ok) return false;
+    const result = (await response.json()) as { success?: boolean };
+    return result.success !== false;
+  } catch {
+    return false;
   }
 }
