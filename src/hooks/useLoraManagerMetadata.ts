@@ -222,6 +222,14 @@ export const useLoraManagerMetadataStore = create<LoraManagerMetadataState>(
       await reloadPrefix(prefix);
     };
 
+    // Values asked about while lookups were off were skipped, not looked up.
+    // Forget them on the way back on, so the mounted controls (whose effect
+    // re-runs on the switch) can ask again instead of waiting for a reload.
+    const applyCivitaiEnabled = (enabled: boolean) => {
+      if (enabled && get().civitaiEnabled === false) autoRequested.clear();
+      set({ civitaiEnabled: enabled });
+    };
+
     // Look up the batched values for one kind. Lora Manager first rescans so a
     // file added since its last scan is in its catalog, then is asked about each
     // value still missing metadata; our backend resolves the values itself.
@@ -233,6 +241,15 @@ export const useLoraManagerMetadataStore = create<LoraManagerMetadataState>(
         if (await fetchMissingStandalone(prefix, values)) await reloadPrefix(prefix);
         return;
       }
+      // Our backend refuses its own lookups when the switch is off, but Lora
+      // Manager knows nothing about it: this page is the only gate. A value
+      // cached here can outlive an admin turning lookups off elsewhere, so ask
+      // again before every batch, and treat an unanswered check as off.
+      const enabled = await getCivitaiStatus()
+        .then((status) => status.enabled)
+        .catch(() => false);
+      applyCivitaiEnabled(enabled);
+      if (!enabled) return;
       await scanLoraManagerModels(prefix);
       await reloadPrefix(prefix);
       let fetched = false;
@@ -285,7 +302,7 @@ export const useLoraManagerMetadataStore = create<LoraManagerMetadataState>(
       available: null,
       standalone: false,
       civitaiEnabled: null,
-      setCivitaiEnabled: (enabled) => set({ civitaiEnabled: enabled }),
+      setCivitaiEnabled: applyCivitaiEnabled,
       refreshing: false,
       refreshDone: false,
       refreshError: null,
@@ -305,7 +322,7 @@ export const useLoraManagerMetadataStore = create<LoraManagerMetadataState>(
             .then((status) => {
               // A Settings change may have landed while this was in flight.
               if (get().civitaiEnabled === null) {
-                set({ civitaiEnabled: status.enabled });
+                applyCivitaiEnabled(status.enabled);
               }
             })
             .catch(() => {
@@ -417,7 +434,7 @@ export const useLoraManagerMetadataStore = create<LoraManagerMetadataState>(
             const civitaiEnabled = await getCivitaiStatus()
               .then((status) => status.enabled)
               .catch(() => get().civitaiEnabled === true);
-            set({ civitaiEnabled });
+            applyCivitaiEnabled(civitaiEnabled);
 
             // One bad prefix (an unconfigured checkpoints dir, a transient
             // 500) must not cost the others their refresh: record the

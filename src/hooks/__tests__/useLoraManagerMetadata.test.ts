@@ -463,6 +463,51 @@ describe("useLoraManagerMetadata automatic lookup", () => {
     expect(fetchLoraManagerModel).not.toHaveBeenCalled();
   });
 
+  it("asks LoRA Manager nothing once the server says lookups are off, whatever this page cached", async () => {
+    await ready();
+    vi.mocked(fetchAllModels).mockResolvedValue([...SAMPLE, NEW_MODEL]);
+    // An admin turned lookups off from another client after this page loaded.
+    vi.mocked(getCivitaiStatus).mockResolvedValue({ enabled: false, forcedByEnvironment: false });
+    const store = useLoraManagerMetadataStore;
+
+    store.getState().requestMissingMetadata("checkpoints", "new_model.safetensors");
+    await vi.waitFor(() => expect(store.getState().civitaiEnabled).toBe(false), { timeout: 3000 });
+
+    expect(scanLoraManagerModels).not.toHaveBeenCalled();
+    expect(fetchLoraManagerModel).not.toHaveBeenCalled();
+  });
+
+  it("treats an unanswered switch check as off before asking LoRA Manager", async () => {
+    await ready();
+    vi.mocked(fetchAllModels).mockResolvedValue([...SAMPLE, NEW_MODEL]);
+    vi.mocked(getCivitaiStatus).mockRejectedValue(new Error("offline"));
+
+    useLoraManagerMetadataStore.getState().requestMissingMetadata("checkpoints", "new_model.safetensors");
+    await new Promise((resolve) => setTimeout(resolve, 1200));
+
+    expect(fetchLoraManagerModel).not.toHaveBeenCalled();
+  });
+
+  it("asks again about a model skipped while lookups were off once they are back on", async () => {
+    await ready();
+    vi.mocked(fetchAllModels).mockResolvedValue([...SAMPLE, NEW_MODEL]);
+    const store = useLoraManagerMetadataStore;
+    vi.mocked(getCivitaiStatus).mockResolvedValueOnce({ enabled: false, forcedByEnvironment: false });
+
+    store.getState().requestMissingMetadata("checkpoints", "new_model.safetensors");
+    await vi.waitFor(() => expect(store.getState().civitaiEnabled).toBe(false), { timeout: 3000 });
+    expect(fetchLoraManagerModel).not.toHaveBeenCalled();
+
+    // The mounted control's effect re-runs when the switch comes back on.
+    store.getState().setCivitaiEnabled(true);
+    store.getState().requestMissingMetadata("checkpoints", "new_model.safetensors");
+
+    await vi.waitFor(() => expect(fetchLoraManagerModel).toHaveBeenCalled(), { timeout: 3000 });
+    expect(vi.mocked(fetchLoraManagerModel).mock.calls).toEqual([
+      ["checkpoints", NEW_MODEL.file_path],
+    ]);
+  });
+
   it("stops before asking LoRA Manager if the switch is turned off mid-batch", async () => {
     await ready();
     vi.mocked(fetchAllModels).mockResolvedValue([...SAMPLE, NEW_MODEL]);
