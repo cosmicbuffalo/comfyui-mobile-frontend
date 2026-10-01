@@ -1,5 +1,43 @@
 # Changelog
 
+## 3.3.6 - 2026-09-30
+
+### Added
+
+- **New models get their previews and details automatically.** A model you
+  add while ComfyUI is running is looked up on CivitAI the first time a
+  workflow uses it, so its picker row fills in without a trip to *Refresh
+  model metadata*. Works with or without LoRA Manager.
+- **A switch for CivitAI lookups.** Preferences → *Fetch model details from
+  CivitAI*, on by default. Off, the app looks nothing up on CivitAI and
+  *Refresh model metadata* only picks up new files. Administrators can decide
+  it for the server with `COMFYUI_MOBILE_CIVITAI_METADATA` (see
+  [Server settings](./README.md#server-settings)).
+- **Anonymous operational telemetry, on by default.** The node sends
+  anonymous counts of how the server runs (start-ups, queued and finished
+  prompts, notification delivery, failing routes) through the CueForge relay.
+  Never prompts, workflows, file names, the server's address, or who uses it.
+  Turn it off in Preferences → *Share operational telemetry* or with
+  `COMFYUI_MOBILE_TELEMETRY=0`.
+- With comfyui-multiuser, **only an admin can change these two switches**;
+  other accounts see them locked.
+
+### Fixed
+
+- **A model's preview and details no longer stay missing after a failed
+  CivitAI lookup.** If your server was offline or CivitAI was busy or down
+  during a lookup, that model was treated as unknown to CivitAI and never
+  looked up again. Now it is looked up again next time.
+- **Tapping a "generation finished" notification opens that run again when the
+  app was last on the workflow.** After the iOS app had been closed, the tap
+  opened the workflow and stopped there instead of showing the finished run.
+
+### Documentation
+
+- **[CUEFORGE_PRIVACY.md](./CUEFORGE_PRIVACY.md) lists every outbound
+  request** the node makes and exactly what each carries, including every
+  telemetry event and field.
+
 ## 3.3.5 - 2026-09-26
 
 ### Security
