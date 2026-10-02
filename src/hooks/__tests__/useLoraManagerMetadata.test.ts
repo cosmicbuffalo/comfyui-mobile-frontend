@@ -72,6 +72,7 @@ vi.mock("@/api/loraManagerClient", () => ({
 import {
   needsMetadata,
   resetAutoFetchForTests,
+  setOffReprobeIntervalForTests,
   useAutoFetchModelMetadata,
   useLoraManagerMetadataStore,
 } from "../useLoraManagerMetadata";
@@ -533,33 +534,46 @@ describe("useLoraManagerMetadata automatic lookup", () => {
     ]);
   });
 
-  it("notices lookups were turned back on elsewhere, then asks about what was waiting", async () => {
+  it("an open page notices lookups were turned back on elsewhere, then looks up what was waiting", async () => {
     await ready();
     vi.mocked(fetchAllModels).mockResolvedValue([...SAMPLE, NEW_MODEL]);
     const store = useLoraManagerMetadataStore;
+    await store.getState().ensurePrefixLoaded("checkpoints");
+    setOffReprobeIntervalForTests(50);
     store.getState().setCivitaiEnabled(false);
-    // An admin re-enabled lookups from another client.
-    vi.mocked(getCivitaiStatus).mockResolvedValue({ enabled: true, forcedByEnvironment: false });
+    function Probe() {
+      useAutoFetchModelMetadata("checkpoints", "new_model.safetensors");
+      return null;
+    }
+    const root = createRoot(document.createElement("div"));
+    try {
+      await act(async () => root.render(createElement(Probe)));
+      await new Promise((resolve) => setTimeout(resolve, 120));
+      expect(fetchLoraManagerModel).not.toHaveBeenCalled();
 
-    // A control still missing metadata asks; the page re-checks the server.
-    store.getState().requestMissingMetadata("checkpoints", "new_model.safetensors");
-    await vi.waitFor(() => expect(store.getState().civitaiEnabled).toBe(true));
-    // Its effect re-runs on the switch and asks again.
-    store.getState().requestMissingMetadata("checkpoints", "new_model.safetensors");
-
-    await vi.waitFor(() => expect(fetchLoraManagerModel).toHaveBeenCalled(), { timeout: 3000 });
+      // An admin re-enables lookups from another client; nothing on this page
+      // touches the switch, so only the mounted control's re-check can see it.
+      vi.mocked(getCivitaiStatus).mockResolvedValue({ enabled: true, forcedByEnvironment: false });
+      await act(async () => {
+        await vi.waitFor(
+          () => expect(fetchLoraManagerModel).toHaveBeenCalledWith("checkpoints", NEW_MODEL.file_path),
+          { timeout: 3000 },
+        );
+      });
+    } finally {
+      await act(async () => root.unmount());
+      setOffReprobeIntervalForTests(null);
+    }
   });
 
-  it("re-checks a switch that reads off at most once a minute", async () => {
+  it("re-checks a switch that reads off once per interval, however many controls ask", async () => {
     await ready();
     const store = useLoraManagerMetadataStore;
     store.getState().setCivitaiEnabled(false);
     vi.mocked(getCivitaiStatus).mockClear();
     vi.mocked(getCivitaiStatus).mockResolvedValue({ enabled: false, forcedByEnvironment: false });
 
-    for (let i = 0; i < 5; i++) {
-      store.getState().requestMissingMetadata("checkpoints", "new_model.safetensors");
-    }
+    for (let i = 0; i < 5; i++) store.getState().recheckCivitaiWhileOff();
     await new Promise((resolve) => setTimeout(resolve, 20));
 
     expect(getCivitaiStatus).toHaveBeenCalledTimes(1);
