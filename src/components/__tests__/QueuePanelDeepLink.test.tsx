@@ -524,6 +524,28 @@ describe('QueuePanel prompt_id deep link', () => {
     expect(onImageClick).toHaveBeenCalledTimes(1);
   });
 
+  it('opens a second notification tapped right after the first', async () => {
+    useHistoryStore.setState({
+      history: [makeHistoryEntry('first', true), makeHistoryEntry('second', true)] as never,
+    });
+    const onImageClick = vi.fn();
+    await act(async () => {
+      root.render(<Harness visible onImageClick={onImageClick} />);
+      await Promise.resolve();
+    });
+    const bridge = (window as unknown as { __cueforgeDeepLinkPromptId: (id: string) => void })
+      .__cueforgeDeepLinkPromptId;
+
+    await act(async () => {
+      bridge('first');
+      bridge('second');
+    });
+
+    const opened = onImageClick.mock.calls.map(([images, index]) => images[index].promptId);
+    expect(opened.at(-1)).toBe('second');
+    expect(useNotificationDeepLinkStore.getState().pendingPromptId).toBeNull();
+  });
+
   it('does nothing without the query param', async () => {
     useHistoryStore.setState({
       history: [makeHistoryEntry('plain', true)] as never,

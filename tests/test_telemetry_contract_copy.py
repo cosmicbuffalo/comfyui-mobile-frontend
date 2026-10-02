@@ -3,8 +3,9 @@ contract.json - the file the CueForge relay validates against.
 
 If they differ, the node either queues fields the relay drops (wasted, and a
 privacy doc that over-promises) or the relay accepts fields the node never
-sends. Compared against a checkout of cueforge-telemetry beside this repo;
-skipped without one, which is CI until that repository is public.
+sends. Compared against a checkout of cueforge-telemetry beside this repo.
+Locally it is skipped without one; CI checks one out (test_backend.yml) and
+fails rather than skips if it is missing, so drift can't pass unnoticed.
 """
 import json
 import os
@@ -24,6 +25,8 @@ def _source_path():
 def test_the_vendored_contract_matches_the_relays():
     source = _source_path()
     if source is None:
+        if os.environ.get("CI"):
+            pytest.fail("CI must check out cueforge-telemetry beside this repo")
         pytest.skip("no cueforge-telemetry checkout beside this repo")
     with open(source, encoding="utf-8") as f:
         relay = json.load(f)

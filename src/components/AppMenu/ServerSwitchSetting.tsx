@@ -93,6 +93,7 @@ export function ServerSwitchSetting({
         <button
           type="button"
           role="switch"
+          aria-label={label}
           aria-checked={status.enabled}
           aria-disabled={locked}
           disabled={locked || saving}

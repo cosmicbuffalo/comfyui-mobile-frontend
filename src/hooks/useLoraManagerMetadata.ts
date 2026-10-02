@@ -57,6 +57,8 @@ interface LoraManagerMetadataState {
   // A model widget shows a model the catalog has no metadata for: look it up.
   // Batched per kind, and each value is asked about once per session.
   requestMissingMetadata: (prefix: LoraManagerPrefix, value: string) => void;
+  /** While lookups read off: re-ask the server, at most once per interval. */
+  recheckCivitaiWhileOff: () => void;
 }
 
 const ALL_PREFIXES: LoraManagerPrefix[] = [
@@ -142,6 +144,11 @@ const populateStarted: Partial<Record<LoraManagerPrefix, boolean>> = {};
 const REFRESH_DONE_DURATION_MS = 5_000;
 let refreshDoneTimer: ReturnType<typeof setTimeout> | null = null;
 let civitaiProbe: Promise<void> | null = null;
+// While lookups read off, a page re-asks the server at most this often, so an
+// admin turning them back on elsewhere reaches pages that are already open.
+const DEFAULT_OFF_REPROBE_INTERVAL_MS = 60_000;
+let offReprobeIntervalMs = DEFAULT_OFF_REPROBE_INTERVAL_MS;
+let lastOffReprobeAt = 0;
 
 // Automatic lookups. Values seen this session (per kind, lower-cased), values
 // waiting for the batch timer, and one chain per kind so batches never overlap.
@@ -151,9 +158,19 @@ const autoPending: Partial<Record<LoraManagerPrefix, Set<string>>> = {};
 const autoTimers: Partial<Record<LoraManagerPrefix, ReturnType<typeof setTimeout>>> = {};
 const autoChains: Partial<Record<LoraManagerPrefix, Promise<void>>> = {};
 
+function autoFetchKey(prefix: LoraManagerPrefix, value: string): string {
+  return `${prefix}\u0000${normalizePath(value)}`;
+}
+
 // Test hook: forget what has been asked about and drop queued batches.
+// Test hook: how often a page reading "off" re-checks the server.
+export function setOffReprobeIntervalForTests(ms: number | null): void {
+  offReprobeIntervalMs = ms ?? DEFAULT_OFF_REPROBE_INTERVAL_MS;
+}
+
 export function resetAutoFetchForTests(): void {
   autoRequested.clear();
+  lastOffReprobeAt = 0;
   for (const prefix of ALL_PREFIXES) {
     delete autoPending[prefix];
     const timer = autoTimers[prefix];
@@ -222,6 +239,14 @@ export const useLoraManagerMetadataStore = create<LoraManagerMetadataState>(
       await reloadPrefix(prefix);
     };
 
+    // Values asked about while lookups were off were skipped, not looked up.
+    // Forget them on the way back on, so the mounted controls (whose effect
+    // re-runs on the switch) can ask again instead of waiting for a reload.
+    const applyCivitaiEnabled = (enabled: boolean) => {
+      if (enabled && get().civitaiEnabled === false) autoRequested.clear();
+      set({ civitaiEnabled: enabled });
+    };
+
     // Look up the batched values for one kind. Lora Manager first rescans so a
     // file added since its last scan is in its catalog, then is asked about each
     // value still missing metadata; our backend resolves the values itself.
@@ -233,6 +258,21 @@ export const useLoraManagerMetadataStore = create<LoraManagerMetadataState>(
         if (await fetchMissingStandalone(prefix, values)) await reloadPrefix(prefix);
         return;
       }
+      // Our backend refuses its own lookups when the switch is off, but Lora
+      // Manager knows nothing about it: this page is the only gate. A value
+      // cached here can outlive an admin turning lookups off elsewhere, so ask
+      // again before every batch. An unanswered check skips this batch only:
+      // storing "off" for a network blip would stop every later lookup on the
+      // page, so these values are forgotten and can be asked about again.
+      const enabled = await getCivitaiStatus()
+        .then((status) => status.enabled)
+        .catch(() => null);
+      if (enabled === null) {
+        for (const value of values) autoRequested.delete(autoFetchKey(prefix, value));
+        return;
+      }
+      applyCivitaiEnabled(enabled);
+      if (!enabled) return;
       await scanLoraManagerModels(prefix);
       await reloadPrefix(prefix);
       let fetched = false;
@@ -285,7 +325,7 @@ export const useLoraManagerMetadataStore = create<LoraManagerMetadataState>(
       available: null,
       standalone: false,
       civitaiEnabled: null,
-      setCivitaiEnabled: (enabled) => set({ civitaiEnabled: enabled }),
+      setCivitaiEnabled: applyCivitaiEnabled,
       refreshing: false,
       refreshDone: false,
       refreshError: null,
@@ -305,7 +345,7 @@ export const useLoraManagerMetadataStore = create<LoraManagerMetadataState>(
             .then((status) => {
               // A Settings change may have landed while this was in flight.
               if (get().civitaiEnabled === null) {
-                set({ civitaiEnabled: status.enabled });
+                applyCivitaiEnabled(status.enabled);
               }
             })
             .catch(() => {
@@ -414,10 +454,13 @@ export const useLoraManagerMetadataStore = create<LoraManagerMetadataState>(
               throw new Error("Model metadata provider is unavailable");
             }
             // With CivitAI lookups off, the refresh only picks up new files.
-            const civitaiEnabled = await getCivitaiStatus()
+            // An unanswered check means no CivitAI lookups for this refresh,
+            // the same as the automatic path; only an answer is remembered.
+            const answered = await getCivitaiStatus()
               .then((status) => status.enabled)
-              .catch(() => get().civitaiEnabled === true);
-            set({ civitaiEnabled });
+              .catch(() => null);
+            if (answered !== null) applyCivitaiEnabled(answered);
+            const civitaiEnabled = answered === true;
 
             // One bad prefix (an unconfigured checkpoints dir, a transient
             // 500) must not cost the others their refresh: record the
@@ -502,9 +545,23 @@ export const useLoraManagerMetadataStore = create<LoraManagerMetadataState>(
         })();
       },
 
+      recheckCivitaiWhileOff: () => {
+        if (get().civitaiEnabled !== false) return;
+        // Shared by every control on the page, so many of them still cost one
+        // request per interval.
+        const now = Date.now();
+        if (now - lastOffReprobeAt < offReprobeIntervalMs) return;
+        lastOffReprobeAt = now;
+        void getCivitaiStatus()
+          .then((status) => {
+            if (status.enabled) applyCivitaiEnabled(true);
+          })
+          .catch(() => {});
+      },
+
       requestMissingMetadata: (prefix, value) => {
         if (get().civitaiEnabled !== true || !isModelFileName(value)) return;
-        const key = `${prefix}\u0000${normalizePath(value)}`;
+        const key = autoFetchKey(prefix, value);
         if (autoRequested.has(key)) return;
         autoRequested.add(key);
         (autoPending[prefix] ??= new Set()).add(value);
@@ -552,7 +609,8 @@ export function useModelMetadataLookup(
 
 // Watches one model widget's value and asks for a lookup when the loaded
 // catalog has no metadata for it — a model added since the catalog was built,
-// or one never looked up. Does nothing while CivitAI lookups are off.
+// or one never looked up. While CivitAI lookups are off it only re-checks the
+// switch now and then, so lookups turned back on elsewhere reach open pages.
 export function useAutoFetchModelMetadata(
   kind: LoraManagerPrefix | null,
   value: unknown,
@@ -565,11 +623,25 @@ export function useAutoFetchModelMetadata(
   const requestMissingMetadata = useLoraManagerMetadataStore(
     (s) => s.requestMissingMetadata,
   );
+  const recheckCivitaiWhileOff = useLoraManagerMetadataStore(
+    (s) => s.recheckCivitaiWhileOff,
+  );
 
   useEffect(() => {
-    if (!kind || civitaiEnabled !== true || prefixState?.status !== "ready") return;
+    if (!kind || prefixState?.status !== "ready") return;
     if (typeof value !== "string" || !isModelFileName(value)) return;
     if (!needsMetadata(lookup(kind, value))) return;
-    requestMissingMetadata(kind, value);
-  }, [kind, value, civitaiEnabled, prefixState, lookup, requestMissingMetadata]);
+    if (civitaiEnabled === true) {
+      requestMissingMetadata(kind, value);
+      return;
+    }
+    if (civitaiEnabled !== false) return;
+    // Nothing else re-runs this effect while the switch reads off, so poll.
+    // Turning on re-runs it, and the skipped value is asked about then.
+    const timer = setInterval(recheckCivitaiWhileOff, offReprobeIntervalMs);
+    return () => clearInterval(timer);
+  }, [
+    kind, value, civitaiEnabled, prefixState, lookup,
+    requestMissingMetadata, recheckCivitaiWhileOff,
+  ]);
 }

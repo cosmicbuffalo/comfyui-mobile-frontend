@@ -27,8 +27,10 @@ queueing — is between your browser and your own ComfyUI server.
 
 ## The CueForge push relay
 
-The node talks to the relay only when a device has been paired with the iOS
-app. With no paired device it makes no requests to the relay at all.
+For notifications and Live Activities, the node talks to the relay only when
+a device has been paired with the iOS app. Operational telemetry is the one
+exception: it goes to the same relay whether or not anything is paired, until
+you turn it off ([below](#operational-telemetry)).
 
 ### Completion notifications
 

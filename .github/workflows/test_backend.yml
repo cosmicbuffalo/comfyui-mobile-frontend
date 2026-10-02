@@ -12,6 +12,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      # The relay's contract, pinned to the version telemetry_contract.json
+      # copies. test_telemetry_contract_copy reads it from beside this repo,
+      # and checkout can only write inside the workspace, so move it up.
+      - uses: actions/checkout@v4
+        with:
+          repository: cosmicbuffalo/cueforge-telemetry
+          ref: v1.0.0
+          path: cueforge-telemetry
+      - run: mv cueforge-telemetry ../cueforge-telemetry
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
