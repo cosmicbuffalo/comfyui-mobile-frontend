@@ -129,6 +129,12 @@ export function ensureSubgraphDefinitionEnvelopes(workflow: Workflow): Workflow 
  * is already in use. The next connection drawn inside that subgraph would land
  * on `_links.set(existingId, …)` and quietly overwrite a live link.
  *
+ * Stock 1.57.0 closed this on its own side: `mintLinkId` now skips any id
+ * already live under the root graph, subgraphs included. We keep writing a
+ * correct counter anyway, because a saved file is opened by whatever frontend
+ * the user's ComfyUI pins, and older ones still take `lastLinkId + 1` blind.
+ * On 1.57.0+ a correct counter just means that skip never has to fire.
+ *
  * Only links. Node ids look like the same problem and are not: every node
  * arrives through `LGraph.add`, which calls `syncLastNodeId`, so stock repairs
  * `lastNodeId` from the nodes themselves as it loads. Links are inserted

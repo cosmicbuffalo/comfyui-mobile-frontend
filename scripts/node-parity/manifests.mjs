@@ -248,7 +248,7 @@ export const MANIFESTS = [
   {
     pack: 'comfyui-frontend',
     repo: 'https://github.com/Comfy-Org/ComfyUI_frontend',
-    verifiedVersion: '1.54.1',
+    verifiedVersion: '1.57.0',
     localDir: false,
     versionFile: 'package.json',
     versionPattern: /"version":\s*"([^"]+)"/,
@@ -294,13 +294,22 @@ export const MANIFESTS = [
       },
       {
         id: 'link-id-allocation',
-        why: 'New link ids come from incrementing state.lastLinkId, and a subgraph has no counter of its own — so a definition holding a link numbered past the root counter leaves stock ready to reissue an id that is already live, overwriting a connection. reconcileIdAllocators raises the counter past every interior link for exactly this reason. Upstream has since added observeLinkId, which raises the counter when a link is added at runtime; that narrows the hazard without removing our need to write a correct counter, and if it ever covered the load path too we would want to know rather than guess.',
+        why: 'New link ids still come from advancing state.lastLinkId, one counter for the whole file (a subgraph has none of its own), but since 1.57.0 the mint skips any id already live anywhere under the root — its links and floating links and every subgraph\'s — so a definition numbered past a stale root counter no longer gets an id reissued over it. Older stock has no such check and hands out lastLinkId + 1 blind, which is why reconcileIdAllocators still raises the counter past every interior link: the files we write are opened by whatever frontend the user\'s ComfyUI pins, and on 1.57.0+ a correct counter simply means the skip never fires. If upstream ever drops the reservation check, the hazard is back on current stock too; if it stops advancing lastLinkId, the counter we write stops mattering.',
         ours: 'src/utils/subgraphDefinitionShape.ts',
         file: 'src/lib/litegraph/src/idAllocation.ts',
         contains: [
-          /export function mintLinkId[\s\S]{0,160}state\.lastLinkId\s*=/,
-          /export function observeLinkId[\s\S]{0,120}state\.lastLinkId\s*=\s*id/,
+          /export function mintLinkId\([\s\S]{0,200}mintSequentialId\(lastLinkId, reservedIds\)[\s\S]{0,60}state\.lastLinkId\s*=/,
+          /function mintSequentialId[\s\S]{0,200}!reservedIds\.has\(nextId\)/,
+          /export function linkIdReservations[\s\S]{0,200}\[graph, \.\.\.graph\.subgraphs\.values\(\)\][\s\S]{0,80}owner\.links\.has\(linkId\)/,
+          /export function observeLinkId[\s\S]{0,200}state\.lastLinkId\s*=\s*id/,
         ],
+      },
+      {
+        id: 'link-id-reservations-root-wide',
+        why: 'The other half of the check above: drawing a connection reserves against the ROOT graph, which is what makes a subgraph\'s interior ids visible to a mint made inside another subgraph. A reservation scoped to the graph being edited would bring the reissue back for ids that live in a sibling definition.',
+        ours: 'src/utils/subgraphDefinitionShape.ts',
+        file: 'src/lib/litegraph/src/LGraphNode.ts',
+        contains: [/mintLinkId\(graph\.state, linkIdReservations\(graph\.rootGraph\)\)/],
       },
       {
         id: 'clipspace-layer-filenames',
