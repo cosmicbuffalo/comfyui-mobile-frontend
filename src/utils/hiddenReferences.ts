@@ -56,16 +56,19 @@ function candidateIds(value: string): string[] {
  * that consumes one still has to inherit the mark. Free text often begins
  * with dots (an ellipsis in a prompt), so this only fires when the value
  * plausibly names a file: it carries a source annotation, or its last segment
- * has a file extension. A dot-named FOLDER passed bare (no extension, no
- * annotation) is the accepted miss.
+ * has a file extension. A bare extension such as `.webp` is a format option
+ * (SaveImageExtended's `output_ext`), not a file. A dot-named FOLDER passed
+ * bare (no extension, no annotation) is the accepted miss.
  */
 function referencesDotHiddenPath(value: string): boolean {
   const { path, type } = splitPathAnnotation(value.trim());
   const normalized = normalizePath(path);
   if (!normalized || normalized.includes('..')) return false;
   const segments = normalized.split('/');
-  const looksLikeFile =
-    Boolean(type) || /\.[a-z0-9]{2,4}$/i.test(segments[segments.length - 1]);
+  const looksLikeFile = Boolean(type) || (
+    /\.[a-z0-9]{2,4}$/i.test(segments[segments.length - 1])
+    && !/^\.[a-z0-9]+$/i.test(normalized)
+  );
   if (!looksLikeFile) return false;
   return segments.some((segment) => segment.startsWith('.'));
 }
