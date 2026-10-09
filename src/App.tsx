@@ -33,6 +33,7 @@ import { useMaskEditorStore } from './hooks/useMaskEditor';
 import { lazyPanel, prefetchLazyPanels } from './components/lazyPanel';
 import { UpdateNotice } from './components/UpdateNotice';
 import { useAppUpdateCheck } from './hooks/useAppUpdateCheck';
+import { useGenerationSettingsStore } from './hooks/useGenerationSettings';
 
 const QueuePanel = lazyPanel(() =>
   import('./components/QueuePanel').then((module) => ({ default: module.QueuePanel })),
@@ -84,6 +85,11 @@ function App() {
     () => useWorkflowStore.persist?.hasHydrated() ?? true,
   );
   const { updateAvailable, dismissUpdate } = useAppUpdateCheck();
+  const blurEffectsEnabled = useGenerationSettingsStore((s) => s.blurEffectsEnabled);
+
+  useEffect(() => {
+    document.documentElement.classList.toggle('no-blur', !blurEffectsEnabled);
+  }, [blurEffectsEnabled]);
 
   // Warm the lazy panel chunks once startup has settled, so a server update
   // later can never strand this session on a panel it hadn't opened yet (the

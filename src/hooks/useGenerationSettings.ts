@@ -24,6 +24,10 @@ interface GenerationSettingsState {
   // cosmetic provenance, never shown in the mobile UI — opt out to never add it.
   marketingNoteEnabled: boolean;
   setMarketingNoteEnabled: (value: boolean) => void;
+  // Backdrop blur forces constant repaints on lower-end mobile GPUs; turning
+  // it off strips every backdrop-filter app-wide (see .no-blur in index.css).
+  blurEffectsEnabled: boolean;
+  setBlurEffectsEnabled: (value: boolean) => void;
 }
 
 export const useGenerationSettingsStore = create<GenerationSettingsState>()(
@@ -45,6 +49,8 @@ export const useGenerationSettingsStore = create<GenerationSettingsState>()(
       setObfuscateSharedInputPaths: (value) => set({ obfuscateSharedInputPaths: value }),
       marketingNoteEnabled: true,
       setMarketingNoteEnabled: (value) => set({ marketingNoteEnabled: value }),
+      blurEffectsEnabled: true,
+      setBlurEffectsEnabled: (value) => set({ blurEffectsEnabled: value }),
     }),
     {
       name: 'generation-settings-storage',

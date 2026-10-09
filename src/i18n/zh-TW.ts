@@ -340,6 +340,8 @@ export const zhTW: Record<string, string> = {
   'Unpromoting leaves one value on the node inside, shared by every instance of this subgraph.': '取消提升後，內部節點只會保留一個值，並由該子圖的所有實例共用。',
   'Instance': '實例',
   'Value': '值',
+  'Blur effects': '模糊效果',
+  'Blur the background behind menus, overlays and badges. Turn off to improve performance on slower devices.': '為選單、浮層和標籤的背景加上模糊。關閉可提升低效能裝置上的流暢度。',
   'Follow into subgraphs': '跟隨進入子圖',
   'Navigate into subgraph scopes when following execution': '跟隨執行時進入子圖範圍',
   'Tag autocomplete': '標籤自動完成',

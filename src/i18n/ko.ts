@@ -340,6 +340,8 @@ export const ko: Record<string, string> = {
   'Unpromoting leaves one value on the node inside, shared by every instance of this subgraph.': '승격을 해제하면 내부 노드에 값 하나만 남아 이 서브그래프의 모든 인스턴스가 이를 공유합니다.',
   'Instance': '인스턴스',
   'Value': '값',
+  'Blur effects': '흐림 효과',
+  'Blur the background behind menus, overlays and badges. Turn off to improve performance on slower devices.': '메뉴, 오버레이, 배지 뒤의 배경을 흐리게 합니다. 사양이 낮은 기기에서는 끄면 성능이 향상됩니다.',
   'Follow into subgraphs': '하위 그래프로 따라가기',
   'Navigate into subgraph scopes when following execution': '실행을 추적할 때 하위 그래프 범위로 이동',
   'Tag autocomplete': '태그 자동 완성',

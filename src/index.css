@@ -44,6 +44,13 @@ body {
   min-height: 100vh;
 }
 
+html.no-blur *,
+html.no-blur *::before,
+html.no-blur *::after {
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+}
+
 .bg-white { background-color: #151a23; }
 
 input,

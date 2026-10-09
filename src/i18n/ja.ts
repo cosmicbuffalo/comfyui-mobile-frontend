@@ -340,6 +340,8 @@ export const ja: Record<string, string> = {
   'Unpromoting leaves one value on the node inside, shared by every instance of this subgraph.': '昇格を解除すると内部ノードに値が 1 つだけ残り、このサブグラフのすべてのインスタンスで共有されます。',
   'Instance': 'インスタンス',
   'Value': '値',
+  'Blur effects': 'ぼかし効果',
+  'Blur the background behind menus, overlays and badges. Turn off to improve performance on slower devices.': 'メニュー、オーバーレイ、バッジの背景をぼかします。低性能な端末ではオフにすると動作が軽くなります。',
   'Follow into subgraphs': 'サブグラフ内も追従',
   'Navigate into subgraph scopes when following execution': '実行追従時にサブグラフのスコープ内へ移動',
   'Tag autocomplete': 'タグのオートコンプリート',

@@ -341,6 +341,8 @@ export const zhCN: Record<string, string> = {
   'Unpromoting leaves one value on the node inside, shared by every instance of this subgraph.': '取消提升后，内部节点只会保留一个值，并由该子图的所有实例共用。',
   'Instance': '实例',
   'Value': '值',
+  'Blur effects': '模糊效果',
+  'Blur the background behind menus, overlays and badges. Turn off to improve performance on slower devices.': '为菜单、浮层和标签的背景添加模糊。关闭可提升低性能设备上的流畅度。',
   'Follow into subgraphs': '跟随进入子图',
   'Navigate into subgraph scopes when following execution': '跟随执行时进入子图作用域',
   'Tag autocomplete': '标签自动补全',
