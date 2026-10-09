@@ -1,6 +1,6 @@
 # ComfyUI Mobile User Guide
 
-This guide walks through every feature in the mobile frontend as of `v3.3.8`
+This guide walks through every feature in the mobile frontend as of `v3.3.9`
 
 ## Table of Contents
 
@@ -446,6 +446,7 @@ A full-screen manager for the custom nodes installed on your ComfyUI server, ope
 App-wide toggles, reached from **Server → Preferences**:
 
 - **Fast image previews** — load lightweight WebP previews instead of full-size originals (faster browsing; turn off if an image looks wrong). Downloads always use the original.
+- **Blur effects** — **on by default.** Blurs the background behind menus, overlays and badges. Turn it off for smoother scrolling and taps on slower phones.
 - **Show latent previews** — show a live preview on sampler nodes during generation, with a choice of **Fast (latent2rgb)** or **Accurate (TAESD)**. See [How do I turn on latent previews?](#how-do-i-turn-on-latent-previews).
 - **Restore lost queue after restart** — automatically re-enqueue pending jobs this device saw if ComfyUI restarts and loses them. See [Connection & Recovery](#connection-and-recovery).
 - **Alias filepaths in embedded metadata** — hide input paths and output filename prefixes in shared workflow metadata.
@@ -802,6 +803,8 @@ Dropdowns that pick a model — checkpoints, LoRAs, VAEs, and similar — show a
 - To populate or update previews and details for every model, run **Refresh model metadata** from the [Server](#server) menu section.
 - To stop the app looking models up on CivitAI, switch off **Preferences → Fetch model details from CivitAI** (it is on by default). Refresh model metadata then only picks up new files.
 - Previews flagged as sensitive are blurred with a **Reveal** button — tap it to show the image.
+- In the full-screen picker, search matches every word you type anywhere in the name or folder, in any order — `flux paint` finds `Flux/inpaint_v2`.
+- When your models span more than one base model, the funnel button next to the search filters the list to one base model (or to models with no metadata, under **Unknown**).
 
 > [!NOTE]
 > If a model has no metadata yet, it still appears by filename and works normally — you just won't see a preview until metadata is fetched.
