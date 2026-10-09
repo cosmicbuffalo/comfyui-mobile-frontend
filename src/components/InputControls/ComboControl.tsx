@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ChangeEvent, ReactNode } from "react";
-import Select, { components, createFilter } from "react-select";
-import type { InputActionMeta, OnChangeValue, OptionProps } from "react-select";
+import Select, { components } from "react-select";
+import type { FilterOptionOption, InputActionMeta, OnChangeValue, OptionProps } from "react-select";
 import { FullscreenWidgetModal } from "../modals/FullscreenWidgetModal";
 import { PinButton } from "./PinButton";
 import { ChevronDownIcon, PlusIcon, FolderIcon, FunnelIcon, CheckIcon, EyeIcon, EyeOffIcon } from "@/components/icons";
@@ -74,6 +74,17 @@ const NULL_OPTION_VALUE = "__null__";
 // Options that participate in the base-model filter (real selectable models).
 const isFilterableOption = (opt: ComboSelectOption) =>
   opt.value !== NULL_OPTION_VALUE && !opt.isMissing;
+
+const foldSearchText = (text: string) =>
+  text.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+// Every whitespace-separated term must appear somewhere in the label or path,
+// in any order, so "flux paint" finds "Flux/inpaint_v2.safetensors".
+const matchesSearchTerms = (option: FilterOptionOption<ComboSelectOption>, input: string) => {
+  const terms = foldSearchText(input).split(/\s+/).filter(Boolean);
+  if (terms.length === 0) return true;
+  const haystack = foldSearchText(`${option.label} ${option.value}`);
+  return terms.every((term) => haystack.includes(term));
+};
 
 interface ComboControlProps {
   containerClass: string;
@@ -350,8 +361,10 @@ export function ComboControl({
       hasUnknownBaseModel: hasUnknown,
     };
   }, [isModelMode, visibleSelectOptions]);
+  // With a single group (e.g. every model lacks metadata) "All" and that group
+  // list the same models, so the filter would do nothing.
   const showBaseModelFilter =
-    isModelMode && (baseModelChoices.length > 0 || hasUnknownBaseModel);
+    isModelMode && baseModelChoices.length + (hasUnknownBaseModel ? 1 : 0) > 1;
   const baseModelFilterActive = showBaseModelFilter && baseModelFilter !== null;
   const modalSelectOptions =
     !baseModelFilterActive
@@ -942,12 +955,7 @@ export function ComboControl({
               controlShouldRenderValue={true}
               placeholder={t("Search...")}
               onInputChange={handleModalInputChange}
-              filterOption={createFilter({
-                ignoreAccents: true,
-                ignoreCase: true,
-                trim: true,
-                matchFrom: "any",
-              })}
+              filterOption={matchesSearchTerms}
               styles={{
                 // Outlined and joined to the search box, the same way an
                 // inline list is — one panel rather than a box and a loose
@@ -1151,12 +1159,7 @@ export function ComboControl({
           // no keyboard appears.
           isSearchable={!isCoarsePointer}
           isDisabled={disabled}
-          filterOption={createFilter({
-            ignoreAccents: true,
-            ignoreCase: true,
-            trim: true,
-            matchFrom: "any",
-          })}
+          filterOption={matchesSearchTerms}
           menuIsOpen={inlineMenuOpen}
           menuPortalTarget={menuPortalTarget}
           // Absolute document coordinates stay coupled to the control when a

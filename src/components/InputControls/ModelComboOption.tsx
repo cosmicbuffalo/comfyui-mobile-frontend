@@ -49,7 +49,7 @@ function ModelThumb({
   return (
     <div
       // Compact: fixed square. Full: fixed width, height stretches to the cell
-      // (2-line name + version) via the row's items-stretch.
+      // (name + version) via the row's items-stretch.
       className={`relative shrink-0 rounded-sm overflow-hidden bg-slate-800 ${compact ? "" : "self-stretch"}`}
       style={compact ? { width: 28, height: 28 } : { width: 44 }}
     >
@@ -113,16 +113,16 @@ export function ModelRowContent({
     );
   }
 
-  // Full row: fixed height so every row is uniform (even ones with no preview or
-  // no Lora Manager metadata — they still get a placeholder thumbnail). The
-  // name+version block is vertically centered, so the version hugs under the
-  // name when the name is a single line; with two lines it fills the cell. The
-  // thumbnail stretches to the row height; the badge is vertically centered.
+  // Full row: a minimum height so short rows stay uniform (even ones with no
+  // preview or no Lora Manager metadata — they still get a placeholder
+  // thumbnail), while a long name wraps in full instead of being clipped. The
+  // name+version block is vertically centered; the thumbnail stretches to the
+  // row height; the badge is vertically centered.
   return (
-    <div className="flex items-stretch gap-2 min-w-0 h-[3.75em]">
+    <div className="flex items-stretch gap-2 min-w-0 min-h-[3.75em]">
       <ModelThumb model={model ?? null} />
       <div className="flex flex-col min-w-0 flex-1 justify-center">
-        <span className="leading-snug line-clamp-2">{option.label}</span>
+        <span className="leading-snug break-words">{option.label}</span>
         {version ? (
           <span className="truncate text-xs leading-snug text-slate-400">
             {version}
