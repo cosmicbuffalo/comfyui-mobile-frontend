@@ -1,5 +1,26 @@
 # Changelog
 
+## 3.3.9 - 2026-10-09
+
+### Added
+
+- **Blur effects preference.** Switch off **Preferences → Blur effects** to
+  drop the background blur behind menus, overlays and badges, which can make
+  the app noticeably smoother on slower phones.
+
+### Fixed
+
+- **Model picker search matches every word.** Each word you type can appear
+  anywhere in the name or folder, in any order, so `flux paint` finds
+  `Flux/inpaint_v2`.
+- **The base-model filter only appears when it can narrow the list.** With no
+  model metadata it offered only *All* and *Unknown*, which listed the same
+  models.
+- **Long model names wrap in full** in the model picker instead of being cut
+  off after two lines.
+- **The Queue's run count leaves out hidden runs** while hidden items are
+  hidden, so an empty queue no longer shows a count of runs you can't see.
+
 ## 3.3.8 - 2026-10-09
 
 ### Fixed
