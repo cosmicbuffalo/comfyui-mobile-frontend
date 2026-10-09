@@ -93,6 +93,14 @@ describe('promptReferencesHiddenFile', () => {
     )).toBe(false);
   });
 
+  it('does not read a bare file extension option as a dot-hidden file', () => {
+    // SaveImageExtended's `output_ext` combo holds values like `.webp`.
+    expect(promptReferencesHiddenFile(
+      { '3': { class_type: 'SaveImageExtended', inputs: { output_ext: '.webp' } } },
+      [],
+    )).toBe(false);
+  });
+
   it('respects the source an annotation names', () => {
     // `[output]` says the output directory, so an identically-named hidden
     // INPUT is a different file and must not taint the run.
