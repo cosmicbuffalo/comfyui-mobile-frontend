@@ -12,6 +12,10 @@ import mobile_queue_metadata as _mobile_queue_metadata
 from aiohttp import web
 from mobile_common import QUEUE_METADATA_CACHE_PATH
 from restart_utils import build_restart_exec_args
+
+# Matches HIDDEN_WORKFLOW_EXTRA_DATA_KEY in src/utils/workflowHidden.ts.
+HIDDEN_WORKFLOW_EXTRA_DATA_KEY = 'mobile_hidden_workflow'
+
 async def api_restart_server(request):
     try:
         data = await request.json()
@@ -45,10 +49,19 @@ async def api_cpu_stats(request):
     except Exception as e:
         return web.json_response({"error": str(e)}, status=500)
 
+def _count_history(history):
+    # prompt is ComfyUI's (number, prompt_id, prompt, extra_data, ...) tuple.
+    hidden = sum(
+        1 for item in history.values()
+        if item['prompt'][3].get(HIDDEN_WORKFLOW_EXTRA_DATA_KEY) is True
+    )
+    return len(history), hidden
+
 async def api_history_count(request):
-    # The total number of runs in ComfyUI's in-memory history. The frontend
-    # pages /history with max_items, so it only knows the loaded count; this
-    # returns the real total cheaply (just len, no payload serialization).
+    # The total number of runs in ComfyUI's in-memory history, and how many of
+    # them came from hidden workflows. The frontend pages /history with
+    # max_items, so it only knows the loaded count; this returns the real totals
+    # without serializing any payloads.
     try:
         prompt_queue = server.PromptServer.instance.prompt_queue
         history = getattr(prompt_queue, 'history', None)
@@ -57,10 +70,10 @@ async def api_history_count(request):
         mutex = getattr(prompt_queue, 'mutex', None)
         if mutex is not None:
             with mutex:
-                count = len(history)
+                count, hidden_count = _count_history(history)
         else:
-            count = len(history)
-        return web.json_response({"count": count})
+            count, hidden_count = _count_history(history)
+        return web.json_response({"count": count, "hidden_count": hidden_count})
     except Exception as e:
         return web.json_response({"error": str(e)}, status=500)
 

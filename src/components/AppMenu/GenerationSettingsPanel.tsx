@@ -96,6 +96,8 @@ export function GenerationSettingsPanel({ onBack }: GenerationSettingsPanelProps
   const setObfuscateSharedInputPaths = useGenerationSettingsStore((s) => s.setObfuscateSharedInputPaths);
   const marketingNoteEnabled = useGenerationSettingsStore((s) => s.marketingNoteEnabled);
   const setMarketingNoteEnabled = useGenerationSettingsStore((s) => s.setMarketingNoteEnabled);
+  const blurEffectsEnabled = useGenerationSettingsStore((s) => s.blurEffectsEnabled);
+  const setBlurEffectsEnabled = useGenerationSettingsStore((s) => s.setBlurEffectsEnabled);
   // Autocomplete opt-in (server-synced). Only surfaced when a supported source
   // node (ComfyUI-Autocomplete-Plus and/or ComfyUI-Custom-Scripts) is detected
   // on this server.
@@ -141,6 +143,13 @@ export function GenerationSettingsPanel({ onBack }: GenerationSettingsPanelProps
           description={t('Load lightweight WebP previews instead of full-size originals. Turn off if images look wrong. Downloads always use the original.')}
           checked={webpPreviewEnabled}
           onToggle={() => setWebpPreviewEnabled(!webpPreviewEnabled)}
+        />
+
+        <PreferenceSection
+          label={t('Blur effects')}
+          description={t('Blur the background behind menus, overlays and badges. Turn off to improve performance on slower devices.')}
+          checked={blurEffectsEnabled}
+          onToggle={() => setBlurEffectsEnabled(!blurEffectsEnabled)}
         />
 
         <PreferenceSection

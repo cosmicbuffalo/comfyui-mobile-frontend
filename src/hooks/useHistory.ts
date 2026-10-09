@@ -80,6 +80,8 @@ interface HistoryState {
   // Real total run count from the backend (independent of how many pages are
   // loaded). Null until first resolved / when the count endpoint is unavailable.
   historyTotal: number | null;
+  // How many of historyTotal came from hidden workflows, from the same request.
+  historyHiddenTotal: number;
 
   // Actions
   // Resolves true only after a response was fetched and processed. Failures are
@@ -326,6 +328,7 @@ export const useHistoryStore = create<HistoryState>((set, get) => ({
   historyLimit: INITIAL_HISTORY_PAGE_SIZE,
   hasMoreHistory: true,
   historyTotal: null,
+  historyHiddenTotal: 0,
 
   addHistoryEntry: (entry) => {
     set((state) => {
@@ -394,8 +397,8 @@ export const useHistoryStore = create<HistoryState>((set, get) => ({
       // Refresh the real total run count (cheap len-only endpoint) so the header
       // can show it rather than just the loaded page count. Fire-and-forget; a
       // missing endpoint resolves to null and the UI falls back to loaded count.
-      void Promise.resolve(api.getHistoryCount?.()).then((count) => {
-        if (count != null) set({ historyTotal: count });
+      void Promise.resolve(api.getHistoryCount?.()).then((counts) => {
+        if (counts != null) set({ historyTotal: counts.count, historyHiddenTotal: counts.hiddenCount });
       });
 
       // Skip the heavy rebuild when this page's payload is byte-for-byte
@@ -694,7 +697,7 @@ export const useHistoryStore = create<HistoryState>((set, get) => ({
         console.error('Failed to delete history items:', deleteErr);
       }
     } finally {
-      set({ history: [], historyTotal: 0 });
+      set({ history: [], historyTotal: 0, historyHiddenTotal: 0 });
     }
   },
   clearEmptyItems: async () => {

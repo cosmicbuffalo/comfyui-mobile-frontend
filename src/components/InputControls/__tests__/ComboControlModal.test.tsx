@@ -75,6 +75,84 @@ describe('ComboControl modal picker', () => {
     expect(document.body.textContent).not.toContain('beta.safetensors');
   });
 
+  it('matches every search term anywhere in the path, in any order', async () => {
+    await act(async () => {
+      root.render(
+        <ComboControl
+          containerClass=""
+          name="lora_name"
+          value="Flux/inpaint_v2.safetensors"
+          options={[
+            'Flux/inpaint_v2.safetensors',
+            'Flux/detail.safetensors',
+            'SDXL/paint_style.safetensors',
+            'SDXL/eyes.safetensors',
+            'SDXL/hands.safetensors',
+          ]}
+          onChange={() => {}}
+          hasPin={false}
+        />,
+      );
+    });
+
+    await act(async () => {
+      container.querySelector<HTMLElement>('.combo-control-trigger')?.click();
+    });
+    const input = document.body.querySelector<HTMLInputElement>(
+      '.fullscreen-widget-modal input[role="combobox"]',
+    );
+    await act(async () => {
+      input?.focus();
+      if (input) enterText(input, 'paint flux');
+    });
+
+    const menu = document.body.querySelector('.fullscreen-widget-modal .rs__menu');
+    expect(menu?.textContent).toContain('Flux/inpaint_v2.safetensors');
+    expect(menu?.textContent).not.toContain('Flux/detail.safetensors');
+    expect(menu?.textContent).not.toContain('SDXL/paint_style.safetensors');
+  });
+
+  it('only offers the base-model filter when it can narrow the list', async () => {
+    const renderWith = async (baseModels: Record<string, string | undefined>) => {
+      await act(async () => {
+        root.render(
+          <ComboControl
+            containerClass=""
+            name="lora_name"
+            value="a.safetensors"
+            options={{
+              options: Object.keys(baseModels),
+              modelLookup: (value: string) => ({ model_name: value, base_model: baseModels[value] }),
+            }}
+            onChange={() => {}}
+            hasPin={false}
+          />,
+        );
+      });
+      await act(async () => {
+        container.querySelector<HTMLElement>('.combo-control-trigger')?.click();
+      });
+      return document.body.querySelector('[aria-label="Filter by base model"]');
+    };
+
+    expect(await renderWith({
+      'a.safetensors': undefined,
+      'b.safetensors': undefined,
+      'c.safetensors': undefined,
+      'd.safetensors': undefined,
+      'e.safetensors': undefined,
+    })).toBeNull();
+    await act(async () => root.unmount());
+    root = createRoot(container);
+    expect(await renderWith({
+      'a.safetensors': 'Flux.1 D',
+      'b.safetensors': undefined,
+      'c.safetensors': undefined,
+      'd.safetensors': undefined,
+      'e.safetensors': undefined,
+    })).not.toBeNull();
+  });
+
   it('uses the keyboard-aware modal as the vertical results scroller', async () => {
     await act(async () => {
       root.render(

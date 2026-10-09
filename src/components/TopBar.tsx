@@ -17,7 +17,8 @@ import { OutputsSourceToggle } from './TopBar/OutputsSourceToggle';
 import { TopBarPanelNavigation } from './TopBar/PanelNavigation';
 import type { PanelMode } from '@/hooks/useNavigation';
 import { useWorkflowHiddenStore } from '@/hooks/useWorkflowHidden';
-import { isWorkflowHidden } from '@/utils/workflowHidden';
+import { HIDDEN_WORKFLOW_EXTRA_DATA_KEY, isWorkflowHidden } from '@/utils/workflowHidden';
+import { useShowHiddenStore } from '@/hooks/useShowHidden';
 import { useI18n } from '@/i18n';
 
 interface TopBarProps {
@@ -99,10 +100,25 @@ export function TopBar({ mode = 'workflow' }: TopBarProps) {
   const pending = useQueueStore((s) => s.pending);
   const history = useHistoryStore((s) => s.history);
   const historyTotal = useHistoryStore((s) => s.historyTotal);
+  const historyHiddenTotal = useHistoryStore((s) => s.historyHiddenTotal);
+  const showHidden = useShowHiddenStore((s) => s.showHidden);
   const outputsSource = useOutputsStore((s) => s.source);
 
   const isDirty = isWorkflowModified(workflow, originalWorkflow);
   const isHiddenWorkflow = isWorkflowHidden(workflowSource, currentFilename, hiddenWorkflowPaths);
+
+  // Match the queue panel: runs from hidden workflows only count while shown.
+  const historyLength = useMemo(() => {
+    if (showHidden) return historyTotal ?? history.length;
+    if (historyTotal != null) return Math.max(0, historyTotal - historyHiddenTotal);
+    return history.filter((entry) => !entry.hidden).length;
+  }, [showHidden, historyTotal, historyHiddenTotal, history]);
+  const pendingLength = useMemo(
+    () => showHidden
+      ? pending.length
+      : pending.filter((item) => item.extra?.[HIDDEN_WORKFLOW_EXTRA_DATA_KEY] !== true).length,
+    [showHidden, pending],
+  );
 
   const nodeCountLabel = useMemo(() => {
     if (!workflow) return '';
@@ -177,8 +193,8 @@ export function TopBar({ mode = 'workflow' }: TopBarProps) {
       isDirty={Boolean(isDirty)}
       hasWorkflow={Boolean(workflow)}
       nodeCountLabel={nodeCountLabel}
-      historyLength={historyTotal ?? history.length}
-      pendingLength={pending.length}
+      historyLength={historyLength}
+      pendingLength={pendingLength}
       onTap={handleTitleTap}
       isHidden={isHiddenWorkflow}
     />

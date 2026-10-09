@@ -45,15 +45,20 @@ export async function promptHasHistory(promptId: string): Promise<boolean | null
   }
 }
 
-// Total number of runs in ComfyUI's history (the frontend pages /history with
-// max_items, so it only knows the loaded count). Returns null if the mobile
-// backend endpoint isn't available (e.g. server not restarted after an update).
-export async function getHistoryCount(): Promise<number | null> {
+// Total number of runs in ComfyUI's history, and how many came from hidden
+// workflows (the frontend pages /history with max_items, so it only knows the
+// loaded count). Returns null if the mobile backend endpoint isn't available
+// (e.g. server not restarted after an update).
+export async function getHistoryCount(): Promise<{ count: number; hiddenCount: number } | null> {
   try {
     const response = await fetch(`/mobile/api/history-count`, { cache: 'no-store' });
     if (!response.ok) return null;
     const data = await response.json();
-    return typeof data.count === 'number' ? data.count : null;
+    if (typeof data.count !== 'number') return null;
+    return {
+      count: data.count,
+      hiddenCount: typeof data.hidden_count === 'number' ? data.hidden_count : 0,
+    };
   } catch {
     return null;
   }
