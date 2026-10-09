@@ -1,5 +1,17 @@
 # Changelog
 
+## 3.3.8 - 2026-10-09
+
+### Fixed
+
+- **Jobs ending in Save Image Extended show in the Queue again.** Queued from
+  the app, they were treated as hidden and only appeared with *Show hidden*
+  on, because the node's file-type option (such as `.webp`) was read as a
+  hidden file.
+- **Restarting ComfyUI from the app keeps its virtual environment on
+  Windows.** On installs such as StabilityMatrix, the restart launched the
+  base Python instead of the venv's and failed with missing modules.
+
 ## 3.3.7 - 2026-10-01
 
 ### Fixed

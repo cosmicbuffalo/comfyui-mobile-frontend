@@ -6,7 +6,7 @@ matches pyproject.toml; the backend test suite locks that invariant.
 """
 
 API_VERSION = 1
-NODE_VERSION = "3.3.7"
+NODE_VERSION = "3.3.8"
 
 
 def build_capabilities(*, app_push_available: bool,
