@@ -3,8 +3,11 @@ import { BookIcon, CaretDownIcon, ExternalLinkIcon, GithubIcon, InfoCircleOutlin
 import { useI18n } from '@/i18n';
 import type { SystemStats } from '@/api/client';
 import type { Workflow } from '@/api/types';
+import { REPO_URL } from '@/constants';
+import { useFeedbackFollowsStore } from '@/hooks/useFeedbackFollows';
 import { FeedbackDialog } from './FeedbackDialog';
 import {
+  menuMutedTextClassName,
   menuArrowClassName,
   menuChevronClassName,
   menuExternalIconClassName,
@@ -34,6 +37,8 @@ export function MenuAboutSection({
 }: MenuAboutSectionProps) {
   const { t } = useI18n();
   const [feedbackDialogOpen, setFeedbackDialogOpen] = useState(false);
+  const follows = useFeedbackFollowsStore((s) => s.follows);
+  const unfollow = useFeedbackFollowsStore((s) => s.unfollow);
 
   return (
     <section ref={sectionRef} className="mt-auto pt-6 border-t border-white/10">
@@ -57,6 +62,31 @@ export function MenuAboutSection({
             <span className={menuTextClassName}>{t('Send Feedback')}</span>
             <span className={menuArrowClassName}>&rarr;</span>
           </button>
+
+          {follows.length > 0 && (
+            <div className="space-y-1 px-1">
+              <p className={`text-xs ${menuMutedTextClassName}`}>{t('Feedback you follow')}</p>
+              {follows.map((follow) => (
+                <div key={follow.number} className="flex items-center gap-2 text-xs">
+                  <a
+                    href={`${REPO_URL}/issues/${follow.number}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="min-w-0 flex-1 truncate text-slate-300 hover:underline"
+                  >
+                    #{follow.number} {follow.title}
+                  </a>
+                  <button
+                    type="button"
+                    onClick={() => unfollow(follow.number).catch(() => {})}
+                    className="shrink-0 rounded px-2 py-1 text-slate-400 hover:bg-white/10 hover:text-slate-200"
+                  >
+                    {t('Stop following')}
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
 
           <a
             href="https://github.com/cosmicbuffalo/comfyui-mobile-frontend"

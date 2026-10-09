@@ -1,6 +1,7 @@
 """System/status routes.
 
-Restart, CPU stats, history count, and queue metadata. Split out of
+Restart, CPU stats, history count, queue metadata, and followed feedback
+issues. Split out of
 ``__init__.py`` — handler bodies are unchanged.
 """
 
@@ -8,6 +9,8 @@ import asyncio
 import os
 
 import server
+import mobile_auth as _mobile_auth
+import mobile_feedback_follows as _mobile_feedback_follows
 import mobile_queue_metadata as _mobile_queue_metadata
 from aiohttp import web
 from mobile_common import QUEUE_METADATA_CACHE_PATH
@@ -124,6 +127,60 @@ async def api_queue_metadata_remap(request):
     except Exception as e:
         return web.json_response({"error": str(e)}, status=500)
 
+def _feedback_user_key():
+    """Whose follows this request reads: the signed-in user's, or the one shared
+    list when auth is off. None when auth is on and nobody is signed in."""
+    if not _mobile_auth.is_enabled():
+        return "default"
+    user = _mobile_auth.current_user()
+    return str(user["id"]) if user else None
+
+async def api_feedback_follows_get(request):
+    user_key = _feedback_user_key()
+    if user_key is None:
+        return web.json_response({"error": "Access denied"}, status=403)
+    try:
+        return web.json_response({"follows": _mobile_feedback_follows.list_follows(user_key)})
+    except Exception as e:
+        return web.json_response({"error": str(e)}, status=500)
+
+async def api_feedback_follows_add(request):
+    user_key = _feedback_user_key()
+    if user_key is None:
+        return web.json_response({"error": "Access denied"}, status=403)
+    try:
+        data = await request.json()
+        if not isinstance(data, dict) or not _mobile_feedback_follows.add_follow(
+                user_key, data.get('number'), data.get('title'), data.get('secret')):
+            return web.json_response({"error": "invalid_follow"}, status=400)
+        return web.json_response({"follows": _mobile_feedback_follows.list_follows(user_key)})
+    except Exception as e:
+        return web.json_response({"error": str(e)}, status=500)
+
+async def api_feedback_follows_seen(request):
+    user_key = _feedback_user_key()
+    if user_key is None:
+        return web.json_response({"error": "Access denied"}, status=403)
+    try:
+        data = await request.json()
+        number = int(request.match_info['number'])
+        seen_at = data.get('seenAt') if isinstance(data, dict) else None
+        if not _mobile_feedback_follows.mark_seen(user_key, number, seen_at):
+            return web.json_response({"error": "not_found"}, status=404)
+        return web.json_response({"follows": _mobile_feedback_follows.list_follows(user_key)})
+    except Exception as e:
+        return web.json_response({"error": str(e)}, status=500)
+
+async def api_feedback_follows_delete(request):
+    user_key = _feedback_user_key()
+    if user_key is None:
+        return web.json_response({"error": "Access denied"}, status=403)
+    try:
+        _mobile_feedback_follows.remove_follow(user_key, int(request.match_info['number']))
+        return web.json_response({"follows": _mobile_feedback_follows.list_follows(user_key)})
+    except Exception as e:
+        return web.json_response({"error": str(e)}, status=500)
+
 
 def register_routes(mobile_app):
     """Register the system/status routes on the mobile sub-app."""
@@ -133,3 +190,7 @@ def register_routes(mobile_app):
     mobile_app.router.add_post('/api/queue-metadata', api_queue_metadata_post)
     mobile_app.router.add_post('/api/queue-metadata/remap', api_queue_metadata_remap)
     mobile_app.router.add_post('/api/restart', api_restart_server)
+    mobile_app.router.add_get('/api/feedback/follows', api_feedback_follows_get)
+    mobile_app.router.add_post('/api/feedback/follows', api_feedback_follows_add)
+    mobile_app.router.add_post(r'/api/feedback/follows/{number:\d+}/seen', api_feedback_follows_seen)
+    mobile_app.router.add_delete(r'/api/feedback/follows/{number:\d+}', api_feedback_follows_delete)

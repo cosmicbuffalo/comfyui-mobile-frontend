@@ -11,6 +11,7 @@ import {
   isFeedbackEndpointConfigured,
   submitFeedback,
 } from '@/utils/feedbackApi';
+import { useFeedbackFollowsStore } from '@/hooks/useFeedbackFollows';
 import { menuMutedTextClassName } from './menuStyles';
 import { t as globalT, useI18n } from '@/i18n';
 
@@ -23,7 +24,7 @@ interface FeedbackDialogProps {
 type SubmitState =
   | { kind: 'idle' }
   | { kind: 'submitting' }
-  | { kind: 'success'; url: string }
+  | { kind: 'success'; url: string; followed: boolean }
   | { kind: 'error'; message: string };
 
 const FIELD_LABEL_CLASS = 'block text-xs font-medium text-slate-300 mb-1';
@@ -41,6 +42,7 @@ export function FeedbackDialog({ systemStats, workflow, onClose }: FeedbackDialo
   const [contact, setContact] = useState('');
   const [website, setWebsite] = useState(''); // honeypot
   const [includeDiagnostics, setIncludeDiagnostics] = useState(false);
+  const [follow, setFollow] = useState(true);
   const [submit, setSubmit] = useState<SubmitState>({ kind: 'idle' });
 
   const isSubmitting = submit.kind === 'submitting';
@@ -65,10 +67,24 @@ export function FeedbackDialog({ systemStats, workflow, onClose }: FeedbackDialo
       body: body.trim(),
       contact: contact.trim() || undefined,
       diagnostics: includeDiagnostics ? diagnosticsPreview : undefined,
+      follow,
       website: website || undefined,
     });
     if (result.ok) {
-      setSubmit({ kind: 'success', url: result.url });
+      let followed = false;
+      if (result.secret) {
+        try {
+          await useFeedbackFollowsStore.getState().follow({
+            number: result.number,
+            title: title.trim(),
+            secret: result.secret,
+          });
+          followed = true;
+        } catch {
+          // The issue exists either way; only the banner is lost.
+        }
+      }
+      setSubmit({ kind: 'success', url: result.url, followed });
     } else {
       setSubmit({
         kind: 'error',
@@ -95,6 +111,9 @@ export function FeedbackDialog({ systemStats, workflow, onClose }: FeedbackDialo
             >
               {submit.url}
             </a>
+            {submit.followed && (
+              <p>{t("You'll see a banner in the app when someone replies, and can answer from there.")}</p>
+            )}
           </div>
         }
         actions={[{ label: t('Close'), onClick: onClose, variant: 'primary' }]}
@@ -222,6 +241,21 @@ export function FeedbackDialog({ systemStats, workflow, onClose }: FeedbackDialo
               {diagnosticsPreview}
             </pre>
           )}
+
+          <label className="flex items-start gap-2 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              className="mt-1 h-4 w-4 rounded border-white/20 bg-slate-950 text-cyan-400 focus:ring-cyan-400 focus:ring-offset-slate-900"
+              checked={follow}
+              onChange={(e) => setFollow(e.target.checked)}
+            />
+            <span className="text-sm text-slate-300">
+              {t('Show replies to this feedback in the app')}
+              <span className={`block text-xs ${menuMutedTextClassName}`}>
+                {t('This server keeps the issue number and checks the feedback service for replies while the app is open.')}
+              </span>
+            </span>
+          </label>
 
           {submit.kind === 'error' && (
             <div role="alert" className="text-sm text-red-200 bg-red-950/80 border border-red-400/20 rounded-lg p-2">
