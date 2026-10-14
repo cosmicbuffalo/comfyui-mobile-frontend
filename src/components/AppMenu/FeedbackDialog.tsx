@@ -8,11 +8,12 @@ import { Z_LAYERS } from '@/components/zLayers';
 import { buildDiagnosticsBlock, buildFeedbackIssueUrl } from '@/utils/feedbackUrl';
 import {
   FEEDBACK_ENDPOINT,
+  forgetFeedback,
   isFeedbackEndpointConfigured,
   submitFeedback,
 } from '@/utils/feedbackApi';
 import { useFeedbackFollowsStore } from '@/hooks/useFeedbackFollows';
-import { menuMutedTextClassName } from './menuStyles';
+import { feedbackFieldSurfaceClassName, feedbackInputClassName, menuMutedTextClassName } from './menuStyles';
 import { t as globalT, useI18n } from '@/i18n';
 
 interface FeedbackDialogProps {
@@ -28,11 +29,6 @@ type SubmitState =
   | { kind: 'error'; message: string };
 
 const FIELD_LABEL_CLASS = 'block text-xs font-medium text-slate-300 mb-1';
-const FEEDBACK_FIELD_SURFACE_CLASS =
-  'rounded-lg border border-slate-600/80 bg-slate-950 text-slate-300';
-const INPUT_CLASS =
-  `w-full px-3 py-2 text-sm placeholder:text-slate-500 focus:border-cyan-300 focus:outline-none focus:ring-2 focus:ring-cyan-400/30 ${FEEDBACK_FIELD_SURFACE_CLASS}`;
-
 export function FeedbackDialog({ systemStats, workflow, onClose }: FeedbackDialogProps) {
   const { t } = useI18n();
   const endpointConfigured = isFeedbackEndpointConfigured();
@@ -81,7 +77,9 @@ export function FeedbackDialog({ systemStats, workflow, onClose }: FeedbackDialo
           });
           followed = true;
         } catch {
-          // The issue exists either way; only the banner is lost.
+          // The issue exists either way; only the banner is lost. Drop the
+          // grant too, so its hash doesn't outlive the secret.
+          void forgetFeedback(FEEDBACK_ENDPOINT, { number: result.number, secret: result.follow.secret });
         }
       }
       setSubmit({ kind: 'success', url: result.url, followed, canReply: result.follow?.canReply ?? false });
@@ -182,7 +180,7 @@ export function FeedbackDialog({ systemStats, workflow, onClose }: FeedbackDialo
               onChange={(e) => setTitle(e.target.value)}
               maxLength={200}
               placeholder={t('Short summary')}
-              className={INPUT_CLASS}
+              className={feedbackInputClassName}
             />
           </label>
 
@@ -194,7 +192,7 @@ export function FeedbackDialog({ systemStats, workflow, onClose }: FeedbackDialo
               maxLength={8000}
               rows={5}
               placeholder={t("What happened? What were you trying to do? Steps to reproduce if it's a bug.")}
-              className={`${INPUT_CLASS} resize-y`}
+              className={`${feedbackInputClassName} resize-y`}
             />
           </label>
 
@@ -208,7 +206,7 @@ export function FeedbackDialog({ systemStats, workflow, onClose }: FeedbackDialo
               onChange={(e) => setContact(e.target.value)}
               maxLength={200}
               placeholder={t("GitHub @username or email if you'd like a reply")}
-              className={INPUT_CLASS}
+              className={feedbackInputClassName}
             />
             <span className={`block mt-1 text-xs ${menuMutedTextClassName}`}>
               {t('GitHub handles get @-mentioned in the public issue. Anything else (emails, phone numbers, etc.) is forwarded privately to the maintainer and never appears in the issue body.')}
@@ -241,7 +239,7 @@ export function FeedbackDialog({ systemStats, workflow, onClose }: FeedbackDialo
             </span>
           </label>
           {includeDiagnostics && (
-            <pre className={`p-2 text-xs whitespace-pre-wrap break-words ${FEEDBACK_FIELD_SURFACE_CLASS}`}>
+            <pre className={`p-2 text-xs whitespace-pre-wrap break-words ${feedbackFieldSurfaceClassName}`}>
               {diagnosticsPreview}
             </pre>
           )}

@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect } from 'react';
 import { create } from 'zustand';
 import {
   addFeedbackFollow,
@@ -20,6 +20,9 @@ const DAY_MS = 24 * 60 * 60_000;
 const CLOSED_GRACE_MS = 14 * DAY_MS;
 // Nothing from either side for this long and the follow is dropped.
 const IDLE_LIMIT_MS = 90 * DAY_MS;
+// KV takes up to a minute to show a new follow everywhere, so a follow younger
+// than this that the service calls unknown may just not have arrived yet.
+const UNKNOWN_GRACE_MS = 10 * 60_000;
 
 function activityMs(status: FeedbackIssueStatus | undefined): number | null {
   return status?.activityAt ? Date.parse(status.activityAt) : null;
@@ -35,7 +38,7 @@ export function isFollowExpired(follow: FeedbackFollow, status: FeedbackIssueSta
   if (status.state === 'closed' && !hasUnseenActivity(follow, status) && now - (at ?? follow.followedAt) > CLOSED_GRACE_MS) {
     return true;
   }
-  return now - Math.max(follow.followedAt, at ?? 0) > IDLE_LIMIT_MS;
+  return now - Math.max(follow.followedAt, Date.parse(status.updatedAt)) > IDLE_LIMIT_MS;
 }
 
 interface FeedbackFollowsState {
@@ -52,26 +55,29 @@ export const useFeedbackFollowsStore = create<FeedbackFollowsState>((set, get) =
   statuses: {},
 
   refresh: async () => {
-    let follows = await getFeedbackFollows();
+    if (!isFeedbackEndpointConfigured()) return;
+    const follows = await getFeedbackFollows();
     set({ follows });
-    if (follows.length === 0 || !isFeedbackEndpointConfigured()) return;
+    if (follows.length === 0) return;
 
     const result = await fetchFeedbackStatus(FEEDBACK_ENDPOINT, follows.map((f) => f.number));
     if (!result) return;
     const statuses = Object.fromEntries(result.issues.map((s) => [s.number, s]));
     set({ statuses });
 
+    // Each removal sets the list the server returns, never the one read above:
+    // a seen or a new follow may have landed while this check was waiting.
     const now = Date.now();
     for (const follow of follows) {
       const status = statuses[follow.number];
-      if (result.unknown.includes(follow.number)) {
-        follows = await removeFeedbackFollow(follow.number);
-      } else if (status && isFollowExpired(follow, status, now)) {
-        await forgetFeedback(FEEDBACK_ENDPOINT, follow);
-        follows = await removeFeedbackFollow(follow.number);
+      const gone = result.unknown.includes(follow.number) && now - follow.followedAt > UNKNOWN_GRACE_MS;
+      // An expired follow stays until the service has forgotten it, so the
+      // secret is never dropped while its hash still works.
+      const expired = status && isFollowExpired(follow, status, now) && (await forgetFeedback(FEEDBACK_ENDPOINT, follow));
+      if (gone || expired) {
+        set({ follows: await removeFeedbackFollow(follow.number) });
       }
     }
-    set({ follows });
   },
 
   follow: async (follow) => {
@@ -86,8 +92,8 @@ export const useFeedbackFollowsStore = create<FeedbackFollowsState>((set, get) =
 
   unfollow: async (number) => {
     const follow = get().follows.find((f) => f.number === number);
-    if (follow && isFeedbackEndpointConfigured()) {
-      await forgetFeedback(FEEDBACK_ENDPOINT, follow);
+    if (!follow || !(await forgetFeedback(FEEDBACK_ENDPOINT, follow))) {
+      throw new Error('Failed to stop following feedback');
     }
     set({ follows: await removeFeedbackFollow(number) });
   },
@@ -98,34 +104,34 @@ export const useFeedbackFollowsStore = create<FeedbackFollowsState>((set, get) =
 const CHECK_INTERVAL_MS = 10 * 60_000;
 
 /**
- * Checks followed feedback for activity when the app opens, and every 10
- * minutes while it is visible, including on return to the foreground once that
- * much time has passed. Asks the feedback service only when this server follows
- * something.
+ * Checks followed feedback for activity when the app opens, then every 10
+ * minutes while it is visible. A hidden tab skips its turn and checks on return
+ * if 10 minutes have passed, then keeps the 10-minute rhythm from there. Asks
+ * the feedback service only when this server follows something.
  */
 export function useFeedbackActivityCheck(): void {
-  const lastCheckAtRef = useRef(0);
-
   useEffect(() => {
-    const check = () => {
-      const now = Date.now();
-      if (now - lastCheckAtRef.current < CHECK_INTERVAL_MS) return;
-      lastCheckAtRef.current = now;
+    let lastCheckAt = 0;
+    let timer: number | undefined;
+    const run = () => {
+      window.clearTimeout(timer);
+      if (document.visibilityState !== 'visible') return;
+      const wait = lastCheckAt + CHECK_INTERVAL_MS - Date.now();
+      if (wait > 0) {
+        timer = window.setTimeout(run, wait);
+        return;
+      }
+      lastCheckAt = Date.now();
       // Best effort: a failed check just means no banner until the next one.
       useFeedbackFollowsStore.getState().refresh().catch(() => {});
+      timer = window.setTimeout(run, CHECK_INTERVAL_MS);
     };
 
-    check();
-    const onVisibilityChange = () => {
-      if (document.visibilityState === 'visible') check();
-    };
-    document.addEventListener('visibilitychange', onVisibilityChange);
-    const intervalId = window.setInterval(() => {
-      if (document.visibilityState === 'visible') check();
-    }, CHECK_INTERVAL_MS);
+    run();
+    document.addEventListener('visibilitychange', run);
     return () => {
-      document.removeEventListener('visibilitychange', onVisibilityChange);
-      window.clearInterval(intervalId);
+      document.removeEventListener('visibilitychange', run);
+      window.clearTimeout(timer);
     };
   }, []);
 }

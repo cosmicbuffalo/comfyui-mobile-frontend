@@ -2,12 +2,10 @@ import { useState } from 'react';
 import type { FeedbackFollow } from '@/api/client';
 import { Dialog } from '@/components/modals/Dialog';
 import { Z_LAYERS } from '@/components/zLayers';
-import { REPO_URL } from '@/constants';
+import { feedbackInputClassName } from '@/components/AppMenu/menuStyles';
 import { FEEDBACK_ENDPOINT, submitFeedbackReply } from '@/utils/feedbackApi';
+import { feedbackIssueUrl } from '@/utils/feedbackUrl';
 import { t as globalT, useI18n } from '@/i18n';
-
-const INPUT_CLASS =
-  'w-full px-3 py-2 text-sm rounded-lg border border-slate-600/80 bg-slate-950 text-slate-300 placeholder:text-slate-500 focus:border-cyan-300 focus:outline-none focus:ring-2 focus:ring-cyan-400/30 resize-y';
 
 type ReplyState =
   | { kind: 'idle' }
@@ -29,7 +27,7 @@ export function FeedbackReplyDialog({
   const [body, setBody] = useState('');
   const [website, setWebsite] = useState(''); // honeypot
   const [reply, setReply] = useState<ReplyState>({ kind: 'idle' });
-  const issueUrl = `${REPO_URL}/issues/${follow.number}`;
+  const issueUrl = feedbackIssueUrl(follow.number);
 
   if (reply.kind === 'sent') {
     return (
@@ -98,7 +96,7 @@ export function FeedbackReplyDialog({
             maxLength={8000}
             rows={5}
             placeholder={t('Reply anonymously to the public GitHub issue')}
-            className={INPUT_CLASS}
+            className={`${feedbackInputClassName} resize-y`}
           />
           {/* Honeypot — see FeedbackDialog. */}
           <div aria-hidden="true" style={{ position: 'absolute', left: '-10000px', top: 'auto', width: 1, height: 1, overflow: 'hidden' }}>

@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { FeedbackReplyDialog } from '@/components/FeedbackReplyDialog';
 import { XMarkIcon } from '@/components/icons';
-import { REPO_URL } from '@/constants';
+import { feedbackIssueUrl } from '@/utils/feedbackUrl';
 import { hasUnseenActivity, useFeedbackFollowsStore } from '@/hooks/useFeedbackFollows';
 import { useI18n } from '@/i18n';
 
@@ -46,7 +46,7 @@ export function FeedbackActivityNotice({ hidden }: { hidden: boolean }) {
             </p>
             <div className="mt-2.5 grid grid-cols-2 gap-2">
               <a
-                href={`${REPO_URL}/issues/${follow.number}`}
+                href={feedbackIssueUrl(follow.number)}
                 target="_blank"
                 rel="noopener noreferrer"
                 className={`${canReply ? '' : 'col-span-2 '}rounded-md border border-white/10 bg-white/5 px-3 py-1.5 text-center text-xs font-medium text-slate-200 hover:bg-white/10`}

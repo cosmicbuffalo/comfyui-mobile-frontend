@@ -21,8 +21,6 @@ from json_cache_io import atomic_write_json, now_ms
 
 _LOG_PREFIX = "[\033[34mMobile\033[0m]"
 
-# Oldest are dropped past this, so a busy reporter can't grow the file forever.
-MAX_FOLLOWS = 20
 _MAX_TITLE_LEN = 200
 _MAX_SECRET_LEN = 100
 
@@ -80,7 +78,7 @@ def add_follow(user_key: str, number, title, secret, can_reply) -> bool:
         now = now_ms()
         entries.append({"number": number, "title": title, "secret": secret, "canReply": can_reply,
                         "followedAt": now, "seenAt": now})
-        follows[user_key] = entries[-MAX_FOLLOWS:]
+        follows[user_key] = entries
         _save_locked(follows)
         return True
 

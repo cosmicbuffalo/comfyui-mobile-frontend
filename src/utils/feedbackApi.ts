@@ -112,6 +112,8 @@ export interface FeedbackIssueStatus {
   locked: boolean;
   /** ISO time of the newest comment by someone other than the submitter, or of closing. */
   activityAt: string | null;
+  /** ISO time of the last change by anyone, the submitter included. */
+  updatedAt: string;
 }
 
 export interface FeedbackStatusResult {

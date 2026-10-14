@@ -38,16 +38,12 @@ def test_rejects_bad_entries(follows_file):
     assert not follows_file.exists()
 
 
-def test_refollowing_replaces_and_old_entries_drop_off(follows_file):
-    for number in range(1, follows.MAX_FOLLOWS + 3):
-        follows.add_follow("default", number, "t", "s", True)
+def test_refollowing_replaces_the_entry(follows_file):
+    follows.add_follow("default", 5, "t", "old", True)
+    follows.add_follow("default", 6, "t", "s", True)
     follows.add_follow("default", 5, "t", "new", True)
 
-    numbers = [e["number"] for e in follows.list_follows("default")]
-    assert len(numbers) == follows.MAX_FOLLOWS
-    assert 1 not in numbers and 2 not in numbers
-    assert numbers[-1] == 5
-    assert follows.list_follows("default")[-1]["secret"] == "new"
+    assert [(e["number"], e["secret"]) for e in follows.list_follows("default")] == [(6, "s"), (5, "new")]
 
 
 def test_seen_only_moves_forward(follows_file):

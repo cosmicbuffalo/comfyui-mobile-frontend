@@ -127,3 +127,7 @@ export function buildFeedbackIssueUrl(
   });
   return `${REPO_URL}/issues/new?${params.toString()}`;
 }
+
+export function feedbackIssueUrl(number: number): string {
+  return `${REPO_URL}/issues/${number}`;
+}

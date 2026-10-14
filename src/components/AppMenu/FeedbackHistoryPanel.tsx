@@ -7,7 +7,7 @@ import { ExternalLinkIcon, MegaphoneIcon, PlusIcon, ReplyIcon, TrashIcon } from 
 import { Dialog } from '@/components/modals/Dialog';
 import { FullscreenModalHeader } from '@/components/modals/FullscreenModalHeader';
 import { Z_LAYERS } from '@/components/zLayers';
-import { REPO_URL } from '@/constants';
+import { feedbackIssueUrl } from '@/utils/feedbackUrl';
 import { hasUnseenActivity, useFeedbackFollowsStore } from '@/hooks/useFeedbackFollows';
 import type { FeedbackIssueStatus } from '@/utils/feedbackApi';
 import { useI18n } from '@/i18n';
@@ -130,7 +130,7 @@ function FeedbackHistoryRow({
     >
       <div className="min-w-0 flex-1">
         <a
-          href={`${REPO_URL}/issues/${follow.number}`}
+          href={feedbackIssueUrl(follow.number)}
           target="_blank"
           rel="noopener noreferrer"
           className="group flex min-w-0 items-center gap-1.5 text-sm font-semibold text-slate-100"

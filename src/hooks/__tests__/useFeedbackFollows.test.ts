@@ -11,7 +11,7 @@ function follow(overrides: Partial<FeedbackFollow> = {}): FeedbackFollow {
 }
 
 function status(overrides: Partial<FeedbackIssueStatus> = {}): FeedbackIssueStatus {
-  return { number: 7, state: 'open', locked: false, activityAt: null, ...overrides };
+  return { number: 7, state: 'open', locked: false, activityAt: null, updatedAt: new Date(T0).toISOString(), ...overrides };
 }
 
 describe('hasUnseenActivity', () => {
@@ -29,9 +29,9 @@ describe('isFollowExpired', () => {
     expect(isFollowExpired(follow(), status(), T0 + 91 * DAY)).toBe(true);
   });
 
-  it('counts activity as resetting the idle clock', () => {
-    const recent = status({ activityAt: new Date(T0 + 80 * DAY).toISOString() });
-    expect(isFollowExpired(follow({ seenAt: T0 + 80 * DAY }), recent, T0 + 91 * DAY)).toBe(false);
+  it('counts any update, including the submitter\'s own reply, as resetting the idle clock', () => {
+    const replied = status({ updatedAt: new Date(T0 + 80 * DAY).toISOString() });
+    expect(isFollowExpired(follow(), replied, T0 + 91 * DAY)).toBe(false);
   });
 
   it('drops a seen closed issue after two weeks, but not an unseen one', () => {
@@ -65,6 +65,63 @@ describe('refresh', () => {
     await useFeedbackFollowsStore.getState().refresh();
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(fetchMock.mock.calls[0][0]).toBe('/mobile/api/feedback/follows');
+  });
+
+  it('keeps a brand-new follow the service does not know yet', async () => {
+    const fresh = follow({ number: 9, followedAt: Date.now() });
+    fetchMock.mockImplementation((url: string) =>
+      url.includes('/status?') ? respond({ issues: [], unknown: [9] }) : respond({ follows: [fresh] }));
+
+    await useFeedbackFollowsStore.getState().refresh();
+
+    expect(useFeedbackFollowsStore.getState().follows).toEqual([fresh]);
+    expect(fetchMock.mock.calls.some(([, init]) => init?.method === 'DELETE')).toBe(false);
+  });
+
+  it('does not overwrite a seen that lands while the status check is in flight', async () => {
+    const before = follow({ number: 7 });
+    const after = follow({ number: 7, seenAt: T0 + 1000 });
+    let releaseStatus: () => void = () => {};
+    fetchMock.mockImplementation((url: string) => {
+      if (url.includes('/status?')) {
+        return new Promise((resolve) => {
+          releaseStatus = () => resolve({ ok: true, status: 200, json: async () => ({ issues: [status({ number: 7 })], unknown: [] }) } as Response);
+        });
+      }
+      return respond({ follows: [before] });
+    });
+
+    const refreshing = useFeedbackFollowsStore.getState().refresh();
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    useFeedbackFollowsStore.setState({ follows: [after] });
+    releaseStatus();
+    await refreshing;
+
+    expect(useFeedbackFollowsStore.getState().follows).toEqual([after]);
+  });
+
+  it('keeps an expired follow when the service could not forget it', async () => {
+    const old = follow({ number: 7, followedAt: Date.now() - 100 * DAY });
+    const oldStatus = status({ number: 7, updatedAt: new Date(Date.now() - 100 * DAY).toISOString() });
+    fetchMock.mockImplementation((url: string) => {
+      if (url.includes('/status?')) return respond({ issues: [oldStatus], unknown: [] });
+      if (url.endsWith('/forget')) return Promise.reject(new Error('offline'));
+      return respond({ follows: [old] });
+    });
+
+    await useFeedbackFollowsStore.getState().refresh();
+
+    expect(useFeedbackFollowsStore.getState().follows).toEqual([old]);
+    expect(fetchMock.mock.calls.some(([, init]) => init?.method === 'DELETE')).toBe(false);
+  });
+
+  it('refuses to stop following when the service could not forget', async () => {
+    const kept = follow({ number: 7 });
+    useFeedbackFollowsStore.setState({ follows: [kept] });
+    fetchMock.mockImplementation(() => Promise.reject(new Error('offline')));
+
+    await expect(useFeedbackFollowsStore.getState().unfollow(7)).rejects.toThrow();
+    expect(useFeedbackFollowsStore.getState().follows).toEqual([kept]);
   });
 
   it('stores statuses and drops follows the service no longer knows', async () => {
