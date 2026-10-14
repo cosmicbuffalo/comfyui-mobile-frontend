@@ -41,6 +41,16 @@ describe('isFollowExpired', () => {
     const unseen = status({ state: 'closed', activityAt: new Date(T0 + DAY).toISOString() });
     expect(isFollowExpired(follow(), unseen, T0 + 20 * DAY)).toBe(false);
   });
+
+  it('keeps a closed issue the submitter replied to recently', () => {
+    const replied = status({
+      state: 'closed',
+      activityAt: new Date(T0).toISOString(),
+      updatedAt: new Date(T0 + 13 * DAY).toISOString(),
+    });
+    expect(isFollowExpired(follow(), replied, T0 + 15 * DAY)).toBe(false);
+    expect(isFollowExpired(follow(), replied, T0 + 28 * DAY)).toBe(true);
+  });
 });
 
 describe('refresh', () => {
@@ -98,6 +108,26 @@ describe('refresh', () => {
     await refreshing;
 
     expect(useFeedbackFollowsStore.getState().follows).toEqual([after]);
+  });
+
+  it('discards a follows read that a newer change overtook', async () => {
+    const stale = follow({ number: 7 });
+    const added = follow({ number: 8 });
+    let releaseRead: () => void = () => {};
+    fetchMock.mockImplementation((url: string) => {
+      if (url.includes('/status?')) return respond({ issues: [], unknown: [] });
+      return new Promise((resolve) => {
+        releaseRead = () => resolve({ ok: true, status: 200, json: async () => ({ follows: [stale] }) } as Response);
+      });
+    });
+
+    const refreshing = useFeedbackFollowsStore.getState().refresh();
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    useFeedbackFollowsStore.setState({ follows: [stale, added] });
+    releaseRead();
+    await refreshing;
+
+    expect(useFeedbackFollowsStore.getState().follows).toEqual([stale, added]);
   });
 
   it('keeps an expired follow when the service could not forget it', async () => {

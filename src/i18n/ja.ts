@@ -293,6 +293,7 @@ export const ja: Record<string, string> = {
   'Stop following': 'フォローをやめる',
   'Stop following feedback #{number}?': 'フィードバック #{number} のフォローをやめますか？',
   "You won't see replies to it in the app anymore, and can't reply to it from here. The issue itself stays on GitHub.": '今後このフィードバックへの返信はアプリに表示されず、ここから返信することもできなくなります。Issue 自体は GitHub に残ります。',
+  "Couldn't stop following. Check your connection and try again.": 'フォローをやめられませんでした。接続を確認して、もう一度お試しください。',
   'Feedback History': 'フィードバック履歴',
   'New activity': '新しい動き',
   'Open': 'オープン',

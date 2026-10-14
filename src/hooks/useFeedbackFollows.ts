@@ -16,7 +16,8 @@ import {
 } from '@/utils/feedbackApi';
 
 const DAY_MS = 24 * 60 * 60_000;
-// A closed issue the user has seen stays followed this long, for a late reply.
+// A closed issue the user has seen stays followed this long after its last
+// change (a reply from the submitter included), for a late answer.
 const CLOSED_GRACE_MS = 14 * DAY_MS;
 // Nothing from either side for this long and the follow is dropped.
 const IDLE_LIMIT_MS = 90 * DAY_MS;
@@ -34,11 +35,11 @@ export function hasUnseenActivity(follow: FeedbackFollow, status: FeedbackIssueS
 }
 
 export function isFollowExpired(follow: FeedbackFollow, status: FeedbackIssueStatus, now: number): boolean {
-  const at = activityMs(status);
-  if (status.state === 'closed' && !hasUnseenActivity(follow, status) && now - (at ?? follow.followedAt) > CLOSED_GRACE_MS) {
+  const quietFor = now - Math.max(follow.followedAt, Date.parse(status.updatedAt));
+  if (status.state === 'closed' && !hasUnseenActivity(follow, status) && quietFor > CLOSED_GRACE_MS) {
     return true;
   }
-  return now - Math.max(follow.followedAt, Date.parse(status.updatedAt)) > IDLE_LIMIT_MS;
+  return quietFor > IDLE_LIMIT_MS;
 }
 
 interface FeedbackFollowsState {
@@ -56,8 +57,12 @@ export const useFeedbackFollowsStore = create<FeedbackFollowsState>((set, get) =
 
   refresh: async () => {
     if (!isFeedbackEndpointConfigured()) return;
-    const follows = await getFeedbackFollows();
-    set({ follows });
+    const before = get().follows;
+    const fetched = await getFeedbackFollows();
+    // A follow, seen or unfollow that finished during the read already set a
+    // newer list; keep that one.
+    if (get().follows === before) set({ follows: fetched });
+    const follows = get().follows;
     if (follows.length === 0) return;
 
     const result = await fetchFeedbackStatus(FEEDBACK_ENDPOINT, follows.map((f) => f.number));

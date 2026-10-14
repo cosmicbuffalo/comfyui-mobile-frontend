@@ -293,6 +293,7 @@ export const ko: Record<string, string> = {
   'Stop following': '팔로우 중지',
   'Stop following feedback #{number}?': '피드백 #{number} 팔로우를 중지할까요?',
   "You won't see replies to it in the app anymore, and can't reply to it from here. The issue itself stays on GitHub.": '더 이상 앱에서 이 피드백의 답글을 볼 수 없고, 여기서 답글을 달 수도 없습니다. 이슈 자체는 GitHub에 남아 있습니다.',
+  "Couldn't stop following. Check your connection and try again.": '팔로우를 중지하지 못했습니다. 연결을 확인하고 다시 시도하세요.',
   'Feedback History': '피드백 기록',
   'New activity': '새 활동',
   'Open': '열림',

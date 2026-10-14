@@ -34,6 +34,7 @@ export function FeedbackReplyDialog({
       <Dialog
         onClose={onClose}
         zIndex={Z_LAYERS.panelDialog}
+        fullscreen
         title={t('Reply posted')}
         description={
           <a
@@ -75,6 +76,9 @@ export function FeedbackReplyDialog({
       onClose={onClose}
       disableClose={sending}
       zIndex={Z_LAYERS.panelDialog}
+      // Covers the top bar too: from Feedback History, that's where the
+      // history page's Close button is, and it must not unmount a sending reply.
+      fullscreen
       size="lg"
       title={t('Reply to feedback #{number}', { number: follow.number })}
       description={

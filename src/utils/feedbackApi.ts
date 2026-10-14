@@ -153,7 +153,8 @@ export async function forgetFeedback(
   endpoint: string,
   follow: { number: number; secret: string },
 ): Promise<boolean> {
-  const result = await postJson(`${endpoint}/forget`, follow);
+  // Callers pass a whole stored follow; only these two fields may leave the browser.
+  const result = await postJson(`${endpoint}/forget`, { number: follow.number, secret: follow.secret });
   // not_following means the service already forgot it.
   return result.ok || result.error === 'not_following';
 }

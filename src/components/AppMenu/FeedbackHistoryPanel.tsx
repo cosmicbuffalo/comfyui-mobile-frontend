@@ -111,7 +111,7 @@ function FeedbackHistoryRow({
 }) {
   const { t } = useI18n();
   const unfollow = useFeedbackFollowsStore((s) => s.unfollow);
-  const [confirmingUnfollow, setConfirmingUnfollow] = useState(false);
+  const [unfollowStep, setUnfollowStep] = useState<'closed' | 'confirming' | 'stopping' | 'failed'>('closed');
 
   const state = status?.locked ? 'locked' : status?.state;
   const pill = state === 'locked'
@@ -164,27 +164,40 @@ function FeedbackHistoryRow({
       )}
       <button
         type="button"
-        onClick={() => setConfirmingUnfollow(true)}
+        onClick={() => setUnfollowStep('confirming')}
         aria-label={t('Stop following')}
         className="shrink-0 h-9 w-9 flex items-center justify-center rounded-md bg-red-500 text-slate-950 hover:bg-red-400"
       >
         <TrashIcon className="w-4 h-4" />
       </button>
 
-      {confirmingUnfollow && (
+      {unfollowStep !== 'closed' && (
         <Dialog
-          onClose={() => setConfirmingUnfollow(false)}
+          onClose={() => setUnfollowStep('closed')}
+          disableClose={unfollowStep === 'stopping'}
           zIndex={Z_LAYERS.panelDialog}
+          fullscreen
           title={t('Stop following feedback #{number}?', { number: follow.number })}
-          description={t("You won't see replies to it in the app anymore, and can't reply to it from here. The issue itself stays on GitHub.")}
+          description={
+            <div className="space-y-3">
+              <p>{t("You won't see replies to it in the app anymore, and can't reply to it from here. The issue itself stays on GitHub.")}</p>
+              {unfollowStep === 'failed' && (
+                <p role="alert" className="text-sm text-red-200 bg-red-950/80 border border-red-400/20 rounded-lg p-2">
+                  {t("Couldn't stop following. Check your connection and try again.")}
+                </p>
+              )}
+            </div>
+          }
           actions={[
-            { label: t('Cancel'), onClick: () => setConfirmingUnfollow(false) },
+            { label: t('Cancel'), onClick: () => setUnfollowStep('closed'), disabled: unfollowStep === 'stopping' },
             {
               label: t('Stop following'),
               variant: 'danger',
+              disabled: unfollowStep === 'stopping',
+              // On success the row, and this dialog with it, goes away.
               onClick: () => {
-                setConfirmingUnfollow(false);
-                unfollow(follow.number).catch(() => {});
+                setUnfollowStep('stopping');
+                unfollow(follow.number).catch(() => setUnfollowStep('failed'));
               },
             },
           ]}

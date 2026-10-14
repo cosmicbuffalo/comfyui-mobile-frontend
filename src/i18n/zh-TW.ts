@@ -293,6 +293,7 @@ export const zhTW: Record<string, string> = {
   'Stop following': '停止追蹤',
   'Stop following feedback #{number}?': '停止追蹤意見回饋 #{number}？',
   "You won't see replies to it in the app anymore, and can't reply to it from here. The issue itself stays on GitHub.": '你將不再在應用程式中看到它的回覆，也無法再從這裡回覆。議題本身仍保留在 GitHub 上。',
+  "Couldn't stop following. Check your connection and try again.": '無法停止追蹤。請檢查網路連線後再試一次。',
   'Feedback History': '意見回饋記錄',
   'New activity': '新動態',
   'Open': '進行中',

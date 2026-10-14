@@ -207,9 +207,9 @@ app is off and you reply on GitHub instead. An email contact is never used for
 replies; it is only forwarded once, when the issue is filed.
 
 Stop following in Feedback History tells the service to delete its hash, so the
-secret no longer works. The app also stops following on its own two weeks after
-a closed issue's last activity, once you've seen it, or once nothing has
-happened for 90 days.
+secret no longer works. The app also stops following on its own once a closed
+issue has had no new comments, including your own replies, for two weeks and
+you've seen its last activity, or once nothing at all has happened for 90 days.
 
 ## Operational telemetry
 

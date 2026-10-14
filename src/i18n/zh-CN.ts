@@ -294,6 +294,7 @@ export const zhCN: Record<string, string> = {
   'Stop following': '取消关注',
   'Stop following feedback #{number}?': '取消关注反馈 #{number}？',
   "You won't see replies to it in the app anymore, and can't reply to it from here. The issue itself stays on GitHub.": '你将不再在应用中看到它的回复，也无法再从这里回复。议题本身仍保留在 GitHub 上。',
+  "Couldn't stop following. Check your connection and try again.": '无法取消关注。请检查网络连接后重试。',
   'Feedback History': '反馈记录',
   'New activity': '新动态',
   'Open': '进行中',

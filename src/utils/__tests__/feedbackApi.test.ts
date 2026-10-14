@@ -123,6 +123,13 @@ describe('following', () => {
     expect(await submitFeedbackReply(ENDPOINT, reply)).toEqual({ ok: false, error: 'issue_locked', status: 409 });
   });
 
+  it('sends only the issue number and secret to forget', async () => {
+    const fetchMock = mockFetch({ jsonBody: { ok: true } });
+    const stored = { number: 3, secret: 's', title: 'private title', canReply: true, followedAt: 1, seenAt: 2 };
+    await forgetFeedback(ENDPOINT, stored);
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({ number: 3, secret: 's' });
+  });
+
   it('treats an already-forgotten follow as forgotten', async () => {
     mockFetch({ ok: false, status: 403, jsonBody: { error: 'not_following' } });
     expect(await forgetFeedback(ENDPOINT, { number: 3, secret: 's' })).toBe(true);
