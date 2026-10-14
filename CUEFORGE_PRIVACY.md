@@ -189,22 +189,27 @@ own new-issue page instead and send nothing themselves.
 ### Following your feedback
 
 "Show replies to this feedback in the app" is ticked by default and can be
-unticked before you press Submit. When it's ticked, the feedback service returns a
-random secret with the issue number and keeps only a hash of that secret. Your
-server stores the number, the title you typed and the secret in
-`user/default/mobile/feedback_follows.json` (per user when the multiuser
-node is on). No requests go out from the server itself. When the app opens or comes back
-to the foreground (at most once every 10 minutes), and every 3 hours while it stays
-open, your **browser** sends the followed issue numbers to the feedback service.
-It's checking whether anyone other than you has commented or the issue was closed. The service uses your IP
+unticked before you send the form. When it's ticked, the feedback service returns
+a random secret with the issue number and keeps only a hash of that secret. Your
+server stores the number, the title you typed, the secret and whether you can
+reply from the app in `user/default/mobile/feedback_follows.json` (per user when
+the multiuser node is on). No requests go out from the server itself. When the
+app opens, and every 10 minutes while it's open and visible, your **browser**
+sends the followed issue numbers to the feedback service, to see whether anyone
+other than you has commented or the issue was closed. The service uses your IP
 address only to rate-limit these checks and does not store it.
 
-From the activity banner you can reply. Your browser sends the reply text, the
-issue number and the secret, and the service posts the reply on the public issue
-without your name. The App menu's About section lists the feedback you follow, and
-Stop following there tells the service to delete its hash, so the secret no longer
-works. The app also stops following on its own once a closed issue has been
-seen for two weeks, or once nothing has happened for 90 days.
+From the activity banner or **App menu → About → Feedback History** you can
+reply. Your browser sends the reply text, the issue number and the secret, and
+the service posts the reply on the public issue without your name. If your
+contact was a GitHub handle that got mentioned on the issue, replying from the
+app is off and you reply on GitHub instead. An email contact is never used for
+replies; it is only forwarded once, when the issue is filed.
+
+Stop following in Feedback History tells the service to delete its hash, so the
+secret no longer works. The app also stops following on its own two weeks after
+a closed issue's last activity, once you've seen it, or once nothing has
+happened for 90 days.
 
 ## Operational telemetry
 

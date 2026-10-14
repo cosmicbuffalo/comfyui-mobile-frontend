@@ -42,7 +42,7 @@ interface FeedbackFollowsState {
   follows: FeedbackFollow[];
   statuses: Record<number, FeedbackIssueStatus>;
   refresh: () => Promise<void>;
-  follow: (follow: { number: number; title: string; secret: string }) => Promise<void>;
+  follow: (follow: { number: number; title: string; secret: string; canReply: boolean }) => Promise<void>;
   markSeen: (number: number) => Promise<void>;
   unfollow: (number: number) => Promise<void>;
 }
@@ -93,13 +93,15 @@ export const useFeedbackFollowsStore = create<FeedbackFollowsState>((set, get) =
   },
 }));
 
-const CHECK_THROTTLE_MS = 10 * 60_000;
-const VISIBLE_POLL_INTERVAL_MS = 3 * 60 * 60_000;
+// The feedback service caches each issue's status for 5 minutes, so checking
+// more often than this would mostly read the same answer.
+const CHECK_INTERVAL_MS = 10 * 60_000;
 
 /**
- * Checks followed feedback for activity when the app opens, when it returns to
- * the foreground, and every few hours while it stays visible. Asks the
- * feedback service only when this server follows something.
+ * Checks followed feedback for activity when the app opens, and every 10
+ * minutes while it is visible, including on return to the foreground once that
+ * much time has passed. Asks the feedback service only when this server follows
+ * something.
  */
 export function useFeedbackActivityCheck(): void {
   const lastCheckAtRef = useRef(0);
@@ -107,7 +109,7 @@ export function useFeedbackActivityCheck(): void {
   useEffect(() => {
     const check = () => {
       const now = Date.now();
-      if (now - lastCheckAtRef.current < CHECK_THROTTLE_MS) return;
+      if (now - lastCheckAtRef.current < CHECK_INTERVAL_MS) return;
       lastCheckAtRef.current = now;
       // Best effort: a failed check just means no banner until the next one.
       useFeedbackFollowsStore.getState().refresh().catch(() => {});
@@ -120,7 +122,7 @@ export function useFeedbackActivityCheck(): void {
     document.addEventListener('visibilitychange', onVisibilityChange);
     const intervalId = window.setInterval(() => {
       if (document.visibilityState === 'visible') check();
-    }, VISIBLE_POLL_INTERVAL_MS);
+    }, CHECK_INTERVAL_MS);
     return () => {
       document.removeEventListener('visibilitychange', onVisibilityChange);
       window.clearInterval(intervalId);

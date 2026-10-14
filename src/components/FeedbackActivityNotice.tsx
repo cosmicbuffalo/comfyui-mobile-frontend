@@ -1,13 +1,14 @@
 import { useState } from 'react';
-import { appChromePrimaryButtonClassName } from '@/components/chromeStyles';
 import { FeedbackReplyDialog } from '@/components/FeedbackReplyDialog';
+import { XMarkIcon } from '@/components/icons';
 import { REPO_URL } from '@/constants';
 import { hasUnseenActivity, useFeedbackFollowsStore } from '@/hooks/useFeedbackFollows';
 import { useI18n } from '@/i18n';
 
 /**
  * Banner for new activity on feedback this server follows (see
- * useFeedbackActivityCheck). Viewing, replying, or dismissing marks it seen.
+ * useFeedbackActivityCheck). Sending a reply or dismissing marks it seen;
+ * viewing doesn't, so the user can read the thread and come back to reply.
  */
 export function FeedbackActivityNotice({ hidden }: { hidden: boolean }) {
   const { t } = useI18n();
@@ -18,6 +19,8 @@ export function FeedbackActivityNotice({ hidden }: { hidden: boolean }) {
 
   const replyFollow = follows.find((f) => f.number === replyingTo);
   const follow = follows.find((f) => hasUnseenActivity(f, statuses[f.number]));
+  // Locked issues take no replies, and a mentioned GitHub user replies on GitHub.
+  const canReply = !!follow && follow.canReply && !statuses[follow.number]?.locked;
   const seen = (number: number) => {
     markSeen(number).catch(() => {});
   };
@@ -26,38 +29,41 @@ export function FeedbackActivityNotice({ hidden }: { hidden: boolean }) {
     <>
       {follow && !hidden && replyingTo == null && (
         <div
-          className="fixed inset-x-0 z-[2000] flex flex-wrap items-center justify-center gap-x-3 gap-y-1 border-b border-slate-700 bg-slate-900/95 px-4 py-2"
-          style={{ top: 'var(--top-bar-offset, 69px)' }}
+          className="fixed inset-x-0 z-[2000] flex justify-center px-4 pointer-events-none"
+          style={{ top: 'calc(var(--top-bar-offset, 69px) + 1rem)' }}
         >
-          <span className="text-xs text-slate-200">
-            {t("There's new activity on your feedback #{number}.", { number: follow.number })}
-          </span>
-          <a
-            href={`${REPO_URL}/issues/${follow.number}`}
-            target="_blank"
-            rel="noopener noreferrer"
-            onClick={() => seen(follow.number)}
-            className={`rounded-md px-3 py-1 text-xs font-semibold ${appChromePrimaryButtonClassName}`}
-          >
-            {t('View')}
-          </a>
-          {!statuses[follow.number]?.locked && (
+          <div className="relative w-full max-w-sm rounded-lg border border-white/10 bg-slate-900/95 px-3 py-3 text-slate-100 shadow-lg pointer-events-auto">
             <button
               type="button"
-              onClick={() => setReplyingTo(follow.number)}
-              className="rounded-md px-3 py-1 text-xs font-medium text-slate-200 hover:bg-white/10"
+              onClick={() => seen(follow.number)}
+              aria-label={t('Dismiss')}
+              className="absolute -top-3.5 -right-3.5 w-7 h-7 rounded-full flex items-center justify-center bg-slate-800 border border-white/15 text-slate-300 shadow-md hover:text-white hover:bg-slate-700"
             >
-              {t('Reply')}
+              <XMarkIcon className="w-4 h-4" />
             </button>
-          )}
-          <button
-            type="button"
-            onClick={() => seen(follow.number)}
-            aria-label={t('Dismiss')}
-            className="px-1 text-sm text-slate-400"
-          >
-            ✕
-          </button>
+            <p className="pr-2 text-sm text-slate-200">
+              {t("There's new activity on your feedback #{number}.", { number: follow.number })}
+            </p>
+            <div className="mt-2.5 grid grid-cols-2 gap-2">
+              <a
+                href={`${REPO_URL}/issues/${follow.number}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className={`${canReply ? '' : 'col-span-2 '}rounded-md border border-white/10 bg-white/5 px-3 py-1.5 text-center text-xs font-medium text-slate-200 hover:bg-white/10`}
+              >
+                {t('View')}
+              </a>
+              {canReply && (
+                <button
+                  type="button"
+                  onClick={() => setReplyingTo(follow.number)}
+                  className="rounded-md bg-cyan-500 px-3 py-1.5 text-xs font-semibold text-slate-950 hover:bg-cyan-400"
+                >
+                  {t('Reply')}
+                </button>
+              )}
+            </div>
+          </div>
         </div>
       )}
       {replyFollow && (

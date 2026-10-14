@@ -24,7 +24,7 @@ interface FeedbackDialogProps {
 type SubmitState =
   | { kind: 'idle' }
   | { kind: 'submitting' }
-  | { kind: 'success'; url: string; followed: boolean }
+  | { kind: 'success'; url: string; followed: boolean; canReply: boolean }
   | { kind: 'error'; message: string };
 
 const FIELD_LABEL_CLASS = 'block text-xs font-medium text-slate-300 mb-1';
@@ -72,19 +72,19 @@ export function FeedbackDialog({ systemStats, workflow, onClose }: FeedbackDialo
     });
     if (result.ok) {
       let followed = false;
-      if (result.secret) {
+      if (result.follow) {
         try {
           await useFeedbackFollowsStore.getState().follow({
             number: result.number,
             title: title.trim(),
-            secret: result.secret,
+            ...result.follow,
           });
           followed = true;
         } catch {
           // The issue exists either way; only the banner is lost.
         }
       }
-      setSubmit({ kind: 'success', url: result.url, followed });
+      setSubmit({ kind: 'success', url: result.url, followed, canReply: result.follow?.canReply ?? false });
     } else {
       setSubmit({
         kind: 'error',
@@ -112,7 +112,11 @@ export function FeedbackDialog({ systemStats, workflow, onClose }: FeedbackDialo
               {submit.url}
             </a>
             {submit.followed && (
-              <p>{t("You'll see a banner in the app when someone replies, and can answer from there.")}</p>
+              <p>
+                {submit.canReply
+                  ? t("You'll see a banner in the app when someone replies, and can answer from there.")
+                  : t("You'll see a banner in the app when someone replies. You're mentioned on the issue, so reply there on GitHub.")}
+              </p>
             )}
           </div>
         }

@@ -95,9 +95,9 @@ describe('submitFeedback', () => {
 
 describe('following', () => {
   it('passes the follow secret through when the service returns one', async () => {
-    const fetchMock = mockFetch({ jsonBody: { url: 'u', number: 12, secret: 'abc' } });
+    const fetchMock = mockFetch({ jsonBody: { url: 'u', number: 12, secret: 'abc', canReply: false } });
     const result = await submitFeedback(ENDPOINT, { ...baseSubmission, follow: true });
-    expect(result).toEqual({ ok: true, url: 'u', number: 12, secret: 'abc' });
+    expect(result).toEqual({ ok: true, url: 'u', number: 12, follow: { secret: 'abc', canReply: false } });
     expect(JSON.parse(fetchMock.mock.calls[0][1].body).follow).toBe(true);
   });
 

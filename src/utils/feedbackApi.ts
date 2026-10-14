@@ -15,7 +15,13 @@ interface FeedbackSuccess {
   url: string;
   number: number;
   /** Present only when follow was asked for and the service stored it. */
-  secret?: string;
+  follow?: FeedbackFollowGrant;
+}
+
+export interface FeedbackFollowGrant {
+  secret: string;
+  /** False when the contact was a GitHub handle mentioned on the issue: they reply there. */
+  canReply: boolean;
 }
 
 interface FeedbackFailure {
@@ -91,11 +97,13 @@ export async function submitFeedback(
 ): Promise<FeedbackResult> {
   const result = await postJson(endpoint, submission);
   if (!result.ok) return result;
-  const { url, number, secret } = result.data;
+  const { url, number, secret, canReply } = result.data;
   if (typeof url !== 'string' || typeof number !== 'number') {
     return { ok: false, error: 'invalid_response', status: result.status };
   }
-  return typeof secret === 'string' ? { ok: true, url, number, secret } : { ok: true, url, number };
+  return typeof secret === 'string' && typeof canReply === 'boolean'
+    ? { ok: true, url, number, follow: { secret, canReply } }
+    : { ok: true, url, number };
 }
 
 export interface FeedbackIssueStatus {

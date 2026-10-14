@@ -7,7 +7,7 @@ const DAY = 24 * 60 * 60_000;
 const T0 = Date.parse('2026-10-01T00:00:00Z');
 
 function follow(overrides: Partial<FeedbackFollow> = {}): FeedbackFollow {
-  return { number: 7, title: 't', secret: 's', followedAt: T0, seenAt: T0, ...overrides };
+  return { number: 7, title: 't', secret: 's', canReply: true, followedAt: T0, seenAt: T0, ...overrides };
 }
 
 function status(overrides: Partial<FeedbackIssueStatus> = {}): FeedbackIssueStatus {

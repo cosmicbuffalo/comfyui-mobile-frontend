@@ -16,30 +16,32 @@ def follows_file(tmp_path, monkeypatch):
 
 
 def test_add_persists_and_lists_per_user(follows_file):
-    assert follows.add_follow("default", 7, " Crash on save ", "s3cret")
+    assert follows.add_follow("default", 7, " Crash on save ", "s3cret", True)
 
     [entry] = follows.list_follows("default")
     assert entry["number"] == 7
     assert entry["title"] == "Crash on save"
     assert entry["secret"] == "s3cret"
+    assert entry["canReply"] is True
     assert entry["seenAt"] == entry["followedAt"]
     assert follows.list_follows("someone-else") == []
     assert json.loads(follows_file.read_text())["default"][0]["number"] == 7
 
 
 def test_rejects_bad_entries(follows_file):
-    assert not follows.add_follow("default", 0, "t", "s")
-    assert not follows.add_follow("default", True, "t", "s")
-    assert not follows.add_follow("default", "7", "t", "s")
-    assert not follows.add_follow("default", 7, "t", "")
-    assert not follows.add_follow("default", 7, "t", "x" * 101)
+    assert not follows.add_follow("default", 0, "t", "s", True)
+    assert not follows.add_follow("default", True, "t", "s", True)
+    assert not follows.add_follow("default", "7", "t", "s", True)
+    assert not follows.add_follow("default", 7, "t", "", True)
+    assert not follows.add_follow("default", 7, "t", "x" * 101, True)
+    assert not follows.add_follow("default", 7, "t", "s", None)
     assert not follows_file.exists()
 
 
 def test_refollowing_replaces_and_old_entries_drop_off(follows_file):
     for number in range(1, follows.MAX_FOLLOWS + 3):
-        follows.add_follow("default", number, "t", "s")
-    follows.add_follow("default", 5, "t", "new")
+        follows.add_follow("default", number, "t", "s", True)
+    follows.add_follow("default", 5, "t", "new", True)
 
     numbers = [e["number"] for e in follows.list_follows("default")]
     assert len(numbers) == follows.MAX_FOLLOWS
@@ -49,7 +51,7 @@ def test_refollowing_replaces_and_old_entries_drop_off(follows_file):
 
 
 def test_seen_only_moves_forward(follows_file):
-    follows.add_follow("default", 7, "t", "s")
+    follows.add_follow("default", 7, "t", "s", True)
     start = follows.list_follows("default")[0]["seenAt"]
 
     assert follows.mark_seen("default", 7, start + 1000)
@@ -60,7 +62,7 @@ def test_seen_only_moves_forward(follows_file):
 
 
 def test_remove(follows_file):
-    follows.add_follow("default", 7, "t", "s")
+    follows.add_follow("default", 7, "t", "s", True)
 
     assert follows.remove_follow("default", 7)
     assert not follows.remove_follow("default", 7)

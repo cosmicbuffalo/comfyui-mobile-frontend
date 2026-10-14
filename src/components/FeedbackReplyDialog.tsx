@@ -97,7 +97,7 @@ export function FeedbackReplyDialog({
             onChange={(e) => setBody(e.target.value)}
             maxLength={8000}
             rows={5}
-            placeholder={t('Your reply is posted publicly on the issue, without your name.')}
+            placeholder={t('Reply anonymously to the public GitHub issue')}
             className={INPUT_CLASS}
           />
           {/* Honeypot — see FeedbackDialog. */}
@@ -128,6 +128,8 @@ function replyErrorMessage(error: string, status?: number): string {
       return globalT('Too many submissions in a short window. Please try again in a minute.');
     case 'issue_locked':
       return globalT('This issue is locked, so it no longer takes replies.');
+    case 'reply_on_github':
+      return globalT("You're mentioned on this issue, so reply there on GitHub.");
     case 'not_following':
       return globalT('The feedback service no longer recognizes this follow, so replies from here are off for this issue.');
     case 'timeout':

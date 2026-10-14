@@ -151,7 +151,7 @@ async def api_feedback_follows_add(request):
     try:
         data = await request.json()
         if not isinstance(data, dict) or not _mobile_feedback_follows.add_follow(
-                user_key, data.get('number'), data.get('title'), data.get('secret')):
+                user_key, data.get('number'), data.get('title'), data.get('secret'), data.get('canReply')):
             return web.json_response({"error": "invalid_follow"}, status=400)
         return web.json_response({"follows": _mobile_feedback_follows.list_follows(user_key)})
     except Exception as e:

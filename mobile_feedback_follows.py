@@ -7,7 +7,9 @@ the server sees the activity banner. This module never contacts the feedback
 service; the browser does, with the entries it reads from here.
 
 Stored in user/default/mobile/feedback_follows.json as
-{user_key: [{number, title, secret, followedAt, seenAt}, ...]}.
+{user_key: [{number, title, secret, canReply, followedAt, seenAt}, ...]}.
+canReply is false when the submitter's GitHub handle was mentioned on the
+issue, so they answer there instead of through the app.
 """
 import json
 import os
@@ -64,8 +66,8 @@ def list_follows(user_key: str) -> list:
         return [dict(entry) for entry in _load_locked().get(user_key, [])]
 
 
-def add_follow(user_key: str, number, title, secret) -> bool:
-    if not _valid_number(number):
+def add_follow(user_key: str, number, title, secret, can_reply) -> bool:
+    if not _valid_number(number) or not isinstance(can_reply, bool):
         return False
     if not isinstance(title, str) or not isinstance(secret, str):
         return False
@@ -76,7 +78,8 @@ def add_follow(user_key: str, number, title, secret) -> bool:
         follows = dict(_load_locked())
         entries = [e for e in follows.get(user_key, []) if e.get("number") != number]
         now = now_ms()
-        entries.append({"number": number, "title": title, "secret": secret, "followedAt": now, "seenAt": now})
+        entries.append({"number": number, "title": title, "secret": secret, "canReply": can_reply,
+                        "followedAt": now, "seenAt": now})
         follows[user_key] = entries[-MAX_FOLLOWS:]
         _save_locked(follows)
         return True

@@ -6,6 +6,8 @@ export interface FeedbackFollow {
   number: number;
   title: string;
   secret: string;
+  /** False when the submitter's GitHub handle is mentioned on the issue, so they reply there. */
+  canReply: boolean;
   /** Epoch ms. */
   followedAt: number;
   /** Epoch ms of the newest activity the user has seen. */
@@ -22,7 +24,9 @@ export function getFeedbackFollows(): Promise<FeedbackFollow[]> {
   return followsRequest('');
 }
 
-export function addFeedbackFollow(follow: { number: number; title: string; secret: string }): Promise<FeedbackFollow[]> {
+export function addFeedbackFollow(
+  follow: { number: number; title: string; secret: string; canReply: boolean },
+): Promise<FeedbackFollow[]> {
   return followsRequest('', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
