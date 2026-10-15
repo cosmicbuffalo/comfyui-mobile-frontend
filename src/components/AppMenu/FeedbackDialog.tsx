@@ -8,10 +8,12 @@ import { Z_LAYERS } from '@/components/zLayers';
 import { buildDiagnosticsBlock, buildFeedbackIssueUrl } from '@/utils/feedbackUrl';
 import {
   FEEDBACK_ENDPOINT,
+  forgetFeedback,
   isFeedbackEndpointConfigured,
   submitFeedback,
 } from '@/utils/feedbackApi';
-import { menuMutedTextClassName } from './menuStyles';
+import { useFeedbackFollowsStore } from '@/hooks/useFeedbackFollows';
+import { feedbackFieldSurfaceClassName, feedbackInputClassName, menuMutedTextClassName } from './menuStyles';
 import { t as globalT, useI18n } from '@/i18n';
 
 interface FeedbackDialogProps {
@@ -23,15 +25,10 @@ interface FeedbackDialogProps {
 type SubmitState =
   | { kind: 'idle' }
   | { kind: 'submitting' }
-  | { kind: 'success'; url: string }
+  | { kind: 'success'; url: string; followed: boolean; canReply: boolean }
   | { kind: 'error'; message: string };
 
 const FIELD_LABEL_CLASS = 'block text-xs font-medium text-slate-300 mb-1';
-const FEEDBACK_FIELD_SURFACE_CLASS =
-  'rounded-lg border border-slate-600/80 bg-slate-950 text-slate-300';
-const INPUT_CLASS =
-  `w-full px-3 py-2 text-sm placeholder:text-slate-500 focus:border-cyan-300 focus:outline-none focus:ring-2 focus:ring-cyan-400/30 ${FEEDBACK_FIELD_SURFACE_CLASS}`;
-
 export function FeedbackDialog({ systemStats, workflow, onClose }: FeedbackDialogProps) {
   const { t } = useI18n();
   const endpointConfigured = isFeedbackEndpointConfigured();
@@ -41,6 +38,7 @@ export function FeedbackDialog({ systemStats, workflow, onClose }: FeedbackDialo
   const [contact, setContact] = useState('');
   const [website, setWebsite] = useState(''); // honeypot
   const [includeDiagnostics, setIncludeDiagnostics] = useState(false);
+  const [follow, setFollow] = useState(true);
   const [submit, setSubmit] = useState<SubmitState>({ kind: 'idle' });
 
   const isSubmitting = submit.kind === 'submitting';
@@ -65,10 +63,26 @@ export function FeedbackDialog({ systemStats, workflow, onClose }: FeedbackDialo
       body: body.trim(),
       contact: contact.trim() || undefined,
       diagnostics: includeDiagnostics ? diagnosticsPreview : undefined,
+      follow,
       website: website || undefined,
     });
     if (result.ok) {
-      setSubmit({ kind: 'success', url: result.url });
+      let followed = false;
+      if (result.follow) {
+        try {
+          await useFeedbackFollowsStore.getState().follow({
+            number: result.number,
+            title: title.trim(),
+            ...result.follow,
+          });
+          followed = true;
+        } catch {
+          // The issue exists either way; only the banner is lost. Drop the
+          // grant too, so its hash doesn't outlive the secret.
+          void forgetFeedback(FEEDBACK_ENDPOINT, { number: result.number, secret: result.follow.secret });
+        }
+      }
+      setSubmit({ kind: 'success', url: result.url, followed, canReply: result.follow?.canReply ?? false });
     } else {
       setSubmit({
         kind: 'error',
@@ -95,6 +109,13 @@ export function FeedbackDialog({ systemStats, workflow, onClose }: FeedbackDialo
             >
               {submit.url}
             </a>
+            {submit.followed && (
+              <p>
+                {submit.canReply
+                  ? t("You'll see a banner in the app when someone replies, and can answer from there.")
+                  : t("You'll see a banner in the app when someone replies. You're mentioned on the issue, so reply there on GitHub.")}
+              </p>
+            )}
           </div>
         }
         actions={[{ label: t('Close'), onClick: onClose, variant: 'primary' }]}
@@ -159,7 +180,7 @@ export function FeedbackDialog({ systemStats, workflow, onClose }: FeedbackDialo
               onChange={(e) => setTitle(e.target.value)}
               maxLength={200}
               placeholder={t('Short summary')}
-              className={INPUT_CLASS}
+              className={feedbackInputClassName}
             />
           </label>
 
@@ -171,7 +192,7 @@ export function FeedbackDialog({ systemStats, workflow, onClose }: FeedbackDialo
               maxLength={8000}
               rows={5}
               placeholder={t("What happened? What were you trying to do? Steps to reproduce if it's a bug.")}
-              className={`${INPUT_CLASS} resize-y`}
+              className={`${feedbackInputClassName} resize-y`}
             />
           </label>
 
@@ -185,7 +206,7 @@ export function FeedbackDialog({ systemStats, workflow, onClose }: FeedbackDialo
               onChange={(e) => setContact(e.target.value)}
               maxLength={200}
               placeholder={t("GitHub @username or email if you'd like a reply")}
-              className={INPUT_CLASS}
+              className={feedbackInputClassName}
             />
             <span className={`block mt-1 text-xs ${menuMutedTextClassName}`}>
               {t('GitHub handles get @-mentioned in the public issue. Anything else (emails, phone numbers, etc.) is forwarded privately to the maintainer and never appears in the issue body.')}
@@ -218,10 +239,25 @@ export function FeedbackDialog({ systemStats, workflow, onClose }: FeedbackDialo
             </span>
           </label>
           {includeDiagnostics && (
-            <pre className={`p-2 text-xs whitespace-pre-wrap break-words ${FEEDBACK_FIELD_SURFACE_CLASS}`}>
+            <pre className={`p-2 text-xs whitespace-pre-wrap break-words ${feedbackFieldSurfaceClassName}`}>
               {diagnosticsPreview}
             </pre>
           )}
+
+          <label className="flex items-start gap-2 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              className="mt-1 h-4 w-4 rounded border-white/20 bg-slate-950 text-cyan-400 focus:ring-cyan-400 focus:ring-offset-slate-900"
+              checked={follow}
+              onChange={(e) => setFollow(e.target.checked)}
+            />
+            <span className="text-sm text-slate-300">
+              {t('Show replies to this feedback in the app')}
+              <span className={`block text-xs ${menuMutedTextClassName}`}>
+                {t('This server keeps the issue number and checks the feedback service for replies while the app is open.')}
+              </span>
+            </span>
+          </label>
 
           {submit.kind === 'error' && (
             <div role="alert" className="text-sm text-red-200 bg-red-950/80 border border-red-400/20 rounded-lg p-2">

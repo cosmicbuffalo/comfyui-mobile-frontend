@@ -23,6 +23,7 @@ export { CloudDownloadIcon } from './CloudDownloadIcon';
 export { EyeIcon } from './EyeIcon';
 export { EyeOffIcon } from './EyeOffIcon';
 export { TrashIcon } from './TrashIcon';
+export { ReplyIcon } from './ReplyIcon';
 export { CancelCircleIcon } from './CancelCircleIcon';
 export { NoEntryIcon } from './NoEntryIcon';
 export { ReloadIcon } from './ReloadIcon';

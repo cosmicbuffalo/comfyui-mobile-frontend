@@ -19,7 +19,7 @@ and a stale copy is worse than no copy.
 | CueForge push relay | only after you pair a device | completion notifications and Live Activity updates ([below](#the-cueforge-push-relay)) |
 | Your browser's push service | only after you enable web push in a browser | an encrypted notification only that browser can read |
 | CivitAI | **on by default — turn it off in Preferences**; automatically, for models without metadata | a model file's SHA-256 hash; preview images are downloaded back ([below](#civitai-model-metadata)) |
-| CueForge feedback service | only when you submit the feedback form | what you typed, plus diagnostics if you tick the box |
+| CueForge feedback service | only when you submit the feedback form, reply to it, or follow it | what you typed, plus diagnostics if you tick the box; for followed feedback, its issue number while the app is open ([below](#following-your-feedback)) |
 | CueForge push relay, `/telemetry/batch` | **on by default — turn it off in Preferences** | anonymous operational events ([below](#operational-telemetry)) |
 
 Everything else the frontend does — browsing outputs, editing workflows,
@@ -185,6 +185,31 @@ issue** on this repository. It sends only when you press Submit:
 The service uses your IP address only to rate-limit submissions and does not
 store it. Builds made without the feedback endpoint configured link to GitHub's
 own new-issue page instead and send nothing themselves.
+
+### Following your feedback
+
+"Show replies to this feedback in the app" is ticked by default and can be
+unticked before you send the form. When it's ticked, the feedback service returns
+a random secret with the issue number and keeps only a hash of that secret. Your
+server stores the number, the title you typed, the secret and whether you can
+reply from the app in `user/default/mobile/feedback_follows.json` (per user when
+the multiuser node is on). No requests go out from the server itself. When the
+app opens, and every 10 minutes while it's open and visible, your **browser**
+sends the followed issue numbers to the feedback service, to see whether anyone
+other than you has commented or the issue was closed. The service uses your IP
+address only to rate-limit these checks and does not store it.
+
+From the activity banner or **App menu → About → Feedback History** you can
+reply. Your browser sends the reply text, the issue number and the secret, and
+the service posts the reply on the public issue without your name. If your
+contact was a GitHub handle that got mentioned on the issue, replying from the
+app is off and you reply on GitHub instead. An email contact is never used for
+replies; it is only forwarded once, when the issue is filed.
+
+Stop following in Feedback History tells the service to delete its hash, so the
+secret no longer works. The app also stops following on its own once a closed
+issue has had no new comments, including your own replies, for two weeks and
+you've seen its last activity, or once nothing at all has happened for 90 days.
 
 ## Operational telemetry
 

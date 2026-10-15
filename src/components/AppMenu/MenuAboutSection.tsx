@@ -3,7 +3,9 @@ import { BookIcon, CaretDownIcon, ExternalLinkIcon, GithubIcon, InfoCircleOutlin
 import { useI18n } from '@/i18n';
 import type { SystemStats } from '@/api/client';
 import type { Workflow } from '@/api/types';
+import { useFeedbackFollowsStore } from '@/hooks/useFeedbackFollows';
 import { FeedbackDialog } from './FeedbackDialog';
+import { FeedbackHistoryPanel } from './FeedbackHistoryPanel';
 import {
   menuArrowClassName,
   menuChevronClassName,
@@ -33,7 +35,9 @@ export function MenuAboutSection({
   onOpenLegend,
 }: MenuAboutSectionProps) {
   const { t } = useI18n();
-  const [feedbackDialogOpen, setFeedbackDialogOpen] = useState(false);
+  // Chosen when tapped, so unfollowing the last issue doesn't swap the open page.
+  const [feedbackView, setFeedbackView] = useState<'history' | 'send' | null>(null);
+  const hasFollows = useFeedbackFollowsStore((s) => s.follows.length > 0);
 
   return (
     <section ref={sectionRef} className="mt-auto pt-6 border-t border-white/10">
@@ -50,11 +54,11 @@ export function MenuAboutSection({
         <div className="space-y-2 pb-4">
           <button
             type="button"
-            onClick={() => setFeedbackDialogOpen(true)}
+            onClick={() => setFeedbackView(hasFollows ? 'history' : 'send')}
             className={menuSurfaceButtonClassName}
           >
             <MegaphoneIcon className={menuIconClassName} />
-            <span className={menuTextClassName}>{t('Send Feedback')}</span>
+            <span className={menuTextClassName}>{hasFollows ? t('Feedback History') : t('Send Feedback')}</span>
             <span className={menuArrowClassName}>&rarr;</span>
           </button>
 
@@ -90,11 +94,18 @@ export function MenuAboutSection({
           </a>
         </div>
       </CollapsibleMenuSection>
-      {feedbackDialogOpen && (
+      {feedbackView === 'history' && (
+        <FeedbackHistoryPanel
+          systemStats={systemStats}
+          workflow={workflow}
+          onClose={() => setFeedbackView(null)}
+        />
+      )}
+      {feedbackView === 'send' && (
         <FeedbackDialog
           systemStats={systemStats}
           workflow={workflow}
-          onClose={() => setFeedbackDialogOpen(false)}
+          onClose={() => setFeedbackView(null)}
         />
       )}
     </section>

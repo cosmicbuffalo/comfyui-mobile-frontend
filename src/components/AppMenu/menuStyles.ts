@@ -29,3 +29,8 @@ export const menuSecondaryButtonClassName =
 
 export const menuPanelDivideClassName =
   "rounded-xl border border-white/10 bg-slate-900/95 overflow-hidden divide-y divide-white/10";
+
+export const feedbackFieldSurfaceClassName =
+  "rounded-lg border border-slate-600/80 bg-slate-950 text-slate-300";
+export const feedbackInputClassName =
+  `w-full px-3 py-2 text-sm placeholder:text-slate-500 focus:border-cyan-300 focus:outline-none focus:ring-2 focus:ring-cyan-400/30 ${feedbackFieldSurfaceClassName}`;

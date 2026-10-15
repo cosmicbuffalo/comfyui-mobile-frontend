@@ -33,6 +33,8 @@ import { useMaskEditorStore } from './hooks/useMaskEditor';
 import { lazyPanel, prefetchLazyPanels } from './components/lazyPanel';
 import { UpdateNotice } from './components/UpdateNotice';
 import { useAppUpdateCheck } from './hooks/useAppUpdateCheck';
+import { FeedbackActivityNotice } from './components/FeedbackActivityNotice';
+import { useFeedbackActivityCheck } from './hooks/useFeedbackFollows';
 import { useGenerationSettingsStore } from './hooks/useGenerationSettings';
 
 const QueuePanel = lazyPanel(() =>
@@ -85,6 +87,7 @@ function App() {
     () => useWorkflowStore.persist?.hasHydrated() ?? true,
   );
   const { updateAvailable, dismissUpdate } = useAppUpdateCheck();
+  useFeedbackActivityCheck();
   const blurEffectsEnabled = useGenerationSettingsStore((s) => s.blurEffectsEnabled);
 
   useEffect(() => {
@@ -387,6 +390,7 @@ function App() {
     <div id="app-root" className="min-h-screen bg-slate-950">
       <TopBar mode={currentPanel} />
       <UpdateNotice visible={updateAvailable} onDismiss={dismissUpdate} />
+      <FeedbackActivityNotice hidden={updateAvailable} />
 
       <main
         id="main-content"
