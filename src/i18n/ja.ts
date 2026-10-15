@@ -372,6 +372,7 @@ export const ja: Record<string, string> = {
   'Blur the background behind menus, overlays and badges. Turn off to improve performance on slower devices.': 'メニュー、オーバーレイ、バッジの背景をぼかします。低性能な端末ではオフにすると動作が軽くなります。',
   'Server logs': 'サーバーログ',
   'Could not load the server logs.': 'サーバーログを読み込めませんでした。',
+  'Live updates unavailable. Reopen this window to retry.': 'リアルタイム更新を利用できません。このウィンドウを開き直して再試行してください。',
   'No log output yet.': 'ログ出力はまだありません。',
   'Follow into subgraphs': 'サブグラフ内も追従',
   'Navigate into subgraph scopes when following execution': '実行追従時にサブグラフのスコープ内へ移動',

@@ -1,7 +1,7 @@
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { SERVER_LOGS_EVENT, type ServerLogEntry } from '@/api/client';
+import { SERVER_LOG_MAX_LINES, SERVER_LOGS_EVENT, type ServerLogEntry } from '@/api/client';
 import { useConnectionStatusStore } from '@/hooks/useConnectionStatus';
 import { useServerLogsWindowStore } from '@/hooks/useServerLogsWindow';
 import { ServerLogsWindow } from '../ServerLogsWindow';
@@ -42,6 +42,9 @@ describe('ServerLogsWindow', () => {
   afterEach(async () => {
     await act(async () => root.unmount());
     container.remove();
+    document.documentElement.style.removeProperty('--top-bar-offset');
+    document.documentElement.style.removeProperty('--bottom-bar-offset');
+    vi.restoreAllMocks();
     vi.unstubAllGlobals();
   });
 
@@ -177,6 +180,58 @@ describe('ServerLogsWindow', () => {
     expect(logText()).toBe('Ready\nSampling 100%\nDone\n');
   });
 
+  it('bounds both the snapshot and appended live output', async () => {
+    mockServer(Array.from({ length: SERVER_LOG_MAX_LINES + 2 }, (_, i) => `line ${i}\n`));
+    await act(async () => root.render(<ServerLogsWindow onClose={() => {}} />));
+    expect(logText()?.startsWith('line 2\n')).toBe(true);
+    await act(async () => emitLogs([{ t: '', m: 'newest\n' }]));
+    expect(logText()?.startsWith('line 3\n')).toBe(true);
+    expect(logText()?.endsWith('newest\n')).toBe(true);
+    expect(logText()?.split('\n')).toHaveLength(SERVER_LOG_MAX_LINES + 1);
+  });
+
+  it('compensates for removed wrapped lines while reading older output', async () => {
+    mockServer(Array.from({ length: SERVER_LOG_MAX_LINES }, (_, i) => `line ${i}\n`));
+    await act(async () => root.render(<ServerLogsWindow onClose={() => {}} />));
+    const pre = document.body.querySelector<HTMLPreElement>('.server-logs')!;
+    Object.defineProperty(pre, 'scrollHeight', { value: 10000 });
+    pre.scrollTop = 200;
+    await act(async () => pre.dispatchEvent(new Event('scroll', { bubbles: true })));
+    const createRange = document.createRange.bind(document);
+    vi.spyOn(document, 'createRange').mockImplementation(() => {
+      const range = createRange();
+      // The first removed line wraps to three rows; the next occupies one.
+      range.getBoundingClientRect = () => {
+        const lines = range.startContainer.textContent!.slice(0, range.startOffset).split('\n').length - 1;
+        return { top: lines ? 60 + (lines - 1) * 20 : 0 } as DOMRect;
+      };
+      return range;
+    });
+    await act(async () => {
+      emitLogs([{ t: '', m: 'next\n' }]);
+      emitLogs([{ t: '', m: 'latest\n' }]);
+    });
+    expect(pre.scrollTop).toBe(120);
+    expect(logText()?.startsWith('line 2\n')).toBe(true);
+  });
+
+  it('warns when subscription fails, keeps the snapshot, and recovers on reconnect', async () => {
+    let rejectSubscription = true;
+    const fetchMock = vi.fn(async (url: string) => url.endsWith('/raw')
+      ? { ok: true, json: async () => ({ entries: [{ t: '', m: 'snapshot\n' }] }) }
+      : { ok: !rejectSubscription });
+    vi.stubGlobal('fetch', fetchMock);
+    await act(async () => root.render(<ServerLogsWindow onClose={() => {}} />));
+    expect(logText()).toBe('snapshot\n');
+    expect(document.body.querySelector('[role="status"]')?.textContent).toContain('Live updates unavailable.');
+    rejectSubscription = false;
+    await act(async () => useConnectionStatusStore.setState({ isConnected: false }));
+    await act(async () => useConnectionStatusStore.setState({ isConnected: true }));
+    expect(document.body.querySelector('[role="status"]')).toBeNull();
+    await act(async () => emitLogs([{ t: '', m: 'live again\n' }]));
+    expect(logText()).toBe('snapshot\nlive again\n');
+  });
+
   it('is a fullscreen modal on a phone that Escape closes', async () => {
     mockServer([]);
     const onClose = vi.fn();
@@ -258,7 +313,7 @@ describe('ServerLogsWindow', () => {
 
     const dialog = document.body.querySelector<HTMLElement>('[role="dialog"]')!;
     expect(parseFloat(dialog.style.left)).toBe(window.innerWidth - 80);
-    expect(parseFloat(dialog.style.top)).toBe(window.innerHeight - 80);
+    expect(parseFloat(dialog.style.top)).toBe(window.innerHeight - 54 - 8);
   });
 
   it('clamps a saved size before restoring its position on a smaller screen', async () => {
@@ -289,10 +344,31 @@ describe('ServerLogsWindow', () => {
     try {
       await act(async () => window.dispatchEvent(new Event('resize')));
       expect(parseFloat(dialog.style.left)).toBe(720);
-      expect(parseFloat(dialog.style.top)).toBe(420);
+      expect(parseFloat(dialog.style.top)).toBe(438);
     } finally {
       vi.restoreAllMocks();
     }
+  });
+
+  it('keeps the header between the fixed app bars when restoring and dragging', async () => {
+    useDesktop();
+    mockServer([]);
+    document.documentElement.style.setProperty('--top-bar-offset', '96px');
+    document.documentElement.style.setProperty('--bottom-bar-offset', '80px');
+    useServerLogsWindowStore.setState({ geometry: { x: 100, y: 0, width: 600, height: 400 } });
+    await act(async () => root.render(<ServerLogsWindow onClose={() => {}} />));
+    const dialog = document.body.querySelector<HTMLElement>('[role="dialog"]')!;
+    const header = dialog.querySelector<HTMLElement>('.cursor-move')!;
+    expect(parseFloat(dialog.style.top)).toBe(104);
+    await act(async () => {
+      header.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0, clientX: 200, clientY: 120 }));
+      window.dispatchEvent(new PointerEvent('pointermove', { clientX: 200, clientY: window.innerHeight + 100 }));
+      window.dispatchEvent(new PointerEvent('pointerup'));
+    });
+    expect(parseFloat(dialog.style.top)).toBe(window.innerHeight - 80 - 54 - 8);
+    document.documentElement.style.setProperty('--bottom-bar-offset', '140px');
+    await act(async () => window.dispatchEvent(new Event('resize')));
+    expect(parseFloat(dialog.style.top)).toBe(window.innerHeight - 140 - 54 - 8);
   });
 
   it('says so when the logs cannot be loaded', async () => {

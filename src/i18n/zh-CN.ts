@@ -373,6 +373,7 @@ export const zhCN: Record<string, string> = {
   'Blur the background behind menus, overlays and badges. Turn off to improve performance on slower devices.': '为菜单、浮层和标签的背景添加模糊。关闭可提升低性能设备上的流畅度。',
   'Server logs': '服务器日志',
   'Could not load the server logs.': '无法加载服务器日志。',
+  'Live updates unavailable. Reopen this window to retry.': '实时更新不可用。请重新打开此窗口以重试。',
   'No log output yet.': '暂无日志输出。',
   'Follow into subgraphs': '跟随进入子图',
   'Navigate into subgraph scopes when following execution': '跟随执行时进入子图作用域',

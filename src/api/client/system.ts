@@ -80,6 +80,27 @@ export interface ServerLogEntry {
   m: string;
 }
 
+export const SERVER_LOG_MAX_LINES = 5000;
+export const SERVER_LOG_MAX_CHARS = 1_000_000;
+
+export function trimServerLogs(text: string): string {
+  let start = Math.max(0, text.length - SERVER_LOG_MAX_CHARS);
+  // Prefer complete lines when the character limit cuts through one. Keep
+  // the tail when a single line alone exceeds the limit.
+  if (start > 0 && text[start - 1] !== '\n') {
+    const newline = text.indexOf('\n', start);
+    if (newline !== -1 && newline < text.length - 1) start = newline + 1;
+  }
+  let end = text.endsWith('\n') ? text.length - 1 : text.length;
+  for (let lines = 0; lines < SERVER_LOG_MAX_LINES; lines++) {
+    if (end <= start) return text.slice(start);
+    const newline = text.lastIndexOf('\n', end - 1);
+    if (newline < start) return text.slice(start);
+    end = newline;
+  }
+  return text.slice(Math.max(start, end + 1));
+}
+
 // Log entries as plain text with colour codes stripped. The same shape arrives
 // from /internal/logs/raw and from the websocket `logs` message.
 export function formatServerLogEntries(entries: ServerLogEntry[], previous = ''): string {
@@ -125,13 +146,20 @@ let subscriptionRequest: Promise<void> = Promise.resolve();
 export function setServerLogsSubscription(enabled: boolean): Promise<void> {
   // Keep close/reopen and reconnect requests in order, even over a slow link.
   subscriptionRequest = subscriptionRequest.catch(() => {}).then(async () => {
-    const response = await fetch(`/internal/logs/subscribe`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ clientId, enabled }),
-    });
-    if (!response.ok) {
-      throw new Error('Failed to change the server logs subscription');
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), 10000);
+    try {
+      const response = await fetch(`/internal/logs/subscribe`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ clientId, enabled }),
+        signal: controller.signal,
+      });
+      if (!response.ok) {
+        throw new Error('Failed to change the server logs subscription');
+      }
+    } finally {
+      window.clearTimeout(timeout);
     }
   });
   return subscriptionRequest;

@@ -5,6 +5,7 @@ import {
   formatServerLogEntries,
   SERVER_LOGS_EVENT,
   setServerLogsSubscription,
+  trimServerLogs,
   type ServerLogEntry,
 } from '@/api/client';
 import { CheckIcon, CopyIcon } from '@/components/icons';
@@ -23,12 +24,18 @@ const FOLLOW_THRESHOLD_PX = 24;
 // How much of the window must stay on screen while dragging, so it can't be
 // lost off an edge.
 const MIN_VISIBLE_PX = 80;
+const WINDOW_MARGIN_PX = 8;
+const HEADER_HEIGHT_PX = 54;
 
 // Keep enough of the window on screen to grab its header again.
-function clampPosition(x: number, y: number, width: number) {
+function clampPosition(x: number, y: number, width: number, headerHeight = HEADER_HEIGHT_PX) {
+  const rootStyle = getComputedStyle(document.documentElement);
+  const minY = (parseFloat(rootStyle.getPropertyValue('--top-bar-offset')) || 0) + WINDOW_MARGIN_PX;
+  const bottomBar = parseFloat(rootStyle.getPropertyValue('--bottom-bar-offset')) || 0;
+  const maxY = Math.max(minY, window.innerHeight - bottomBar - headerHeight - WINDOW_MARGIN_PX);
   return {
     x: Math.min(Math.max(x, MIN_VISIBLE_PX - width), window.innerWidth - MIN_VISIBLE_PX),
-    y: Math.min(Math.max(y, 0), window.innerHeight - MIN_VISIBLE_PX),
+    y: Math.min(Math.max(y, minY), maxY),
   };
 }
 
@@ -37,9 +44,11 @@ function clampPosition(x: number, y: number, width: number) {
 function initialGeometry(saved: WindowGeometry | null): WindowGeometry {
   const width = Math.min(window.innerWidth, Math.max(320, saved?.width ?? Math.round(window.innerWidth / 2)));
   const height = Math.min(window.innerHeight, Math.max(200, saved?.height ?? Math.round(window.innerHeight / 2)));
-  const { x, y } = saved
-    ? clampPosition(saved.x, saved.y, width)
-    : { x: Math.round(window.innerWidth / 4), y: Math.round(window.innerHeight / 4) };
+  const { x, y } = clampPosition(
+    saved?.x ?? Math.round(window.innerWidth / 4),
+    saved?.y ?? Math.round(window.innerHeight / 4),
+    width,
+  );
   return { x, y, width, height };
 }
 
@@ -54,6 +63,7 @@ export function ServerLogsWindow({ onClose }: ServerLogsWindowProps) {
   const { t } = useI18n();
   const isDesktop = useIsDesktop();
   const windowRef = useRef<HTMLDivElement>(null);
+  const headerRef = useRef<HTMLDivElement>(null);
   const setGeometry = useServerLogsWindowStore((s) => s.setGeometry);
   // Size is only applied at open; after that the CSS resize handle owns it.
   const [opening] = useState(() => initialGeometry(useServerLogsWindowStore.getState().geometry));
@@ -66,8 +76,13 @@ export function ServerLogsWindow({ onClose }: ServerLogsWindowProps) {
   useBodyScrollLock(!isDesktop);
   useModalKeyboard(!isDesktop, onClose, windowRef);
   const isConnected = useConnectionStatusStore((s) => s.isConnected);
-  const [logs, setLogs] = useState<string | null>(null);
+  const [logOutput, setLogOutput] = useState<{ text: string } | null>(null);
+  const logs = logOutput?.text ?? null;
+  const logTextRef = useRef('');
+  const removedCharsRef = useRef(0);
+  const scrollRestoreRef = useRef<number | null>(null);
   const [failed, setFailed] = useState(false);
+  const [streamingFailed, setStreamingFailed] = useState(false);
   const [copied, setCopied] = useState(false);
   const logRef = useRef<HTMLPreElement>(null);
   const followRef = useRef(true);
@@ -81,6 +96,36 @@ export function ServerLogsWindow({ onClose }: ServerLogsWindowProps) {
     let snapshotTime = '';
     const pending: ServerLogEntry[] = [];
     const snapshotCounts = new Map<string, number>();
+    const writeLogs = (entries: ServerLogEntry[], replace = false) => {
+      const formatted = formatServerLogEntries(entries, replace ? '' : logTextRef.current);
+      const text = trimServerLogs(formatted);
+      if (replace) {
+        removedCharsRef.current = 0;
+        scrollRestoreRef.current = null;
+      } else {
+        removedCharsRef.current += formatted.length - text.length;
+        const el = logRef.current;
+        const node = el?.firstChild;
+        if (!followRef.current && removedCharsRef.current && el && node) {
+          // Measure the removed prefix before React replaces the text. A range
+          // accounts for wrapped lines; line count * line height would not.
+          const offset = removedCharsRef.current;
+          if (offset >= (node.textContent?.length ?? 0)) {
+            scrollRestoreRef.current = 0;
+          } else {
+            const range = document.createRange();
+            range.setStart(node, 0);
+            range.collapse(true);
+            const top = range.getBoundingClientRect().top;
+            range.setStart(node, offset);
+            range.collapse(true);
+            scrollRestoreRef.current = Math.max(0, el.scrollTop - (range.getBoundingClientRect().top - top));
+          }
+        }
+      }
+      logTextRef.current = text;
+      setLogOutput({ text });
+    };
     const entryKey = (entry: ServerLogEntry) => JSON.stringify([entry.t, entry.m]);
     const withoutSnapshotDuplicates = (entries: ServerLogEntry[]) => entries.filter((entry) => {
       const key = entryKey(entry);
@@ -98,7 +143,7 @@ export function ServerLogsWindow({ onClose }: ServerLogsWindowProps) {
         pending.push(...entries);
       } else {
         const fresh = withoutSnapshotDuplicates(entries);
-        if (fresh.length) setLogs((prev) => formatServerLogEntries(fresh, prev ?? ''));
+        if (fresh.length) writeLogs(fresh);
       }
     };
     window.addEventListener(SERVER_LOGS_EVENT, onLogs);
@@ -111,8 +156,9 @@ export function ServerLogsWindow({ onClose }: ServerLogsWindowProps) {
     };
     void (async () => {
       // A rejected subscription still allows the snapshot to be read.
-      await setServerLogsSubscription(true).catch(() => {});
+      const subscribed = await setServerLogsSubscription(true).then(() => true, () => false);
       if (cancelled) return;
+      setStreamingFailed(!subscribed);
       let backlog: ServerLogEntry[];
       try {
         backlog = await fetchServerLogs();
@@ -131,7 +177,7 @@ export function ServerLogsWindow({ onClose }: ServerLogsWindowProps) {
       }
       const merged = [...backlog, ...withoutSnapshotDuplicates(pending)]
         .sort((a, b) => a.t.localeCompare(b.t));
-      setLogs(formatServerLogEntries(merged));
+      writeLogs(merged, true);
       setFailed(false);
       pending.length = 0;
       loading = false;
@@ -143,8 +189,13 @@ export function ServerLogsWindow({ onClose }: ServerLogsWindowProps) {
   // following new lines unless you've scrolled up to read something.
   useLayoutEffect(() => {
     const el = logRef.current;
-    if (el && followRef.current) el.scrollTop = el.scrollHeight;
-  }, [logs]);
+    if (el) {
+      if (followRef.current) el.scrollTop = el.scrollHeight;
+      else if (scrollRestoreRef.current !== null) el.scrollTop = scrollRestoreRef.current;
+    }
+    removedCharsRef.current = 0;
+    scrollRestoreRef.current = null;
+  }, [logOutput]);
 
   const handleScroll = () => {
     const el = logRef.current;
@@ -156,13 +207,15 @@ export function ServerLogsWindow({ onClose }: ServerLogsWindowProps) {
     const el = windowRef.current;
     if (!isDesktop || !el) return;
     const keepVisible = () => {
-      const next = clampPosition(positionRef.current.x, positionRef.current.y, el.offsetWidth);
+      const next = clampPosition(positionRef.current.x, positionRef.current.y, el.offsetWidth, headerRef.current?.offsetHeight || HEADER_HEIGHT_PX);
       positionRef.current = next;
       setPosition(next);
       setGeometry({ ...next, width: el.offsetWidth, height: el.offsetHeight });
     };
     const observer = new ResizeObserver(keepVisible);
     observer.observe(el);
+    for (const bar of document.querySelectorAll('#top-bar-root, #bottom-bar-root')) observer.observe(bar);
+    if (headerRef.current) observer.observe(headerRef.current);
     window.addEventListener('resize', keepVisible);
     return () => {
       observer.disconnect();
@@ -179,7 +232,7 @@ export function ServerLogsWindow({ onClose }: ServerLogsWindowProps) {
     const startY = event.clientY - position.y;
     let last = position;
     const onMove = (move: PointerEvent) => {
-      last = clampPosition(move.clientX - startX, move.clientY - startY, el.offsetWidth);
+      last = clampPosition(move.clientX - startX, move.clientY - startY, el.offsetWidth, headerRef.current?.offsetHeight || HEADER_HEIGHT_PX);
       setPosition(last);
     };
     const onUp = () => {
@@ -214,8 +267,9 @@ export function ServerLogsWindow({ onClose }: ServerLogsWindowProps) {
         : { zIndex: Z_LAYERS.fullscreenPanel }}
     >
       <div
+        ref={headerRef}
         onPointerDown={handleDragStart}
-        className={isDesktop ? 'cursor-move select-none' : undefined}
+        className={isDesktop ? 'shrink-0 cursor-move select-none' : 'shrink-0'}
       >
         <FullscreenModalHeader
           title={t('Server logs')}
@@ -234,6 +288,11 @@ export function ServerLogsWindow({ onClose }: ServerLogsWindowProps) {
         />
       </div>
 
+      {!failed && streamingFailed && (
+        <p role="status" className="shrink-0 px-3 py-2 text-sm text-amber-300">
+          {t('Live updates unavailable. Reopen this window to retry.')}
+        </p>
+      )}
       {failed ? (
         <p className="py-12 text-center text-sm text-slate-400">
           {t('Could not load the server logs.')}
