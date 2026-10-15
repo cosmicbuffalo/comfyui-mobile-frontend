@@ -1,5 +1,24 @@
 # Changelog
 
+## 3.3.10 - 2026-10-15
+
+### Added
+
+- **Server logs window.** **Menu → Server → Server logs** shows ComfyUI's
+  console output live, with a button to copy it for a bug report. On desktop
+  it's a floating window you can drag and resize, which stays open while you
+  work and reopens where you left it; on a phone it opens fullscreen.
+- **Follow your feedback in the app.** When you send feedback, **Show replies
+  to this feedback in the app** (on by default) lets you hear back on the
+  public issue it creates. While the app is open it checks for activity every
+  10 minutes, and a banner tells you when someone replies or the issue closes,
+  with **View** and an anonymous **Reply**. **About → Feedback History** lists
+  the feedback you follow, where you can reply, stop following or send more.
+  Follows are stored per user on your ComfyUI server, and end two weeks after
+  a closed issue's last activity or after 90 days with none. In-app replies
+  are off when you left a GitHub handle as your contact, and an email contact
+  is never used for them. `CUEFORGE_PRIVACY.md` lists what is stored and sent.
+
 ## 3.3.9 - 2026-10-09
 
 ### Added

@@ -1,6 +1,6 @@
 # ComfyUI Mobile User Guide
 
-This guide walks through every feature in the mobile frontend as of `v3.3.9`
+This guide walks through every feature in the mobile frontend as of `v3.3.10`
 
 ## Table of Contents
 
