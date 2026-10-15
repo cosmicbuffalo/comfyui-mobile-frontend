@@ -17,6 +17,7 @@ import { obfuscateWorkflowInputPaths } from '@/utils/inputPathAliases';
 import { readWorkflowFromFile } from '@/utils/workflowFromFile';
 import { useNoWorkflowImageModal } from '@/hooks/useNoWorkflowImageModal';
 import { useCustomNodesManager } from '@/hooks/useCustomNodesManager';
+import { useServerLogsWindowStore } from '@/hooks/useServerLogsWindow';
 import { t as globalT, useI18n } from '@/i18n';
 import { lazyPanel } from '@/components/lazyPanel';
 import type { CustomNodeFilterValue } from '@/utils/customNodesManager';
@@ -576,6 +577,7 @@ export function AppMenu({
           onRestartServer={handleRestartServer}
           onOpenGenerationSettings={() => setActiveTab('generationSettings')}
           onOpenCustomNodes={() => { setCustomNodesInitialFilter(''); setCustomNodesInitialSearch(''); setCustomNodesOpen(true); }}
+          onOpenServerLogs={() => { useServerLogsWindowStore.getState().setOpen(true); onClose(); }}
         />
       )}
       {activeTab === 'userWorkflows' && (

@@ -36,6 +36,7 @@ import { useAppUpdateCheck } from './hooks/useAppUpdateCheck';
 import { FeedbackActivityNotice } from './components/FeedbackActivityNotice';
 import { useFeedbackActivityCheck } from './hooks/useFeedbackFollows';
 import { useGenerationSettingsStore } from './hooks/useGenerationSettings';
+import { useServerLogsWindowStore } from './hooks/useServerLogsWindow';
 
 const QueuePanel = lazyPanel(() =>
   import('./components/QueuePanel').then((module) => ({ default: module.QueuePanel })),
@@ -45,6 +46,9 @@ const OutputsPanel = lazyPanel(() =>
 );
 const ImageViewer = lazyPanel(() =>
   import('./components/ImageViewer').then((module) => ({ default: module.ImageViewer })),
+);
+const ServerLogsWindow = lazyPanel(() =>
+  import('./components/ServerLogsWindow').then((module) => ({ default: module.ServerLogsWindow })),
 );
 const MaskEditorModal = lazyPanel(() =>
   import('./components/MaskEditor/MaskEditorModal').then((module) => ({
@@ -89,6 +93,8 @@ function App() {
   const { updateAvailable, dismissUpdate } = useAppUpdateCheck();
   useFeedbackActivityCheck();
   const blurEffectsEnabled = useGenerationSettingsStore((s) => s.blurEffectsEnabled);
+  const serverLogsOpen = useServerLogsWindowStore((s) => s.open);
+  const setServerLogsOpen = useServerLogsWindowStore((s) => s.setOpen);
 
   useEffect(() => {
     document.documentElement.classList.toggle('no-blur', !blurEffectsEnabled);
@@ -438,6 +444,12 @@ function App() {
       {maskEditorOpen && (
         <Suspense fallback={<DeferredOverlayFallback />}>
           <MaskEditorModal />
+        </Suspense>
+      )}
+
+      {serverLogsOpen && (
+        <Suspense fallback={null}>
+          <ServerLogsWindow onClose={() => setServerLogsOpen(false)} />
         </Suspense>
       )}
 

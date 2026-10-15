@@ -66,7 +66,7 @@ export function useDeleteRejectedShortcut({
       }
       // A confirmation is already up (this one, or any other): let the user
       // answer it rather than stacking a second copy on top of it.
-      if (document.querySelector('[data-dialog-root="true"], [role="dialog"]')) return;
+      if (document.querySelector('[data-dialog-root="true"], [role="dialog"]:not([aria-modal="false"])')) return;
 
       event.preventDefault();
       onTrigger();
