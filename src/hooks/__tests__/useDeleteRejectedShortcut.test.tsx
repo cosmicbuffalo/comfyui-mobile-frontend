@@ -156,6 +156,22 @@ describe('useDeleteRejectedShortcut under the full-screen viewer', () => {
     dialog.remove();
   });
 
+  it('fires beside a floating dialog but still blocks for a modal dialog', () => {
+    act(() => root.render(<Harness enabled onTrigger={onTrigger} />));
+    const dialog = document.createElement('div');
+    dialog.setAttribute('role', 'dialog');
+    dialog.setAttribute('aria-modal', 'false');
+    document.body.appendChild(dialog);
+
+    dispatchShortcut();
+    expect(onTrigger).toHaveBeenCalledTimes(1);
+
+    dialog.setAttribute('aria-modal', 'true');
+    dispatchShortcut();
+    expect(onTrigger).toHaveBeenCalledTimes(1);
+    dialog.remove();
+  });
+
   it('fires with the viewer closed and no dialog up', () => {
     act(() => root.render(<Harness enabled onTrigger={onTrigger} />));
     dispatchShortcut();

@@ -41,6 +41,7 @@ interface MainMenuPanelProps {
   onRestartServer: () => void;
   onOpenGenerationSettings: () => void;
   onOpenCustomNodes: () => void;
+  onOpenServerLogs: () => void;
 }
 
 export function MainMenuPanel({
@@ -70,6 +71,7 @@ export function MainMenuPanel({
   onRestartServer,
   onOpenGenerationSettings,
   onOpenCustomNodes,
+  onOpenServerLogs,
 }: MainMenuPanelProps) {
   return (
     <div className="pb-8">
@@ -85,6 +87,7 @@ export function MainMenuPanel({
         onRestartServer={onRestartServer}
         onOpenGenerationSettings={onOpenGenerationSettings}
         onOpenCustomNodes={onOpenCustomNodes}
+        onOpenServerLogs={onOpenServerLogs}
       />
 
       <MenuLoadSection

@@ -1,5 +1,5 @@
 import { Component, type ReactNode } from 'react';
-import { CaretDownIcon, DownloadDeviceIcon, GearIcon, ReloadIcon, ServerIcon, WarningTriangleIcon } from '@/components/icons';
+import { CaretDownIcon, DocumentLinesIcon, DownloadDeviceIcon, GearIcon, ReloadIcon, ServerIcon, WarningTriangleIcon } from '@/components/icons';
 import type { SystemStats } from '@/api/client';
 import { t as globalT, useI18n } from '@/i18n';
 import { MenuRefreshMetadataButton } from './MenuRefreshMetadataButton';
@@ -156,6 +156,7 @@ interface MenuServerSectionProps {
   onRestartServer: () => void;
   onOpenGenerationSettings: () => void;
   onOpenCustomNodes: () => void;
+  onOpenServerLogs: () => void;
 }
 
 export function MenuServerSection({
@@ -168,6 +169,7 @@ export function MenuServerSection({
   onRestartServer,
   onOpenGenerationSettings,
   onOpenCustomNodes,
+  onOpenServerLogs,
 }: MenuServerSectionProps) {
   const { t } = useI18n();
   return (
@@ -209,6 +211,14 @@ export function MenuServerSection({
           >
             <GearIcon className={menuIconClassName} />
             <span className={menuTextClassName}>{t('Preferences')}</span>
+          </button>
+
+          <button
+            onClick={onOpenServerLogs}
+            className={menuSurfaceButtonClassName}
+          >
+            <DocumentLinesIcon className={menuIconClassName} />
+            <span className={menuTextClassName}>{t('Server logs')}</span>
           </button>
 
           <button

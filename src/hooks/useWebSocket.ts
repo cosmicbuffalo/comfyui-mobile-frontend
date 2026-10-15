@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { connectProgressWebSocket, connectWebSocket, clientId } from '@/api/client';
+import { connectProgressWebSocket, connectWebSocket, clientId, SERVER_LOGS_EVENT } from '@/api/client';
 import { useWorkflowStore } from './useWorkflow';
 import { useLoraManagerStore } from './useLoraManager';
 import { useQueueStore } from './useQueue';
@@ -1087,6 +1087,11 @@ export function useWebSocket() {
               'Apply node feedback',
             );
           }
+          break;
+        }
+
+        case 'logs': {
+          window.dispatchEvent(new CustomEvent(SERVER_LOGS_EVENT, { detail: msg.data }));
           break;
         }
 

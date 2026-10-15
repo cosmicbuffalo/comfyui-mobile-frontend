@@ -9,6 +9,12 @@
  * the body, which makes these values comparable app-wide.
  */
 export const Z_LAYERS = {
+  /**
+   * Desktop floating windows (server logs) that stay open while you work: above
+   * the panels and their popovers, below the top/bottom bars and every menu,
+   * dialog and viewer, so Run and the menu stay reachable.
+   */
+  floatingWindow: 1900,
   /** Slide-over panels — the app menu. */
   slidePanel: 2300,
   /** Fullscreen panels launched from the menu: custom nodes, feedback form. */
