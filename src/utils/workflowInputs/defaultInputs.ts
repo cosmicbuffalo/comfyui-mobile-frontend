@@ -1,6 +1,7 @@
 import type { NodeTypeDefinition } from '@/api/types';
 import { DYNAMIC_COMBO_V3, getComboOptions, getDynamicComboSubInputs, isComboType, isMultiSelectCombo, normalizeComboValue, orderedInputNames } from './comboValues';
 import { isWidgetInputType } from './widgetSlots';
+import { isDynamicGroup, groupLimits, getDynamicGroupSubInputs } from './dynamicGroups';
 
 /**
  * Widget types stock creates but never saves into widgets_values
@@ -14,15 +15,32 @@ const UNSAVED_WIDGET_INITIAL_VALUES: Record<string, () => unknown> = {
   IMAGECOMPARE: () => ['', ''],
 };
 
+/** Stock widgets that hold only editor state: never saved and never sent. */
+const EDITOR_ONLY_WIDGET_TYPES = new Set(['CAMERA_INFO_STATE']);
+
+export function isEditorOnlyWidgetType(typeOrOptions: string | unknown[]): boolean {
+  return typeof typeOrOptions === 'string' && EDITOR_ONLY_WIDGET_TYPES.has(typeOrOptions.toUpperCase());
+}
+
+/** Widget types that take no widgets_values slot. */
 export function isUnsavedWidgetType(typeOrOptions: string | unknown[]): boolean {
-  return typeof typeOrOptions === 'string'
-    && Object.prototype.hasOwnProperty.call(UNSAVED_WIDGET_INITIAL_VALUES, typeOrOptions.toUpperCase());
+  return isEditorOnlyWidgetType(typeOrOptions) || (typeof typeOrOptions === 'string'
+    && Object.prototype.hasOwnProperty.call(UNSAVED_WIDGET_INITIAL_VALUES, typeOrOptions.toUpperCase()));
+}
+
+/**
+ * Inputs the prompt never carries: editor-only widgets, CameraAngle's saved
+ * `view` (a widgetType override on a STRING), and a DynamicGroup's row count,
+ * whose rows go in as their own `name.N.field` inputs.
+ */
+export function isOmittedFromPrompt(typeOrOptions: string | unknown[], inputOptions?: Record<string, unknown>): boolean {
+  return isDynamicGroup(typeOrOptions) || isEditorOnlyWidgetType(typeOrOptions) || inputOptions?.widgetType === 'CAMERA_ANGLE_VIEW';
 }
 
 /** The prompt value of an unsaved widget type; undefined for any other type. */
 export function unsavedWidgetInitialValue(typeOrOptions: string | unknown[]): unknown {
-  if (!isUnsavedWidgetType(typeOrOptions)) return undefined;
-  return UNSAVED_WIDGET_INITIAL_VALUES[(typeOrOptions as string).toUpperCase()]();
+  if (typeof typeOrOptions !== 'string') return undefined;
+  return UNSAVED_WIDGET_INITIAL_VALUES[typeOrOptions.toUpperCase()]?.();
 }
 
 export function isWidgetBackedInput(
@@ -30,6 +48,7 @@ export function isWidgetBackedInput(
   inputOptions?: Record<string, unknown>
 ): boolean {
   if (inputOptions?.forceInput === true || inputOptions?.defaultInput === true) return false;
+  if (isDynamicGroup(typeOrOptions)) return true;
   if (inputOptions?.socketless === true) return true;
   if (typeof inputOptions?.widgetType === 'string' && inputOptions.widgetType) return true;
   if (isComboType(typeOrOptions) || isWidgetInputType(typeOrOptions)) return true;
@@ -48,6 +67,7 @@ export function isConnectionSocketInput(
   inputOptions?: Record<string, unknown>,
 ): boolean {
   if (inputOptions?.forceInput === true || inputOptions?.defaultInput === true) return true;
+  if (isDynamicGroup(typeOrOptions)) return false;
   // Legacy array combos are widget-only. Serializing their entire option list
   // as a comma-joined socket type bloats workflows and cannot participate in
   // meaningful connection compatibility checks.
@@ -64,6 +84,8 @@ export function getDefaultWidgetValue(
   inputOptions?: Record<string, unknown>
 ): unknown {
   const declared = inputOptions?.default;
+  if (isDynamicGroup(typeOrOptions)) return groupLimits(inputOptions).min;
+  if (inputOptions?.widgetType === 'CAMERA_ANGLE_VIEW') return 'camera';
   if (isComboType(typeOrOptions)) {
     const comboOptions = getComboOptions(typeOrOptions, inputOptions);
     if (isMultiSelectCombo(inputOptions)) {
@@ -124,6 +146,9 @@ export function buildDefaultWidgetValues(
     if (isUnsavedWidgetType(typeOrOptions)) return;
     const value = getDefaultWidgetValue(typeOrOptions, inputOptions);
     values.push(value);
+    if (isDynamicGroup(typeOrOptions)) {
+      for (const sub of getDynamicGroupSubInputs(inputOptions, name, Number(value))) emit(sub.inputDef, sub.qualifiedName);
+    }
     const seedControl = inputOptions?.control_after_generate;
     if (
       emitSeedControl &&
@@ -165,6 +190,12 @@ function collectDefaultConnectionInputs(
 ): void {
   const [typeOrOptions, inputOptions] = inputDef;
   const widgetBacked = isWidgetBackedInput(typeOrOptions, inputOptions);
+  if (isDynamicGroup(typeOrOptions)) {
+    for (const sub of getDynamicGroupSubInputs(inputOptions, qualifiedName, groupLimits(inputOptions).min)) {
+      collectDefaultConnectionInputs(sub.qualifiedName, sub.inputDef, result);
+    }
+    return;
+  }
   if (isConnectionSocketInput(typeOrOptions, inputOptions)) {
     result.push({
       name: qualifiedName,

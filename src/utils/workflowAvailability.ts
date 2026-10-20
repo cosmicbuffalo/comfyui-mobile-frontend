@@ -29,6 +29,19 @@ function resolveTarget(file: FileItem, source?: AssetSource) {
 }
 
 /**
+ * Files whose workflow only the server can confirm: a video resolves through
+ * its sibling still, and a GLB through the metadata core SaveGLB embeds.
+ */
+export function needsWorkflowProbe(file: FileItem): boolean {
+  return file.type === 'video' || (file.type === 'model' && canCarryWorkflow(file.name));
+}
+
+/** Of the 3D formats, only GLB embeds a workflow (core SaveGLB's asset.extras). */
+export function canCarryWorkflow(modelFilename: string): boolean {
+  return /\.glb$/i.test(modelFilename);
+}
+
+/**
  * The already-known answer for this file, or undefined if it has never been
  * probed (or the last probe failed). Failures are never cached as `false`: a
  * transient server blip must not permanently hide Load Workflow.

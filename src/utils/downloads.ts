@@ -1,10 +1,11 @@
-import { saveToPhotosInNativeApp } from '@/utils/nativeSave';
+import { canSaveFile, saveToPhotosInNativeApp } from '@/utils/nativeSave';
 
 export async function downloadImage(
   src: string,
   filename: string = 'image.png',
   onDownloaded?: (src: string) => void,
 ) {
+  if (!canSaveFile(filename)) return;
   // Inside the native iOS app: route through the savePhoto JS channel so the
   // file lands in Photos. The anchor click below would otherwise be treated as
   // a top-level navigation by WKWebView (the download attribute isn't honored
@@ -102,6 +103,7 @@ export async function shareOrDownloadFile(
   src: string,
   filename: string,
 ): Promise<DownloadOutcome> {
+  if (!canSaveFile(filename)) return { route: 'downloads', started: false };
   // Inside the native iOS app: route through the savePhoto JS channel — the
   // anchor click below is treated as a top-level navigation by WKWebView and
   // would trap the user on the bare image URL.
@@ -136,6 +138,7 @@ export async function shareOrDownloadBatch(
   if (targets.length === 0) return;
   try {
     for (const target of targets) {
+      if (!canSaveFile(target.filename)) continue;
       // Inside the native iOS app: route through the savePhoto JS channel — the
       // anchor click below would otherwise navigate the WebView away from the
       // mobile frontend on the first iteration.

@@ -1,4 +1,4 @@
-import { memo, useEffect, useState, type MouseEvent } from 'react';
+import { memo, useEffect, useRef, useState, type MouseEvent } from 'react';
 import type { FileItem, SortMode } from '@/api/client';
 import {
   FolderIcon, CheckIcon,
@@ -12,6 +12,7 @@ import { useI18n } from '@/i18n';
 import { formatRelativeAge } from '@/utils/outputsBrowser';
 import { useLongPress } from '@/hooks/useLongPress';
 import { formatVideoDuration } from '@/utils/formatVideoDuration';
+import { useModelThumbnail } from '@/utils/modelThumbnails';
 
 interface SelectionClickOptions {
   range?: boolean;
@@ -101,6 +102,9 @@ function FileCardComponent({
     : (file.modifiedDate ?? file.date);
   const relativeAge = formatRelativeAge(metadataDate);
   const [previewError, setPreviewError] = useState(false);
+  const previewRef = useRef<HTMLDivElement>(null);
+  const modelThumbnail = useModelThumbnail(file, previewRef);
+  const previewSrc = file.type === 'model' ? modelThumbnail : file.previewUrl;
   const [desktopActionsDismissed, setDesktopActionsDismissed] = useState(false);
 
   const folderMetadata = isFolder && typeof file.count === 'number' ? (
@@ -154,7 +158,7 @@ function FileCardComponent({
   /* eslint-disable react-hooks/set-state-in-effect */
   useEffect(() => {
     setPreviewError(false);
-  }, [file.previewUrl, file.id]);
+  }, [previewSrc, file.id]);
   /* eslint-enable react-hooks/set-state-in-effect */
 
   // In select mode a tap toggles selection, so opening the viewer needs its own
@@ -270,12 +274,12 @@ function FileCardComponent({
         onMouseLeave={() => setDesktopActionsDismissed(false)}
         {...longPressHandlers}
       >
-        <div className={`file-preview-container w-10 h-10 flex-shrink-0 flex items-center justify-center rounded text-slate-400 overflow-hidden relative ${isFolder ? '' : 'bg-slate-950/80'}`}>
+        <div ref={previewRef} className={`file-preview-container w-10 h-10 flex-shrink-0 flex items-center justify-center rounded text-slate-400 overflow-hidden relative ${isFolder ? '' : 'bg-slate-950/80'}`}>
           {isFolder ? (
             <FolderIcon className={`w-6 h-6 ${folderIconClass}`} />
-          ) : file.previewUrl && !previewError ? (
+          ) : previewSrc && !previewError ? (
             <img
-              src={file.previewUrl}
+              src={previewSrc}
               className="w-full h-full object-cover select-none"
               loading="lazy"
               onError={() => setPreviewError(true)}
@@ -284,7 +288,7 @@ function FileCardComponent({
             file.type === 'video' ? (
               <VideoCameraIcon className="w-5 h-5 text-slate-400" />
             ) : (
-              <span className="text-xs font-bold">IMG</span>
+              <span className="text-xs font-bold">{file.type === 'model' ? '3D' : 'IMG'}</span>
             )
           )}
         </div>
@@ -342,6 +346,7 @@ function FileCardComponent({
       onMouseLeave={() => setDesktopActionsDismissed(false)}
     >
       <div
+        ref={previewRef}
         className={`relative aspect-square bg-slate-900/95 border border-white/10 overflow-hidden transition-all ${isSelected ? 'ring-4 ring-cyan-400 ring-offset-2 ring-offset-slate-950' : !selectionMode ? 'lg:group-hover:ring-4 lg:group-hover:ring-slate-300/40 lg:group-hover:ring-offset-2 lg:group-hover:ring-offset-slate-950' : ''}`}
         onClick={handleClick}
         {...longPressHandlers}
@@ -366,9 +371,9 @@ function FileCardComponent({
               <div className="flex justify-center">{folderMetadata}</div>
             ) : null}
           </div>
-        ) : file.previewUrl && !previewError ? (
+        ) : previewSrc && !previewError ? (
           <img
-            src={file.previewUrl}
+            src={previewSrc}
             className="w-full h-full object-cover select-none"
             loading="lazy"
             onError={() => setPreviewError(true)}
@@ -378,7 +383,7 @@ function FileCardComponent({
             {file.type === 'video' ? (
               <VideoCameraIcon className="w-10 h-10 text-white/80" />
             ) : (
-              'IMG'
+              file.type === 'model' ? '3D' : 'IMG'
             )}
           </div>
         )}

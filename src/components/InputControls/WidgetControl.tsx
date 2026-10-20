@@ -1,4 +1,5 @@
 import { StringControl } from "./StringControl";
+import { DynamicGroupControl } from './DynamicGroupControl';
 import { NumberControl } from "./NumberControl";
 import { ComboControl } from "./ComboControl";
 import { ModelComboControl } from "./ModelComboControl";
@@ -163,6 +164,7 @@ export function WidgetControl({
   };
 
   const renderControl = () => {
+    if (type === 'DYNAMIC_GROUP') return <DynamicGroupControl name={name} value={value} options={options} onChange={onChange} disabled={disabled} />;
     if (isCombo)
       return <ModelComboControl {...controlProps} modelKind={resolvedModelKind} />;
     if (isNumber)
@@ -183,6 +185,8 @@ export function WidgetControl({
   };
 
   const effectiveModalOpen = forceModalOpen || modalOpen;
+
+  if (type === 'DYNAMIC_GROUP') return <div className={layoutContainerClass}>{renderControl()}</div>;
 
   if (type === "LM_LORA_HEADER") {
     const allActive = Boolean(value);

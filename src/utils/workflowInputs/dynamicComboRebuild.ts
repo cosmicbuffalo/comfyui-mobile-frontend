@@ -2,6 +2,7 @@ import type { WorkflowNode, NodeTypeDefinition } from '@/api/types';
 import { DYNAMIC_COMBO_V3, getDynamicComboSubInputs, orderedInputNames, type DynamicComboSubInput } from './comboValues';
 import { buildDefaultWidgetValues, getDefaultWidgetValue, getDynamicComboConnectionInputs, isUnsavedWidgetType, isWidgetBackedInput } from './defaultInputs';
 import { getNodePropertyWidgetIndexMap, getWidgetValue, skipImplicitSeedControlSlot } from './widgetSlots';
+import { isDynamicGroup, groupRowCount, groupFields, getDynamicGroupSubInputs, readGroupRows, type DynamicGroupEdit } from './dynamicGroups';
 
 export function occupiesWidgetSlot(
   node: WorkflowNode,
@@ -50,6 +51,7 @@ export function getActiveNodeInputDefinitions(
     name: string,
     qualifiedName: string,
     inputDef: [string | unknown[], Record<string, unknown>?],
+    groupField = false,
   ) => {
     const [typeOrOptions, inputOptions] = inputDef;
     const inputIndex = node.inputs.findIndex((entry) => entry.name === qualifiedName);
@@ -59,9 +61,10 @@ export function getActiveNodeInputDefinitions(
       ?? propertyMap?.[qualifiedName]
       ?? (qualifiedName === name ? widgetIndexMap?.[name] ?? propertyMap?.[name] : undefined);
     const widgetIndex = hasWidgetSlot ? mappedIndex ?? cursor : null;
-    const value = widgetIndex === null
+    const storedValue = widgetIndex === null
       ? undefined
       : getWidgetValue(node, qualifiedName, widgetIndex);
+    const value = storedValue ?? (groupField ? getDefaultWidgetValue(typeOrOptions, inputOptions) : undefined);
 
     definitions.push({
       name,
@@ -76,6 +79,12 @@ export function getActiveNodeInputDefinitions(
     if (!hasWidgetSlot) return;
     const ownWidgetIndex = widgetIndex ?? cursor;
     cursor = Math.max(cursor + 1, ownWidgetIndex + 1);
+    if (isDynamicGroup(typeOrOptions)) {
+      for (const sub of getDynamicGroupSubInputs(inputOptions, qualifiedName, groupRowCount(value, inputOptions))) {
+        process(sub.name, sub.qualifiedName, sub.inputDef, true);
+      }
+      return;
+    }
     if (
       String(typeOrOptions).toUpperCase() === 'INT' &&
       (name === 'seed' || name === 'noise_seed') &&
@@ -128,6 +137,10 @@ function advancePastSubInputs(
         getDynamicComboSubInputs(subType, subOpts, selected, sub.qualifiedName),
         index
       );
+    } else if (isDynamicGroup(subType)) {
+      // A DynamicGroup's rows follow its count slot inline, like a nested combo's branch.
+      const count = groupRowCount(getWidgetValue(node, sub.qualifiedName, ownIndex), subOpts);
+      index = advancePastSubInputs(node, getDynamicGroupSubInputs(subOpts, sub.qualifiedName, count), index);
     }
   }
   return index;
@@ -202,6 +215,7 @@ export function rebuildDynamicComboNode(
   comboIndex: number,
   nextValue: unknown,
 ): DynamicComboNodeRebuild | null {
+  if (isDynamicGroup(inputDef[0])) return rebuildDynamicGroupNode(node, typeDef, inputName, inputDef[1], comboIndex, nextValue);
   const rebuiltValues = rebuildDynamicComboWidgetValues(
     node,
     inputName,
@@ -270,11 +284,19 @@ export function rebuildDynamicComboNode(
     inputs: provisionalInputs,
     properties,
   };
-  const activeOrder = getActiveNodeInputDefinitions(typeDef, provisionalNode)
+  return {
+    node: { ...provisionalNode, inputs: sortInputsBySchema(typeDef, provisionalNode, node) },
+    removedLinkIds,
+  };
+}
+
+/** Active schema order first; inputs outside the schema keep their previous relative order. */
+function sortInputsBySchema(typeDef: NodeTypeDefinition, next: WorkflowNode, previous: WorkflowNode) {
+  const activeOrder = getActiveNodeInputDefinitions(typeDef, next)
     .map((definition) => definition.qualifiedName);
   const orderByName = new Map(activeOrder.map((name, index) => [name, index]));
-  const originalOrder = new Map(node.inputs.map((input, index) => [input.name, index]));
-  const inputs = [...provisionalInputs].sort((left, right) => {
+  const originalOrder = new Map(previous.inputs.map((input, index) => [input.name, index]));
+  return [...next.inputs].sort((left, right) => {
     const leftOrder = orderByName.get(left.name);
     const rightOrder = orderByName.get(right.name);
     if (leftOrder !== undefined && rightOrder !== undefined) return leftOrder - rightOrder;
@@ -283,9 +305,36 @@ export function rebuildDynamicComboNode(
     return (originalOrder.get(left.name) ?? Number.MAX_SAFE_INTEGER) -
       (originalOrder.get(right.name) ?? Number.MAX_SAFE_INTEGER);
   });
+}
 
-  return {
-    node: { ...provisionalNode, inputs },
-    removedLinkIds,
-  };
+function rebuildDynamicGroupNode(node: WorkflowNode, typeDef: NodeTypeDefinition, name: string, options: Record<string, unknown> | undefined, index: number, value: unknown): DynamicComboNodeRebuild | null {
+  if (!value || typeof value !== 'object' || !('rows' in value) || !Array.isArray(value.rows)) return null;
+  const { rows, order } = value as DynamicGroupEdit;
+  if (rows.length !== groupRowCount(rows.length, options)) return null;
+  const oldRows = readGroupRows(node, name, index, options);
+  const fields = groupFields(options);
+  const nextValues = Array.isArray(node.widgets_values) ? [...node.widgets_values] : { ...node.widgets_values };
+  if (Array.isArray(nextValues)) {
+    nextValues.splice(index, 1 + oldRows.length * Object.keys(fields).length, rows.length, ...rows.flatMap(row => Object.keys(fields).map(field => row[field])));
+  } else {
+    for (const key of Object.keys(nextValues)) if (key.startsWith(`${name}.`)) delete nextValues[key];
+    nextValues[name] = rows.length;
+    rows.forEach((row, rowIndex) => Object.entries(row).forEach(([field, fieldValue]) => { nextValues[`${name}.${rowIndex}.${field}`] = fieldValue; }));
+  }
+  const removedLinkIds: number[] = [];
+  const prefix = `${name}.`;
+  const kept = node.inputs.filter(input => !input.name.startsWith(prefix) && input.name !== name);
+  rows.forEach((_, row) => {
+    for (const [field, definition] of Object.entries(fields)) {
+      const oldName = `${name}.${order[row]}.${field}`;
+      const old = node.inputs.find(input => input.name === oldName);
+      if (definition[1]?.socketless === true) continue;
+      kept.push({ ...old, name: `${name}.${row}.${field}`, type: String(definition[0]), link: old?.link ?? null, widget: { name: `${name}.${row}.${field}` } });
+    }
+  });
+  for (const input of node.inputs) if (input.link != null && !kept.some(next => next.link === input.link)) removedLinkIds.push(input.link);
+  const properties = { ...node.properties };
+  delete properties.__lm_widget_ids;
+  const next = { ...node, properties, inputs: kept, widgets_values: nextValues };
+  return { node: { ...next, inputs: sortInputsBySchema(typeDef, next, node) }, removedLinkIds };
 }

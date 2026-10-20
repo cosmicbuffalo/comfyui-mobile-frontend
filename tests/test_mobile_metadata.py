@@ -1,4 +1,5 @@
 import json
+import struct
 from pathlib import Path
 
 import pytest
@@ -7,6 +8,7 @@ from mobile_metadata import (
     MetadataPathError,
     extract_prompt_from_metadata,
     extract_workflow_from_metadata,
+    read_glb_metadata,
     resolve_metadata_path,
 )
 
@@ -120,3 +122,44 @@ def test_prompt_text_cache_eviction_is_thread_safe(tmp_path: Path, monkeypatch):
 
     assert all(value for value in values)
     assert len(metadata._PROMPT_TEXT_CACHE) <= metadata._PROMPT_TEXT_CACHE_MAX
+
+
+def _write_glb(path: Path, asset: dict) -> None:
+    chunk = json.dumps({"asset": asset}).encode()
+    chunk += b" " * (-len(chunk) % 4)
+    path.write_bytes(struct.pack("<4sII", b"glTF", 2, 20 + len(chunk)) + struct.pack("<II", len(chunk), 0x4E4F534A) + chunk)
+
+
+def test_glb_metadata_loads_the_workflow_core_save_glb_embeds(tmp_path: Path):
+    output_dir = tmp_path / "output"
+    input_dir = tmp_path / "input"
+    output_dir.mkdir()
+    input_dir.mkdir()
+    workflow = {"id": "mesh-workflow", "nodes": []}
+    # Core SaveGLB stores each hidden value as a JSON string under asset.extras.
+    _write_glb(output_dir / "mesh.glb", {"version": "2.0", "extras": {
+        "prompt": json.dumps({"1": {"class_type": "SaveGLB", "inputs": {}}}),
+        "workflow": json.dumps(workflow),
+    }})
+
+    resolved = resolve_metadata_path("mesh.glb", "output", str(input_dir), str(output_dir))
+    metadata = read_glb_metadata(resolved)
+    assert extract_workflow_from_metadata(metadata) == workflow
+    assert extract_prompt_from_metadata(metadata) == {"1": {"class_type": "SaveGLB", "inputs": {}}}
+
+
+def test_glb_without_extras_has_no_workflow(tmp_path: Path):
+    path = tmp_path / "plain.glb"
+    _write_glb(path, {"version": "2.0"})
+    assert extract_workflow_from_metadata(read_glb_metadata(str(path))) is None
+    (tmp_path / "not-a-glb.glb").write_bytes(b"ply\nformat ascii 1.0\n")
+    assert read_glb_metadata(str(tmp_path / "not-a-glb.glb")) == {}
+
+
+def test_other_3d_formats_are_not_metadata_sources(tmp_path: Path):
+    output_dir = tmp_path / "output"
+    output_dir.mkdir()
+    (output_dir / "cloud.ply").write_bytes(b"ply")
+    with pytest.raises(MetadataPathError) as exc:
+        resolve_metadata_path("cloud.ply", "output", str(tmp_path), str(output_dir))
+    assert exc.value.status_code == 400

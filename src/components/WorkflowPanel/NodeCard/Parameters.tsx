@@ -1,5 +1,6 @@
 import { WidgetRow } from './WidgetRow';
-import { Fragment, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { Fragment, Suspense, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { lazyPanel } from '@/components/lazyPanel';
 import { Collapsible } from '@/components/Collapsible';
 import { FoldIcon } from '@/components/FoldIcon';
 import {
@@ -70,6 +71,8 @@ import { variationOptionsFor } from '@/utils/widgetVariations';
 import { FastGroupsBypasserControls } from './FastGroupsBypasserControls';
 import { supportsPinnedWidgetEditor } from '@/utils/pinnedWidgetSupport';
 import { promotedWidgetKey, resolvePromotedWidgetKeys } from '@/utils/boundaryPromotion';
+
+const CameraControls = lazyPanel(() => import('@/components/ThreeView/CameraControls'), { prefetch: false });
 
 interface WidgetDescriptor {
   widgetIndex: number;
@@ -1595,7 +1598,10 @@ export function NodeCardParameters({
           onBoundaryJump={widgetBoundaryJump(widget)}
           type={widget.type}
           value={widget.value}
-          options={widget.options}
+          options={widget.type === 'DYNAMIC_GROUP'
+            // Core reports row fields by qualified name (loras.1.lora_name).
+            ? { ...widget.options, __errors: [...errorInputNames].filter(name => name.startsWith(`${widget.inputName ?? widget.name}.`)) }
+            : widget.options}
           onChange={handleWidgetChange(widget)}
           disabled={isBypassed || widget.disabled === true}
           isPinned={canPinWidget(widget.type, widget.name, widget.options) ? isWidgetPinned(widget.widgetIndex) : false}
@@ -1674,6 +1680,7 @@ export function NodeCardParameters({
       )}
       {showParameters && (
         <>
+          {(node.type === 'CameraAngle' || node.type === 'CreateCameraInfo') && <Suspense fallback={<div className="h-72" />}><CameraControls node={node} onChange={onUpdateNodeWidgets} disabled={isBypassed} /></Suspense>}
           {isKSampler && workflowExists && nodeTypesExists && (() => {
             const seedIndex = kSamplerSeedIndex;
             if (seedIndex === null) return null;

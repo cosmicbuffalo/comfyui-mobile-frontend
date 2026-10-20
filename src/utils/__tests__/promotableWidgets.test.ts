@@ -53,6 +53,15 @@ describe('collectPromotableWidgets', () => {
     })).toEqual([{ widgetIndex: 0, name: 'steps', inputName: 'steps', type: 'INT', value: 12 }]);
   });
 
+  it('never offers a native LoRA group, whose rows span many slots', () => {
+    expect(collectPromotableWidgets({
+      node: node({ type: 'LoadLoraModel', widgets_values: [2, 'a.safetensors', 1, true, 'b.safetensors', 0.5, false] }),
+      descriptors: [descriptor({ name: 'loras', inputName: 'loras', type: 'DYNAMIC_GROUP', value: [] })],
+      isPlaceholder: false,
+      inSubgraphScope: true,
+    })).toEqual([]);
+  });
+
   it('drops connected or already-promoted widgets', () => {
     const target = node({
       inputs: [{ name: 'steps', type: 'INT', link: 9, widget: { name: 'steps' } }],

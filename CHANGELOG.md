@@ -1,5 +1,42 @@
 # Changelog
 
+## 3.4.0 - 2026-10-15
+
+Supports the new nodes in ComfyUI 0.40. Older ComfyUI versions keep working
+exactly as before.
+
+### Added
+
+- **LoRA stacks.** **Load LoRA (Model)** and **Load LoRA (Text Encoder)** show
+  one row per LoRA: pick the file, set its strength, switch it on or off, and
+  move or remove it. **Toggle All Loras** switches every row at once, and
+  **Add Lora** adds another. Workflows save and queue exactly as they do in
+  ComfyUI's own editor.
+- **Camera nodes.** **Create Camera Info** and **Compose Camera Angle Prompt**
+  get an interactive 3D preview. Drag the rings to orbit, the pink handle to
+  zoom, or pick a gizmo to move the target or move and rotate the camera.
+  **Look through** shows the camera's own view, and Compose Camera Angle Prompt
+  shows your reference image on the cube.
+- **3D outputs.** Meshes (GLB, GLTF, OBJ, FBX, STL), point clouds and Gaussian
+  splats (PLY, SPLAT, SPZ, KSPLAT) from nodes such as **Save GLB** and
+  **Preview 3D** show on node and queue cards, open in the viewer alongside
+  your other outputs, and can be favorited, deleted and downloaded like them.
+  Drag to orbit, and use the arrows to move between outputs.
+- **3D thumbnails in Outputs.** 3D files show a rendered preview instead of a
+  placeholder. Previews are made on your device the first time you see a
+  file; files over 20 MB get theirs when you first open them.
+- **Load workflow from 3D files.** GLB files saved by **Save GLB** carry their
+  workflow, and **Load workflow** opens it from the Outputs menu or the viewer.
+- **License notices.** `THIRD_PARTY_NOTICES.md` lists the open-source
+  packages built into the app, with their license texts.
+
+### Notes
+
+- **Load 3D** and **Load 3D (Advanced)**, which need a model staged in
+  ComfyUI's 3D editor, still need the desktop editor. Uploading 3D files from
+  mobile isn't supported yet.
+- EXR files are not listed or previewed.
+
 ## 3.3.10 - 2026-10-15
 
 ### Added

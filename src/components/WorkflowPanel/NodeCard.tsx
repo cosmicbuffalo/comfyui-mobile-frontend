@@ -60,6 +60,9 @@ import { NodeCardErrorPopover } from './NodeCard/ErrorPopover';
 import { NodeCardNote } from './NodeCard/Note';
 import { MarkdownContent } from './NodeCard/MarkdownContent';
 import { NodeCardOutputPreview } from './NodeCard/OutputPreview';
+import { isModelOutput } from '@/utils/model3d';
+import { ModelOutputPreview } from '@/components/ThreeView/ModelOutputPreview';
+import { buildViewerImages } from '@/utils/viewerImages';
 import { NodeCardImageComparer } from './NodeCard/ImageComparer';
 import { DenoVideoCompare } from './NodeCard/DenoVideoCompare';
 import { isGetNode, isSetGetNode, isSetNode } from '@/utils/setGetNodes';
@@ -185,7 +188,9 @@ export const NodeCard = memo(function NodeCard({
   const setPinnedWidget = usePinnedWidgetStore((s) => s.setPinnedWidget);
   const bookmarkedItems = useBookmarksStore((s) => s.bookmarkedItems);
   const toggleBookmark = useBookmarksStore((s) => s.toggleBookmark);
-  const nodeImages = useWorkflowStore((s) => s.nodeOutputs[String(node.id)]);
+  const nodeMedia = useWorkflowStore((s) => s.nodeOutputs[String(node.id)]);
+  const nodeImages = useMemo(() => nodeMedia?.filter(output => !isModelOutput(output)), [nodeMedia]);
+  const modelOutputs = useMemo(() => nodeMedia?.filter(isModelOutput) ?? [], [nodeMedia]);
   const comparerOutput = useWorkflowStore((s) => s.nodeComparerOutputs[String(node.id)]);
   const latentPreviewUrl = useWorkflowStore((s) =>
     s.latentPreviews[nodeHierarchicalKey] ?? null
@@ -1103,7 +1108,7 @@ export const NodeCard = memo(function NodeCard({
           img.type,
           img.cacheToken,
         ),
-        mediaType,
+        mediaType: 'image' as const,
         alt: displayName,
       };
     });
@@ -1725,6 +1730,7 @@ export const NodeCard = memo(function NodeCard({
                 setWidgetLabel(nodeHierarchicalKey, inputName, label);
               }}
               hasOutputsBelow={
+                modelOutputs.length > 0 ||
                 Boolean(noteText) ||
                 (showComparer && Boolean(comparerOutput)) ||
                 showImagePreview ||
@@ -1790,6 +1796,7 @@ export const NodeCard = memo(function NodeCard({
               )
             )}
 
+            {modelOutputs.map((output, index) => <ModelOutputPreview key={`${output.type}/${output.subfolder}/${output.filename}`} output={output} onExpand={() => onImageClick?.(buildViewerImages([{ outputs: { images: modelOutputs }, prompt: null }]), index, false)} />)}
             <NodeCardOutputPreview
               show={showImagePreview || showTextPreview || !!latentPreviewUrl || isBatchOutput}
               previewImage={effectivePreviewImage}

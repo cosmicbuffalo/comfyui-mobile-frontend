@@ -5,7 +5,7 @@ import { isPowerPuterNodeType, readPowerPuterWidgets, toPowerPuterOutputsValue, 
 import { extractTriggerWordList, extractTriggerWordListLoose, isTriggerWordList, extractTriggerWordMessage, findTriggerWordListIndex, findTriggerWordMessageIndex, isTriggerWordToggleNodeType } from '@/utils/triggerWordToggle';
 import { getComboOptions, isComboType, isMultiSelectCombo, normalizeComboValue, normalizeWidgetValue } from './comboValues';
 import { getActiveNodeInputDefinitions } from './dynamicComboRebuild';
-import { isUnsavedWidgetType, unsavedWidgetInitialValue } from './defaultInputs';
+import { isOmittedFromPrompt, isUnsavedWidgetType, unsavedWidgetInitialValue } from './defaultInputs';
 import { finalizeInputValue } from './textReplacements';
 import { getPrimitiveInlineValue, getWidgetValue, isRecord } from './widgetSlots';
 
@@ -256,6 +256,7 @@ export function buildWorkflowPromptInputs(
     const { name, qualifiedName, inputDef, widgetIndex, connected, value } = definition;
     try {
       const [typeOrOptions, inputOptions] = inputDef;
+      if (isOmittedFromPrompt(typeOrOptions, inputOptions)) continue;
       // No widgets_values slot to read, but stock still sends its value.
       if (isUnsavedWidgetType(typeOrOptions)) {
         if (!connected && !(qualifiedName in inputs)) {
@@ -304,6 +305,8 @@ export function buildWorkflowPromptInputs(
   // is slightly out of sync with the workflow.
   if (widgetIndexMap) {
     for (const [name, index] of Object.entries(widgetIndexMap)) {
+      const definition = activeInputDefinitions.find(input => input.qualifiedName === name);
+      if (definition && isOmittedFromPrompt(definition.inputDef[0], definition.inputDef[1])) continue;
       if (!(name in inputs) && widgetValuesArray && index < widgetValuesArray.length) {
         const value = widgetValuesArray[index];
         if (value !== undefined && value !== null) {

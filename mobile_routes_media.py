@@ -15,9 +15,11 @@ import folder_paths
 import file_utils as _file_utils
 from file_utils import safe_join as _safe_join
 from mobile_metadata import (
+    MODEL_METADATA_EXTENSIONS,
     MetadataPathError,
     extract_prompt_from_metadata,
     extract_workflow_from_metadata,
+    read_glb_metadata,
     resolve_metadata_path,
 )
 import mobile_image_dimensions as _mobile_image_dimensions
@@ -83,6 +85,12 @@ async def api_video_durations(request):
     except Exception as e:
         return web.json_response({"error": str(e)}, status=500)
 
+def _read_workflow_metadata(path):
+    if path.lower().endswith(MODEL_METADATA_EXTENSIONS):
+        return read_glb_metadata(path)
+    return _read_pnginfo_metadata(path)
+
+
 async def api_file_metadata(request):
     try:
         filepath = request.query.get('path', '')
@@ -95,7 +103,7 @@ async def api_file_metadata(request):
         )
 
         loop = asyncio.get_event_loop()
-        metadata = await loop.run_in_executor(None, _read_pnginfo_metadata, metadata_path)
+        metadata = await loop.run_in_executor(None, _read_workflow_metadata, metadata_path)
         workflow = extract_workflow_from_metadata(metadata)
         prompt = extract_prompt_from_metadata(metadata)
 
@@ -120,7 +128,7 @@ async def api_workflow_availability(request):
         )
 
         loop = asyncio.get_event_loop()
-        metadata = await loop.run_in_executor(None, _read_pnginfo_metadata, metadata_path)
+        metadata = await loop.run_in_executor(None, _read_workflow_metadata, metadata_path)
         workflow = extract_workflow_from_metadata(metadata)
         return web.json_response({"available": bool(workflow)})
     except MetadataPathError as e:

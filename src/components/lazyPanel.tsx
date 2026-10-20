@@ -34,8 +34,10 @@ export function prefetchLazyPanels(): void {
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function lazyPanel<T extends ComponentType<any>>(
   load: () => Promise<{ default: T }>,
+  // Large, rarely used chunks (the 3D viewer) skip the background warm-up.
+  { prefetch = true }: { prefetch?: boolean } = {},
 ): LazyExoticComponent<T> {
-  registeredLoaders.push(load);
+  if (prefetch) registeredLoaders.push(load);
   return lazy(async (): Promise<{ default: T }> => {
     try {
       return await load();

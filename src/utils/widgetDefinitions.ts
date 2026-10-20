@@ -4,6 +4,8 @@ import { getDefaultWidgetValue, getNodePropertyWidgetIndexMap, getWidgetValue, i
 import { findLoraListIndex, isLoraList, isLoraManagerNodeType, isPowerLoraLoaderNodeType } from '@/utils/loraManager';
 import { isPowerPuterNodeType, readPowerPuterWidgets, POWER_PUTER_MAX_OUTPUTS, POWER_PUTER_OUTPUT_TYPES } from '@/utils/powerPuter';
 import { modelWidgetKind } from '@/utils/modelWidgetKind';
+import { isDynamicGroup, groupRowCount, readGroupRows, groupFields } from './workflowInputs/dynamicGroups';
+import { isEditorOnlyWidgetType } from './workflowInputs/defaultInputs';
 import {
   extractTriggerWordList,
   extractTriggerWordListLoose,
@@ -315,6 +317,19 @@ function collectWidgetDefinitions(
     ) => {
       if (!input) return; // Defensive check
       const [typeOrOptions, inputOptions] = input;
+      if (isDynamicGroup(typeOrOptions)) {
+        const count = groupRowCount(getWidgetValue(node, qualifiedName, widgetIndex), inputOptions);
+        definitions.push({ name, inputName: qualifiedName, type: 'DYNAMIC_GROUP', value: readGroupRows(node, qualifiedName, widgetIndex, inputOptions), widgetIndex, isCombo: false, connected: false, inputIndex: -1,
+          options: { ...inputOptions, __connected: node.inputs.filter(i => i.link != null).map(i => i.name) } });
+        widgetIndex += 1 + count * Object.keys(groupFields(inputOptions)).length;
+        return;
+      }
+      // The camera preview edits these; CameraAngle's view still holds its saved slot.
+      if (isEditorOnlyWidgetType(typeOrOptions)) return;
+      if (inputOptions?.widgetType === 'CAMERA_ANGLE_VIEW') {
+        widgetIndex += 1;
+        return;
+      }
       const typeSignature = Array.isArray(typeOrOptions)
         ? typeOrOptions.map((entry) => String(entry)).join(',')
         : String(typeOrOptions);

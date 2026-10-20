@@ -10,7 +10,7 @@ import { OverlayCircleButton } from '@/components/buttons/OverlayCircleButton';
 import { useI18n } from '@/i18n';
 
 interface MediaViewerActionsProps {
-  isVideo: boolean;
+  canUseInWorkflow: boolean;
   canLoadWorkflow: boolean;
   showMetadataToggle?: boolean;
   canToggleMetadata: boolean;
@@ -60,7 +60,7 @@ interface MediaViewerActionsProps {
 }
 
 export function MediaViewerActions({
-  isVideo,
+  canUseInWorkflow,
   canLoadWorkflow,
   showMetadataToggle,
   canToggleMetadata,
@@ -142,7 +142,7 @@ export function MediaViewerActions({
             progress={loadWorkflowProgress}
           />
         )}
-        {!isVideo && !selectionMode && !picking && (
+        {canUseInWorkflow && !selectionMode && !picking && (
           <UseInWorkflowButton onClick={onUseInWorkflow} />
         )}
         {/* Not image-only: a video whose item carries its own run metadata

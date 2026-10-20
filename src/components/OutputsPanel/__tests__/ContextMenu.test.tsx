@@ -24,7 +24,7 @@ describe('OutputsContextMenu reject action', () => {
     file: FileItem,
     rejected: string[] = [],
     handleReject = vi.fn(),
-    videoWorkflowAvailable = false,
+    probedWorkflowAvailable = false,
   ) {
     await act(async () => {
       root.render(
@@ -43,7 +43,7 @@ describe('OutputsContextMenu reject action', () => {
           handleRenameRequest={() => {}}
           handleLoadWorkflow={() => {}}
           handleLoadInWorkflow={() => {}}
-          videoWorkflowAvailable={videoWorkflowAvailable}
+          probedWorkflowAvailable={probedWorkflowAvailable}
           handleDownload={() => {}}
           handleDeleteRequest={() => {}}
         />,
@@ -88,7 +88,7 @@ describe('OutputsContextMenu load workflow action', () => {
     container.remove();
   });
 
-  async function render(file: FileItem, videoWorkflowAvailable = false) {
+  async function render(file: FileItem, probedWorkflowAvailable = false) {
     const handleLoadWorkflow = vi.fn();
     await act(async () => {
       root.render(
@@ -107,7 +107,7 @@ describe('OutputsContextMenu load workflow action', () => {
           handleRenameRequest={() => {}}
           handleLoadWorkflow={handleLoadWorkflow}
           handleLoadInWorkflow={() => {}}
-          videoWorkflowAvailable={videoWorkflowAvailable}
+          probedWorkflowAvailable={probedWorkflowAvailable}
           handleDownload={() => {}}
           handleDeleteRequest={() => {}}
         />,
@@ -137,6 +137,20 @@ describe('OutputsContextMenu load workflow action', () => {
   it('still offers Load workflow for stills regardless of the video probe', async () => {
     await render({ id: 'output/a.png', name: 'a.png', type: 'image' }, false);
     expect(loadWorkflowButton()).toBeTruthy();
+  });
+
+  it('offers Load workflow for a GLB once its embedded workflow is confirmed', async () => {
+    const glb: FileItem = { id: 'output/mesh.glb', name: 'mesh.glb', type: 'model' };
+    await render(glb, false);
+    expect(loadWorkflowButton()).toBeUndefined();
+    const handleLoadWorkflow = await render(glb, true);
+    loadWorkflowButton()?.click();
+    expect(handleLoadWorkflow).toHaveBeenCalledOnce();
+  });
+
+  it('never offers Load workflow for 3D formats that cannot carry one', async () => {
+    await render({ id: 'output/cloud.ply', name: 'cloud.ply', type: 'model' }, true);
+    expect(loadWorkflowButton()).toBeUndefined();
   });
 
   it('never offers Load workflow for folders', async () => {

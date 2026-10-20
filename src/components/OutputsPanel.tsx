@@ -15,7 +15,7 @@ import { isWorkflowModified, MAX_WORKFLOW_SESSIONS, useWorkflowStore } from '@/h
 import { useNavigationStore } from '@/hooks/useNavigation';
 import { useHistoryWorkflowByFileId } from '@/hooks/useHistoryWorkflowByFileId';
 import { getVisualViewportFrame, useVisualViewportFrame } from '@/hooks/useVisualViewportFrame';
-import type { FileItem } from '@/api/client';
+import type { AssetSource, FileItem } from '@/api/client';
 import {
   buildBreadcrumbs,
   buildFileSections,
@@ -34,6 +34,7 @@ import {
   PlusIcon, MinusIcon, XMarkIcon, CornerDownRightIcon, FunnelArrowsIcon, QueueStackIcon
 } from '@/components/icons';
 import { shareOrDownloadFile, shareOrDownloadBatch } from '@/utils/downloads';
+import { canSaveFile } from '@/utils/nativeSave';
 import { useDismissOnOutsideClick } from '@/hooks/useDismissOnOutsideClick';
 import { useAnchoredMenuPosition } from '@/hooks/useAnchoredMenuPosition';
 import { FilterModal } from './OutputsPanel/FilterModal';
@@ -52,6 +53,7 @@ import {
 } from '@/utils/workflowOperations';
 import {
   getCachedWorkflowAvailability,
+  needsWorkflowProbe,
   probeWorkflowAvailability,
 } from '@/utils/workflowAvailability';
 import { resolveSelectionToggle, type SelectionAnchor } from '@/utils/selectionRange';
@@ -61,6 +63,7 @@ import { OutputsFilesSection } from './OutputsPanel/FilesSection';
 import { OutputsContextMenu } from './OutputsPanel/ContextMenu';
 import { usePanelSearchShortcut } from '@/hooks/usePanelSearchShortcut';
 import { useShowHiddenStore } from '@/hooks/useShowHidden';
+import { setModelThumbnailsActive } from '@/utils/modelThumbnails';
 
 const FOLDERS_COLLAPSED_KEY = 'outputs-folders-collapsed';
 const STICKY_SECTION_TOP = -16;
@@ -77,6 +80,32 @@ const OUTPUTS_RENDER_PAGE = 60;
  * layer so the two cannot drift apart.
  */
 const ABOVE_MEDIA_VIEWER_Z_INDEX = MEDIA_VIEWER_Z_INDEX + 100;
+
+/**
+ * A video's workflow lives in the sibling still saved beside it, and a GLB's in
+ * its embedded metadata, which only the server can confirm — so Load workflow
+ * waits on a probe rather than being decided from the file type alone. Answers
+ * are shared with the full-screen viewer's cache, so a file just viewed answers
+ * instantly.
+ */
+function useProbedWorkflowAvailability(file: FileItem | null | undefined, source: AssetSource): boolean {
+  const [probed, setProbed] = useState<{ file: FileItem; available: boolean } | null>(null);
+  const shouldProbe = Boolean(file && needsWorkflowProbe(file));
+  const cached = file && shouldProbe ? getCachedWorkflowAvailability(file, source) : undefined;
+  useEffect(() => {
+    if (!file || !shouldProbe || cached !== undefined) return;
+    const controller = new AbortController();
+    probeWorkflowAvailability(file, source, { signal: controller.signal })
+      .then((available) => setProbed({ file, available }))
+      .catch(() => {
+        // Aborted (menu closed) or failed (server blip): leave the entry out
+        // rather than offering an action that would only fail.
+      });
+    return () => controller.abort();
+  }, [file, source, shouldProbe, cached]);
+  if (!file || !shouldProbe) return false;
+  return cached ?? (probed?.file === file && probed.available);
+}
 
 export const OutputsPanel = memo(function OutputsPanel({ visible }: { visible: boolean }) {
   const { t } = useI18n();
@@ -294,33 +323,12 @@ export const OutputsPanel = memo(function OutputsPanel({ visible }: { visible: b
     setLoadNodePickerOpen(true);
   };
 
-  // A video's workflow lives in the sibling still saved beside it, which only
-  // the server can confirm — so the menu's Load workflow entry waits on a probe
-  // rather than being decided from the file type alone. Answers are shared with
-  // the full-screen viewer's cache, so a file just viewed answers instantly.
-  const [menuVideoWorkflowAvailable, setMenuVideoWorkflowAvailable] = useState(false);
-
+  const menuProbedWorkflowAvailable = useProbedWorkflowAvailability(menuTarget?.file, source);
+  // Background thumbnails pause under the viewer, which renders its own copy.
   useEffect(() => {
-    const file = menuTarget?.file;
-    if (!file || file.type !== 'video') {
-      setMenuVideoWorkflowAvailable(false);
-      return;
-    }
-    const cached = getCachedWorkflowAvailability(file, source);
-    if (cached !== undefined) {
-      setMenuVideoWorkflowAvailable(cached);
-      return;
-    }
-    setMenuVideoWorkflowAvailable(false);
-    const controller = new AbortController();
-    probeWorkflowAvailability(file, source, { signal: controller.signal })
-      .then((available) => setMenuVideoWorkflowAvailable(available))
-      .catch(() => {
-        // Aborted (menu closed) or failed (server blip): leave the entry out
-        // rather than offering an action that would only fail.
-      });
-    return () => controller.abort();
-  }, [menuTarget, source]);
+    setModelThumbnailsActive(visible && !viewerOpen);
+    return () => setModelThumbnailsActive(false);
+  }, [visible, viewerOpen]);
 
   const { menuStyle, resetMenuPosition } = useAnchoredMenuPosition({
     open: !!menuTarget,
@@ -328,7 +336,7 @@ export const OutputsPanel = memo(function OutputsPanel({ visible }: { visible: b
     menuRef,
     // Re-anchor when the probe adds the Load workflow entry: the menu grows a
     // row taller, and a menu opened near the bottom would otherwise overflow.
-    repositionToken: `${menuTarget?.file.id ?? ''}:${menuVideoWorkflowAvailable}`,
+    repositionToken: `${menuTarget?.file.id ?? ''}:${menuProbedWorkflowAvailable}`,
     menuWidth: 176,
     horizontalAnchorOffset: 160,
     viewportPadding: 8,
@@ -385,7 +393,7 @@ export const OutputsPanel = memo(function OutputsPanel({ visible }: { visible: b
 
   const openOutputsViewer = (file: FileItem) => {
     const displayed = getDisplayedFiles();
-    const mediaFiles = displayed.filter((f) => (f.type === 'image' || f.type === 'video') && f.fullUrl);
+    const mediaFiles = displayed.filter((f) => f.type !== 'folder' && f.fullUrl);
     const media = mediaFiles.map((f) => {
       const historyMatch = historyWorkflowByFileId.get(f.id);
       return {
@@ -492,7 +500,7 @@ export const OutputsPanel = memo(function OutputsPanel({ visible }: { visible: b
     if (!viewerOpen) return;
     const liveIds = new Set(
       displayedFiles
-        .filter((f) => (f.type === 'image' || f.type === 'video') && f.fullUrl)
+        .filter((f) => f.type !== 'folder' && f.fullUrl)
         .map((f) => f.id),
     );
     const survives = (entry: ViewerImage) => !entry.file || liveIds.has(entry.file.id);
@@ -729,15 +737,13 @@ export const OutputsPanel = memo(function OutputsPanel({ visible }: { visible: b
   };
 
   const handleDownloadSelection = () => {
-    if (selectedIds.length === 0) return;
-    // Selection can span folders/tabs, so resolve every selected id — not just
-    // the current folder view (displayed files use their real fullUrl; others
-    // reconstruct from the id).
-    const displayedById = new Map(displayedFiles.map((f) => [f.id, f]));
-    const targets = resolveSelectionDownloadTargets(selectedIds, displayedById);
-    if (targets.length === 0) return;
+    if (selectionDownloadTargets.length === 0) return;
     setSelectionActionOpen(false);
-    void shareOrDownloadBatch(targets).finally(completeSelectionOperation);
+    // Files this device can't save stay selected, so a mixed selection doesn't silently drop them.
+    const unsaved = selectedIds.filter((id) => !canSaveFile(id));
+    void shareOrDownloadBatch(selectionDownloadTargets).finally(
+      unsaved.length > 0 ? () => useOutputsStore.getState().selectIds(unsaved, 'replace') : completeSelectionOperation,
+    );
   };
 
   const handleRenameRequest = () => {
@@ -878,6 +884,14 @@ export const OutputsPanel = memo(function OutputsPanel({ visible }: { visible: b
 
   // Image items in the current selection — the only ones eligible for bulk
   // process (each is fed into a LoadImage node). Gates the menu entry.
+  // Selection can span folders/tabs, so resolve every selected id — not just
+  // the current folder view (displayed files use their real fullUrl; others
+  // reconstruct from the id).
+  const selectionDownloadTargets = useMemo(() => {
+    const displayedById = new Map(displayedFiles.map((f) => [f.id, f]));
+    return resolveSelectionDownloadTargets(selectedIds, displayedById).filter((target) => canSaveFile(target.filename));
+  }, [displayedFiles, selectedIds]);
+
   const selectionImageItems = useMemo(
     () => displayedFiles.filter((f) => selectedIds.includes(f.id) && f.type === 'image'),
     [displayedFiles, selectedIds]
@@ -1573,7 +1587,7 @@ export const OutputsPanel = memo(function OutputsPanel({ visible }: { visible: b
          handleRenameRequest={handleRenameRequest}
          handleLoadWorkflow={handleLoadWorkflow}
          handleLoadInWorkflow={handleLoadInWorkflow}
-         videoWorkflowAvailable={menuVideoWorkflowAvailable}
+         probedWorkflowAvailable={menuProbedWorkflowAvailable}
          handleDownload={handleDownload}
          handleDeleteRequest={handleDeleteRequest}
        />
@@ -1623,13 +1637,15 @@ export const OutputsPanel = memo(function OutputsPanel({ visible }: { visible: b
                <FolderIcon className="w-4 h-4 text-cyan-300" />
                {t('Move')}
              </button>
-             <button
-               className="w-full text-left px-4 py-3 text-sm text-slate-200 hover:bg-white/10 flex items-center gap-2"
-               onClick={handleDownloadSelection}
-             >
-               <DownloadDeviceIcon className="w-4 h-4 text-slate-400" />
-               {t('Download')}
-             </button>
+             {selectionDownloadTargets.length > 0 && (
+               <button
+                 className="w-full text-left px-4 py-3 text-sm text-slate-200 hover:bg-white/10 flex items-center gap-2"
+                 onClick={handleDownloadSelection}
+               >
+                 <DownloadDeviceIcon className="w-4 h-4 text-slate-400" />
+                 {t('Download')}
+               </button>
+             )}
              {selectionImageItems.length > 0 && (
                <button
                  className="w-full text-left px-4 py-3 text-sm text-slate-200 hover:bg-white/10 flex items-center gap-2"

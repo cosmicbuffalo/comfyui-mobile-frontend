@@ -154,7 +154,7 @@ function descriptorPreview(
       descriptor.type,
       descriptor.cacheToken,
     ),
-    mediaType: getMediaType(descriptor.filename),
+    mediaType: getMediaType(descriptor.filename) === 'video' ? 'video' : 'image',
     autoPlay: options.autoPlay ?? false,
     loop: options.loop ?? false,
     playbackRate: options.playbackRate,

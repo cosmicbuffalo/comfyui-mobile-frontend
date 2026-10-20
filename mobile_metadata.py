@@ -1,10 +1,13 @@
 import json
 import os
+import struct
 import threading
 from typing import Any
 
 IMAGE_EXTENSIONS = ('.png', '.jpg', '.jpeg', '.webp', '.gif')
 VIDEO_EXTENSIONS = ('.mp4', '.m4v', '.mov', '.webm', '.mkv', '.avi')
+# Core SaveGLB embeds prompt/workflow in the GLB; other 3D formats carry none.
+MODEL_METADATA_EXTENSIONS = ('.glb',)
 
 
 # Metadata requests run in ComfyUI's executor. Protect the shared bounded cache
@@ -126,10 +129,26 @@ def resolve_metadata_path(
                 return candidate
         raise MetadataPathError("No image metadata found for video", 404)
 
-    if ext not in IMAGE_EXTENSIONS:
+    if ext not in IMAGE_EXTENSIONS and ext not in MODEL_METADATA_EXTENSIONS:
         raise MetadataPathError("Unsupported file type", 400)
 
     return target_path
+
+
+def read_glb_metadata(path: str) -> dict[str, Any]:
+    """Return a GLB's `asset.extras`, where core SaveGLB stores the same
+    `prompt`/`workflow` JSON strings a ComfyUI PNG keeps in its text chunks.
+    """
+    with open(path, 'rb') as f:
+        header = f.read(20)
+        if len(header) < 20:
+            return {}
+        magic, _version, _length, json_length, chunk_type = struct.unpack('<4sIIII', header)
+        if magic != b'glTF' or chunk_type != 0x4E4F534A:
+            return {}
+        gltf = json.loads(f.read(json_length))
+    extras = gltf.get('asset', {}).get('extras') if isinstance(gltf, dict) else None
+    return extras if isinstance(extras, dict) else {}
 
 
 def extract_workflow_from_metadata(metadata: dict[str, Any]) -> Any | None:

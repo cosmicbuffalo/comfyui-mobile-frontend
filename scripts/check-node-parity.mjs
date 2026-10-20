@@ -66,7 +66,7 @@ function findLocalPack(manifest) {
   return match ? resolve(localRoot, match.name) : null;
 }
 
-/** Shallow-clone (or reuse) a pack at its default branch, returning its path. */
+/** Shallow-clone (or reuse) a pack at `branch`, or its default branch, returning its path. */
 function fetchPack(manifest) {
   if (localRoot) {
     if (manifest.localDir === false) return { path: null, ref: 'local', skipped: true };
@@ -78,10 +78,11 @@ function fetchPack(manifest) {
   const path = resolve(CACHE, manifest.pack);
   if (refresh && existsSync(path)) rmSync(path, { recursive: true, force: true });
   if (!existsSync(path)) {
-    execFileSync('git', ['clone', '--depth', '1', manifest.repo, path], { stdio: 'pipe' });
+    const branch = manifest.branch ? ['--branch', manifest.branch] : [];
+    execFileSync('git', ['clone', '--depth', '1', ...branch, manifest.repo, path], { stdio: 'pipe' });
   } else {
     // Cached from an earlier run — move it to the current tip.
-    execFileSync('git', ['-C', path, 'fetch', '--depth', '1', 'origin', 'HEAD'], { stdio: 'pipe' });
+    execFileSync('git', ['-C', path, 'fetch', '--depth', '1', 'origin', manifest.branch ?? 'HEAD'], { stdio: 'pipe' });
     execFileSync('git', ['-C', path, 'reset', '--hard', 'FETCH_HEAD'], { stdio: 'pipe' });
   }
   const ref = execFileSync('git', ['-C', path, 'rev-parse', '--short', 'HEAD'], {

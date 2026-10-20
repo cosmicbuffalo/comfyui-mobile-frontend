@@ -1589,3 +1589,101 @@ describe('MediaViewer pick mode', () => {
     expect(document.querySelector('button[aria-label="Use in workflow"]')).not.toBeNull();
   });
 });
+
+vi.mock('@/components/ThreeView/ModelViewer', () => ({
+  default: ({ src }: { src: string }) => <div data-model-viewer data-src={src}><canvas /></div>,
+}));
+
+describe('MediaViewer 3D items', () => {
+  let container: HTMLDivElement;
+  let root: Root;
+
+  beforeEach(() => {
+    vi.stubGlobal('ResizeObserver', ResizeObserverMock);
+    container = document.createElement('div');
+    document.body.appendChild(container);
+    root = createRoot(container);
+    getFileWorkflowAvailabilityMock.mockReset();
+    getFileWorkflowAvailabilityMock.mockResolvedValue(true);
+    getImageMetadataMock.mockReset();
+  });
+
+  afterEach(() => {
+    act(() => root.unmount());
+    container.remove();
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  const model = (name: string): ViewerImage => ({
+    src: `/view?filename=${name}&subfolder=3d&type=output`,
+    mediaType: 'model',
+    file: { id: `output/3d/${name}`, name, type: 'model' },
+    filename: name,
+    metadata: {},
+  });
+  const items = [makeImageItem('output/still.png', 'still.png'), model('cloud.ply'), model('mesh.glb')];
+
+  async function open(index: number, onIndexChange = vi.fn()) {
+    await act(async () => {
+      root.render(
+        <MediaViewer
+          open={true}
+          items={items}
+          index={index}
+          showMetadataToggle
+          onIndexChange={onIndexChange}
+          onClose={() => {}}
+          onDelete={() => {}}
+          onLoadWorkflow={() => {}}
+          onLoadInWorkflow={() => {}}
+        />,
+      );
+    });
+    // The 3D viewer is a lazy chunk.
+    await act(async () => { await vi.dynamicImportSettled(); });
+    await settleWorkflowProbe();
+    return onIndexChange;
+  }
+
+  it('shows a 3D item in the 3D viewer, without the still-image behaviour', async () => {
+    vi.useFakeTimers();
+    await open(1);
+    const viewer = document.querySelector('#media-viewer-overlay [data-model-viewer]');
+    expect(viewer?.getAttribute('data-src')).toBe(items[1].src);
+    expect(document.querySelector('#media-viewer-overlay img')).toBeNull();
+    // Image metadata, Use in workflow and the (empty) metadata toggle don't apply.
+    expect(getImageMetadataMock).not.toHaveBeenCalled();
+    expect(document.querySelector('button[aria-label="Use in workflow"]')).toBeNull();
+    expect(document.querySelector('button[aria-label="Toggle metadata"]')).toBeNull();
+    // Only GLB can embed a workflow, so a point cloud is never probed.
+    expect(getFileWorkflowAvailabilityMock).not.toHaveBeenCalled();
+  });
+
+  it('probes a GLB for its embedded workflow', async () => {
+    vi.useFakeTimers();
+    await open(2);
+    expect(getFileWorkflowAvailabilityMock).toHaveBeenCalledWith('3d/mesh.glb', 'output', expect.anything());
+  });
+
+  it('moves between items with the arrow buttons, while drags on the model only turn it', async () => {
+    vi.useFakeTimers();
+    const onIndexChange = await open(1);
+    const canvas = document.querySelector<HTMLCanvasElement>('#media-viewer-overlay [data-model-viewer] canvas')!;
+    const drag = (type: string, x: number) => {
+      const event = new MouseEvent(type, { bubbles: true, clientX: x, clientY: 300 });
+      Object.defineProperty(event, 'pointerId', { value: 1 });
+      canvas.dispatchEvent(event);
+    };
+    await act(async () => {
+      drag('pointerdown', 600);
+      drag('pointermove', 200);
+      drag('pointerup', 200);
+    });
+    expect(onIndexChange).not.toHaveBeenCalled();
+    await act(async () => document.querySelector<HTMLButtonElement>('button[aria-label="Next"]')!.click());
+    expect(onIndexChange).toHaveBeenLastCalledWith(2);
+    await act(async () => document.querySelector<HTMLButtonElement>('button[aria-label="Previous"]')!.click());
+    expect(onIndexChange).toHaveBeenLastCalledWith(0);
+  });
+});

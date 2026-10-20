@@ -2,6 +2,17 @@ import { describe, it, expect } from 'vitest';
 import { getMediaType, isVideoFilename, formatDuration } from '../media';
 
 describe('getMediaType', () => {
+  it.each(['glb', 'gltf', 'obj', 'fbx', 'stl', 'ply', 'splat', 'spz', 'ksplat'])(
+    'returns "model" for .%s',
+    (ext) => {
+      expect(getMediaType(`mesh.${ext}`)).toBe('model');
+    }
+  );
+
+  it('classifies an annotated 3D input path by its file, not the annotation', () => {
+    expect(getMediaType('3d/mesh.GLB [input]')).toBe('model');
+  });
+
   it.each(['mp4', 'webm', 'mkv', 'mov', 'avi', 'm4v'])(
     'returns "video" for .%s',
     (ext) => {

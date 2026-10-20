@@ -1,4 +1,5 @@
 import { isInNativeApp } from '@/utils/nativeApp';
+import { isModelFilename } from '@/utils/model3d';
 
 /**
  * In the native iOS app, posts a Save-to-Photos request over the WebView's
@@ -57,6 +58,16 @@ function savePhotoChannel(): { postMessage: (m: string) => void } | null {
  */
 export function canSaveToPhotosInNativeApp(): boolean {
   return savePhotoChannel() !== null;
+}
+
+/**
+ * Whether this surface can save the file at all. The native app saves only
+ * into Photos, which takes images and videos; until it gains a Files export, a
+ * 3D file there has nowhere to go, and a plain download link would navigate
+ * the WebView away from the app.
+ */
+export function canSaveFile(filename: string): boolean {
+  return !canSaveToPhotosInNativeApp() || !isModelFilename(filename);
 }
 
 export function saveToPhotosInNativeApp(

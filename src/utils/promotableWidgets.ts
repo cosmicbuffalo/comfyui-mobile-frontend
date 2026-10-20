@@ -38,6 +38,10 @@ export function collectPromotableWidgets({
     if (widget.connected) continue;
     const baseName = widget.name.split(': ').pop() ?? widget.name;
     if (baseName === 'video_oasis_ui' || baseName === 'ltx23_oasis_ui') continue;
+    // A DynamicGroup's value is its row count plus every row's fields across
+    // many slots; a boundary input carries one value, so promoting it would
+    // drop rows from the prompt.
+    if (widget.type === 'DYNAMIC_GROUP') continue;
 
     const indexedInput = widget.inputIndex >= 0 ? node.inputs[widget.inputIndex] : null;
     const namedInput = widget.inputName

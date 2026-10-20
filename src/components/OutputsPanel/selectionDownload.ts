@@ -1,4 +1,5 @@
 import type { FileItem } from '@/api/client';
+import { isModelFilename } from '@/utils/model3d';
 
 export interface DownloadTarget {
   src: string;
@@ -32,7 +33,7 @@ export function downloadTargetFromFileId(id: string): DownloadTarget | null {
   const filename = lastSlash >= 0 ? path.slice(lastSlash + 1) : path;
   const subfolder = lastSlash >= 0 ? path.slice(0, lastSlash) : '';
   const ext = filename.split('.').pop()?.toLowerCase() ?? '';
-  if (!DOWNLOADABLE_EXTENSIONS.has(ext)) return null;
+  if (!DOWNLOADABLE_EXTENSIONS.has(ext) && !isModelFilename(filename)) return null;
   return {
     src: `/view?filename=${encodeURIComponent(filename)}&type=${source}&subfolder=${encodeURIComponent(subfolder)}`,
     filename,

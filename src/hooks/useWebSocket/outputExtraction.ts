@@ -1,4 +1,5 @@
 import type { HistoryOutputImage } from '@/api/types';
+import { model3dMetadata, standardize3dOutput } from '@/utils/model3d';
 import type {
   DenoVideoCompareAudio,
   DenoVideoCompareMetadata,
@@ -71,10 +72,11 @@ export function collectExecutedMediaOutputs(
   // the socket's catch reported that as a parse failure, so a run went on with
   // the rest of that message's work silently skipped.
   if (!output || typeof output !== 'object') return media;
-  for (const key of ['images', 'gifs', 'videos', 'deno_video_preview'] as const) {
+  output = standardize3dOutput(output);
+  for (const key of ['images', 'gifs', 'videos', 'deno_video_preview', '3d'] as const) {
     const candidates = output[key];
     if (!Array.isArray(candidates)) continue;
-    for (const candidate of candidates) {
+    for (const [index, candidate] of candidates.entries()) {
       if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) continue;
       const descriptor = candidate as Partial<HistoryOutputImage>;
       if (
@@ -84,6 +86,7 @@ export function collectExecutedMediaOutputs(
       ) continue;
       const normalized: HistoryOutputImage = {
         ...(candidate as HistoryOutputImage),
+        ...(key === '3d' ? { model3d: model3dMetadata(output, index) } : {}),
         // Every execution gets its own browser-cache identity. This matters for
         // ordinary outputs too: ComfyUI may reuse a path whose previous file
         // was moved outside the app, where our delete invalidation cannot run.

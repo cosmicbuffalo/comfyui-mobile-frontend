@@ -1,6 +1,6 @@
 # ComfyUI Mobile User Guide
 
-This guide walks through every feature in the mobile frontend as of `v3.3.10`
+This guide walks through every feature in the mobile frontend as of `v3.4.0`
 
 ## Table of Contents
 
@@ -33,6 +33,9 @@ This guide walks through every feature in the mobile frontend as of `v3.3.10`
   - [How do I find a specific node in my workflow?](#how-do-i-find-a-specific-node-in-my-workflow)
   - [How do I quickly edit a widget I change often?](#how-do-i-quickly-edit-a-widget-i-change-often)
   - [How do I use LoRA Manager with this frontend?](#how-do-i-use-lora-manager-with-this-frontend)
+  - [How do I stack LoRAs with ComfyUI's LoRA nodes?](#how-do-i-stack-loras-with-comfyuis-lora-nodes)
+  - [How do I aim a camera with the camera nodes?](#how-do-i-aim-a-camera-with-the-camera-nodes)
+  - [How do I view 3D outputs?](#how-do-i-view-3d-outputs)
   - [How do I skip (bypass) a node in my workflow?](#how-do-i-skip-bypass-a-node-in-my-workflow)
   - [How do I re-run a previous generation?](#how-do-i-re-run-a-previous-generation)
   - [How do I trace which nodes are connected to each other?](#how-do-i-trace-which-nodes-are-connected-to-each-other)
@@ -211,7 +214,7 @@ If you have more than one workflow open in [tabs](#workflow-tabs), the picker fi
 
 Click on the image you would like to load the workflow for in your outputs list, then click the small button with the workflow icon overlaid on top of the image viewer. This will load the workflow embedded in the image into the workflow panel, you will be prompted to confirm if your current loaded workflow has changes, since any unsaved changes will be lost.
 
-You don't have to open the file first: **Load workflow** is also in the file's `...` menu on the [Outputs Page](#outputs-page). For a video that entry appears only once the app has confirmed there is a workflow it can reach, so a clip saved on its own simply doesn't offer it.
+You don't have to open the file first: **Load workflow** is also in the file's `...` menu on the [Outputs Page](#outputs-page). For a video or a 3D file that entry appears only once the app has confirmed there is a workflow it can reach, so a clip saved on its own simply doesn't offer it. Of the 3D formats, only GLB files saved by **Save GLB** carry their workflow.
 
 > [!NOTE]
 > It is currently possible to load workflows for videos too, but only if one of the following applies:
@@ -282,6 +285,23 @@ Use a workflow that contains supported `(LoraManager)` nodes (for example: Lora 
 Once a workflow with LoraManager nodes is loaded, the frontend will automatically accept incoming updates (`lora_code_update`, `trigger_word_update`, and `lm_widget_update`) and apply them to the matching node automatically. Trigger-word nodes connected to LoRA nodes can be refreshed automatically based on active LoRAs.
 
 You can open the LoRA Manager web UI directly from a LoRA node card's `...` menu using **Open LoRA Manager**.
+
+<a id="how-do-i-stack-loras-with-comfyuis-lora-nodes"></a>
+### How do I stack LoRAs with ComfyUI's LoRA nodes?
+
+ComfyUI 0.40's **Load LoRA (Model)** and **Load LoRA (Text Encoder)** nodes hold a list of LoRAs instead of just one. Each row has its own LoRA picker and **Strength**, plus an **Enabled** / **Disabled** button. Disabled rows are dimmed and skipped when you run, so you can try a LoRA without removing it. **Toggle All Loras** at the top switches every row at once, **Add Lora** adds a row, and each row's arrows and **Remove** button reorder or delete it.
+
+<a id="how-do-i-aim-a-camera-with-the-camera-nodes"></a>
+### How do I aim a camera with the camera nodes?
+
+**Create Camera Info** and **Compose Camera Angle Prompt** show a small 3D scene above their settings. Drag the colored rings to orbit around the subject and the pink handle to zoom or change the distance; the numbers below update as you drag. On Create Camera Info, the **Camera transform** menu adds gizmos to move the target or move and rotate the camera, and **Look through** shows exactly what the camera sees. On Compose Camera Angle Prompt, connect an image to see it on the front of the cube, and switch between **Camera view** and **Object view**.
+
+<a id="how-do-i-view-3d-outputs"></a>
+### How do I view 3D outputs?
+
+3D files (meshes, point clouds and Gaussian splats) from nodes such as **Save GLB** and **Preview 3D** appear on the node card and the queue card with a small preview you can turn by dragging sideways (vertical swipes still scroll the page). Tap **Expand**, or open the file from the [Outputs Page](#outputs-page), to view it full screen in the [Image Viewer](#image-viewer) alongside your other outputs. Drag on the model to orbit and pinch or scroll to zoom; because dragging turns the model, use the arrow buttons (or the arrow keys) to move to the next or previous output. **Reset view**, **Wireframe** and, for animated models, **Animation** sit at the top left.
+
+On the Outputs Page, 3D files show a rendered thumbnail. Thumbnails are made on your device and stored in your browser, so each device makes its own the first time it shows a file. Files over 20 MB get theirs the first time you open them, rather than being downloaded in the background.
 
 <a id="how-do-i-skip-bypass-a-node-in-my-workflow"></a>
 ### How do I skip (bypass) a node in my workflow?
