@@ -93,3 +93,45 @@ it('writes a drag to the workflow once per frame, inside the input range, and fl
   expect(onChange).toHaveBeenCalledTimes(2);
   expect(onChange).toHaveBeenLastCalledWith({ 0: 100, 1: 0 });
 });
+
+function renderInfo(mode: string) {
+  const node: WorkflowNode = {
+    id: 2, itemKey: makeLocationPointer({ type: 'node', nodeId: 2, subgraphId: null }), type: 'CreateCameraInfo',
+    inputs: [], outputs: [], widgets_values: [mode], pos: [0, 0], size: [200, 100], flags: {}, order: 0, mode: 0, properties: {},
+  };
+  const infoType = {
+    ...angleType, name: 'CreateCameraInfo', output: ['LOAD3D_CAMERA'], output_name: ['camera_info'],
+    input: { required: { mode: ['COMFY_DYNAMICCOMBO_V3', { options: ['orbit', 'look_at', 'quaternion'].map(key => ({ key, inputs: { required: {} } })) }] } },
+  } as unknown as NodeTypeDefinition;
+  useWorkflowStore.setState({ nodeTypes: { CreateCameraInfo: infoType }, workflow: { nodes: [node], links: [], groups: [], last_node_id: 2, last_link_id: 0, config: {}, extra: {}, version: 0.4 }, scopeStack: [] });
+  act(() => root.render(<CameraControls node={node} onChange={() => {}} disabled={false} />));
+  return container.querySelector<HTMLSelectElement>('select[aria-label="Camera transform"]')!;
+}
+
+it('offers only the transforms the camera mode can store', () => {
+  const options = (mode: string) => [...renderInfo(mode).options].map(option => option.textContent);
+  // One set of handles each: the camera's, or its target's. A quaternion camera
+  // has no target to move, but a rotation of its own.
+  expect(options('orbit')).toEqual(['Orbit / roll', 'Move']);
+  expect(options('look_at')).toEqual(['Move camera', 'Move']);
+  expect(options('quaternion')).toEqual(['Move camera', 'Rotate camera']);
+  act(() => root.unmount());
+});
+
+it('keeps the handles and transform picker for the corner while looking through', () => {
+  const picker = renderInfo('orbit');
+  const button = (label: string) => [...container.querySelectorAll('button')].find(b => b.textContent === label)!;
+  const corner = () => container.querySelector('[data-camera-corner]');
+  expect(corner()).not.toBeNull();
+  act(() => button('Look through').click());
+  // The handles move to the corner, so both stay usable, and Reset view turns the corner back.
+  expect(button('Handles').disabled).toBe(false);
+  expect(picker.disabled).toBe(false);
+  expect(button('Reset view').disabled).toBe(false);
+  act(() => button('Handles').click());
+  expect(corner()).toBeNull();
+  expect(button('Reset view').disabled).toBe(true);
+  act(() => button('Handles').click());
+  expect(corner()).not.toBeNull();
+  act(() => root.unmount());
+});

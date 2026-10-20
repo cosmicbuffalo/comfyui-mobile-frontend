@@ -1,94 +1,53 @@
 # Changelog
 
-## 3.4.0 - 2026-10-15
+## 3.4.0 - 2026-10-20
 
-Supports ComfyUI 0.40 through 0.42.1, including growing reference inputs and
-visual layout authoring. Older ComfyUI versions remain supported.
+Supports ComfyUI 0.40 through 0.42.1. Older ComfyUI versions remain supported.
 
 ### Added
 
-- **Growing inputs.** Reference-image groups in **Set Reference Multi Latent**,
-  **Krea 3 Image**, and other nodes offer typed connections that grow as you
-  connect them. Add or remove inputs directly, including groups inside selectors.
-- **Visual bounding boxes.** **Create Bounding Boxes** supports drawing, moving,
-  resizing, duplicating and ordering boxes, with object/text labels, captions,
-  five-color palettes and background images. Saved layouts work with the new
-  FLUX.3 and MOSS layout-prompt nodes and ComfyUI's desktop editor.
-- **Webcam capture.** **Start camera**, capture a still, or leave the camera
-  running to capture each queued run. Stopping the camera keeps the saved still;
-  hiding the page or closing the control releases the camera.
-- **Starter workflow.** **Menu → Templates → Load starter workflow** uses the
-  core's starter workflow, with a basic editable starter on older cores.
-
-- **Low resource mode.** The former **Blur effects** switch is now
-  **Preferences → Low resource mode**, off by default. It removes blur and
-  motion, skips model thumbnails and background prefetch, limits previews to
-  1024 pixels, pauses latent previews, and plays videos on request. Inline 3D
-  previews open through **Expand**. Inactive
-  panels are released and undo history keeps the latest three steps. Turning
-  the preset off restores the other saved preferences. Existing blur-off
-  settings migrate to low resource mode.
 - **LoRA stacks.** **Load LoRA (Model)** and **Load LoRA (Text Encoder)** show
-  one row per LoRA: pick the file, set its strength, switch it on or off, and
-  move or remove it. **Toggle All Loras** switches every row at once, and
-  **Add Lora** adds another. Workflows save and queue exactly as they do in
-  ComfyUI's own editor.
+  one row per LoRA with its strength, an on/off switch, reorder and remove,
+  plus **Toggle All Loras** and **Add Lora**.
 - **Camera nodes.** **Create Camera Info** and **Compose Camera Angle Prompt**
-  get an interactive 3D preview. Drag the handles to move the camera: cyan
-  around the subject, magenta up and down, yellow nearer or farther. Create
-  Camera Info also has gizmos to move the target or move and rotate the camera.
-  **Look through** shows the camera's own view, and Compose Camera Angle Prompt
-  shows your reference image on the cube.
-- **3D outputs.** Meshes (GLB, GLTF, OBJ, FBX, STL), point clouds and Gaussian
-  splats (PLY, SPLAT, SPZ, KSPLAT) from nodes such as **Save GLB** and
-  **Preview 3D** show on node and queue cards, open in the viewer alongside
-  your other outputs, and can be favorited, deleted and downloaded like them.
-  Drag to orbit, and use the arrows to move between outputs.
-- **3D thumbnails in Outputs.** 3D files show a rendered preview instead of a
-  placeholder. Previews are made on your device the first time you see a
-  file; files over 20 MB get theirs when you first open them.
-- **Load workflow from 3D files.** GLB files saved by **Save GLB** carry their
-  workflow, and **Load workflow** opens it from the Outputs menu or the viewer.
-- **License notices.** `THIRD_PARTY_NOTICES.md` lists the open-source
-  packages built into the app, with their license texts.
+  get an interactive 3D preview with drag handles. **Look through** shows the
+  camera's own view; two fingers or Shift-drag pan it.
+- **3D outputs.** Meshes, point clouds and Gaussian splats show on node and
+  queue cards, open in the media viewer and get rendered thumbnails in
+  Outputs. GLB files from **Save GLB** can load their workflow.
+- **Growing inputs** on nodes such as **Set Reference Multi Latent** and
+  **Krea 3 Image**.
+- **Bounding boxes.** A full-screen editor for **Create Bounding Boxes**.
+- **Webcam capture**, optionally on every queued run.
+- **Starter workflow** in **Templates**.
+- **Low resource mode** in **Preferences**, replacing **Blur effects**: less
+  motion, smaller previews, and media that loads on request.
+- `THIRD_PARTY_NOTICES.md` lists bundled open-source packages and licenses.
 
 ### Improved
 
-- **New node diagnostics.** Image/video and audio latent-size nodes show their
-  text diagnostics, including in low resource mode and background workflow tabs.
-- **Nested reference groups.** Stock-saved Krea 3 prompts and subsequent settings
-  retain their correct widget positions even when no reference images are linked.
-
-- **Faster workflow edits.** Unrelated root node cards no longer refresh for
-  each widget edit. Connected values and graph changes remain reactive;
-  subgraphs and wireless links keep full dependency tracking.
-- **Large pickers.** Long option lists render a window of measured rows, with
-  full filenames, search, keyboard navigation, and selected-option scrolling.
-  Model catalogs are no longer repeatedly joined into strings during widget
-  checks, and model lookup/search data is reused across renders.
-- **Smaller inline image previews.** Workflow cards and other inline images use
-  the bounded, cached preview endpoint already used by queue cards. Downloads
-  and the original-image preference keep their existing behavior.
+- Faster workflow edits, model pickers, saved-workflow menus and Outputs
+  browsing, with smaller inline previews.
+- Node text diagnostics show on their cards, also in low resource mode.
 
 ### Changed
 
-- **One look for every LoRA node.** Native LoRA stacks, LoRA Manager,
-  rgthree's Power Lora Loader and Comfyroll's CR LoRA Stack now share one
-  layout, showing only the controls each node has. A switched-off LoRA turns
-  purple like a bypassed node, with only its LoRA picker dimmed. Power Lora's
-  Toggle All is now a switch that shows whether every LoRA is on, and CR LoRA
-  Stack no longer folds a LoRA away when you switch it off.
+- Every LoRA node, including LoRA Manager, Power Lora Loader and CR LoRA
+  Stack, shares one layout. A switched-off LoRA turns purple like a bypassed
+  node.
+- Groundwork for an upcoming companion node.
 
 ### Fixed
 
-- **Camera gizmos.** The first drag after enabling or moving a camera gizmo
-  uses its current position, even before the next preview frame renders.
+- Output previews follow every run, refresh when a file is replaced, and no
+  longer show stale images after switching tabs.
+- Krea reference groups saved in the desktop editor load correctly.
+- The installed app's manifest loads on servers behind a login (fixes #114).
 
 ### Notes
 
-- **Load 3D** and **Load 3D (Advanced)**, which need a model staged in
-  ComfyUI's 3D editor, still need the desktop editor. Uploading 3D files from
-  mobile isn't supported yet.
+- **Load 3D** and **Load 3D (Advanced)** still need the desktop editor;
+  uploading 3D files from mobile isn't supported yet.
 - EXR files are not listed or previewed.
 
 ## 3.3.10 - 2026-10-15

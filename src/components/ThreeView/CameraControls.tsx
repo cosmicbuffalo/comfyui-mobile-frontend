@@ -5,10 +5,20 @@ import { getActiveNodeInputDefinitions } from '@/utils/workflowInputs';
 import { getImagePreviewUrl } from '@/api/client';
 import { getLinkId, getLinkOriginId, resolveCurrentScope } from '@/utils/canonicalWorkflowOps';
 import { splitPathAnnotation } from '@/utils/annotatedPath';
-import { CameraViewport, type TransformMode } from './CameraViewport';
+import { CameraViewport, cornerFraction, type TransformMode } from './CameraViewport';
 import { limit } from './cameraMath';
 import { t as translate, useI18n } from '@/i18n';
-const toolbarButton = 'min-h-10 rounded-lg border border-white/10 bg-slate-950 px-3 py-2 text-xs aria-pressed:border-cyan-400 aria-pressed:text-cyan-200 disabled:opacity-40';
+const TRANSFORMS_BY_MODE: Record<string, TransformMode[]> = {
+  orbit: ['camera', 'target'],
+  look_at: ['camera', 'target'],
+  quaternion: ['camera', 'rotate'],
+};
+const TRANSFORM_LABELS: Record<TransformMode, string> = { camera: 'Move camera', target: 'Move', rotate: 'Rotate camera' };
+// An orbit camera moves by its orbit handles and roll ring, not a gizmo.
+const transformLabel = (value: TransformMode, cameraMode: string) =>
+  value === 'camera' && cameraMode === 'orbit' ? 'Orbit / roll' : TRANSFORM_LABELS[value];
+const toolbarControl = 'pointer-events-auto min-h-10 rounded-lg border border-white/10 bg-slate-950/80 text-xs backdrop-blur-sm disabled:opacity-40';
+const toolbarButton = `${toolbarControl} px-3 py-2 aria-pressed:border-cyan-400 aria-pressed:text-cyan-200`;
 
 export default function CameraControls({ node, onChange, disabled }: {
   node: WorkflowNode; onChange: (updates: Record<number, unknown>) => void; disabled: boolean;
@@ -20,7 +30,16 @@ export default function CameraControls({ node, onChange, disabled }: {
   const [error, setError] = useState<string | null>(null);
   const [lookingThrough, setLookingThrough] = useState(false);
   const [gizmos, setGizmos] = useState(true);
-  const [transform, setTransform] = useState<TransformMode>('none');
+  const [transform, setTransform] = useState<TransformMode>('camera');
+  // The frame drawn around the corner view, sized by the same rule the viewport draws it with.
+  const [cornerShare, setCornerShare] = useState(() => cornerFraction(0));
+  const frame = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!frame.current) return;
+    const observer = new ResizeObserver(([entry]) => setCornerShare(cornerFraction(entry.contentRect.width)));
+    observer.observe(frame.current);
+    return () => observer.disconnect();
+  }, []);
   const nodeTypes = useWorkflowStore(s => s.nodeTypes);
   const workflow = useWorkflowStore(s => s.workflow);
   const scopeStack = useWorkflowStore(s => s.scopeStack);
@@ -30,6 +49,10 @@ export default function CameraControls({ node, onChange, disabled }: {
   const inputs = Object.fromEntries(definitions.map(d => [d.qualifiedName, d.value]));
   const inputsKey = JSON.stringify(inputs);
   const isAngle = node.type === 'CameraAngle';
+  // Each camera mode can only move what it stores: an orbit's position comes
+  // from yaw/pitch/distance, and only a quaternion camera has its own rotation.
+  const transforms = TRANSFORMS_BY_MODE[String(inputs.mode)] ?? TRANSFORMS_BY_MODE.orbit;
+  const activeTransform = transforms.includes(transform) ? transform : 'camera';
   const mode = inputs.view === 'object' ? 'object' : 'camera';
   const scope = isAngle && workflow ? resolveCurrentScope(scopeStack, workflow) : null;
   const link = scope?.links.find(l => getLinkId(l) === node.inputs.find(i => i.name === 'image')?.link);
@@ -99,24 +122,32 @@ export default function CameraControls({ node, onChange, disabled }: {
     const instance = viewport.current;
     if (isAngle) void instance?.setImage(referenceUrl);
   }, [referenceUrl, isAngle]);
+  useEffect(() => { viewport.current?.setTransformGizmoMode(activeTransform); }, [activeTransform]);
   const changeMode = (value: string) => {
     const input = definitions.find(d => d.name === 'view');
     if (input?.widgetIndex != null) onChange({ [input.widgetIndex]: value });
   };
 
-  return <section className="my-3 space-y-2" aria-label={isAngle ? t('Camera angle preview') : t('Camera info preview')}>
-    <div className="flex flex-wrap gap-2">
-      {isAngle ? <>
-        <button type="button" className={toolbarButton} aria-pressed={mode === 'camera'} disabled={disabled} onClick={() => changeMode('camera')}>{t('Camera view')}</button>
-        <button type="button" className={toolbarButton} aria-pressed={mode === 'object'} disabled={disabled} onClick={() => changeMode('object')}>{t('Object view')}</button>
-      </> : <>
-        <button type="button" className={toolbarButton} aria-pressed={lookingThrough} onClick={() => { const next = !lookingThrough; setLookingThrough(next); viewport.current?.setLookThrough(next); }}>{t('Look through')}</button>
-        <button type="button" className={toolbarButton} aria-pressed={gizmos} disabled={disabled} onClick={() => { setGizmos(!gizmos); viewport.current?.setGizmosVisible(!gizmos); }}>{t('Handles')}</button>
-        <select aria-label={t('Camera transform')} className="rounded bg-slate-800 px-2" value={transform} disabled={disabled} onChange={event => { const next = event.target.value as TransformMode; setTransform(next); viewport.current?.setTransformGizmoMode(next); }}>
-          <option value="none">{t('Orbit / roll')}</option><option value="target">{t('Move target')}</option><option value="camera-translate">{t('Move camera')}</option><option value="camera-rotate">{t('Rotate camera')}</option>
-        </select>
-      </>}
-    </div>
-    {error ? <p role="status" className="text-sm text-slate-400">{t('3D preview unavailable: {error}', { error })}</p> : <div ref={container} className="h-72 w-full overflow-hidden rounded-lg" style={{ pointerEvents: disabled ? 'none' : undefined }} />}
+  return <section className="my-3" aria-label={isAngle ? t('Camera angle preview') : t('Camera info preview')}>
+    {error ? <p role="status" className="text-sm text-slate-400">{t('3D preview unavailable: {error}', { error })}</p> : <div ref={frame} className="relative">
+      <div ref={container} className="aspect-square w-full overflow-hidden rounded-lg" style={{ pointerEvents: disabled ? 'none' : undefined }} />
+      {/* The corner view: the camera's view, or its handles while looking through it. */}
+      {!isAngle && (gizmos || !lookingThrough) && <div aria-hidden="true" data-camera-corner className="pointer-events-none absolute bottom-0 right-0 rounded-br-lg rounded-tl-lg border-l border-t border-white/25" style={{ width: `${cornerShare * 100}%`, height: `${cornerShare * 100}%` }} />}
+      {/* Over the scene, top left; a drag between the controls still reaches the canvas. */}
+      <div className="pointer-events-none absolute left-2 right-2 top-2 flex flex-wrap gap-2">
+        <button type="button" className={toolbarButton} disabled={disabled || (isAngle && mode === 'object') || (lookingThrough && !gizmos)} onClick={() => viewport.current?.resetView()}>{t('Reset view')}</button>
+        {isAngle ? <>
+          <button type="button" className={toolbarButton} aria-pressed={mode === 'camera'} disabled={disabled} onClick={() => changeMode('camera')}>{t('Camera view')}</button>
+          <button type="button" className={toolbarButton} aria-pressed={mode === 'object'} disabled={disabled} onClick={() => changeMode('object')}>{t('Object view')}</button>
+        </> : <>
+          <button type="button" className={toolbarButton} aria-pressed={lookingThrough} onClick={() => { const next = !lookingThrough; setLookingThrough(next); viewport.current?.setLookThrough(next); }}>{t('Look through')}</button>
+          {/* Looking through, the handles move to the bottom-right corner; Handles shows or hides them there. */}
+          <button type="button" className={toolbarButton} aria-pressed={gizmos} disabled={disabled} onClick={() => { setGizmos(!gizmos); viewport.current?.setGizmosVisible(!gizmos); }}>{t('Handles')}</button>
+          <select aria-label={t('Camera transform')} className={`${toolbarControl} px-2`} value={activeTransform} disabled={disabled} onChange={event => setTransform(event.target.value as TransformMode)}>
+            {transforms.map(value => <option key={value} value={value}>{t(transformLabel(value, String(inputs.mode ?? 'orbit')))}</option>)}
+          </select>
+        </>}
+      </div>
+    </div>}
   </section>;
 }

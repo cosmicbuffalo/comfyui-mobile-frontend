@@ -15,6 +15,8 @@ export function applyCameraUp(camera: THREE.Camera, state: CameraState) {
   else if (state.quaternion) camera.up.applyQuaternion(new THREE.Quaternion().copy(state.quaternion).normalize());
 }
 
+const HOME_POSITION = new THREE.Vector3(8, 6, 10);
+
 /** A renderer whose lifetime follows the visible React preview. */
 export class Viewport3d {
   readonly renderer: THREE.WebGLRenderer;
@@ -49,7 +51,7 @@ export class Viewport3d {
     const light = new THREE.DirectionalLight(0xffffff, 3);
     light.position.set(4, 8, 6);
     this.scene.add(light);
-    this.camera.position.set(8, 6, 10);
+    this.camera.position.copy(HOME_POSITION);
     this.controls = new OrbitControls(this.camera, this.domElement);
     // OrbitControls claims every touch gesture; give vertical ones back to the page.
     if (pageScroll) this.domElement.style.touchAction = 'pan-y';
@@ -113,6 +115,10 @@ export class Viewport3d {
     this.controls.enabled = camera === null;
     if (!camera) this.controls.object = this.camera;
     this.forceRender();
+  }
+  /** Back to where the camera started, looking at the origin. */
+  resetCamera() {
+    this.setCameraState({ position: HOME_POSITION.clone(), target: new THREE.Vector3(), zoom: 1, cameraType: 'perspective' });
   }
   setCameraState(state: CameraState) {
     const camera = this.camera;

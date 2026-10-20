@@ -59,6 +59,30 @@ export function lookDrag(kind: CameraKind, inputs: CameraInputs, dx: number, dy:
   return { 'mode.yaw': ((numberInput(inputs, 'mode.yaw', 35) - dx * sensitivity) % 360 + 360) % 360, 'mode.pitch': limit(numberInput(inputs, 'mode.pitch', 30) - dy * sensitivity, -89, 89) };
 }
 
+/**
+ * Slide the camera across its own view by a drag of (dx, dy) CSS pixels on a
+ * view `viewHeight` pixels tall, so what is at the target follows the fingers.
+ * An orbit camera moves by its target, a placed one by its position (and its
+ * target, for look_at).
+ */
+export function panDrag(kind: CameraKind, inputs: CameraInputs, dx: number, dy: number, viewHeight: number): CameraInputs {
+  if (kind === 'angle' || viewHeight <= 0) return {};
+  const pose = cameraPose(kind, inputs);
+  const depth = pose.position.distanceTo(pose.target) || 4;
+  const span = pose.orthographic ? 2 / pose.zoom : 2 * depth * Math.tan(MathUtils.degToRad(pose.fov) / 2) / pose.zoom;
+  const move = new Vector3(-dx, dy, 0).multiplyScalar(span / viewHeight).applyQuaternion(pose.quaternion);
+  const values: CameraInputs = {};
+  if (pose.mode !== 'quaternion') {
+    const target = pose.target.clone().add(move);
+    Object.assign(values, { target_x: target.x, target_y: target.y, target_z: target.z });
+  }
+  if (pose.mode !== 'orbit') {
+    const position = pose.position.clone().add(move);
+    Object.assign(values, { 'mode.position_x': position.x, 'mode.position_y': position.y, 'mode.position_z': position.z });
+  }
+  return values;
+}
+
 export function wheelChange(kind: CameraKind, inputs: CameraInputs, delta: number): CameraInputs {
   if (kind === 'angle') return { zoom: limit(numberInput(inputs, 'zoom', 5) - delta * 0.01, 0, 10) };
   const pose = cameraPose(kind, inputs);

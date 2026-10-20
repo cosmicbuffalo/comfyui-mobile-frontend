@@ -62,8 +62,9 @@ export default function WebcamControl({ value, onChange, disabled, nodeKey, widt
   let image: string | undefined;
   if (typeof value === 'string' && value) { const parsed = splitPathAnnotation(value); const slash = parsed.path.lastIndexOf('/'); image = getImagePreviewUrl(parsed.path.slice(slash + 1), slash < 0 ? '' : parsed.path.slice(0, slash), parsed.type ?? 'input'); }
   return <section aria-label={t('Webcam capture')} className="my-3 space-y-2">
-    <video ref={video} muted playsInline className={active ? 'max-h-72 w-full rounded-lg' : 'hidden'} />
-    {!active && image && <img src={image} alt={t('Captured camera image')} loading="lazy" className="max-h-72 w-full rounded-lg object-contain" />}
+    {/* The node's full width at the feed's own shape: a height cap shrank a portrait feed sideways. */}
+    <video ref={video} muted playsInline className={active ? 'block h-auto w-full rounded-lg' : 'hidden'} />
+    {!active && image && <img src={image} alt={t('Captured camera image')} loading="lazy" className="block h-auto w-full rounded-lg" />}
     <div className="flex flex-wrap gap-2">
       <button type="button" className={button} disabled={disabled || busy} onClick={() => { if (active) { stop(); setActive(false); } else void start(); }}>{active ? t('Stop camera') : t('Start camera')}</button>
       <button type="button" className={button} disabled={disabled || busy || !active} onClick={async () => { const epoch = generation.current; setBusy(true); setError(''); try { const path = await capture(); if (generation.current === epoch) onChange(path); } catch (cause) { if (generation.current === epoch) setError(String(cause)); } finally { setBusy(false); } }}>{t('Capture image')}</button>

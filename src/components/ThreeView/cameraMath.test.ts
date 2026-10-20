@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { Vector3 } from 'three';
-import { cameraPose, lookDrag, orbitPosition, wheelChange } from './cameraMath';
+import { PerspectiveCamera, Vector3 } from 'three';
+import { cameraPose, lookDrag, orbitPosition, panDrag, wheelChange } from './cameraMath';
 
 describe('camera node contracts', () => {
   it('places the angle camera six units in front and applies the backend zoom scale', () => {
@@ -56,5 +56,36 @@ describe('camera node contracts', () => {
   it('bounds interactive orbit distance and lens zoom', () => {
     expect(wheelChange('info', { 'mode.distance': 1 }, -10000)).toEqual({ 'mode.distance': 0.5 });
     expect(wheelChange('angle', { zoom: 9 }, -1000)).toEqual({ zoom: 10 });
+  });
+});
+
+describe('panDrag', () => {
+  // Where a world point lands on a 400 px square view through this pose.
+  const onScreen = (inputs: Record<string, unknown>, world: Vector3) => {
+    const pose = cameraPose('info', inputs);
+    const camera = new PerspectiveCamera(pose.fov, 1, 0.1, 1000);
+    camera.position.copy(pose.position); camera.quaternion.copy(pose.quaternion); camera.zoom = pose.zoom;
+    camera.updateProjectionMatrix(); camera.updateMatrixWorld(true);
+    const point = world.clone().project(camera);
+    return [(point.x + 1) / 2 * 400, (1 - point.y) / 2 * 400];
+  };
+
+  it.each([
+    ['orbit', { mode: 'orbit', 'mode.yaw': 35, 'mode.pitch': 25, 'mode.distance': 4.5, target_x: 0.5, target_y: 0, target_z: 0 }],
+    ['look_at', { mode: 'look_at', 'mode.position_x': 2, 'mode.position_y': 1, 'mode.position_z': 3, target_x: 0, target_y: 0, target_z: 0 }],
+  ])('keeps what was at the target under the fingers for an %s camera', (_mode, inputs) => {
+    const target = cameraPose('info', inputs).target;
+    const [x0, y0] = onScreen(inputs, target);
+    const panned = { ...inputs, ...panDrag('info', inputs, 40, -25, 400) };
+    const [x1, y1] = onScreen(panned, target);
+    expect(x1 - x0).toBeCloseTo(40, 0);
+    expect(y1 - y0).toBeCloseTo(-25, 0);
+  });
+
+  it('moves what each camera mode stores', () => {
+    expect(Object.keys(panDrag('info', { mode: 'orbit' }, 10, 0, 400)).sort()).toEqual(['target_x', 'target_y', 'target_z']);
+    expect(Object.keys(panDrag('info', { mode: 'look_at' }, 10, 0, 400)).sort()).toEqual(['mode.position_x', 'mode.position_y', 'mode.position_z', 'target_x', 'target_y', 'target_z']);
+    expect(Object.keys(panDrag('info', { mode: 'quaternion' }, 10, 0, 400)).sort()).toEqual(['mode.position_x', 'mode.position_y', 'mode.position_z']);
+    expect(panDrag('angle', {}, 10, 0, 400)).toEqual({});
   });
 });
