@@ -22,8 +22,9 @@ Four rules govern this module:
    outputs would be the worse loss), `can_modify_file` → the `can_read_file` answer (stricter than
    nothing), `badge_for_file` / `prompt_owner` / `folder_badges` / the
    `*_tags` reporters → an empty, honest report, `virtually_deleted_paths`
-   → empty, `virtual_delete_file` and `can_access_model` → False (refuse
-   rather than pretend or grant), `prompt_owner_or_unknown` →
+   → empty, `virtual_delete_file`, `can_access_model`, `can_create_folder` and
+   `assign_new_folder` → False (refuse rather than pretend or grant),
+   `prompt_owner_or_unknown` →
    `OWNER_UNKNOWN`. Two exceptions in the other direction are deliberate:
    `filter_files` denies (`[]`) even when the *method* is missing from a
    present node — a listing that cannot be scoped must not be returned
@@ -374,6 +375,67 @@ def can_modify_file(path: str, user=None) -> bool:
     except Exception as exc:
         _warn_once(exc)
         return False
+
+
+def can_create_folder(path: str, tree: str = "output", user=None) -> bool:
+    """Whether this viewer may make a new folder at a tree-relative path.
+
+    False when the auth node predates this contract: a folder nobody can own
+    would sit shared in everyone's tree, which is what this check prevents.
+    """
+    api = _resolve()
+    if api is None:
+        return True
+    try:
+        return bool(api.can_create_folder(path, tree=tree, user=user))
+    except AttributeError:
+        return False
+    except Exception as exc:
+        _warn_once(exc)
+        return False
+
+
+def assign_new_folder(path: str, tree: str = "output", user=None) -> bool:
+    """Make a folder this request just created its creator's. False when that
+    could not be recorded, so the caller can undo the folder."""
+    api = _resolve()
+    if api is None:
+        return True
+    try:
+        api.assign_new_folder(path, tree=tree, user=user)
+        return True
+    except AttributeError:
+        return False
+    except Exception as exc:
+        _warn_once(exc)
+        return False
+
+
+def folder_moved(old_path: str, new_path: str, tree: str = "output") -> None:
+    """Tell the auth node a folder moved, so its ownership goes with it. A no-op
+    without the node, or with one predating this call."""
+    api = _resolve()
+    if api is None:
+        return
+    try:
+        api.folder_moved(old_path, new_path, tree=tree)
+    except AttributeError:
+        return
+    except Exception as exc:
+        _warn_once(exc)
+
+
+def folder_deleted(path: str, tree: str = "output") -> None:
+    """Tell the auth node a folder is gone, so its ownership does not outlive it."""
+    api = _resolve()
+    if api is None:
+        return
+    try:
+        api.folder_deleted(path, tree=tree)
+    except AttributeError:
+        return
+    except Exception as exc:
+        _warn_once(exc)
 
 
 def virtual_delete_file(path: str, user=None) -> bool:

@@ -10,6 +10,7 @@ import os
 import shutil
 
 import folder_paths
+import server
 import file_utils as _file_utils
 import mobile_auth as _mobile_auth
 import mobile_file_state as _mobile_file_state
@@ -19,7 +20,6 @@ from file_utils import entry_matches_name_or_path, is_within_dir as _is_within_d
 from mobile_metadata import get_cached_prompt_text
 from mobile_common import (
     _ASSET_SOURCES,
-    FILE_STATE_CACHE_PATH,
     _safe_int,
     _source_base_dir,
 )
@@ -34,11 +34,43 @@ def _may_modify(path: str, viewer=None) -> bool:
         return True
     if not os.path.isdir(path):
         return _mobile_auth.can_modify_file(path, user=viewer)
-    for root, _dirs, files in os.walk(path):
-        for name in files:
-            if not _mobile_auth.can_modify_file(os.path.join(root, name), user=viewer):
+    for root, dirs, files in os.walk(path):
+        # Folders are owned too: a subfolder someone else holds blocks it.
+        for name in [None, *dirs, *files]:
+            if not _mobile_auth.can_modify_file(root if name is None else os.path.join(root, name), user=viewer):
                 return False
     return True
+
+
+def _tree_rel(path: str, base_dir: str) -> str:
+    return os.path.relpath(path, os.path.abspath(base_dir)).replace(os.sep, '/')
+
+
+def _file_state_path(request):
+    """This account's favorite/reject/hidden marks. Each account keeps its
+    own, resolved like /userdata; without accounts, and for the admin pinned to
+    ComfyUI's `default` tree, that is the one file there always was."""
+    return server.PromptServer.instance.user_manager.get_request_user_filepath(
+        request, 'mobile/file_state.json')
+
+
+def _may_mark(path: str) -> bool:
+    """Whether this viewer may favorite, reject or hide a path.
+
+    Marks are a declutter toggle rather than access control, so reading is the
+    bar: you may mark anything you can see, and nothing you cannot.
+    """
+    return not (_mobile_auth.is_enabled() and os.path.isfile(path)
+                and not _mobile_auth.can_read_file(path, user=_mobile_auth.current_user()))
+
+
+def _visible_states(state, base_dir, viewer):
+    """Drop marked files this viewer may not read: the marks are shared, and
+    their paths would otherwise list other accounts' files by name."""
+    def readable(rel):
+        full = os.path.join(base_dir, rel)
+        return not os.path.isfile(full) or _mobile_auth.can_read_file(full, user=viewer)
+    return {name: [rel for rel in paths if readable(rel)] for name, paths in state.items()}
 
 
 # How many files to look at before giving an unassigned folder the benefit of
@@ -177,6 +209,7 @@ def _filter_by_ownership(results, source, base_dir, viewer, include_shared):
 
 async def api_list_files(request):
     try:
+        state_path = _file_state_path(request)
         query = request.rel_url.query
         source = query.get('source', 'output')
         if source not in _ASSET_SOURCES:
@@ -233,7 +266,7 @@ async def api_list_files(request):
             # fetching them separately parsed the state file twice per
             # listing (it reaches 350KB+ on a well-used install).
             verified_hidden, hidden_set = _mobile_file_state.get_hidden_listing_view(
-                FILE_STATE_CACHE_PATH,
+                state_path,
                 source,
                 base_dir,
             )
@@ -297,7 +330,7 @@ async def api_list_files(request):
             # read, and folders can be transiently absent while external
             # tools move/mount/generate them.
             _mobile_file_state.annotate_listing(
-                FILE_STATE_CACHE_PATH,
+                state_path,
                 source,
                 base_dir,
                 results,
@@ -332,6 +365,7 @@ async def api_list_files(request):
 
 async def api_delete_file(request):
     try:
+        state_path = _file_state_path(request)
         data = await request.json()
         filepath = data.get('path')
         source = data.get('source', 'output')
@@ -363,19 +397,20 @@ async def api_delete_file(request):
             if not os.path.exists(target_path):
                 return False
             removal_plan = _mobile_file_state.plan_remove_path(
-                FILE_STATE_CACHE_PATH,
+                state_path,
                 source,
                 base_dir,
                 filepath,
             )
             if os.path.isdir(target_path):
                 shutil.rmtree(target_path)
+                _mobile_auth.folder_deleted(_tree_rel(target_path, base_dir), tree=source)
             else:
                 os.remove(target_path)
             # Remove only identities verified at this path before deletion.
             # A moved original whose old name was reused keeps its state.
             _mobile_file_state.remove_path(
-                FILE_STATE_CACHE_PATH,
+                state_path,
                 source,
                 filepath,
                 removal_plan,
@@ -392,6 +427,7 @@ async def api_delete_file(request):
 
 async def api_get_file_state(request):
     try:
+        state_path = _file_state_path(request)
         source = request.rel_url.query.get('source', 'output')
         if source not in _ASSET_SOURCES:
             return web.json_response({"error": "source must be output/input/temp"}, status=400)
@@ -400,16 +436,20 @@ async def api_get_file_state(request):
         state = await loop.run_in_executor(
             None,
             _mobile_file_state.get_all,
-            FILE_STATE_CACHE_PATH,
+            state_path,
             source,
             base_dir,
         )
+        if _mobile_auth.is_enabled():
+            state = await loop.run_in_executor(
+                None, _visible_states, state, base_dir, _mobile_auth.current_user())
         return web.json_response(state)
     except Exception as e:
         return web.json_response({"error": str(e)}, status=500)
 
 async def api_set_file_state(request):
     try:
+        state_path = _file_state_path(request)
         data = await request.json()
         path = data.get('path')
         source = data.get('source', 'output')
@@ -425,13 +465,13 @@ async def api_set_file_state(request):
             return web.json_response({"error": "source must be output/input/temp"}, status=400)
         base_dir = _source_base_dir(source)
         target_path = _safe_join(base_dir, path)
-        if target_path is None:
+        if target_path is None or not _may_mark(target_path):
             return web.json_response({"error": "Access denied"}, status=403)
         loop = asyncio.get_event_loop()
         applied = await loop.run_in_executor(
             None,
             _mobile_file_state.set_state,
-            FILE_STATE_CACHE_PATH,
+            state_path,
             source,
             state,
             base_dir,
@@ -455,6 +495,7 @@ async def api_set_file_state(request):
 # shipped client calls them.
 async def api_set_hidden(request):
     try:
+        state_path = _file_state_path(request)
         data = await request.json()
         path = data.get('path')
         source = data.get('source', 'output')
@@ -465,21 +506,13 @@ async def api_set_hidden(request):
             return web.json_response({"error": "source must be output/input/temp"}, status=400)
         base_dir = _source_base_dir(source)
         target_path = _safe_join(base_dir, path)
-        if target_path is None:
-            return web.json_response({"error": "Access denied"}, status=403)
-        # Hiding is a declutter toggle rather than access control, so reading
-        # is the right bar: you may fold away anything you can see. (Per-viewer
-        # hidden state, so one account's toggle cannot reach another's listing,
-        # is an access-control concern and is deliberately not handled here.)
-        if (_mobile_auth.is_enabled() and os.path.isfile(target_path)
-                and not _mobile_auth.can_read_file(target_path,
-                                                   user=_mobile_auth.current_user())):
+        if target_path is None or not _may_mark(target_path):
             return web.json_response({"error": "Access denied"}, status=403)
         loop = asyncio.get_event_loop()
         applied = await loop.run_in_executor(
             None,
             _mobile_file_state.set_state,
-            FILE_STATE_CACHE_PATH,
+            state_path,
             source,
             'hidden',
             base_dir,
@@ -497,6 +530,7 @@ async def api_set_hidden(request):
 
 async def api_get_file_favorites(request):
     try:
+        state_path = _file_state_path(request)
         source = request.rel_url.query.get('source', 'output')
         if source not in _ASSET_SOURCES:
             return web.json_response({"error": "source must be output/input/temp"}, status=400)
@@ -505,17 +539,22 @@ async def api_get_file_favorites(request):
         favorites = await loop.run_in_executor(
             None,
             _mobile_file_state.get_paths,
-            FILE_STATE_CACHE_PATH,
+            state_path,
             source,
             'favorite',
             base_dir,
         )
+        if _mobile_auth.is_enabled():
+            favorites = (await loop.run_in_executor(
+                None, _visible_states, {'favorite': favorites}, base_dir,
+                _mobile_auth.current_user()))['favorite']
         return web.json_response({"favorites": favorites})
     except Exception as e:
         return web.json_response({"error": str(e)}, status=500)
 
 async def api_set_file_favorite(request):
     try:
+        state_path = _file_state_path(request)
         data = await request.json()
         path = data.get('path')
         source = data.get('source', 'output')
@@ -528,13 +567,13 @@ async def api_set_file_favorite(request):
             return web.json_response({"error": "source must be output/input/temp"}, status=400)
         base_dir = _source_base_dir(source)
         target_path = _safe_join(base_dir, path)
-        if target_path is None:
+        if target_path is None or not _may_mark(target_path):
             return web.json_response({"error": "Access denied"}, status=403)
         loop = asyncio.get_event_loop()
         applied = await loop.run_in_executor(
             None,
             _mobile_file_state.set_state,
-            FILE_STATE_CACHE_PATH,
+            state_path,
             source,
             'favorite',
             base_dir,
@@ -549,17 +588,22 @@ async def api_set_file_favorite(request):
         favorites = await loop.run_in_executor(
             None,
             _mobile_file_state.get_paths,
-            FILE_STATE_CACHE_PATH,
+            state_path,
             source,
             'favorite',
             base_dir,
         )
+        if _mobile_auth.is_enabled():
+            favorites = (await loop.run_in_executor(
+                None, _visible_states, {'favorite': favorites}, base_dir,
+                _mobile_auth.current_user()))['favorite']
         return web.json_response({"favorites": favorites})
     except Exception as e:
         return web.json_response({"error": str(e)}, status=500)
 
 async def api_move_files(request):
     try:
+        state_path = _file_state_path(request)
         data = await request.json()
         sources = data.get('sources')
         destination = data.get('destination', '')
@@ -578,6 +622,10 @@ async def api_move_files(request):
             return web.json_response({"error": "Destination not found"}, status=404)
         if not os.path.isdir(dest_path):
             return web.json_response({"error": "Destination must be a folder"}, status=400)
+        # Moving into a folder writes to it: not into another account's.
+        if (_mobile_auth.is_enabled()
+                and not _mobile_auth.can_modify_file(dest_path, user=_mobile_auth.current_user())):
+            return web.json_response({"error": "Access denied"}, status=403)
 
         # Validate every path on the loop; do the disk work in an executor —
         # a move can degrade to a full copy+delete across mounts and would
@@ -611,11 +659,14 @@ async def api_move_files(request):
                 if not os.path.exists(src_path):
                     continue
                 target = os.path.join(dest_path, basename)
+                moved_folder = os.path.isdir(src_path)
                 shutil.move(src_path, target)
+                if moved_folder:
+                    _mobile_auth.folder_moved(_tree_rel(src_path, base_dir), _tree_rel(target, base_dir), tree=asset_source)
                 # Keep hidden state attached to the item across the move.
                 new_rel = os.path.relpath(target, os.path.abspath(base_dir))
                 _mobile_file_state.rename_path(
-                    FILE_STATE_CACHE_PATH,
+                    state_path,
                     asset_source,
                     rel,
                     new_rel,
@@ -628,19 +679,23 @@ async def api_move_files(request):
     except Exception as e:
         return web.json_response({"error": str(e)}, status=500)
 
-def _resolve_workflows_path(rel_path):
-    """Resolve a path under the (default) user's workflows dir, guarding
-    against traversal. Returns (abs_path, base_dir) or (None, base_dir)."""
-    base_dir = os.path.realpath(
-        os.path.join(folder_paths.get_user_directory(), 'default', 'workflows')
-    )
+def _resolve_workflows_path(request, rel_path):
+    """Resolve a path under the requesting user's workflows dir, guarding
+    against traversal. Returns the absolute path, or None outside it."""
+    # Ask ComfyUI's user manager, as /userdata does: with multiuser that is the
+    # signed-in account's own tree, not the admin's `default` one.
+    workflows = server.PromptServer.instance.user_manager.get_request_user_filepath(
+        request, 'workflows', create_dir=False)
+    if workflows is None:
+        return None
+    base_dir = os.path.realpath(workflows)
     # realpath (not abspath) so a symlink inside the workflows dir can't
     # point destructive operations outside the sandbox.
     target = os.path.realpath(os.path.join(base_dir, rel_path))
     # Must stay strictly inside the workflows dir (never the dir itself).
     if target == base_dir or os.path.commonpath([base_dir, target]) != base_dir:
-        return None, base_dir
-    return target, base_dir
+        return None
+    return target
 
 async def api_create_workflow_folder(request):
     try:
@@ -648,7 +703,7 @@ async def api_create_workflow_folder(request):
         path = (data.get('path') or '').strip().strip('/')
         if not path:
             return web.json_response({"error": "No path provided"}, status=400)
-        target, _ = _resolve_workflows_path(path)
+        target = _resolve_workflows_path(request, path)
         if target is None:
             return web.json_response({"error": "Access denied"}, status=403)
         if os.path.exists(target):
@@ -663,7 +718,7 @@ async def api_delete_workflow_folder(request):
         path = (request.query.get('path') or '').strip().strip('/')
         if not path:
             return web.json_response({"error": "No path provided"}, status=400)
-        target, _ = _resolve_workflows_path(path)
+        target = _resolve_workflows_path(request, path)
         if target is None:
             return web.json_response({"error": "Access denied"}, status=403)
         if not os.path.isdir(target):
@@ -682,18 +737,38 @@ async def api_mkdir(request):
         if not path:
             return web.json_response({"error": "No path provided"}, status=400)
 
+        if source not in _ASSET_SOURCES:
+            return web.json_response({"error": "source must be output/input/temp"}, status=400)
         base_dir = _source_base_dir(source)
         target_path = _safe_join(base_dir, path)
         if target_path is None:
             return web.json_response({"error": "Access denied"}, status=403)
+        if os.path.isdir(target_path):
+            return web.json_response({"success": True})
 
-        os.makedirs(target_path, exist_ok=True)
+        # The first level that does not exist yet is the folder being made; a
+        # nested path makes its parents too, and they all fall under it.
+        new_root = target_path
+        while not os.path.exists(os.path.dirname(new_root)):
+            new_root = os.path.dirname(new_root)
+        new_rel = os.path.relpath(new_root, base_dir).replace(os.sep, '/')
+        guarded = _mobile_auth.is_enabled()
+        viewer = _mobile_auth.current_user() if guarded else None
+        if guarded and not _mobile_auth.can_create_folder(new_rel, tree=source, user=viewer):
+            return web.json_response({"error": "Access denied"}, status=403)
+        os.makedirs(target_path)
+        # Like a file it writes, the folder is its creator's. Only ever the new
+        # one: claiming an existing folder would take a shared one.
+        if guarded and not _mobile_auth.assign_new_folder(new_rel, tree=source, user=viewer):
+            shutil.rmtree(new_root, ignore_errors=True)
+            return web.json_response({"error": "Could not record the folder's owner"}, status=500)
         return web.json_response({"success": True})
     except Exception as e:
         return web.json_response({"error": str(e)}, status=500)
 
 async def api_rename_file(request):
     try:
+        state_path = _file_state_path(request)
         data = await request.json()
         path = data.get('path')
         new_name = (data.get('newName') or '').strip()
@@ -722,10 +797,12 @@ async def api_rename_file(request):
             return web.json_response({"error": "A file or folder with that name already exists"}, status=409)
 
         os.rename(src_path, dst_path)
+        if os.path.isdir(dst_path):
+            _mobile_auth.folder_moved(_tree_rel(src_path, base_dir), _tree_rel(dst_path, base_dir), tree=source)
         # Keep hidden state attached to the item across the rename.
         new_rel = os.path.relpath(dst_path, os.path.abspath(base_dir))
         _mobile_file_state.rename_path(
-            FILE_STATE_CACHE_PATH,
+            state_path,
             source,
             path,
             new_rel,

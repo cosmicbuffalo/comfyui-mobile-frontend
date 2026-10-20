@@ -22,6 +22,7 @@ from mobile_metadata import (
     read_glb_metadata,
     resolve_metadata_path,
 )
+import mobile_auth as _mobile_auth
 import mobile_image_dimensions as _mobile_image_dimensions
 import mobile_image_preview as _mobile_image_preview
 import mobile_push as _mobile_push
@@ -34,6 +35,23 @@ from mobile_common import (
     _render_image_thumbnail,
     _source_base_dir,
 )
+def _readable(base_dir, paths, viewer):
+    """The requested paths this viewer may read: a batch must not report on
+    other accounts' files by name."""
+    def allowed(rel):
+        full = _safe_join(base_dir, rel) if isinstance(rel, str) else None
+        return full is not None and _mobile_auth.can_read_file(full, user=viewer)
+    return [rel for rel in paths if allowed(rel)]
+
+
+async def _batch_paths(base_dir, paths):
+    paths = paths[:512]
+    if not _mobile_auth.is_enabled():
+        return paths
+    return await asyncio.get_event_loop().run_in_executor(
+        None, _readable, base_dir, paths, _mobile_auth.current_user())
+
+
 async def api_file_dimensions(request):
     """True pixel dimensions for a batch of images.
 
@@ -56,7 +74,7 @@ async def api_file_dimensions(request):
             None,
             _mobile_image_dimensions.get_dimensions_for_paths,
             base_dir,
-            paths[:512],
+            await _batch_paths(base_dir, paths),
         )
         return web.json_response({"dimensions": dimensions})
     except Exception as e:
@@ -79,7 +97,7 @@ async def api_video_durations(request):
             None,
             _mobile_video_metadata.get_durations_for_paths,
             base_dir,
-            paths[:512],
+            await _batch_paths(base_dir, paths),
         )
         return web.json_response({"durations": durations})
     except Exception as e:

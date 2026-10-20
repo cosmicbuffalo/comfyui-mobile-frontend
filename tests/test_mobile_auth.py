@@ -239,6 +239,38 @@ def test_folder_badges_swallow_auth_node_errors():
     _install_fake_auth_node(folder_badges=boom)
     assert mobile_auth.folder_badges(["private"]) == {}
 
+# --- folder creation ---------------------------------------------------------
+
+
+def test_folders_are_created_freely_without_the_auth_node():
+    assert mobile_auth.can_create_folder("new") is True
+    assert mobile_auth.assign_new_folder("new") is True
+
+
+def test_folder_creation_is_refused_on_an_auth_node_predating_it():
+    # The folder could never be anyone's, so it would sit shared in every tree.
+    _install_fake_auth_node()
+    assert mobile_auth.can_create_folder("new") is False
+    assert mobile_auth.assign_new_folder("new") is False
+
+
+def test_a_broken_folder_check_denies():
+    _install_fake_auth_node(can_create_folder=_boom, assign_new_folder=_boom)
+    assert mobile_auth.can_create_folder("new") is False
+    assert mobile_auth.assign_new_folder("new") is False
+
+
+def test_folder_moves_and_deletes_never_fail_the_operation():
+    # The folder is already moved or gone; reporting it must not undo that.
+    assert mobile_auth.folder_moved("a", "b") is None
+    _install_fake_auth_node()
+    assert mobile_auth.folder_moved("a", "b") is None
+    assert mobile_auth.folder_deleted("a") is None
+    _install_fake_auth_node(folder_moved=_boom, folder_deleted=_boom)
+    assert mobile_auth.folder_moved("a", "b") is None
+    assert mobile_auth.folder_deleted("a") is None
+
+
 # --- public route registration --------------------------------------------
 
 

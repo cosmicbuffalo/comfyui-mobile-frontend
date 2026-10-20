@@ -106,12 +106,26 @@ def sanitize_entry(prompt_id: str, entry: dict[str, Any], previous: dict[str, An
     return result
 
 
-def upsert_prompt_metadata(cache_path: str, prompt_id: str, entry: dict[str, Any]) -> dict[str, Any]:
+def _owned_by(entry: Any, owner_id: str | None) -> bool:
+    """Whether `owner_id` may see or change this entry. None is unrestricted:
+    no accounts, or an admin. An entry without an owner predates accounts, or
+    was an admin's, and stays admin-only like an unowned file."""
+    return owner_id is None or (isinstance(entry, dict) and entry.get("ownerId") == owner_id)
+
+
+def upsert_prompt_metadata(cache_path: str, prompt_id: str, entry: dict[str, Any],
+                           owner_id: str | None = None) -> dict[str, Any] | None:
+    """Write a prompt's metadata. None when it belongs to someone else."""
     with _LOCK:
         cache = load_cache(cache_path)
         prompts = cache["prompts"]
         previous = prompts.get(prompt_id)
+        if previous is not None and not _owned_by(previous, owner_id):
+            return None
         next_entry = sanitize_entry(prompt_id, entry, previous)
+        owner = previous.get("ownerId") if isinstance(previous, dict) else owner_id
+        if owner:
+            next_entry["ownerId"] = owner
         prompts[prompt_id] = next_entry
         cache["prompts"] = _trim_prompts(prompts)
         cache["updatedAt"] = _now_ms()
@@ -119,12 +133,15 @@ def upsert_prompt_metadata(cache_path: str, prompt_id: str, entry: dict[str, Any
         return next_entry
 
 
-def remap_prompt_metadata(cache_path: str, old_prompt_id: str, new_prompt_id: str) -> dict[str, Any] | None:
+def remap_prompt_metadata(cache_path: str, old_prompt_id: str, new_prompt_id: str,
+                          owner_id: str | None = None) -> dict[str, Any] | None:
     with _LOCK:
         cache = load_cache(cache_path)
         prompts = cache["prompts"]
         previous = prompts.get(old_prompt_id)
-        if not isinstance(previous, dict):
+        if not isinstance(previous, dict) or not _owned_by(previous, owner_id):
+            return None
+        if new_prompt_id in prompts and not _owned_by(prompts[new_prompt_id], owner_id):
             return None
         prompts.pop(old_prompt_id, None)
         prompts[new_prompt_id] = sanitize_entry(
@@ -135,15 +152,18 @@ def remap_prompt_metadata(cache_path: str, old_prompt_id: str, new_prompt_id: st
             },
             previous,
         )
+        if previous.get("ownerId"):
+            prompts[new_prompt_id]["ownerId"] = previous["ownerId"]
         cache["prompts"] = _trim_prompts(prompts)
         cache["updatedAt"] = _now_ms()
         save_cache(cache_path, cache)
         return prompts[new_prompt_id]
 
 
-def get_prompt_metadata(cache_path: str, prompt_ids: list[str] | None = None) -> dict[str, Any]:
+def get_prompt_metadata(cache_path: str, prompt_ids: list[str] | None = None,
+                        owner_id: str | None = None) -> dict[str, Any]:
     cache = load_cache(cache_path)
-    prompts = cache["prompts"]
+    prompts = {key: entry for key, entry in cache["prompts"].items() if _owned_by(entry, owner_id)}
     if prompt_ids is None:
         return prompts
     wanted = set(filter(None, (_normalize_prompt_id(value) for value in prompt_ids)))
