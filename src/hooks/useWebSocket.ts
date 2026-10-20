@@ -615,6 +615,7 @@ export function useWebSocket() {
             setExecutionState(false, null, null, 0);
             for (const sid of Object.keys(ws.parkedSessions)) {
               setExecutionState(false, null, null, 0, null, sid);
+              storeActionsRef.current.clearAllLatentPreviews(sid);
             }
             storeActionsRef.current.clearAllLatentPreviews();
             clearVhsLatentSequences();
@@ -692,9 +693,7 @@ export function useWebSocket() {
             if (promptId) delete promptStartedAtRef.current[promptId];
             executingPromptIdRef.current = null;
             setExecutionState(false, null, null, 0, null, ctx.sessionId);
-            if (ctx.sessionId === useWorkflowStore.getState().activeSessionId) {
-              storeActionsRef.current.clearAllLatentPreviews();
-            }
+            storeActionsRef.current.clearAllLatentPreviews(ctx.sessionId);
             clearVhsLatentSequences();
 
             // Apply control_after_generate for PrimitiveNodes
@@ -1018,12 +1017,9 @@ export function useWebSocket() {
           if (promptId) delete promptStartedAtRef.current[promptId];
           executingPromptIdRef.current = null;
           setExecutionState(false, null, null, 0, null, errCtx.sessionId);
-          // Latent previews only ever exist for the active tab, so only clear
-          // them when the active tab is the one that errored — a background
-          // (parked) session's error must not wipe the foreground run's preview.
-          if (errCtx.sessionId === useWorkflowStore.getState().activeSessionId) {
-            storeActionsRef.current.clearAllLatentPreviews();
-          }
+          // The errored tab's previews only: a background session's error
+          // must not wipe the foreground run's preview.
+          storeActionsRef.current.clearAllLatentPreviews(errCtx.sessionId);
           clearVhsLatentSequences();
           // Only clear the errored prompt's outputs. A prompt-id-less error must
           // NOT fall through to the wipe-all branch — that would destroy output
@@ -1227,9 +1223,7 @@ export function useWebSocket() {
             storeActionsRef.current.removeRunning(finishedPromptId);
 
             if (finishedCtx) {
-              if (finishedCtx.sessionId === useWorkflowStore.getState().activeSessionId) {
-                storeActionsRef.current.clearAllLatentPreviews();
-              }
+              storeActionsRef.current.clearAllLatentPreviews(finishedCtx.sessionId);
               clearVhsLatentSequences();
             }
             return;

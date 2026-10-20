@@ -79,8 +79,6 @@ export class CameraViewport {
     this.view = new Viewport3d(container);
     this.view.scene.add(this.sceneObjects);
     this.view.grid.visible = kind === 'info';
-    // CameraAngle's overview is fixed: drags belong to its handles.
-    if (kind === 'angle') this.view.controls.enabled = false;
     const materials = ['RIGHT', 'LEFT', 'TOP', 'BOTTOM', 'FRONT', 'BACK'].map(label => {
       const canvas = document.createElement('canvas');
       canvas.width = canvas.height = 128;
@@ -137,7 +135,7 @@ export class CameraViewport {
     this.transformControl.attach(this.transformProxy);
     this.transformHelper = this.transformControl.getHelper();
     this.view.scene.add(this.transformProxy, this.transformHelper);
-    this.transformControl.addEventListener('dragging-changed', event => { this.view.controls.enabled = this.kind === 'info' && !event.value && !this.lookingThrough; });
+    this.transformControl.addEventListener('dragging-changed', event => { this.view.controls.enabled = !event.value && !this.lookingThrough; });
     this.transformControl.addEventListener('objectChange', this.onTransform);
     const canvas = this.view.domElement;
     canvas.addEventListener('pointerdown', this.onDown, true);
@@ -207,7 +205,8 @@ export class CameraViewport {
     let texture: THREE.Texture | null = null;
     if (url) {
       try { texture = await new THREE.TextureLoader().loadAsync(url); }
-      catch { return; }
+      // A failed load clears the face rather than leaving the previous image up.
+      catch { if (token === this.imageToken) this.imageUrl = null; }
     }
     if (this.disposed || token !== this.imageToken) { texture?.dispose(); return; }
     const face = (this.subject.material as THREE.MeshStandardMaterial[])[4];
@@ -352,10 +351,13 @@ export class CameraViewport {
     event.stopImmediatePropagation();
   };
   private onUp = (event: PointerEvent) => {
+    // TransformControls ignores pointercancel: a cancelled gizmo drag stayed
+    // live, blocking orbit and dragging on with the next touch.
+    if (event.type === 'pointercancel' && this.transformControl.dragging) this.transformControl.pointerUp(null);
     if (this.dragging?.pointer !== event.pointerId) return;
     this.dragging = null;
     if (this.view.domElement.hasPointerCapture(event.pointerId)) this.view.domElement.releasePointerCapture(event.pointerId);
-    this.view.controls.enabled = this.kind === 'info' && !this.lookingThrough;
+    this.view.controls.enabled = !this.lookingThrough;
     event.stopImmediatePropagation();
   };
   private onWheel = (event: WheelEvent) => {

@@ -34,7 +34,7 @@ describe('NodeCard emitted video output', () => {
   let container: HTMLDivElement;
   let root: Root;
   let node: WorkflowNode;
-  const preloadedImages: Array<{ onload: (() => void) | null; src: string }> = [];
+  const preloadedImages: Array<{ onload: (() => void) | null; onerror: (() => void) | null; src: string }> = [];
 
   beforeEach(() => {
     container = document.createElement('div');
@@ -53,6 +53,7 @@ describe('NodeCard emitted video output', () => {
     preloadedImages.length = 0;
     vi.stubGlobal('Image', class {
       onload: (() => void) | null = null;
+      onerror: (() => void) | null = null;
       src = '';
       constructor() {
         preloadedImages.push(this);
@@ -150,6 +151,68 @@ describe('NodeCard emitted video output', () => {
     expect(container.querySelector('img')).toBeNull();
     await act(async () => preloadedImages[0].onload?.());
     expect(container.querySelector('img')?.getAttribute('src')).toContain('filename=result.png');
+  });
+
+  describe('a new run of an image output', () => {
+    const shown = () => container.querySelector('img')?.getAttribute('src') ?? '';
+    const run = async (filename: string) => act(async () => useWorkflowStore.setState({
+      nodeOutputs: { '91': [{ filename, subfolder: 'demo', type: 'output', cacheToken: filename }] },
+    }));
+
+    beforeEach(async () => {
+      vi.useFakeTimers();
+      await run('new-angle_00001_.png');
+      await act(async () => root.render(<NodeCard node={node} />));
+      await act(async () => preloadedImages[0].onload?.());
+      expect(shown()).toContain('filename=new-angle_00001_.png');
+    });
+    afterEach(() => vi.useRealTimers());
+
+    it('replaces the previous image once the new one loads', async () => {
+      await run('new-angle_00002_.png');
+      expect(shown()).toContain('filename=new-angle_00001_.png');
+      await act(async () => preloadedImages[1].onload?.());
+      expect(shown()).toContain('filename=new-angle_00002_.png');
+    });
+
+    it('retries a refused preload instead of keeping the previous image', async () => {
+      // Multiuser refused a non-admin's new SaveImage file until the job finished;
+      // the failed preload left the card on the last run's image until a reload.
+      await run('new-angle_00002_.png');
+      await act(async () => preloadedImages[1].onerror?.());
+      expect(preloadedImages).toHaveLength(2);
+      await act(async () => vi.advanceTimersByTime(1000));
+      expect(preloadedImages).toHaveLength(3);
+      expect(preloadedImages[2].src).toContain('filename=new-angle_00002_.png');
+      await act(async () => preloadedImages[2].onload?.());
+      expect(shown()).toContain('filename=new-angle_00002_.png');
+    });
+
+    it('shows the new output once retries run out', async () => {
+      await run('new-angle_00002_.png');
+      for (const delay of [1000, 2000, 4000]) {
+        await act(async () => preloadedImages.at(-1)!.onerror?.());
+        await act(async () => vi.advanceTimersByTime(delay));
+      }
+      expect(preloadedImages).toHaveLength(5);
+      await act(async () => preloadedImages.at(-1)!.onerror?.());
+      expect(shown()).toContain('filename=new-angle_00002_.png');
+    });
+
+    it('drops the image when another tab or workflow has no output for this node', async () => {
+      await act(async () => useWorkflowStore.setState({ nodeOutputs: {} }));
+      expect(container.querySelector('img')).toBeNull();
+    });
+
+    it('drops a pending retry when a newer run arrives', async () => {
+      await run('new-angle_00002_.png');
+      await act(async () => preloadedImages[1].onerror?.());
+      await run('new-angle_00003_.png');
+      await act(async () => vi.advanceTimersByTime(10000));
+      expect(preloadedImages.map(image => image.src.match(/new-angle_\d+/)?.[0])).toEqual([
+        'new-angle_00001', 'new-angle_00002', 'new-angle_00003',
+      ]);
+    });
   });
 
   it('cache-busts a Deno preview that overwrites the same filename each run', async () => {

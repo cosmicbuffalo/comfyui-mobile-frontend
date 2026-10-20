@@ -128,6 +128,107 @@ def test_nothing_is_sent_when_push_is_unavailable(push, monkeypatch):
     assert push["sent"] == []
 
 
+# --- per-account routing --------------------------------------------------
+#
+# On a server running comfyui-multiuser, "every subscription" is several
+# different people's browsers. A completion belongs to the account that
+# queued it, and so does the notification. The dispatch in mobile_push passes
+# owner= to BOTH push modules' send_completion — a signature that stops
+# accepting it silently kills every completion notification (the TypeError is
+# swallowed as a "dispatch error"), so the contract is pinned here too.
+
+
+def test_both_send_completion_signatures_accept_owner():
+    import inspect
+
+    import mobile_app_push
+
+    for module in (mobile_web_push, mobile_app_push):
+        params = inspect.signature(module.send_completion).parameters
+        assert "owner" in params, module.__name__
+
+
+def test_a_subscription_records_the_account_that_registered_it(push, monkeypatch):
+    sub = {"endpoint": "https://fcm.googleapis.com/fcm/send/new",
+           "keys": {"p256dh": "k", "auth": "a"}}
+    assert mobile_web_push.add_subscription(sub, owner="u1")
+    assert push["subs"]["https://fcm.googleapis.com/fcm/send/new"]["user_id"] == "u1"
+
+
+def test_a_completion_reaches_only_the_owners_browsers(push):
+    push["subs"]["https://fcm.googleapis.com/fcm/send/en-endpoint"]["user_id"] = "u1"
+    push["subs"]["https://web.push.apple.com/ja-endpoint"]["user_id"] = "u2"
+    result = mobile_web_push.send_completion("pid-1", "success", 1, owner="u1")
+    assert [e for e, _ in push["sent"]] == ["https://fcm.googleapis.com/fcm/send/en-endpoint"]
+    assert result["sent"] == 1
+
+
+def test_a_server_without_accounts_still_notifies_every_browser(push):
+    """The single-user behaviour this module has always had. owner=None is
+    not a fallback — it is the correct answer when there is one user."""
+    mobile_web_push.send_completion("pid-1", "success", 1)
+    assert len(push["sent"]) == 2
+
+
+def test_a_subscription_predating_accounts_is_skipped(push, monkeypatch, capsys):
+    """It belongs to nobody, so it cannot be shown to somebody — but say so
+    once, or the silence is unexplainable."""
+    monkeypatch.setattr(mobile_web_push, "_warned_unowned", False)
+    mobile_web_push.send_completion("pid-1", "success", 1, owner="u1")
+    assert push["sent"] == []
+    assert "not attached" in capsys.readouterr().out
+
+
+def test_one_account_cannot_unsubscribe_anothers_browser(push):
+    push["subs"]["https://fcm.googleapis.com/fcm/send/en-endpoint"]["user_id"] = "u1"
+    assert not mobile_web_push.remove_subscription(
+        "https://fcm.googleapis.com/fcm/send/en-endpoint", owner="u2")
+    assert mobile_web_push.remove_subscription(
+        "https://fcm.googleapis.com/fcm/send/en-endpoint", owner="u1")
+
+
+def test_subscription_count_is_scoped_to_the_owner(push):
+    push["subs"]["https://fcm.googleapis.com/fcm/send/en-endpoint"]["user_id"] = "u1"
+    push["subs"]["https://web.push.apple.com/ja-endpoint"]["user_id"] = "u2"
+    assert mobile_web_push.subscription_count("u1") == 1
+    assert mobile_web_push.subscription_count() == 2
+
+
+def test_a_signed_in_user_can_shed_an_unowned_legacy_subscription(push):
+    """A subscription registered before accounts existed has no user_id. Its
+    endpoint is a capability URL only that browser holds, so the signed-in
+    person presenting it is unsubscribing their own browser — refusing left
+    the pre-accounts registration permanently stuck."""
+    assert mobile_web_push.remove_subscription(
+        "https://fcm.googleapis.com/fcm/send/en-endpoint", owner="u1")
+    assert "https://fcm.googleapis.com/fcm/send/en-endpoint" not in push["subs"]
+
+
+def test_another_users_subscription_still_cannot_be_removed(push):
+    push["subs"]["https://fcm.googleapis.com/fcm/send/en-endpoint"]["user_id"] = "u2"
+    assert not mobile_web_push.remove_subscription(
+        "https://fcm.googleapis.com/fcm/send/en-endpoint", owner="u1")
+    assert "https://fcm.googleapis.com/fcm/send/en-endpoint" in push["subs"]
+
+
+def test_remove_owned_subscriptions_sweeps_only_that_account(push):
+    """The logout sweep: everything belonging to the account goes, nothing
+    else — not another account's browser, not an unowned legacy entry."""
+    push["subs"]["https://fcm.googleapis.com/fcm/send/en-endpoint"]["user_id"] = "u1"
+    # ja-endpoint stays unowned (legacy).
+    assert mobile_web_push.remove_owned_subscriptions("u1") == 1
+    assert set(push["subs"]) == {"https://web.push.apple.com/ja-endpoint"}
+    assert mobile_web_push.remove_owned_subscriptions("u1") == 0
+
+
+def test_remove_owned_subscriptions_requires_a_real_owner(push):
+    """No owner means no logout happened — a sweep keyed to nobody must not
+    become a way to clear the whole file."""
+    assert mobile_web_push.remove_owned_subscriptions(None) == 0
+    assert mobile_web_push.remove_owned_subscriptions("") == 0
+    assert len(push["subs"]) == 2
+
+
 # --- Endpoint allowlist: the server POSTs to whatever endpoint it stores, so
 # only real browser push services may be stored or contacted (SSRF guard). ---
 

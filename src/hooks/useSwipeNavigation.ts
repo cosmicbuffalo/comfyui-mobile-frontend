@@ -58,9 +58,10 @@ export function useSwipeNavigation({
     if (!swipeEnabled) return;
 
     const isEditableTarget = (target: EventTarget | null) => {
-      if (!(target instanceof HTMLElement)) return false;
+      // Element, not HTMLElement: a touch on an SVG canvas must see its opt-out too.
+      if (!(target instanceof Element)) return false;
       if (target.closest('[data-swipe-nav-ignore="true"]')) return true;
-      if (target.isContentEditable) return true;
+      if (target instanceof HTMLElement && target.isContentEditable) return true;
       const tag = target.tagName.toLowerCase();
       return tag === 'input' || tag === 'textarea' || tag === 'select';
     };

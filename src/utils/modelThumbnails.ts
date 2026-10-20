@@ -173,6 +173,14 @@ async function drain() {
       if (hasModelThumbnail(file) || failed.get(file.id) === file.cacheToken) continue;
       const controller = new AbortController();
       rendering = { id: file.id, controller };
+      // A hidden page stops drawing, so the render would time out and count as
+      // a failure. Stop it and render the file again once the page is back.
+      const onHidden = () => {
+        if (!document.hidden) return;
+        controller.abort();
+        queue.unshift(file);
+      };
+      document.addEventListener('visibilitychange', onHidden);
       try {
         const { renderModelThumbnail } = await import('@/components/ThreeView/renderModelThumbnail');
         if (controller.signal.aborted) continue;
@@ -182,6 +190,7 @@ async function drain() {
         // Unreadable or too slow: don't retry this version for the rest of the session.
         if (!controller.signal.aborted) failed.set(file.id, file.cacheToken!);
       } finally {
+        document.removeEventListener('visibilitychange', onHidden);
         rendering = null;
       }
     }

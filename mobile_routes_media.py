@@ -258,8 +258,11 @@ async def api_get_thumbnail(request):
 
         # Listing clients include the file's cacheToken in this URL, so a
         # reused path gets a new browser entry while scroll-backs for the
-        # same file still avoid re-downloading and re-decoding it.
-        cache_headers = {'Cache-Control': 'public, max-age=86400'}
+        # same file still avoid re-downloading and re-decoding it. Without a
+        # token (or a prompt_id) the path may be replaced in place — an input
+        # overwritten by "Use in workflow" — so revalidate instead.
+        cache_headers = {'Cache-Control': 'public, max-age=86400'
+                         if request.query.get('cb') or prompt_id else 'no-cache'}
 
         # A video's still is always its own first frame. This used to prefer
         # any image sharing the video's basename (VHS writes one beside each
@@ -322,10 +325,12 @@ async def api_get_preview(request):
         return web.Response(
             body=body,
             content_type='image/webp',
-            # The client includes a per-execution `cb` identity, so repeat
-            # views can cache hard without a reused output path inheriting
-            # an older run's preview.
-            headers={'Cache-Control': 'public, max-age=86400'},
+            # A per-execution `cb` identity lets repeat views cache hard
+            # without a reused path inheriting an older file's preview. Input
+            # previews often have none, and an input can be overwritten in
+            # place, so those revalidate.
+            headers={'Cache-Control': 'public, max-age=86400'
+                     if request.query.get('cb') else 'no-cache'},
         )
     except Exception:
         return web.Response(status=500, headers=no_store)

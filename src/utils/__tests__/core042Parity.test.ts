@@ -6,7 +6,7 @@ import { autogrowInputs, editAutogrow } from '../workflowInputs/autogrow';
 import { getInputWidgetDefinitions, getWidgetDefinitions } from '../widgetDefinitions';
 import { useWorkflowStore } from '@/hooks/useWorkflow';
 import { makeLocationPointer } from '../mobileLayout';
-import { applyBoundingBoxResult, fitBox } from '../boundingBoxes';
+import { applyBoundingBoxResult, readBoundingBoxOutput, fitBox } from '../boundingBoxes';
 import { parseBinaryPreviewMessage } from '@/hooks/useWebSocket/binaryPreview';
 import { captureQueuedWebcams, registerWebcam } from '../webcamCapture';
 
@@ -111,12 +111,12 @@ describe('bounding-box state', () => {
     definitions = getActiveNodeInputDefinitions(types[n.type], wf.nodes[0]);
     expect(definitions.find(d => d.name === 'editor_state')?.value).toMatchObject([{ x: 33 }]);
   });
-  it('retains executed dimensions for canvases whose size comes from a connection', () => {
+  it('keeps the run\'s background and canvas size out of the workflow, as stock does', () => {
     const wf = workflow([node('CreateBoundingBoxes')]);
-    const next = applyBoundingBoxResult(wf, types, key(1), { dims: [256, 2048] });
-    expect(next.nodes[0].properties.__mobile_box_dims).toEqual([256, 2048]);
-    expect(applyBoundingBoxResult(next, types, key(1), { dims: [256, 2048] })).toBe(next);
-    expect(applyBoundingBoxResult(next, types, key(1), { dims: [NaN, 0] })).toBe(next);
+    const background = { filename: 'bg.png', subfolder: '', type: 'temp' };
+    expect(applyBoundingBoxResult(wf, types, key(1), { dims: [256, 2048], background_images: [background] })).toBe(wf);
+    expect(readBoundingBoxOutput({ dims: [256, 2048], background_images: [background] })).toEqual({ dims: [256, 2048], background });
+    expect(readBoundingBoxOutput({ dims: [NaN, 0], background_images: [null] })).toEqual({});
   });
   it('wraps saved box arrays as values rather than prompt links', () => {
     const n = node('CreateBoundingBoxes');
@@ -137,10 +137,14 @@ describe('binary diagnostics', () => {
     view.setUint32(0, 3); view.setUint32(4, name.length); new Uint8Array(buffer, 8).set(name); new Uint8Array(buffer, 8 + name.length).set(content); return buffer;
   };
   it('decodes UTF-8 text and nested node ids', () => expect(parseBinaryPreviewMessage(textFrame('12:3', 'width: 64 — résumé'))).toEqual({ kind: 'text', nodeId: '12:3', text: 'width: 64 — résumé' }));
-  it('rejects truncated, oversized and invalid UTF-8 text frames', () => {
+  it('keeps long text, as stock does', () => {
+    const long = 'x'.repeat(200_000);
+    expect(parseBinaryPreviewMessage(textFrame('1', long))).toEqual({ kind: 'text', nodeId: '1', text: long });
+  });
+  it('rejects truncated, oversized-id and invalid UTF-8 text frames', () => {
     const truncated = textFrame('1', 'x'); new DataView(truncated).setUint32(4, 9000);
     expect(parseBinaryPreviewMessage(truncated)).toBeNull();
-    expect(parseBinaryPreviewMessage(textFrame('1', 'x'.repeat(65537)))).toBeNull();
+    expect(parseBinaryPreviewMessage(textFrame('1'.repeat(4097), 'x'))).toBeNull();
     const invalid = textFrame('1', 'x'); new Uint8Array(invalid)[8] = 255;
     expect(parseBinaryPreviewMessage(invalid)).toBeNull();
   });

@@ -14,6 +14,7 @@ We poll-and-diff rather than hooking ComfyUI's execution internals on purpose:
 it's resilient to ComfyUI version churn and needs no patching of core code.
 """
 import asyncio
+import functools
 
 import server
 
@@ -31,6 +32,11 @@ try:
     import mobile_push_prefs as _mobile_push_prefs
 except Exception:  # pragma: no cover - module should always be importable
     _mobile_push_prefs = None
+
+try:
+    import mobile_auth as _mobile_auth
+except Exception:  # pragma: no cover - module should always be importable
+    _mobile_auth = None
 
 try:
     import mobile_progress_ws as _mobile_progress_ws
@@ -175,7 +181,32 @@ async def _handle_completion(prompt_id, entry):
         except Exception as exc:
             print(f"{_LOG_PREFIX} progress-ws finished broadcast error: {exc}", flush=True)
 
-    prefs = _mobile_push_prefs.get_prefs() if _mobile_push_prefs is not None else {}
+    # Who this job belongs to, so the notification reaches them and not every
+    # phone on a shared server. None on a server without accounts, where it
+    # means "everyone", which is what it has always meant here.
+    owner = None
+    if _mobile_auth is not None and isinstance(entry, dict):
+        owner = _mobile_auth.prompt_owner_or_unknown(entry.get("prompt"))
+        # None here still means genuinely unowned — a job from before the gate
+        # existed, or a server without accounts — and keeps notifying broadly,
+        # which is the long-standing behaviour. OWNER_UNKNOWN is the case that
+        # must not: downstream, None addresses EVERY paired device, so an auth
+        # node that is gating but cannot say whose job this is would push one
+        # account's completion -- deep link, and the thumbnail when enabled --
+        # to everybody. Send nothing rather than send it to the wrong phone.
+        if owner is _mobile_auth.OWNER_UNKNOWN:
+            if _mobile_auth.is_enabled():
+                print(f"{_LOG_PREFIX} skipping notification: accounts are on but "
+                      f"the job's owner could not be determined", flush=True)
+                return
+            owner = None
+
+    # The OWNER's preferences gate their notification — prefs are per account
+    # now, and the person who queued the job is the one the push targets.
+    # Unowned prompts and gate-off servers read the legacy global store,
+    # which is the pre-multiuser behavior unchanged.
+    prefs = (_mobile_push_prefs.prefs_for_owner(owner)
+             if _mobile_push_prefs is not None else {})
     is_error = status == "error"
     # Respect the user's notify-on toggles before doing any work.
     if is_error and not prefs.get("notifyOnError", True):
@@ -198,8 +229,11 @@ async def _handle_completion(prompt_id, entry):
     if _mobile_web_push is not None and _mobile_web_push.is_available():
         try:
             result = await loop.run_in_executor(
-                None, _mobile_web_push.send_completion,
-                prompt_id, status, outputs, image_url, click_url,
+                None, functools.partial(
+                    _mobile_web_push.send_completion,
+                    prompt_id, status, outputs, image_url, click_url,
+                    owner=owner,
+                ),
             )
             if _mobile_telemetry is not None:
                 _mobile_telemetry.record_push_result("web", result)
@@ -215,8 +249,11 @@ async def _handle_completion(prompt_id, entry):
     if _mobile_app_push is not None and _mobile_app_push.is_available():
         try:
             result = await loop.run_in_executor(
-                None, _mobile_app_push.send_completion,
-                prompt_id, status, outputs, image_url, click_url,
+                None, functools.partial(
+                    _mobile_app_push.send_completion,
+                    prompt_id, status, outputs, image_url, click_url,
+                    owner=owner,
+                ),
             )
             if _mobile_telemetry is not None:
                 _mobile_telemetry.record_push_result("app", result)

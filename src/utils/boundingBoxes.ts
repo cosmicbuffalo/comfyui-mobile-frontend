@@ -1,4 +1,5 @@
-import type { NodeTypes, Workflow, WorkflowNode } from '@/api/types';
+import type { HistoryOutputImage, NodeTypes, Workflow, WorkflowNode } from '@/api/types';
+import type { NodeBoundingBoxOutput } from '@/hooks/useWorkflow/state';
 import { getActiveNodeInputDefinitions } from './workflowInputs';
 import { resolveNodeByHierarchicalKey, resolveScopeForHierarchicalKey } from './canonicalWorkflowOps';
 
@@ -38,10 +39,17 @@ export function applyBoundingBoxResult(workflow: Workflow, types: NodeTypes | nu
     values[editor.widgetIndex] = incoming;
     changed = true;
   }
-  const background = Array.isArray(output.background_images) ? output.background_images[0] : undefined;
-  const dims = Array.isArray(output.dims) && output.dims.length === 2 && output.dims.every(n => typeof n === 'number' && Number.isFinite(n) && n > 0)
-    ? output.dims : node.properties.__mobile_box_dims;
-  if (!changed && JSON.stringify(background ?? null) === JSON.stringify(node.properties.__mobile_box_background ?? null) && JSON.stringify(dims) === JSON.stringify(node.properties.__mobile_box_dims)) return workflow;
-  const next = { ...node, widgets_values: values, properties: { ...node.properties, __mobile_box_background: background ?? null, ...(dims ? { __mobile_box_dims: dims } : {}) } };
+  if (!changed) return workflow;
+  const next = { ...node, widgets_values: values };
   return scope.applyPatch(workflow, { nodes: scope.nodes.map(n => n.id === node.id ? next : n) });
+}
+
+/** The run-time half of a CreateBoundingBoxes result. Stock keeps it with the
+ *  node's outputs, not in the workflow, and so does the store. */
+export function readBoundingBoxOutput(output: Record<string, unknown>): NodeBoundingBoxOutput {
+  const image = Array.isArray(output.background_images) ? output.background_images[0] : undefined;
+  const background = image && typeof image === 'object' && typeof (image as HistoryOutputImage).filename === 'string' ? image as HistoryOutputImage : undefined;
+  const dims = Array.isArray(output.dims) && output.dims.length === 2 && output.dims.every(n => typeof n === 'number' && Number.isFinite(n) && n > 0)
+    ? output.dims as [number, number] : undefined;
+  return { ...(background ? { background } : {}), ...(dims ? { dims } : {}) };
 }

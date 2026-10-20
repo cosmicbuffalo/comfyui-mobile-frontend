@@ -972,6 +972,34 @@ describe('orphaned closed-tab run routing', () => {
     });
   }
 
+  it.each([
+    { end: 'finishes', msg: { type: 'executing', data: { node: null, prompt_id: 'bg-prompt' } } },
+    { end: 'errors', msg: { type: 'execution_error', data: { prompt_id: 'bg-prompt', node_id: '9', exception_message: 'boom' } } },
+  ])('drops a background tab\'s last latent frame when its run $end', async ({ msg }) => {
+    const revoke = vi.fn();
+    vi.stubGlobal('URL', class extends URL { static revokeObjectURL = revoke; });
+    useWorkflowStore.setState({
+      sessions: [{ id: 'active' }, { id: 'bg' }],
+      promptToSession: { 'bg-prompt': 'bg' },
+      parkedSessions: { bg: {
+        workflow: emptyWorkflow, expandedNodeIdMap: {}, expandedNodePathMap: {}, pointerByHierarchicalKey: {},
+        promptOutputs: {}, nodeOutputs: {}, isExecuting: true,
+        latentPreviews: { 'root/node:9': 'blob:frame' }, latentPreviewTiles: { 'root/node:9': ['blob:tile', null] },
+      } as never },
+    });
+    await mount();
+    useWorkflowStore.setState({ latentPreviews: { 'root/node:3': 'blob:foreground' } });
+    await fire({ type: 'executing', data: { node: '9', prompt_id: 'bg-prompt' } });
+    await fire(msg);
+    const parked = useWorkflowStore.getState().parkedSessions.bg;
+    expect(parked.latentPreviews).toEqual({});
+    expect(parked.latentPreviewTiles).toEqual({});
+    expect(revoke).toHaveBeenCalledWith('blob:frame');
+    expect(revoke).toHaveBeenCalledWith('blob:tile');
+    // The tab in front keeps its own live preview.
+    expect(useWorkflowStore.getState().latentPreviews).toEqual({ 'root/node:3': 'blob:foreground' });
+  });
+
   it.each(['active', 'parked', 'closed'])('routes binary text to its %s owning session even in low resource mode', async owner => {
     const write = vi.spyOn(useWorkflowStore.getState(), 'setNodeTextOutput').mockImplementation(() => {});
     const mapping = { '5': 'root/node:5' };

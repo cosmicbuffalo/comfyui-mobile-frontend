@@ -184,6 +184,7 @@ export const useWorkflowStore = create<WorkflowState>()(
         nodeOutputs: {},
         nodeComparerOutputs: {},
         nodeTextOutputs: {},
+        nodeBoundingBoxOutputs: {},
         latentPreviews: {},
         latentPreviewTiles: {},
         promptOutputs: {},
@@ -391,6 +392,7 @@ export const useWorkflowStore = create<WorkflowState>()(
         nodeOutputs: state.nodeOutputs,
         nodeComparerOutputs: state.nodeComparerOutputs,
         nodeTextOutputs: state.nodeTextOutputs,
+        nodeBoundingBoxOutputs: state.nodeBoundingBoxOutputs,
         // Session registry
         sessions: state.sessions,
         activeSessionId: state.activeSessionId,

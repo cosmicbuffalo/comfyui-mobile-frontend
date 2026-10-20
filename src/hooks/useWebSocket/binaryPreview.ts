@@ -45,7 +45,9 @@ export function parseBinaryPreviewMessage(data: ArrayBuffer): ParsedBinaryPrevie
   const type = view.getUint32(0, false);
   if (type === 3) {
     const length = view.getUint32(4, false);
-    if (!length || length > 4096 || 8 + length > data.byteLength || data.byteLength - 8 - length > 65536) return null;
+    // Only the node id is bounded. Stock decodes the text whatever its size,
+    // so a long message from a node must still arrive.
+    if (!length || length > 4096 || 8 + length > data.byteLength) return null;
     try {
       const decoder = new TextDecoder('utf-8', { fatal: true });
       const nodeId = decoder.decode(data.slice(8, 8 + length));

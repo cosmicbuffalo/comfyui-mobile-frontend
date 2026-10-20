@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import type { HistoryOutputImage, WorkflowNode } from '@/api/types';
+import type { WorkflowNode } from '@/api/types';
 import { useWorkflowStore } from '@/hooks/useWorkflow';
 import { boxInputs, readBoxes } from '@/utils/boundingBoxes';
 import { getLinkId, getLinkOriginId, resolveScopeForHierarchicalKey } from '@/utils/canonicalWorkflowOps';
@@ -11,8 +11,9 @@ export default function BoundingBoxControls({ node, onChange, disabled }: { node
   const types = useWorkflowStore(s => s.nodeTypes);
   const workflow = useWorkflowStore(s => s.workflow);
   const outputs = useWorkflowStore(s => s.nodeOutputs);
+  const reported = useWorkflowStore(s => s.nodeBoundingBoxOutputs[String(node.id)]);
   const definitions = boxInputs(node, types);
-  const dimensions = node.properties.__mobile_box_dims as number[] | undefined;
+  const dimensions = reported?.dims;
   const widthInput = definitions.find(d => d.name === 'width');
   const heightInput = definitions.find(d => d.name === 'height');
   const width = Number((widthInput?.connected ? dimensions?.[0] : undefined) ?? widthInput?.value ?? 1024);
@@ -34,9 +35,15 @@ export default function BoundingBoxControls({ node, onChange, disabled }: { node
   if (workflow && node.itemKey) {
     const scope = resolveScopeForHierarchicalKey(workflow, node.itemKey);
     const link = scope.links.find(link => getLinkId(link) === node.inputs.find(input => input.name === 'background')?.link);
+    // A background wired in through the subgraph's inputs has no source in
+    // this scope; the image the node reported on its last run still applies.
     const source = link && scope.nodes.find(n => n.id === getLinkOriginId(link));
+    const ran = reported?.background;
+    if (link && !source && ran) {
+      background = getImagePreviewUrl(ran.filename, ran.subfolder, ran.type, ran.cacheToken);
+    }
     if (source) {
-      const image = outputs[String(source.id)]?.[0] ?? node.properties.__mobile_box_background as HistoryOutputImage | undefined;
+      const image = outputs[String(source.id)]?.[0] ?? ran;
       if (source.type === 'LoadImage') {
         const path = boxInputs(source, types).find(d => d.name === 'image')?.value;
         if (typeof path === 'string' && path) {

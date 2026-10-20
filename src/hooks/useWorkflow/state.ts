@@ -31,6 +31,13 @@ export interface NodeComparerOutput {
   video?: DenoVideoCompareMetadata;
 }
 
+// What CreateBoundingBoxes reported on its last run: the image it drew on and
+// the canvas size, for when width/height arrive through a connection.
+export interface NodeBoundingBoxOutput {
+  background?: NodeOutputImage;
+  dims?: [number, number];
+}
+
 export interface DenoVideoCompareAudio {
   filename: string;
   channels: number;
@@ -146,6 +153,7 @@ export const SESSION_STATE_FIELDS = [
   "nodeOutputs",
   "nodeComparerOutputs",
   "nodeTextOutputs",
+  "nodeBoundingBoxOutputs",
   "latentPreviews",
   "latentPreviewTiles",
   "promptOutputs",
@@ -228,6 +236,9 @@ export interface WorkflowState {
   nodeComparerOutputs: Record<string, NodeComparerOutput>;
   // Node text output previews (keyed by node ID)
   nodeTextOutputs: Record<string, string>;
+  // What a bounding-box node reported on its last run (keyed by node ID).
+  // Kept here rather than in the workflow, as stock does.
+  nodeBoundingBoxOutputs: Record<string, NodeBoundingBoxOutput>;
   // Prompt output images (keyed by prompt ID)
   promptOutputs: Record<string, HistoryOutputImage[]>;
   runCount: number;
@@ -626,7 +637,7 @@ export interface WorkflowState {
   latentPreviewTiles: Record<string, (string | null)[]>;
   setLatentPreview: (url: string, itemKey: string | null) => void;
   setLatentPreviewTiles: (urls: (string | null)[], itemKey: string | null) => void;
-  clearAllLatentPreviews: () => void;
+  clearAllLatentPreviews: (sessionId?: string | null) => void;
   // Live latent preview keyed by prompt_id (global, not per-session) so the queue
   // card for an actively-generating prompt can show it — even for a run started
   // in a parked tab. `seq` is a monotonic recency stamp used by the card to

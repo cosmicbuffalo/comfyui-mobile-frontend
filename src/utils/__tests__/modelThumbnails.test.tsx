@@ -117,6 +117,29 @@ it('waits for a hidden page before rendering in the background', async () => {
   act(() => card.root.unmount());
 });
 
+it('renders again when the page is hidden mid-render instead of giving up on the file', async () => {
+  // The render's own timeout would fire while the hidden page drew nothing.
+  renderModelThumbnail.mockImplementationOnce((_url, _name, _timeout, signal: AbortSignal) => new Promise((_resolve, reject) => {
+    signal.addEventListener('abort', () => reject(new DOMException('cancelled', 'AbortError')));
+  })).mockResolvedValue(new Blob(['png']));
+  const hidden = vi.spyOn(document, 'hidden', 'get').mockReturnValue(false);
+  const card = await mountCard(model({ id: 'output/switch.glb' }));
+  card.setModelThumbnailsActive(true);
+  await card.onScreen();
+  await card.settle(() => expect(renderModelThumbnail).toHaveBeenCalledOnce());
+  hidden.mockReturnValue(true);
+  document.dispatchEvent(new Event('visibilitychange'));
+  await act(async () => { await new Promise(resolve => setTimeout(resolve, 30)); });
+  expect(renderModelThumbnail).toHaveBeenCalledOnce();
+  hidden.mockReturnValue(false);
+  document.dispatchEvent(new Event('visibilitychange'));
+  await card.settle(() => expect(card.seen.at(-1)).toMatch(/^blob:thumb-/));
+  expect(renderModelThumbnail).toHaveBeenCalledTimes(2);
+  card.setModelThumbnailsActive(false);
+  hidden.mockRestore();
+  act(() => card.root.unmount());
+});
+
 it('forgets a deleted file and keeps only on-screen thumbnails beyond the memory cap', async () => {
   const revoked: string[] = [];
   URL.revokeObjectURL = url => { revoked.push(url); };

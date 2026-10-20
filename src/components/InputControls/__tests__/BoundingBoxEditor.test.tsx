@@ -1,8 +1,9 @@
 import { act, useState } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
-import { afterEach, beforeEach, expect, it } from 'vitest';
+import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import BoundingBoxEditor from '../BoundingBoxEditor';
 import type { LayoutBox } from '@/utils/boundingBoxes';
+import { useSwipeNavigation } from '@/hooks/useSwipeNavigation';
 
 let host: HTMLDivElement, root: Root, saved: LayoutBox[];
 function Harness({ disabled = false }: { disabled?: boolean }) {
@@ -35,4 +36,40 @@ it('provides keyboard movement and prevents disabled edits', async () => {
   expect(saved[0].x).toBe(110);
   await act(async () => root.render(<Harness disabled />));
   await click('Delete box'); expect(saved).toHaveLength(1);
+});
+it('keeps a box selected when a run returns fewer boxes', async () => {
+  const box = (x: number): LayoutBox => ({ x, y: 10, width: 50, height: 50, metadata: { type: 'obj', desc: '', text: '', palette: [] } });
+  const render = (value: LayoutBox[]) => act(async () => root.render(<BoundingBoxEditor value={value} width={400} height={200} onChange={() => {}} />));
+  await render([box(10), box(100), box(200)]);
+  await click('3. Object');
+  expect((host.querySelector('[aria-label="Box x"]') as HTMLInputElement).value).toBe('200');
+  await render([box(30)]);
+  expect((host.querySelector('[aria-label="Box x"]') as HTMLInputElement | null)?.value).toBe('30');
+});
+it('keeps a drag across the canvas from switching panels', async () => {
+  const onSwipeLeft = vi.fn(), onSwipeRight = vi.fn();
+  function WithSwipe() {
+    useSwipeNavigation({ onSwipeLeft, onSwipeRight, enabled: true });
+    return <Harness />;
+  }
+  await act(async () => root.render(<WithSwipe />));
+  await click('Add box');
+  const touch = (target: Element, type: string, x: number) => {
+    const event = new Event(type, { bubbles: true, cancelable: true });
+    Object.defineProperty(event, 'touches', { value: type === 'touchend' ? [] : [{ clientX: x, clientY: 100 }] });
+    act(() => { target.dispatchEvent(event); });
+  };
+  // A box drawn or dragged sideways, starting on the canvas and on a box: SVG elements, not HTML ones.
+  for (const target of [host.querySelector('svg')!, host.querySelector('svg rect')!]) {
+    touch(target, 'touchstart', 300);
+    for (const x of [260, 220, 180]) touch(target, 'touchmove', x);
+    touch(target, 'touchend', 180);
+  }
+  expect(onSwipeLeft).not.toHaveBeenCalled();
+  // The same swipe off the canvas still navigates.
+  const outside = host.querySelector('button')!;
+  touch(outside, 'touchstart', 300);
+  for (const x of [260, 220, 180]) touch(outside, 'touchmove', x);
+  touch(outside, 'touchend', 180);
+  expect(onSwipeLeft).toHaveBeenCalledOnce();
 });

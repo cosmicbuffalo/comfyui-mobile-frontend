@@ -111,6 +111,8 @@ function sortPlaceholderWidgetsByBoundaryOrder<T extends { widgetIndex: number }
 const EMPTY_IMAGES: HistoryOutputImage[] = [];
 type ImageLike = (typeof EMPTY_IMAGES)[number];
 const EMPTY_DURATION_STATS: Record<string, { avgMs: number; count: number }> = {};
+// Retries after 1s, 2s and 4s before a new output is shown even though it failed to load.
+const PREVIEW_PRELOAD_RETRIES = 3;
 
 interface NodeCardProps {
   node: WorkflowNode;
@@ -334,7 +336,12 @@ export const NodeCard = memo(function NodeCard({
     : null;
 
   useEffect(() => {
-    if (!latestImage) return;
+    // Cards are reused across tabs and workflows by node id: a node with no
+    // outputs here must not keep another workflow's image.
+    if (!latestImage) {
+      setPreviewMedia(null);
+      return;
+    }
     if (latestKey === previewKey) return;
     // Videos load through their own seekable playback + poster endpoints. Do
     // not gate them behind `new Image()`: that path can decode only a still (or
@@ -349,14 +356,28 @@ export const NodeCard = memo(function NodeCard({
       latestImage.type,
       latestImage.cacheToken,
     );
-    const img = new Image();
     let cancelled = false;
-    img.onload = () => {
-      if (!cancelled) setPreviewMedia(latestImage);
+    let attempt = 0;
+    let retry: ReturnType<typeof setTimeout> | undefined;
+    const preload = () => {
+      const img = new Image();
+      img.onload = () => {
+        if (!cancelled) setPreviewMedia(latestImage);
+      };
+      // A failed preload used to leave the previous run's image standing in
+      // for this one until a reload. Retry in case the file isn't readable
+      // yet, then show the new output regardless.
+      img.onerror = () => {
+        if (cancelled) return;
+        if (attempt < PREVIEW_PRELOAD_RETRIES) retry = setTimeout(preload, 1000 * 2 ** attempt++);
+        else setPreviewMedia(latestImage);
+      };
+      img.src = nextSrc;
     };
-    img.src = nextSrc;
+    preload();
     return () => {
       cancelled = true;
+      clearTimeout(retry);
     };
   }, [latestKey, previewKey, latestImage, latestOutputIsVideo]);
 

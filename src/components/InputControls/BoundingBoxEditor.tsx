@@ -13,7 +13,10 @@ export default function BoundingBoxEditor({ value, onChange, width = 1024, heigh
   const { t } = useI18n();
   const boxes = readBoxes(value);
   const [draft, setDraft] = useState<LayoutBox[] | null>(null);
-  const [selected, select] = useState(0);
+  const [picked, select] = useState(0);
+  // A run can hand back fewer boxes than were selectable. Keep the selection
+  // on a box that exists so its fields stay up.
+  const selected = Math.min(picked, Math.max(0, boxes.length - 1));
   const [draw, setDraw] = useState(false);
   const gesture = useRef<Gesture | null>(null);
   const svg = useRef<SVGSVGElement>(null);
@@ -95,7 +98,7 @@ export default function BoundingBoxEditor({ value, onChange, width = 1024, heigh
       <button type="button" className={button} onClick={() => add(true)}>{t('Add background box')}</button>
       <button type="button" className={button} aria-pressed={draw} onClick={() => setDraw(!draw)}>{t('Draw boxes')}</button>
     </fieldset>
-    <svg ref={svg} viewBox={`0 0 ${w} ${h}`} role="application" tabIndex={disabled ? -1 : 0} aria-label={t('Box canvas')}
+    <svg ref={svg} viewBox={`0 0 ${w} ${h}`} role="application" tabIndex={disabled ? -1 : 0} aria-label={t('Box canvas')} data-swipe-nav-ignore="true"
       className="block max-h-[60vh] w-full rounded-lg border border-white/20 bg-slate-900 outline-cyan-400" style={{ aspectRatio: `${w}/${h}`, touchAction: disabled ? 'auto' : 'none' }}
       onPointerDown={start} onPointerMove={move} onPointerUp={event => finish(event)} onPointerCancel={event => finish(event, true)} onLostPointerCapture={event => finish(event, true)}
       onKeyDown={event => {

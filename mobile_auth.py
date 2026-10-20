@@ -6,7 +6,7 @@ the auth node isn't installed — which is the overwhelmingly common case — ev
 function degrades to the single-user answer this node has always given, and no
 caller needs to branch.
 
-Two rules govern this module:
+Four rules govern this module:
 
 1. **Import lazily, at call time, never at module import.** Load order between
    custom nodes is not guaranteed, so importing the auth node at import time
@@ -16,6 +16,27 @@ Two rules govern this module:
    helpers are identity functions. If it is present but raises, we treat that as
    enabled-and-denying rather than silently reverting to global access — a
    broken auth layer must not become an open one.
+3. **Version tolerance, per check.** A node predating a given method is not an
+   error, and each check gets the answer that is honest for *its* cost:
+   `can_read_file` / `can_manage_hidden` → True (a lockout of one's own
+   outputs would be the worse loss), `can_modify_file` → the `can_read_file` answer (stricter than
+   nothing), `badge_for_file` / `prompt_owner` / `folder_badges` / the
+   `*_tags` reporters → an empty, honest report, `virtually_deleted_paths`
+   → empty, `virtual_delete_file` and `can_access_model` → False (refuse
+   rather than pretend or grant), `prompt_owner_or_unknown` →
+   `OWNER_UNKNOWN`. Two exceptions in the other direction are deliberate:
+   `filter_files` denies (`[]`) even when the *method* is missing from a
+   present node — a listing that cannot be scoped must not be returned
+   unscoped — and `prompt_owner` folds "cannot say" into "nobody owns it",
+   because silencing every notification is the worse loss on a server that
+   was single-user anyway; callers that must not fan out use
+   `prompt_owner_or_unknown` instead (see `mobile_push`).
+4. **Method raising → that check's deny path.** Once the node is installed
+   it is meant to gate, so a call that raises ends in 403, `[]`, `False`,
+   `OWNER_UNKNOWN`, or an empty report — never on the unfiltered answer.
+
+Each helper's docstring pins its own degradation, so the matrix above cannot
+drift silently from the code.
 """
 import importlib
 import threading
@@ -114,21 +135,214 @@ def may_change_server_settings() -> bool:
     if not is_enabled():
         return True
     user = current_user()
-    return bool(user) and "admin" in {
-        str(role).casefold() for role in (user.get("roles") or [])
-    }
+    if not isinstance(user, dict):
+        return False
+    # Same predicate as mobile_viewer_scope.is_admin (not imported: that module
+    # imports this one) — user dicts carry roles, never an is_admin flag.
+    roles = {str(role).casefold() for role in (user.get("roles") or [])}
+    return "admin" in roles or user.get("role") == "admin"
 
 
-def scope_path(kind: str, path: str) -> str:
-    """Rewrite a path into the current user's space. Identity when disabled."""
+def viewer_unresolved(user=None) -> bool:
+    """True when the gate is on but who is asking cannot be determined.
+
+    This is the state every scoping decision has to tell apart from "there are
+    no accounts here". Both arrive as a ``None`` user, and treating them alike
+    is what makes a broken gate fail OPEN: with one user, "everyone's things"
+    and "this person's things" really are the same set, so ``None`` meaning
+    "unscoped" is correct there and catastrophic here.
+
+    ``is_enabled()`` already reports True when the auth node is installed but
+    erroring (rule 2), so this returns True exactly when the node is meant to
+    be gating and cannot answer -- the case where callers must deny rather than
+    serve the server-wide view.
+    """
+    if not is_enabled():
+        return False
+    resolved = user if user is not None else current_user()
+    return not (isinstance(resolved, dict) and resolved.get("id") is not None)
+
+
+def can_view_foreign_prompts(user=None) -> bool:
+    """Whether this viewer may see other accounts' queue items and progress.
+
+    The decided contract: admins only. The auth node may later define a role
+    that widens it, so the node is asked first when it has an opinion -- the
+    admin fallback is what keeps that door open without naming the role here.
+    """
     api = _resolve()
     if api is None:
-        return path
+        return True
     try:
-        return api.scope_path(kind, path)
+        if not api.is_enabled():
+            return True
+        check = getattr(api, 'can_view_foreign_prompts', None)
+        if check is not None:
+            return bool(check(user=user))
     except Exception as exc:
         _warn_once(exc)
-        return path
+        return False
+    # Same predicate as mobile_viewer_scope.is_admin (not imported: that module
+    # imports this one) — user dicts carry roles, never an is_admin flag.
+    roles = [str(r).casefold() for r in ((user or {}).get('roles') or [])]
+    return 'admin' in roles or (user or {}).get('role') == 'admin'
+
+
+def can_manage_hidden(user=None) -> bool:
+    """Standalone/older servers retain their existing hidden controls."""
+    api = _resolve()
+    if api is None:
+        return True
+    try:
+        if not api.is_enabled():
+            return True
+        check = getattr(api, 'can_manage_hidden', None)
+        return True if check is None else bool(check(user=user))
+    except Exception as exc:
+        _warn_once(exc)
+        return False
+
+
+def register_hidden_file_provider(provider) -> bool:
+    return _register_optional_provider(provider, 'register_hidden_file_provider')
+
+
+def _register_optional_provider(provider, name: str) -> bool:
+    """Shared soft-dependency registration for hidden-state providers.
+
+    Registration runs at node load and must never take the node down: a
+    raising `register()` is reported and answered False (the provider is not
+    installed), the same never-fail rule the rest of this module follows.
+    """
+    api = _resolve()
+    if api is None:
+        return False
+    try:
+        # getattr inside the guard: a broken provider raises on ANY attribute
+        # access, and registration happens at node load where nothing may
+        # propagate.
+        register = getattr(api, name, None)
+        if register is None:
+            return False
+        register(provider)
+    except Exception as exc:
+        print(f"{_LOG_PREFIX} {name} failed: {exc}", flush=True)
+        return False
+    return True
+
+
+def register_hidden_workflow_provider(provider) -> bool:
+    """Offer the hidden-workflow callback; False when no auth node needs it."""
+    return _register_optional_provider(provider, 'register_hidden_workflow_provider')
+
+
+def register_hidden_model_provider(provider) -> bool:
+    """Offer the hidden-model callback; False when no auth node needs it."""
+    return _register_optional_provider(provider, 'register_hidden_model_provider')
+
+
+def register_user_deleted_hook(hook) -> bool:
+    """Ask the auth node to announce account deletions to this one.
+
+    `hook` is called with the deleted account's id, after the row is gone.
+    False covers no auth node, one too old to have the hook, and a
+    registration that actually failed: none of which the caller can
+    distinguish or needs to — without the hook this node's per-account
+    state simply lives on, which is exactly the pre-hook behaviour.
+    """
+    return _register_optional_provider(hook, 'register_user_deleted_hook')
+
+
+def allow_public_route(method: str, path: str) -> bool:
+    """Ask the auth node to let one of our routes through unauthenticated.
+
+    For `/mobile/api/presence` and nothing else: a client deciding whether it
+    needs *admin* credentials to add this server has to know whether this node
+    is installed, and it cannot learn that through a gate that denies everyone
+    before sign-in.
+
+    Returns whether the exemption was recorded. False is the ordinary answer on
+    a server with no auth node — there is no gate, so the route already
+    answers — and also covers an auth node predating the registration API,
+    where the honest outcome is that the probe stays gated rather than that
+    this node forces itself open.
+    """
+    api = _resolve()
+    if api is None:
+        return False
+    try:
+        # getattr, not a broad AttributeError catch: an AttributeError raised
+        # INSIDE a present allow_public_route is a refusal/bug to report, not
+        # evidence that the auth node predates the API. (Inside the try: a
+        # broken provider raises on ANY attribute access.)
+        register = getattr(api, "allow_public_route", None)
+        if register is None:
+            return False
+        register(method, path, source="comfyui-mobile-frontend")
+        return True
+    except Exception as exc:
+        # A refusal is the auth node's call to make; never treat it as fatal.
+        print(f"{_LOG_PREFIX} public route {method} {path} refused: {exc}",
+              flush=True)
+        return False
+
+
+def prompt_owner(prompt_tuple):
+    """The account a queued job belongs to, or None.
+
+    Takes the prompt tuple as ComfyUI stores it (`history[id]["prompt"]`). None
+    means "nobody in particular" — no auth node, gate switched off, or a job
+    queued before the gate existed — and every caller reads that as "behave
+    like the single-user server this has always been", i.e. notify everyone.
+
+    Deliberately NOT on the deny path: an auth node that errors here would
+    otherwise silence every notification on the server, and a missed push is a
+    worse answer than a broadcast on a server that was single-user anyway.
+    """
+    api = _resolve()
+    if api is None:
+        return None
+    try:
+        return api.prompt_owner(prompt_tuple)
+    except AttributeError:
+        # Auth node predating this call: no ownership information available.
+        return None
+    except Exception as exc:
+        _warn_once(exc)
+        return None
+
+
+OWNER_UNKNOWN = object()
+
+
+def prompt_owner_or_unknown(prompt_tuple):
+    """`prompt_owner`, but telling "nobody owns this" apart from "cannot say".
+
+    `prompt_owner` folds both into None on purpose — it is deliberately off the
+    deny path, because silencing every notification is a worse answer than
+    notifying broadly on a server that was single-user anyway. That reasoning
+    holds only while None really does mean single-user. Once accounts are on,
+    "cannot say" addresses every device on the server, and callers that fan out
+    need to see the difference.
+
+    Returns the owner, None when the job is genuinely unowned (no auth node, or
+    the node says so), or OWNER_UNKNOWN when the node is installed but could
+    not answer. Callers decide what unknown costs them; `prompt_owner` keeps
+    its old contract for everyone else.
+    """
+    api = _resolve()
+    if api is None:
+        return None
+    try:
+        return api.prompt_owner(prompt_tuple)
+    except AttributeError as exc:
+        # Installed but predating this call: it is gating something, and cannot
+        # tell us whose. That is unknown, not unowned.
+        _warn_once(exc)
+        return OWNER_UNKNOWN
+    except Exception as exc:
+        _warn_once(exc)
+        return OWNER_UNKNOWN
 
 
 def can_read_file(path: str, user=None) -> bool:
@@ -243,6 +457,31 @@ def can_access_model(rel_path: str, user=None) -> bool:
     except Exception as exc:
         _warn_once(exc)
         return False
+
+
+def model_role_tags(rel_paths) -> dict:
+    """Which roles govern each of these models: `{rel: {roles, restricted}}`.
+
+    Display metadata for models that have ALREADY cleared `can_access_model`,
+    so this is the one helper here deliberately NOT on the deny path: an empty
+    answer costs a badge, never access. That is also the honest answer on a
+    server with no auth node, where there are no roles to report, and on an
+    auth node predating the call.
+    """
+    api = _resolve()
+    if api is None:
+        return {}
+    try:
+        if not api.is_enabled():
+            return {}
+        report = getattr(api, 'model_role_tags', None)
+        if report is None:
+            return {}
+        tags = report(list(rel_paths))
+    except Exception as exc:
+        _warn_once(exc)
+        return {}
+    return tags if isinstance(tags, dict) else {}
 
 
 def filter_files(paths, user=None) -> list:

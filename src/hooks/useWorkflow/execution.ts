@@ -32,7 +32,7 @@ import {queueWorkflowLabel, yieldToBrowserPaint} from "./helpers";
 import {patchParkedSession, resolveWriteTarget, writeNodeKeyedField} from "./writeTarget";
 import type {SeedLastValues, WorkflowGet, WorkflowSet, WorkflowState} from "./state";
 import {createApplyNodeErrors} from "./nodeErrors";
-import {applyBoundingBoxResult} from '@/utils/boundingBoxes';
+import {applyBoundingBoxResult, readBoundingBoxOutput} from '@/utils/boundingBoxes';
 import {captureQueuedWebcams} from '@/utils/webcamCapture';
 
 let queueLatentSeq = 0;
@@ -260,7 +260,7 @@ const setNodeTextOutput: WorkflowState["setNodeTextOutput"] = (
 };
 
 const clearNodeOutputs: WorkflowState["clearNodeOutputs"] = () => {
-  set({ nodeOutputs: {}, nodeComparerOutputs: {}, nodeTextOutputs: {} });
+  set({ nodeOutputs: {}, nodeComparerOutputs: {}, nodeTextOutputs: {}, nodeBoundingBoxOutputs: {} });
 };
 
 const setNodeBoundingBoxResult: WorkflowState["setNodeBoundingBoxResult"] = (key, output, sessionId) => {
@@ -272,6 +272,10 @@ const setNodeBoundingBoxResult: WorkflowState["setNodeBoundingBoxResult"] = (key
     const next = applyBoundingBoxResult(workflow, state.nodeTypes, key, output);
     if (next === workflow) return {};
     return parked ? patchParkedSession(state, sessionId!, { workflow: next }) : { workflow: next };
+  });
+  set(state => {
+    if (sessionId && sessionId !== state.activeSessionId && !state.parkedSessions[sessionId]) return {};
+    return writeNodeKeyedField(state, sessionId, key, "nodeBoundingBoxOutputs", readBoundingBoxOutput(output));
   });
 };
 
@@ -305,14 +309,24 @@ const setLatentPreview: WorkflowState["setLatentPreview"] = (url, itemKey) => {
   setLatentPreviewTiles([url], itemKey);
 };
 
-const clearAllLatentPreviews: WorkflowState["clearAllLatentPreviews"] = () => {
-  const { latentPreviews, latentPreviewTiles } = get();
-  const revoked = new Set<string>(Object.values(latentPreviews));
-  for (const tiles of Object.values(latentPreviewTiles)) {
+// The active tab's previews, or one tab's: a run that ends in a background tab
+// must not leave its last frame waiting there. An unknown or closed tab's id
+// clears nothing, so it can never wipe the foreground run's preview.
+const clearAllLatentPreviews: WorkflowState["clearAllLatentPreviews"] = (sessionId) => {
+  const state = get();
+  const parked = sessionId !== undefined && sessionId !== state.activeSessionId
+    ? (sessionId ? state.parkedSessions[sessionId] : undefined)
+    : null;
+  if (parked === undefined) return;
+  const { latentPreviews, latentPreviewTiles } = parked ?? state;
+  const revoked = new Set<string>(Object.values(latentPreviews ?? {}));
+  for (const tiles of Object.values(latentPreviewTiles ?? {})) {
     for (const url of tiles) if (url) revoked.add(url);
   }
   revoked.forEach((url) => URL.revokeObjectURL(url));
-  set({ latentPreviews: {}, latentPreviewTiles: {} });
+  set(parked
+    ? patchParkedSession(state, sessionId as string, { latentPreviews: {}, latentPreviewTiles: {} })
+    : { latentPreviews: {}, latentPreviewTiles: {} });
 };
 
 const setQueueLatentPreviewTiles: WorkflowState["setQueueLatentPreviewTiles"] = (

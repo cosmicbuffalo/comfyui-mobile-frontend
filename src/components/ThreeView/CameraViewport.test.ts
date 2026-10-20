@@ -137,3 +137,66 @@ it('picks a newly enabled transform gizmo before its first render frame', () => 
   expect((control as unknown as { worldPosition: THREE.Vector3 }).worldPosition.toArray()).toEqual([-3, 2, 1]);
   control.dispose();
 });
+
+it('keeps orbiting the overview after a handle drag', () => {
+  const container = document.createElement('div');
+  const changes: CameraInputs[] = [];
+  const viewport = new CameraViewport(container, 'angle', values => changes.push(values));
+  viewport.updateInputs({ horizontal_angle: 0, vertical_angle: 60, zoom: 5 });
+  viewport.setViewMode('camera');
+  const canvas = container.querySelector('canvas')!;
+  canvas.getBoundingClientRect = () => ({ left: 0, top: 0, width: 400, height: 300, right: 400, bottom: 300, x: 0, y: 0, toJSON() {} });
+  const internals = viewport as unknown as { handles: Map<string, import('three').Mesh>; view: { camera: import('three').Camera; scene: import('three').Scene; controls: { enabled: boolean } } };
+  expect(internals.view.controls.enabled).toBe(true);
+  internals.view.scene.updateMatrixWorld(true);
+  const point = internals.handles.get('yaw')!.getWorldPosition(new THREE.Vector3()).project(internals.view.camera);
+  const x = (point.x + 1) / 2 * 400, y = (1 - point.y) / 2 * 300;
+  canvas.dispatchEvent(pointer('pointerdown', x, y));
+  expect(internals.view.controls.enabled).toBe(false);
+  canvas.dispatchEvent(pointer('pointermove', x + 60, y));
+  canvas.dispatchEvent(pointer('pointerup', x + 60, y));
+  expect(changes.some(change => 'horizontal_angle' in change)).toBe(true);
+  expect(internals.view.controls.enabled).toBe(true);
+  viewport.setViewMode('object');
+  expect(internals.view.controls.enabled).toBe(false);
+  viewport.remove();
+});
+
+it('ends a transform gizmo drag that the system cancels', () => {
+  const container = document.createElement('div');
+  const viewport = new CameraViewport(container, 'info', () => {});
+  viewport.updateInputs({ mode: 'look_at', 'mode.position_x': 2, 'mode.position_y': 1, 'mode.position_z': 3 });
+  viewport.setTransformGizmoMode('target');
+  const canvas = container.querySelector('canvas')!;
+  canvas.getBoundingClientRect = () => ({ left: 0, top: 0, width: 400, height: 300, right: 400, bottom: 300, x: 0, y: 0, toJSON() {} });
+  const internals = viewport as unknown as { transformControl: TransformControls; transformProxy: THREE.Object3D; view: { camera: THREE.Camera; scene: THREE.Scene; controls: { enabled: boolean } } };
+  internals.view.scene.updateMatrixWorld(true);
+  const point = internals.transformProxy.getWorldPosition(new THREE.Vector3()).project(internals.view.camera);
+  const x = (point.x + 1) / 2 * 400, y = (1 - point.y) / 2 * 300;
+  canvas.dispatchEvent(pointer('pointerdown', x, y));
+  expect(internals.transformControl.dragging).toBe(true);
+  expect(internals.view.controls.enabled).toBe(false);
+  // An iOS system gesture or a palm cancels the touch instead of lifting it.
+  canvas.dispatchEvent(pointer('pointercancel', x, y));
+  expect(internals.transformControl.dragging).toBe(false);
+  expect(internals.transformControl.axis).toBeNull();
+  expect(internals.view.controls.enabled).toBe(true);
+  viewport.remove();
+});
+
+it('clears the reference image when a new one fails to load', async () => {
+  const loaded = new THREE.Texture<HTMLImageElement>();
+  const load = vi.spyOn(THREE.TextureLoader.prototype, 'loadAsync').mockImplementation(async url => {
+    if (url === 'ok.png') return loaded;
+    throw new Error('403');
+  });
+  const viewport = new CameraViewport(document.createElement('div'), 'angle', () => {});
+  const face = () => ((viewport as unknown as { subject: THREE.Mesh }).subject.material as THREE.MeshStandardMaterial[])[4].map;
+  await viewport.setImage('ok.png');
+  expect(face()).toBe(loaded);
+  await viewport.setImage('refused.png');
+  expect(face()).toBeNull();
+  await viewport.setImage('refused.png');
+  expect(load).toHaveBeenCalledTimes(3);
+  viewport.remove();
+});

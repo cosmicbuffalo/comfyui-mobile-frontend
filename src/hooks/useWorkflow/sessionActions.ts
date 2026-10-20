@@ -457,6 +457,7 @@ const loadWorkflow: WorkflowState["loadWorkflow"] = (
         nodeOutputs: {},
         nodeComparerOutputs: {},
         nodeTextOutputs: {},
+        nodeBoundingBoxOutputs: {},
         latentPreviews: {},
         latentPreviewTiles: {},
         promptOutputs: {},
