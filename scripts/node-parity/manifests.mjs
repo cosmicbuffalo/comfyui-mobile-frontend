@@ -329,7 +329,8 @@ export const MANIFESTS = [
         contains: [
           /_applyPromotedWidgetValues\(/,
           /widgetValues\?\.\[valueIndex\]/,
-          /if \(value !== undefined\)/,
+          // 1.59 also requires the widget's store entry (`&& state`); a missing one was never written either.
+          /if \(value !== undefined(?: && state)?\)/,
         ],
       },
       {
