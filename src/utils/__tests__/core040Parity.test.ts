@@ -111,7 +111,23 @@ it('shows Preview3D results from older cores, including annotated temp paths and
     { filename: 'mesh.obj', subfolder: '3d', type: 'output', cacheToken: 'r', model3d: { camera: undefined, transform: placement } },
   ]);
   // Core 0.40 Preview3D: background image path third, which is not a placement.
-  expect(collectExecutedMediaOutputs({ result: ['mesh.glb', camera, 'temp/bg_1.png'] }, 'r')[0].model3d).toEqual({ camera, transform: undefined });
+  expect(collectExecutedMediaOutputs({ result: ['mesh.glb', camera, 'temp/bg_1.png'] }, 'r')[0].model3d)
+    .toEqual({ camera, transform: undefined, background: { filename: 'bg_1.png', subfolder: '', type: 'temp' } });
   // A 0.37 result that also carries the standard bucket is left to the bucket.
   expect(collectExecutedMediaOutputs({ result: ['x.glb [temp]', camera, []], '3d': [{ filename: 'x.glb', subfolder: '', type: 'temp' }] }, 'r')).toHaveLength(1);
+});
+
+describe('the new 3D nodes', () => {
+  // Core 0.40's Preview3DAdvanced; stock saves its viewport slot as "".
+  const preview = { name: 'Preview3DAdvanced', display_name: 'Preview 3D (Advanced)', description: '', python_module: 'comfy_extras.nodes_load_3d', category: '3d', output_name: [], output: [],
+    input: { required: { model_3d: ['FILE_3D,FILE_3D_GLB', {}], viewport_state: ['LOAD_3D', {}], width: ['INT', { default: 1024 }], height: ['INT', { default: 1024 }] },
+      optional: { model_3d_info: ['LOAD3D_MODEL_INFO', { advanced: true }], camera_info: ['LOAD3D_CAMERA', { advanced: true }] } } } as unknown as NodeTypeDefinition;
+
+  it('keeps and sends the viewport slot but draws no control for it', () => {
+    const n: WorkflowNode = { ...node(['', 800, 600]), type: 'Preview3DAdvanced',
+      inputs: ['model_3d', 'model_3d_info', 'camera_info'].map(name => ({ name, type: 'FILE_3D', link: null })) };
+    expect(getWidgetDefinitions({ Preview3DAdvanced: preview }, n).map(w => [w.name, w.widgetIndex])).toEqual([['width', 1], ['height', 2]]);
+    const inputs = buildWorkflowPromptInputs(workflow(n), { Preview3DAdvanced: preview }, n, n.type, new Set([1]), null);
+    expect(inputs).toMatchObject({ viewport_state: '', width: 800, height: 600 });
+  });
 });

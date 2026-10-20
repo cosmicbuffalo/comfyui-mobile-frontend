@@ -1793,9 +1793,11 @@ export const NodeCard = memo(function NodeCard({
               )
             )}
 
-            {modelOutputs.map((output, index) => <ModelOutputPreview key={`${output.type}/${output.subfolder}/${output.filename}`} output={output} onExpand={() => onImageClick?.(buildViewerImages([{ outputs: { images: modelOutputs }, prompt: null }]), index, false)} />)}
             <NodeCardOutputPreview
-              show={showImagePreview || showTextPreview || !!latentPreviewUrl || isBatchOutput}
+              show={showImagePreview || showTextPreview || !!latentPreviewUrl || isBatchOutput || modelOutputs.length > 0}
+              models={modelOutputs.length > 0
+                ? modelOutputs.map((output, index) => <ModelOutputPreview key={`${output.type}/${output.subfolder}/${output.filename}`} output={output} onExpand={() => onImageClick?.(buildViewerImages([{ outputs: { images: modelOutputs }, prompt: null }]), index, false)} />)
+                : null}
               previewImage={effectivePreviewImage}
               previewImages={batchTiles}
               frontendPreview={effectiveFrontendMediaPreview}

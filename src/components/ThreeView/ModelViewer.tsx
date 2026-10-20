@@ -7,11 +7,20 @@ import { PLYLoader } from 'three/examples/jsm/loaders/PLYLoader.js';
 import { FBXLoader } from 'three/examples/jsm/loaders/FBXLoader.js';
 import type { SparkRenderer } from '@sparkjsdev/spark';
 import { t as translate, useI18n } from '@/i18n';
+import { getImageUrl } from '@/api/client';
 import { MODEL_EXTENSIONS, type Model3dMetadata } from '@/utils/model3d';
 import { applyCameraUp, Viewport3d } from './Viewport3d';
 import { disposeObject, sidecarUrl } from './modelAssets';
 
 const SPLAT_EXTENSIONS = new Set(['splat', 'spz', 'ksplat']);
+const toolbarButton = (pressed: boolean) => `rounded p-2 ${pressed ? 'bg-cyan-500 text-slate-950' : 'bg-slate-900/90'}`;
+
+/** Wireframe only changes triangle surfaces; point clouds have none. */
+function hasSurface(object: THREE.Object3D): boolean {
+  let found = false;
+  object.traverse(child => { if ((child as THREE.Mesh).isMesh) found = true; });
+  return found;
+}
 
 // Spark sorts in a promise it never awaits: a GPU depth readback, then a worker
 // call. Losing the WebGL context or disposing the renderer mid-sort rejects that
@@ -46,6 +55,7 @@ export default function ModelViewer({ src, filename, metadata, onReady, onCaptur
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [wireframe, setWireframe] = useState(false);
+  const [canWireframe, setCanWireframe] = useState(false);
   const [animated, setAnimated] = useState(false);
   const [playing, setPlaying] = useState(true);
   const playingRef = useRef(playing);
@@ -70,6 +80,7 @@ export default function ModelViewer({ src, filename, metadata, onReady, onCaptur
   useEffect(() => {
     if (!container.current) return;
     let removed = false;
+    let backdrop: THREE.Texture | undefined;
     let object: THREE.Object3D | null = null;
     let splatDispose: ((done: () => void) => void) | undefined;
     const releaseSplat = (done: () => void = () => {}) => {
@@ -87,6 +98,7 @@ export default function ModelViewer({ src, filename, metadata, onReady, onCaptur
     setLoading(true);
     setError(null);
     setAnimated(false);
+    setCanWireframe(false);
     const load = async () => {
       const extension = filename.split('.').pop()?.toLowerCase() ?? '';
       if (!MODEL_EXTENSIONS.has(extension)) throw new Error(translate('No preview for .{extension} files', { extension }));
@@ -138,7 +150,26 @@ export default function ModelViewer({ src, filename, metadata, onReady, onCaptur
       if (removed) { releaseSplat(); disposeObject(object); return; }
       model.current = object;
       instance.scene.add(object);
-      const { camera, transform } = JSON.parse(metadataKey) as Model3dMetadata;
+      // Gaussian splats aren't triangles either, whatever object holds them.
+      setCanWireframe(!splat && hasSurface(object));
+      const { camera, transform, background } = JSON.parse(metadataKey) as Model3dMetadata;
+      if (background) {
+        // Like stock: a flat image behind the model, filling the view and cropped to fit it.
+        void new THREE.TextureLoader().loadAsync(getImageUrl(background.filename, background.subfolder, background.type)).then(texture => {
+          if (removed) { texture.dispose(); return; }
+          texture.colorSpace = THREE.SRGBColorSpace;
+          backdrop = texture;
+          instance.scene.background = texture;
+          instance.grid.visible = false;
+          instance.addPreRenderCallback(() => {
+            const image = texture.image as { width: number; height: number };
+            const canvasAspect = instance.domElement.width / instance.domElement.height, imageAspect = image.width / image.height;
+            texture.repeat.set(Math.min(1, canvasAspect / imageAspect), Math.min(1, imageAspect / canvasAspect));
+            texture.offset.set((1 - texture.repeat.x) / 2, (1 - texture.repeat.y) / 2);
+          });
+          instance.forceRender();
+        }, () => {});
+      }
       if (transform) {
         object.position.copy(transform.position);
         object.quaternion.copy(transform.quaternion).normalize();
@@ -227,6 +258,7 @@ export default function ModelViewer({ src, filename, metadata, onReady, onCaptur
       if (object) { mixer?.uncacheRoot(object); instance?.scene.remove(object); disposeObject(object); }
       viewport.current = null;
       model.current = null;
+      backdrop?.dispose();
       releaseSplat(() => instance?.remove());
     };
   }, [src, filename, metadataKey, pageScroll]);
@@ -244,9 +276,9 @@ export default function ModelViewer({ src, filename, metadata, onReady, onCaptur
     {loading && <span className="absolute inset-0 grid place-items-center pointer-events-none text-sm">{t('Loading 3D model…')}</span>}
     {error && <p role="status" className="absolute inset-0 grid place-items-center bg-slate-900 p-4 text-sm">{error}</p>}
     <div className={`absolute ${toolbarClassName} flex flex-wrap gap-2 text-xs`}>
-      <button type="button" className="rounded bg-slate-900/90 p-2" onClick={() => reset.current()}>{t('Reset view')}</button>
-      <button type="button" className="rounded bg-slate-900/90 p-2" aria-pressed={wireframe} onClick={() => setWireframe(!wireframe)}>{t('Wireframe')}</button>
-      {animated && <button type="button" className="rounded bg-slate-900/90 p-2" aria-pressed={playing} onClick={() => setPlaying(!playing)}>{t('Animation')}</button>}
+      <button type="button" className={toolbarButton(false)} onClick={() => reset.current()}>{t('Reset view')}</button>
+      {canWireframe && <button type="button" className={toolbarButton(wireframe)} aria-pressed={wireframe} onClick={() => setWireframe(!wireframe)}>{t('Wireframe')}</button>}
+      {animated && <button type="button" className={toolbarButton(playing)} aria-pressed={playing} onClick={() => setPlaying(!playing)}>{t('Animation')}</button>}
     </div>
   </div>;
 }

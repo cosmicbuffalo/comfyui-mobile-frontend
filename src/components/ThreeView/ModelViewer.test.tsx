@@ -123,3 +123,33 @@ it('orbits on a sideways drag without swiping to another panel', async () => {
   act(() => panelRoot.unmount());
   host.remove();
 });
+
+const settle = () => act(async () => { await new Promise(resolve => setTimeout(resolve, 0)); });
+const wireframeButton = (host: HTMLElement) => [...host.querySelectorAll('button')].find(button => button.textContent === 'Wireframe');
+
+it('offers Wireframe for a mesh and shows when it is on', async () => {
+  const host = document.createElement('div');
+  const meshRoot = createRoot(host);
+  await act(async () => meshRoot.render(<ModelViewer src="/view?filename=mesh.glb&subfolder=&type=output" filename="mesh.glb" />));
+  await settle();
+  const button = wireframeButton(host)!;
+  expect(button.getAttribute('aria-pressed')).toBe('false');
+  expect(button.className).not.toContain('bg-cyan-500');
+  act(() => button.click());
+  expect(button.getAttribute('aria-pressed')).toBe('true');
+  expect(button.className).toContain('bg-cyan-500');
+  act(() => meshRoot.unmount());
+});
+
+it('leaves Wireframe out for a point cloud, which has no surfaces', async () => {
+  const ply = 'ply\nformat ascii 1.0\nelement vertex 3\nproperty float x\nproperty float y\nproperty float z\nend_header\n0 0 0\n1 0 0\n0 1 0\n';
+  vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, arrayBuffer: async () => new TextEncoder().encode(ply).buffer })));
+  const host = document.createElement('div');
+  const cloudRoot = createRoot(host);
+  await act(async () => cloudRoot.render(<ModelViewer src="/view?filename=cloud.ply&subfolder=&type=output" filename="cloud.ply" />));
+  await settle();
+  expect(host.querySelector('[role="status"]')).toBeNull();
+  expect([...host.querySelectorAll('button')].map(button => button.textContent)).toContain('Reset view');
+  expect(wireframeButton(host)).toBeUndefined();
+  act(() => cloudRoot.unmount());
+});

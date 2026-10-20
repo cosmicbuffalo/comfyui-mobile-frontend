@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import {
   getImagePreviewUrl,
   getImageUrl,
@@ -27,6 +27,8 @@ export interface NodeCardBatchPreview {
 
 interface NodeCardOutputPreviewProps {
   show: boolean;
+  /** 3D outputs, drawn first under the same heading. */
+  models?: ReactNode;
   previewImage: {
     filename: string;
     subfolder: string;
@@ -326,6 +328,7 @@ function FrontendMediaPlaylist({
 
 export function NodeCardOutputPreview({
   show,
+  models = null,
   previewImage,
   previewImages = null,
   frontendPreview = null,
@@ -389,7 +392,7 @@ export function NodeCardOutputPreview({
     : null;
 
   if (!show || (
-    !previewImage && !previewText && !latentPreviewUrl && !isTiled && !frontendPreview
+    !previewImage && !previewText && !latentPreviewUrl && !isTiled && !frontendPreview && !models
   )) return null;
 
   return (
@@ -397,6 +400,7 @@ export function NodeCardOutputPreview({
       <div className="text-xs text-slate-500 mb-1.5 uppercase tracking-wide">
         {t('Output Preview')}
       </div>
+      {models}
       {isTiled ? (
         <div className="output-batch-grid grid grid-cols-2 gap-2">
           {previewImages!.map((media, i) => (

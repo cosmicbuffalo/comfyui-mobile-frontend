@@ -502,6 +502,13 @@ describe('backend reconnect notices', () => {
 });
 
 describe('extractTextPreviewFromOutput', () => {
+  it('shows no text for a Preview 3D result, which reports its model path', () => {
+    expect(extractTextPreviewFromOutput({ result: ['mobile-0.40-showcase/torus-knot.glb', { zoom: 1 }, null] })).toBeNull();
+    expect(extractTextPreviewFromOutput({
+      '3d': [{ filename: 'mesh.glb', subfolder: '', type: 'output' }], result: ['mesh.glb'],
+    })).toBeNull();
+  });
+
   it('extracts text from explicit text-like fields', () => {
     expect(
       extractTextPreviewFromOutput({

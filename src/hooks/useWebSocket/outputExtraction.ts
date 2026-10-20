@@ -7,6 +7,8 @@ import type {
 } from '../useWorkflow';
 
 export function extractTextPreviewFromOutput(output: Record<string, unknown>): string | null {
+  // Preview 3D reports its model path under `result`: the model itself is shown, not that text.
+  if ('3d' in standardize3dOutput(output)) return null;
   const preferredKeys = ['text', 'string', 'strings', 'result', 'value', '__value__', 'ui'];
   const mediaContainerKeys = new Set([
     'images',

@@ -18,6 +18,17 @@ const UNSAVED_WIDGET_INITIAL_VALUES: Record<string, () => unknown> = {
 /** Stock widgets that hold only editor state: never saved and never sent. */
 const EDITOR_ONLY_WIDGET_TYPES = new Set(['CAMERA_INFO_STATE']);
 
+/**
+ * The 3D nodes' own viewport (Load 3D, the new 3D previews). Stock saves its
+ * slot and sends the viewer's camera when queueing; the node accepts the saved
+ * value too, so mobile keeps and sends it but draws no control for it.
+ */
+const VIEWPORT_WIDGET_TYPES = new Set(['LOAD_3D', 'LOAD_3D_ADVANCED']);
+
+export function isViewportWidgetType(typeOrOptions: string | unknown[]): boolean {
+  return typeof typeOrOptions === 'string' && VIEWPORT_WIDGET_TYPES.has(typeOrOptions.toUpperCase());
+}
+
 export function isEditorOnlyWidgetType(typeOrOptions: string | unknown[]): boolean {
   return typeof typeOrOptions === 'string' && EDITOR_ONLY_WIDGET_TYPES.has(typeOrOptions.toUpperCase());
 }

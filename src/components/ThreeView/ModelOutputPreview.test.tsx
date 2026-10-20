@@ -30,7 +30,7 @@ it('leaves inline 3D models for Expand in low resource mode and releases an exis
     await act(async () => root.render(<ModelOutputPreview output={{ filename: 'mesh.glb', subfolder: '', type: 'output' }} onExpand={expand} onReady={ready} />));
     expect(container.querySelector('canvas')).toBeNull();
     expect(ready).toHaveBeenCalledOnce();
-    const button = [...container.querySelectorAll('button')].find(b => b.textContent === 'Expand');
+    const button = container.querySelector<HTMLButtonElement>('button[aria-label="Expand"]');
     act(() => button!.click());
     expect(expand).toHaveBeenCalledOnce();
     await act(async () => useGenerationSettingsStore.getState().setLowResourceMode(false));

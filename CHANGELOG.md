@@ -21,8 +21,9 @@ exactly as before.
   **Add Lora** adds another. Workflows save and queue exactly as they do in
   ComfyUI's own editor.
 - **Camera nodes.** **Create Camera Info** and **Compose Camera Angle Prompt**
-  get an interactive 3D preview. Drag the rings to orbit, the pink handle to
-  zoom, or pick a gizmo to move the target or move and rotate the camera.
+  get an interactive 3D preview. Drag the handles to move the camera: cyan
+  around the subject, magenta up and down, yellow nearer or farther. Create
+  Camera Info also has gizmos to move the target or move and rotate the camera.
   **Look through** shows the camera's own view, and Compose Camera Angle Prompt
   shows your reference image on the cube.
 - **3D outputs.** Meshes (GLB, GLTF, OBJ, FBX, STL), point clouds and Gaussian

@@ -5,7 +5,7 @@ import { findLoraListIndex, isLoraList, isLoraManagerNodeType, isPowerLoraLoader
 import { isPowerPuterNodeType, readPowerPuterWidgets, POWER_PUTER_MAX_OUTPUTS, POWER_PUTER_OUTPUT_TYPES } from '@/utils/powerPuter';
 import { modelWidgetKind } from '@/utils/modelWidgetKind';
 import { isDynamicGroup, groupRowCount, readGroupRows, groupFields } from './workflowInputs/dynamicGroups';
-import { isEditorOnlyWidgetType } from './workflowInputs/defaultInputs';
+import { isEditorOnlyWidgetType, isViewportWidgetType } from './workflowInputs/defaultInputs';
 import {
   extractTriggerWordList,
   extractTriggerWordListLoose,
@@ -329,6 +329,11 @@ function collectWidgetDefinitions(
       if (isEditorOnlyWidgetType(typeOrOptions)) return;
       if (inputOptions?.widgetType === 'CAMERA_ANGLE_VIEW') {
         widgetIndex += 1;
+        return;
+      }
+      // Stock saves the 3D viewport as a widget slot; a node mobile created holds it as a socket instead.
+      if (isViewportWidgetType(typeOrOptions)) {
+        if (occupiesWidgetSlot(node, qualifiedName, typeOrOptions, inputOptions)) widgetIndex += 1;
         return;
       }
       // A legacy combo array contains values, not a type name. Joining every
