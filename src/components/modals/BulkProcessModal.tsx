@@ -2,12 +2,12 @@ import { useEffect, useMemo, useState } from 'react';
 import type { FileItem, UserDataFile } from '@/api/client';
 import {
   clientId,
-  listUserWorkflows,
   loadUserWorkflow,
   queuePrompt,
 } from '@/api/client';
 import type { Workflow } from '@/api/types';
 import { useWorkflowStore } from '@/hooks/useWorkflow';
+import { useUserWorkflowList } from '@/hooks/useUserWorkflowList';
 import { useQueueStore } from '@/hooks/useQueue';
 import { useWorkflowHiddenStore } from '@/hooks/useWorkflowHidden';
 import { resolveInputPathForFile } from '@/utils/filesystem';
@@ -45,9 +45,10 @@ export function BulkProcessModal({ open, items, onClose, onComplete }: BulkProce
   const hiddenWorkflowPaths = useWorkflowHiddenStore((s) => s.hidden);
 
   const [step, setStep] = useState<Step>('workflow');
-  const [workflowFiles, setWorkflowFiles] = useState<UserDataFile[]>([]);
-  const [listLoading, setListLoading] = useState(false);
-  const [listError, setListError] = useState<string | null>(null);
+  const workflowList = useUserWorkflowList(open);
+  const workflowFiles = useMemo(() => workflowList.files.filter(file => file.type === 'file'), [workflowList.files]);
+  const listLoading = workflowList.loading;
+  const listError = workflowList.error;
 
   const [selectedFilename, setSelectedFilename] = useState<string | null>(null);
   const [selectedWorkflowPath, setSelectedWorkflowPath] = useState<string | null>(null);
@@ -76,13 +77,6 @@ export function BulkProcessModal({ open, items, onClose, onComplete }: BulkProce
     setRunning(false);
     setProgress(0);
     setSummary(null);
-
-    setListLoading(true);
-    setListError(null);
-    listUserWorkflows()
-      .then((files) => setWorkflowFiles(files.filter((f) => f.type === 'file')))
-      .catch((err) => setListError(err instanceof Error ? err.message : t('Failed to list workflows')))
-      .finally(() => setListLoading(false));
   }, [open, t]);
 
   const handleSelectWorkflow = async (file: UserDataFile) => {

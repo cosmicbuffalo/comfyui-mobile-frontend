@@ -7,6 +7,25 @@ import { cameraPose, limit, lookDrag, numberInput, wheelChange, type CameraInput
 export type TransformMode = 'none' | 'target' | 'camera-translate' | 'camera-rotate';
 type Handle = 'yaw' | 'pitch' | 'distance' | 'roll';
 
+const DEG = Math.PI / 180;
+// The orbit gizmo has a fixed size around the target, whatever the camera's
+// real distance: a horizontal track with the yaw handle, a vertical arc with
+// the pitch handle, and a line out to the distance handle.
+const GIZMO_RADIUS = 1.5;
+const HANDLE_RADIUS = 0.11;
+const YAW_COLOR = 0x00d4ff;
+const PITCH_COLOR = 0xff66ff;
+const DISTANCE_COLOR = 0xffcc00;
+const ROLL_COLOR = 0xe8be6b;
+// CameraAngle draws its track below the subject so it never covers it, and
+// shows its distance handle and camera marker inside the gizmo: zoom 0 at the
+// outer of these radii, zoom 10 at the inner.
+const ANGLE_TRACK_LATITUDE = -40;
+const ANGLE_NEAR = 0.8;
+const ANGLE_FAR = 1.1;
+const ANGLE_OVERVIEW_DIRECTION = new THREE.Vector3(2.4, 1.4, 4.2).normalize();
+const angleDisplayDistance = (zoom: number) => ANGLE_FAR - (ANGLE_FAR - ANGLE_NEAR) * zoom / 10;
+
 /** Camera geometry and gestures implemented from the public node input contract. */
 export class CameraViewport {
   private view: Viewport3d;
@@ -18,6 +37,16 @@ export class CameraViewport {
   private transform: TransformMode = 'none';
   private sceneObjects = new THREE.Group();
   private handles = new Map<Handle, THREE.Mesh>();
+  /** The orbit gizmo, at the target; `facing` turns with the camera's yaw. */
+  private gizmo = new THREE.Group();
+  private facing = new THREE.Group();
+  private trackHeight: number;
+  private trackRadius: number;
+  private pitchLimits: [number, number];
+  private distanceLine: THREE.Line;
+  /** CameraAngle's orbit sphere and camera marker. */
+  private angleGuides = new THREE.Group();
+  private marker = new THREE.Group();
   private subject: THREE.Mesh;
   private perspective = new THREE.PerspectiveCamera(35, 1, 0.1, 1000);
   private orthographic = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 1000);
@@ -34,6 +63,7 @@ export class CameraViewport {
   private image: THREE.Texture | null = null;
   private imageUrl: string | null = null;
   private disposed = false;
+  private overviewAspect = 0;
   private detachBefore: () => void;
   private detachAfter: () => void;
 
@@ -43,7 +73,8 @@ export class CameraViewport {
     this.view = new Viewport3d(container);
     this.view.scene.add(this.sceneObjects);
     this.view.grid.visible = kind === 'info';
-    if (kind === 'angle') this.view.setCameraState({ position: new THREE.Vector3(12, 9, 15), target: new THREE.Vector3(), zoom: 1, cameraType: 'perspective' });
+    // CameraAngle's overview is fixed: drags belong to its handles.
+    if (kind === 'angle') this.view.controls.enabled = false;
     const materials = ['RIGHT', 'LEFT', 'TOP', 'BOTTOM', 'FRONT', 'BACK'].map(label => {
       const canvas = document.createElement('canvas');
       canvas.width = canvas.height = 128;
@@ -58,19 +89,49 @@ export class CameraViewport {
     this.subject = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), materials);
     this.subject.position.y = kind === 'info' ? 0.5 : 0;
     this.sceneObjects.add(this.subject, this.helper);
-    const torus = (name: Handle, color: number) => {
-      const mesh = new THREE.Mesh(new THREE.TorusGeometry(1, 0.02, 8, 96), new THREE.MeshBasicMaterial({ color, depthTest: false, transparent: true, opacity: 0.85 }));
-      mesh.renderOrder = 10; mesh.name = name; this.handles.set(name, mesh); this.sceneObjects.add(mesh);
+    const guide = (color: number) => new THREE.MeshBasicMaterial({ color, depthTest: false, transparent: true, opacity: 0.55 });
+    const latitude = (kind === 'angle' ? ANGLE_TRACK_LATITUDE : 0) * DEG;
+    this.trackRadius = GIZMO_RADIUS * Math.cos(latitude);
+    this.trackHeight = GIZMO_RADIUS * Math.sin(latitude);
+    this.pitchLimits = kind === 'angle' ? [-30, 60] : [-85, 85];
+    const track = new THREE.Mesh(new THREE.TorusGeometry(this.trackRadius, 0.025, 12, 96), guide(YAW_COLOR));
+    track.rotation.x = Math.PI / 2;
+    track.position.y = this.trackHeight;
+    const arcPoints: THREE.Vector3[] = [];
+    for (let degrees = this.pitchLimits[0]; degrees <= this.pitchLimits[1]; degrees += 5) {
+      arcPoints.push(new THREE.Vector3(0, GIZMO_RADIUS * Math.sin(degrees * DEG), GIZMO_RADIUS * Math.cos(degrees * DEG)));
+    }
+    const arc = new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(arcPoints), 32, 0.025, 8, false), guide(PITCH_COLOR));
+    this.distanceLine = new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3(0, 0, 1)]),
+      new THREE.LineBasicMaterial({ color: DISTANCE_COLOR, depthTest: false, transparent: true, opacity: 0.55 }));
+    for (const object of [track, arc, this.distanceLine]) object.renderOrder = 10;
+    const handle = (name: Handle, color: number) => {
+      const mesh = new THREE.Mesh(new THREE.SphereGeometry(HANDLE_RADIUS, 24, 16), new THREE.MeshBasicMaterial({ color, depthTest: false }));
+      mesh.name = name; mesh.renderOrder = 11; this.handles.set(name, mesh);
+      return mesh;
     };
-    torus('yaw', 0x54c9ff); torus('pitch', 0x87e5ab); torus('roll', 0xe8be6b);
-    const distance = new THREE.Mesh(new THREE.SphereGeometry(0.14), new THREE.MeshBasicMaterial({ color: 0xe886cf, depthTest: false }));
-    distance.name = 'distance'; distance.renderOrder = 11; this.handles.set('distance', distance); this.sceneObjects.add(distance);
+    this.facing.add(arc, this.distanceLine, handle('pitch', PITCH_COLOR), handle('distance', DISTANCE_COLOR));
+    this.gizmo.add(track, handle('yaw', YAW_COLOR), this.facing);
+    const roll = new THREE.Mesh(new THREE.TorusGeometry(1, 0.02, 8, 96), guide(ROLL_COLOR));
+    roll.material.opacity = 0.85; roll.name = 'roll'; roll.renderOrder = 10; this.handles.set('roll', roll);
+    this.sceneObjects.add(this.gizmo, roll);
+    if (kind === 'angle') {
+      const sphere = new THREE.Mesh(new THREE.SphereGeometry(GIZMO_RADIUS, 12, 8),
+        new THREE.MeshBasicMaterial({ color: 0x8a93a6, wireframe: true, transparent: true, opacity: 0.14, depthWrite: false }));
+      const markerMaterial = new THREE.MeshStandardMaterial({ color: DISTANCE_COLOR, emissive: DISTANCE_COLOR, emissiveIntensity: 0.45, roughness: 0.4 });
+      const lens = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.048, 0.08, 16), markerMaterial);
+      lens.rotation.x = Math.PI / 2;
+      lens.position.z = -0.1;
+      this.marker.add(new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.14, 0.12), markerMaterial), lens);
+      this.angleGuides.add(sphere, this.marker);
+      this.sceneObjects.add(this.angleGuides);
+    }
     this.transformControl = new TransformControls(this.view.camera, this.view.domElement);
     this.transformControl.setSize(0.8);
     this.transformControl.attach(this.transformProxy);
     this.transformHelper = this.transformControl.getHelper();
     this.view.scene.add(this.transformProxy, this.transformHelper);
-    this.transformControl.addEventListener('dragging-changed', event => { this.view.controls.enabled = !event.value && !this.lookingThrough; });
+    this.transformControl.addEventListener('dragging-changed', event => { this.view.controls.enabled = this.kind === 'info' && !event.value && !this.lookingThrough; });
     this.transformControl.addEventListener('objectChange', this.onTransform);
     const canvas = this.view.domElement;
     canvas.addEventListener('pointerdown', this.onDown, true);
@@ -97,15 +158,21 @@ export class CameraViewport {
       this.sceneObjects.remove(this.helper); this.helper.dispose(); this.helper = new THREE.CameraHelper(this.subjectCamera); this.sceneObjects.add(this.helper);
     }
     this.helper.update();
-    const yaw = this.handles.get('yaw')!;
-    const ringRadius = Math.max(0.1, pose.distance);
-    yaw.position.copy(pose.target); yaw.position.y += Math.sin(THREE.MathUtils.degToRad(pose.pitch)) * pose.distance;
-    yaw.rotation.set(Math.PI / 2, 0, 0); yaw.scale.setScalar(Math.max(0.1, Math.cos(THREE.MathUtils.degToRad(pose.pitch)) * ringRadius));
-    const pitch = this.handles.get('pitch')!;
-    pitch.position.copy(pose.target); pitch.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), new THREE.Vector3(Math.cos(THREE.MathUtils.degToRad(pose.yaw)), 0, -Math.sin(THREE.MathUtils.degToRad(pose.yaw)))); pitch.scale.setScalar(ringRadius);
+    const yawRadians = pose.yaw * DEG, pitchRadians = pose.pitch * DEG;
+    this.gizmo.position.copy(pose.target);
+    this.facing.rotation.y = yawRadians;
+    this.handles.get('yaw')!.position.set(this.trackRadius * Math.sin(yawRadians), this.trackHeight, this.trackRadius * Math.cos(yawRadians));
+    this.handles.get('pitch')!.position.set(0, GIZMO_RADIUS * Math.sin(pitchRadians), GIZMO_RADIUS * Math.cos(pitchRadians));
+    const reach = this.kind === 'angle' ? angleDisplayDistance(numberInput(inputs, 'zoom', 5)) : pose.distance;
+    const end = new THREE.Vector3(0, reach * Math.sin(pitchRadians), reach * Math.cos(pitchRadians));
+    this.handles.get('distance')!.position.copy(end);
+    this.distanceLine.geometry.setFromPoints([new THREE.Vector3(), end]);
     const roll = this.handles.get('roll')!;
     roll.position.copy(pose.position); roll.quaternion.copy(pose.quaternion); roll.scale.setScalar(0.5);
-    this.handles.get('distance')!.position.copy(pose.position);
+    if (this.kind === 'angle') {
+      this.marker.position.copy(end).applyAxisAngle(new THREE.Vector3(0, 1, 0), yawRadians).add(pose.target);
+      this.marker.quaternion.copy(pose.quaternion);
+    }
     this.transformProxy.position.copy(this.transform === 'target' ? pose.target : pose.position);
     this.transformProxy.quaternion.copy(pose.quaternion);
     this.transformProxy.updateMatrixWorld(true);
@@ -145,16 +212,28 @@ export class CameraViewport {
   }
   private syncVisibility() {
     const mode = String(this.inputs.mode ?? 'orbit');
-    this.helper.visible = !this.lookingThrough;
-    for (const [name, mesh] of this.handles) mesh.visible = this.showHandles && !this.lookingThrough && (this.kind === 'angle' ? name !== 'roll' : name === 'roll' ? mode !== 'quaternion' : mode === 'orbit');
+    // CameraAngle shows its camera as a marker on the gizmo instead of a frustum.
+    this.helper.visible = this.kind === 'info' && !this.lookingThrough;
+    this.angleGuides.visible = !this.lookingThrough;
     const enabled = this.kind === 'info' && this.showHandles && !this.lookingThrough && this.transform !== 'none' && (
       this.transform === 'target' ? mode !== 'quaternion' : this.transform === 'camera-translate' ? mode !== 'orbit' : mode === 'quaternion'
     );
+    // The roll ring circles the camera, right where the move-camera gizmo sits; it would take that gizmo's presses.
+    const gizmoOnCamera = enabled && this.transform !== 'target';
+    const shown = this.showHandles && !this.lookingThrough;
+    this.gizmo.visible = shown && (this.kind === 'angle' || mode === 'orbit');
+    this.handles.get('roll')!.visible = shown && this.kind === 'info' && mode !== 'quaternion' && !gizmoOnCamera;
     this.transformControl.enabled = enabled;
     this.transformHelper.visible = enabled;
   }
   private resizeCamera = () => {
     const aspect = this.view.domElement.width / this.view.domElement.height;
+    if (this.kind === 'angle' && aspect !== this.overviewAspect) {
+      // Frame the whole gizmo from a fixed direction, whatever the canvas shape.
+      this.overviewAspect = aspect;
+      const distance = GIZMO_RADIUS * 1.2 / (Math.tan(this.view.camera.fov / 2 * DEG) * Math.min(1, aspect));
+      this.view.setCameraState({ position: ANGLE_OVERVIEW_DIRECTION.clone().multiplyScalar(distance), target: new THREE.Vector3(), zoom: 1, cameraType: 'perspective' });
+    }
     this.perspective.aspect = aspect;
     this.perspective.updateProjectionMatrix();
     this.orthographic.left = -aspect; this.orthographic.right = aspect; this.orthographic.updateProjectionMatrix();
@@ -165,7 +244,7 @@ export class CameraViewport {
     const { renderer, domElement } = this.view;
     const size = Math.round(Math.min(domElement.width * 0.3, domElement.height * 0.35));
     if (size < 32) return;
-    const hidden = [this.helper, this.transformHelper, ...this.handles.values()];
+    const hidden = [this.helper, this.transformHelper, this.gizmo, this.handles.get('roll')!, this.angleGuides];
     const visibility = hidden.map(object => object.visible);
     hidden.forEach(object => { object.visible = false; });
     const aspect = this.perspective.aspect;
@@ -192,9 +271,8 @@ export class CameraViewport {
     this.ray.setFromCamera(this.pointer(event), this.view.camera);
   }
   /**
-   * The nearest visible handle within reach of the pointer. The rings are a
-   * few pixels wide on screen, so an exact hit on their geometry is too hard
-   * with a finger; measure screen distance to each ring's centre line instead.
+   * The nearest visible handle within a finger's reach of the pointer: the
+   * orbit handles by their centres, the thin roll ring along its whole length.
    */
   private pickHandle(event: PointerEvent): Handle | null {
     const rect = this.view.domElement.getBoundingClientRect();
@@ -203,14 +281,14 @@ export class CameraViewport {
     let nearest = event.pointerType === 'touch' ? 28 : 14;
     this.view.scene.updateMatrixWorld(true);
     for (const [name, mesh] of this.handles) {
-      if (!mesh.visible) continue;
-      const samples = name === 'distance' ? 1 : 128;
+      const ring = name === 'roll';
+      if (!(ring ? mesh.visible : this.gizmo.visible)) continue;
+      const samples = ring ? 128 : 1;
       for (let i = 0; i < samples; i++) {
         const angle = i / samples * Math.PI * 2;
-        const point = mesh.localToWorld(name === 'distance' ? new THREE.Vector3() : new THREE.Vector3(Math.cos(angle), Math.sin(angle), 0)).project(camera);
+        const point = mesh.localToWorld(ring ? new THREE.Vector3(Math.cos(angle), Math.sin(angle), 0) : new THREE.Vector3()).project(camera);
         if (Math.abs(point.z) > 1) continue;
-        // The zoom dot sits on the rings; its own radius keeps it the closer pick there.
-        const distance = Math.hypot(rect.left + (point.x + 1) / 2 * rect.width - event.clientX, rect.top + (1 - point.y) / 2 * rect.height - event.clientY) - (name === 'distance' ? 8 : 0);
+        const distance = Math.hypot(rect.left + (point.x + 1) / 2 * rect.width - event.clientX, rect.top + (1 - point.y) / 2 * rect.height - event.clientY);
         if (distance < nearest) { nearest = distance; best = name; }
       }
     }
@@ -238,19 +316,30 @@ export class CameraViewport {
     if (!drag.handle) this.emit(lookDrag(this.kind, drag.start, dx, dy));
     else {
       const pose = cameraPose(this.kind, this.inputs);
-      if (drag.handle === 'distance') this.emit(this.kind === 'angle' ? { zoom: limit(numberInput(drag.start, 'zoom', 5) - dy * 0.05, 0, 10) } : { 'mode.distance': Math.max(0.01, cameraPose(this.kind, drag.start).distance * Math.exp(dy * 0.01)) });
-      else if (drag.handle === 'roll') this.emit({ roll: limit(numberInput(drag.start, 'roll', 0) + dx * 0.5, -180, 180) });
+      if (drag.handle === 'roll') this.emit({ roll: limit(numberInput(drag.start, 'roll', 0) + dx * 0.5, -180, 180) });
       else {
+        // Follow the pointer on the plane the handle moves in: the track's
+        // horizontal plane for yaw, the vertical plane facing the camera for
+        // pitch and distance.
         this.pointRay(event);
-        const yaw = THREE.MathUtils.degToRad(pose.yaw);
-        const normal = drag.handle === 'yaw' ? new THREE.Vector3(0, 1, 0) : new THREE.Vector3(Math.cos(yaw), 0, -Math.sin(yaw));
-        const center = drag.handle === 'yaw' ? this.handles.get('yaw')!.position : pose.target;
-        const point = this.ray.ray.intersectPlane(new THREE.Plane().setFromNormalAndCoplanarPoint(normal, center), new THREE.Vector3());
+        const yaw = pose.yaw * DEG, pitch = pose.pitch * DEG;
+        const plane = drag.handle === 'yaw'
+          ? new THREE.Plane(new THREE.Vector3(0, 1, 0), -(pose.target.y + this.trackHeight))
+          : new THREE.Plane().setFromNormalAndCoplanarPoint(new THREE.Vector3(Math.cos(yaw), 0, -Math.sin(yaw)), pose.target);
+        const point = this.ray.ray.intersectPlane(plane, new THREE.Vector3());
         if (point) {
           point.sub(pose.target);
-          const value = drag.handle === 'yaw' ? ((THREE.MathUtils.radToDeg(Math.atan2(point.x, point.z)) % 360) + 360) % 360 : THREE.MathUtils.radToDeg(Math.atan2(point.y, point.x * Math.sin(yaw) + point.z * Math.cos(yaw)));
-          const name = this.kind === 'angle' ? drag.handle === 'yaw' ? 'horizontal_angle' : 'vertical_angle' : drag.handle === 'yaw' ? 'mode.yaw' : 'mode.pitch';
-          this.emit({ [name]: this.kind === 'angle' ? Math.round(drag.handle === 'yaw' ? value : limit(value, -30, 60)) : drag.handle === 'yaw' ? value : limit(value, -89, 89) });
+          const angle = this.kind === 'angle';
+          if (drag.handle === 'yaw') {
+            const value = ((Math.atan2(point.x, point.z) / DEG) % 360 + 360) % 360;
+            this.emit(angle ? { horizontal_angle: Math.round(value) % 360 } : { 'mode.yaw': value });
+          } else if (drag.handle === 'pitch') {
+            const value = limit(Math.atan2(point.y, point.x * Math.sin(yaw) + point.z * Math.cos(yaw)) / DEG, angle ? this.pitchLimits[0] : -89, angle ? this.pitchLimits[1] : 89);
+            this.emit(angle ? { vertical_angle: Math.round(value) } : { 'mode.pitch': value });
+          } else {
+            const along = point.dot(new THREE.Vector3(Math.cos(pitch) * Math.sin(yaw), Math.sin(pitch), Math.cos(pitch) * Math.cos(yaw)));
+            this.emit(angle ? { zoom: Math.round(limit((ANGLE_FAR - along) * 10 / (ANGLE_FAR - ANGLE_NEAR), 0, 10) * 10) / 10 } : { 'mode.distance': Math.max(0.5, along) });
+          }
         }
       }
     }
@@ -260,7 +349,7 @@ export class CameraViewport {
     if (this.dragging?.pointer !== event.pointerId) return;
     this.dragging = null;
     if (this.view.domElement.hasPointerCapture(event.pointerId)) this.view.domElement.releasePointerCapture(event.pointerId);
-    this.view.controls.enabled = !this.lookingThrough;
+    this.view.controls.enabled = this.kind === 'info' && !this.lookingThrough;
     event.stopImmediatePropagation();
   };
   private onWheel = (event: WheelEvent) => {

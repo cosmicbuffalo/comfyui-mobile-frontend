@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { useWorkflowStore } from '@/hooks/useWorkflow';
 import { useWorkflowUndoStore } from '@/hooks/useWorkflowUndo';
+import { useGenerationSettingsStore } from '@/hooks/useGenerationSettings';
 import { runUndoTransaction } from '@/utils/undoTransaction';
 import type { Workflow, WorkflowNode } from '@/api/types';
 
@@ -63,9 +64,23 @@ const redoLen = (s = 'tab-A') => useWorkflowUndoStore.getState().histories[s]?.r
 
 describe('useWorkflowUndo', () => {
   beforeEach(() => {
+    useGenerationSettingsStore.setState({ lowResourceMode: false });
     useWorkflowUndoStore.setState({ histories: {}, feedback: null });
     loadActive([1]);
     useWorkflowUndoStore.setState({ histories: {}, feedback: null });
+  });
+
+  it('retains three usable undo steps when low resource mode is enabled', () => {
+    for (let count = 2; count <= 8; count++) edit(Array.from({ length: count }, (_, i) => i + 1));
+    expect(undoLen()).toBe(7);
+    useGenerationSettingsStore.getState().setLowResourceMode(true);
+    expect(undoLen()).toBe(3);
+    for (let i = 0; i < 3; i++) useWorkflowUndoStore.getState().undo();
+    expect(ids()).toEqual([1, 2, 3, 4, 5]);
+    expect(redoLen()).toBe(3);
+    useWorkflowUndoStore.getState().redo();
+    expect(ids()).toEqual([1, 2, 3, 4, 5, 6]);
+    useGenerationSettingsStore.getState().setLowResourceMode(false);
   });
 
   it('records an edit and undoes/redoes it', () => {

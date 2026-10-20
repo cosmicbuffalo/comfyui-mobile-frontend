@@ -8,6 +8,9 @@ IMAGE_EXTENSIONS = ('.png', '.jpg', '.jpeg', '.webp', '.gif')
 VIDEO_EXTENSIONS = ('.mp4', '.m4v', '.mov', '.webm', '.mkv', '.avi')
 # Core SaveGLB embeds prompt/workflow in the GLB; other 3D formats carry none.
 MODEL_METADATA_EXTENSIONS = ('.glb',)
+# Inspect metadata without letting a model's declared chunk allocate arbitrary
+# memory. Mesh buffers are never needed to determine workflow availability.
+MAX_GLB_JSON_BYTES = 32 * 1024 * 1024
 
 
 # Metadata requests run in ComfyUI's executor. Protect the shared bounded cache
@@ -143,11 +146,21 @@ def read_glb_metadata(path: str) -> dict[str, Any]:
         header = f.read(20)
         if len(header) < 20:
             return {}
-        magic, _version, _length, json_length, chunk_type = struct.unpack('<4sIIII', header)
-        if magic != b'glTF' or chunk_type != 0x4E4F534A:
+        magic, version, length, json_length, chunk_type = struct.unpack('<4sIIII', header)
+        if (magic != b'glTF' or version != 2 or chunk_type != 0x4E4F534A
+                or json_length > MAX_GLB_JSON_BYTES or json_length % 4
+                or length < 20 or json_length > length - 20
+                or length > os.fstat(f.fileno()).st_size):
             return {}
-        gltf = json.loads(f.read(json_length))
-    extras = gltf.get('asset', {}).get('extras') if isinstance(gltf, dict) else None
+        chunk = f.read(json_length)
+        if len(chunk) != json_length:
+            return {}
+        try:
+            gltf = json.loads(chunk)
+        except (ValueError, UnicodeDecodeError):
+            return {}
+    asset = gltf.get('asset') if isinstance(gltf, dict) else None
+    extras = asset.get('extras') if isinstance(asset, dict) else None
     return extras if isinstance(extras, dict) else {}
 
 

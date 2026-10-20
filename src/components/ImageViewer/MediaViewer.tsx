@@ -4,6 +4,8 @@ import { createPortal } from 'react-dom';
 import { useTextareaFocus } from '@/hooks/useTextareaFocus';
 import { useBodyScrollLock } from '@/hooks/useBodyScrollLock';
 import { useWorkflowStore } from '@/hooks/useWorkflow';
+import { useGenerationSettingsStore } from '@/hooks/useGenerationSettings';
+import { getScreenPreviewUrl } from '@/api/client/base';
 import { useImageViewerStore } from '@/hooks/useImageViewer';
 import { useI18n } from '@/i18n';
 import { usePinnedWidgetStore } from '@/hooks/usePinnedWidget';
@@ -120,6 +122,14 @@ function isEditableElement(element: HTMLElement | null): boolean {
 }
 
 function getFullScreenImageSrc(item: ViewerImage): string {
+  if (useGenerationSettingsStore.getState().lowResourceMode) {
+    // A viewer can already be open when the preset is enabled. Rebuild its
+    // display URL from the original, including JPEGs normally shown directly.
+    try {
+      const url = new URL(item.src, window.location.href);
+      if (url.origin === window.location.origin && url.pathname.endsWith('/view')) return getScreenPreviewUrl(item.src);
+    } catch { /* Non-URL viewer sources keep their existing display path. */ }
+  }
   const name = item.filename ?? item.file?.name ?? item.src;
   return /\.jpe?g(?:$|[?#])/i.test(name) ? item.src : (item.displaySrc ?? item.src);
 }
@@ -195,6 +205,7 @@ export function MediaViewer({
   zoomResetKey,
 }: MediaViewerProps) {
   const { t } = useI18n();
+  const lowResourceMode = useGenerationSettingsStore((s) => s.lowResourceMode);
   const overlayRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const imageRef = useRef<HTMLImageElement>(null);
@@ -202,6 +213,9 @@ export function MediaViewer({
   // zooms/pans in lockstep with the base image instead of catching up on render.
   const compareImageRef = useRef<HTMLImageElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
+  useEffect(() => {
+    if (lowResourceMode) videoRef.current?.pause();
+  }, [lowResourceMode]);
   const naturalSizeRef = useRef<{ width: number; height: number } | null>(null);
   const adjacentPreloadsRef = useRef<
     Map<string, { image: HTMLImageElement; itemIndex: number }>
@@ -274,7 +288,7 @@ export function MediaViewer({
   const [workflowAvailableById, setWorkflowAvailableById] = useState<Record<string, boolean>>({});
   // Holds the failed element's MediaError code (null when it gave none).
   const [videoError, setVideoError] = useState<{ code: number | null } | null>(null);
-  const [videoPlaying, setVideoPlaying] = useState(true);
+  const [videoPlaying, setVideoPlaying] = useState(!lowResourceMode);
   const [videoMuted, setVideoMuted] = useState(true);
   const [videoCurrentTime, setVideoCurrentTime] = useState(0);
   const [videoDuration, setVideoDuration] = useState(0);
@@ -790,7 +804,12 @@ export function MediaViewer({
   }, [open, index, items, isMissingItem, findViewableIndex, onIndexChange]);
 
   useEffect(() => {
-    if (!open || index < 0 || items.length <= 1) {
+    if (lowResourceMode || !open || index < 0 || items.length <= 1) {
+      for (const { image } of adjacentPreloadsRef.current.values()) {
+        image.onload = null;
+        image.onerror = null;
+        image.removeAttribute('src');
+      }
       adjacentPreloadsRef.current.clear();
       return;
     }
@@ -861,7 +880,7 @@ export function MediaViewer({
       nextPreloads.set(src, { image: preload, itemIndex });
     }
     adjacentPreloadsRef.current = nextPreloads;
-  }, [open, index, items, currentItem, markLoaded, isMissingItem, probeMissingMedia]);
+  }, [lowResourceMode, open, index, items, currentItem, markLoaded, isMissingItem, probeMissingMedia]);
 
   /* eslint-disable react-hooks/set-state-in-effect */
   useEffect(() => {
@@ -1024,7 +1043,7 @@ export function MediaViewer({
   /* eslint-disable react-hooks/set-state-in-effect */
   useEffect(() => {
     setVideoError(null);
-    setVideoPlaying(true);
+    setVideoPlaying(!lowResourceMode);
     setVideoMuted(true);
     // Metadata can arrive before this passive effect. Read the mounted video
     // so the reset cannot erase its duration and leave the timeline disabled.
@@ -1038,7 +1057,7 @@ export function MediaViewer({
     }
     // Clear the resolution subtitle until the new media reports its dimensions.
     setNaturalSize(null);
-  }, [renderItem?.src, renderIsVideo]);
+  }, [renderItem?.src, renderIsVideo, lowResourceMode]);
   /* eslint-enable react-hooks/set-state-in-effect */
 
   // The playback rate lives in the viewer store rather than on an individual
@@ -1798,11 +1817,11 @@ export function MediaViewer({
                   ref={videoRef}
                   src={getPlayableVideoUrl(renderItem.src)}
                   poster={getMediaThumbnailUrlFromAssetUrl(renderItem.src)}
-                  autoPlay
+                  autoPlay={!lowResourceMode}
                   loop
                   muted={videoMuted}
                   playsInline
-                  preload="auto"
+                  preload={lowResourceMode ? 'none' : 'auto'}
                   className="w-full h-auto block select-none relative"
                   style={{
                     transform: imageTransform,

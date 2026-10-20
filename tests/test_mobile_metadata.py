@@ -163,3 +163,40 @@ def test_other_3d_formats_are_not_metadata_sources(tmp_path: Path):
     with pytest.raises(MetadataPathError) as exc:
         resolve_metadata_path("cloud.ply", "output", str(tmp_path), str(output_dir))
     assert exc.value.status_code == 400
+
+
+@pytest.mark.parametrize('asset', [None, [], 'invalid', 42])
+def test_glb_non_object_asset_has_no_metadata(tmp_path: Path, asset):
+    path = tmp_path / 'invalid-asset.glb'
+    _write_glb(path, asset)
+    assert read_glb_metadata(str(path)) == {}
+
+
+@pytest.mark.parametrize('chunk', [b'{bad', b'\xff\xff\xff\xff', b'null', b'[]  '])
+def test_glb_invalid_json_has_no_metadata(tmp_path: Path, chunk):
+    path = tmp_path / 'invalid-json.glb'
+    path.write_bytes(struct.pack('<4sIIII', b'glTF', 2, 20 + len(chunk), len(chunk), 0x4E4F534A) + chunk)
+    assert read_glb_metadata(str(path)) == {}
+
+
+def test_glb_oversized_json_is_rejected_without_reading_payload(tmp_path: Path, monkeypatch):
+    from unittest.mock import call, mock_open
+    import mobile_metadata
+
+    length = mobile_metadata.MAX_GLB_JSON_BYTES + 4
+    header = struct.pack('<4sIIII', b'glTF', 2, 20 + length, length, 0x4E4F534A)
+    path = tmp_path / 'oversized.glb'
+    path.write_bytes(header)
+    with path.open('rb') as actual:
+        reader = mock_open(read_data=header)
+        reader.return_value.fileno.return_value = actual.fileno()
+        monkeypatch.setattr(mobile_metadata, 'open', reader, raising=False)
+        assert read_glb_metadata(str(path)) == {}
+        assert reader.return_value.read.call_args_list == [call(20)]
+
+
+@pytest.mark.parametrize('version, total, declared', [(1, 24, 4), (2, 24, 8), (2, 40, 4), (2, 24, 3)])
+def test_glb_invalid_chunk_boundaries_have_no_metadata(tmp_path: Path, version, total, declared):
+    path = tmp_path / 'invalid-length.glb'
+    path.write_bytes(struct.pack('<4sIIII', b'glTF', version, total, declared, 0x4E4F534A) + b'{}  ')
+    assert read_glb_metadata(str(path)) == {}

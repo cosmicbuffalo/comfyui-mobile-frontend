@@ -4,6 +4,9 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import type { Viewport3d as Viewport3dType } from './Viewport3d';
 import { useSwipeNavigation } from '@/hooks/useSwipeNavigation';
 
+const managers: Array<import('three').LoadingManager> = [];
+vi.mock('@sparkjsdev/spark', () => { throw new Error('splat chunk unavailable'); });
+
 // Real viewer, viewport and OrbitControls; only WebGL and the model parse are stand-ins.
 vi.mock('three', async importOriginal => {
   const three = await importOriginal<typeof import('three')>();
@@ -26,7 +29,10 @@ vi.mock('three', async importOriginal => {
 });
 vi.mock('three/examples/jsm/loaders/GLTFLoader.js', async () => {
   const three = await import('three');
-  return { GLTFLoader: class { async parseAsync() { return { scene: new three.Mesh(new three.BoxGeometry(), new three.MeshBasicMaterial()), animations: [] }; } } };
+  return { GLTFLoader: class {
+    constructor(manager: import('three').LoadingManager) { managers.push(manager); }
+    async parseAsync() { return { scene: new three.Mesh(new three.BoxGeometry(), new three.MeshBasicMaterial()), animations: [] }; }
+  } };
 });
 const viewports: Viewport3dType[] = [];
 vi.mock('./Viewport3d', async importOriginal => {
@@ -42,12 +48,32 @@ const { default: ModelViewer } = await import('./ModelViewer');
 let root: ReturnType<typeof createRoot>;
 beforeEach(() => {
   viewports.length = 0;
+  managers.length = 0;
   vi.stubGlobal('ResizeObserver', class { observe() {} disconnect() {} });
   vi.stubGlobal('IntersectionObserver', class { observe() {} disconnect() {} });
   vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, arrayBuffer: async () => new ArrayBuffer(8) })));
   root = createRoot(document.createElement('div'));
 });
 afterEach(() => { act(() => root.unmount()); vi.unstubAllGlobals(); });
+
+it('aborts the per-viewer sidecar manager when removed', async () => {
+  await act(async () => root.render(<ModelViewer src="/view?filename=mesh.glb" filename="mesh.glb" />));
+  const signal = managers[0].abortController.signal;
+  expect(signal.aborted).toBe(false);
+  act(() => root.render(null));
+  expect(signal.aborted).toBe(true);
+});
+
+it('handles a speculative splat import rejection while the file fetch is pending', async () => {
+  let rejectFetch!: (error: Error) => void;
+  vi.stubGlobal('fetch', vi.fn(() => new Promise((_resolve, reject) => { rejectFetch = reject; })));
+  const onError = vi.fn();
+  await act(async () => root.render(<ModelViewer src="/view?filename=cloud.splat" filename="cloud.splat" onError={onError} />));
+  // Vitest also fails this test if the speculative import rejects unhandled.
+  await act(async () => { await new Promise(resolve => setTimeout(resolve, 30)); });
+  await act(async () => rejectFetch(new Error('file fetch failed')));
+  expect(onError).toHaveBeenCalledOnce();
+});
 
 it('keeps a rolled orthographic output camera through controls updates and wheel zoom', async () => {
   // Core CreateCameraInfo sends the quaternion and useCustomUp, without customUp.

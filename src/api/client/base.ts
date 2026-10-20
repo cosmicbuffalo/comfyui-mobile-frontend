@@ -107,9 +107,8 @@ export function getPlayableVideoUrl(assetUrl: string): string {
 }
 
 // Display-only variant of getImageUrl. Asks ComfyUI's /view endpoint to
-// re-encode the image to a small WebP on the fly — same full resolution, but a
-// fraction of the bytes of the source PNG, so inline previews/thumbnails load
-// near-instantly instead of streaming a multi-MB file top-to-bottom.
+// render a bounded, cached WebP. Inline cards never need to decode a full-size
+// generation just to display a small preview; downloads still use getImageUrl.
 //
 // Use for previews and thumbnails only. Do NOT use for: downloads/share (you
 // want the original file), videos (this param is image-only), or anywhere a
@@ -121,7 +120,7 @@ export function getImagePreviewUrl(
   type: string,
   explicitCacheToken?: string | number,
 ): string {
-  return withWebpPreview(getImageUrl(filename, subfolder, type, explicitCacheToken));
+  return withMobilePreview(getImageUrl(filename, subfolder, type, explicitCacheToken), QUEUE_PREVIEW_MAX_EDGE);
 }
 
 // Queue cards can mount several previews while the rest of the application is
@@ -153,6 +152,7 @@ export function getQueueImagePreviewUrl(
 // Honors the user's `webpPreviewEnabled` preference: when opted out, the URL is
 // returned untouched so the original (PNG) is loaded everywhere.
 export function withWebpPreview(viewUrl: string): string {
+  if (useGenerationSettingsStore.getState().lowResourceMode) return withMobilePreview(viewUrl, 1024);
   if (!useGenerationSettingsStore.getState().webpPreviewEnabled) return viewUrl;
   return `${viewUrl}&preview=webp;90`;
 }
@@ -162,6 +162,7 @@ export function withWebpPreview(viewUrl: string): string {
 // only show ~2-4 MP. Capped at 2560 to bound memory; full-resolution detail is
 // loaded lazily on zoom (Phase 2). SSR-safe fallback of 2048.
 function screenMaxEdge(): number {
+  if (useGenerationSettingsStore.getState().lowResourceMode) return 1024;
   if (typeof window === 'undefined') return 2048;
   const dpr = window.devicePixelRatio || 1;
   const longest = Math.max(window.screen?.width ?? 0, window.screen?.height ?? 0);
@@ -180,11 +181,13 @@ export function getScreenPreviewUrl(viewUrl: string): string {
 }
 
 function withMobilePreview(viewUrl: string, maxEdge: number): string {
-  if (!useGenerationSettingsStore.getState().webpPreviewEnabled) return viewUrl;
+  const settings = useGenerationSettingsStore.getState();
+  if (!settings.webpPreviewEnabled && !settings.lowResourceMode) return viewUrl;
   const queryStart = viewUrl.indexOf('?');
   if (queryStart < 0) return viewUrl;
   const query = viewUrl.slice(queryStart + 1);
-  return `/mobile/api/preview?${query}&maxedge=${maxEdge}`;
+  const edge = settings.lowResourceMode ? Math.min(maxEdge, 1024) : maxEdge;
+  return `/mobile/api/preview?${query}&maxedge=${edge}`;
 }
 
 export function connectWebSocket(

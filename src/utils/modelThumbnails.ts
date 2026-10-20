@@ -1,5 +1,6 @@
 import { useEffect, useState, type RefObject } from 'react';
 import type { FileItem } from '@/api/client';
+import { useGenerationSettingsStore } from '@/hooks/useGenerationSettings';
 
 /**
  * Outputs-grid thumbnails for 3D files, rendered in this browser and kept in
@@ -28,6 +29,7 @@ const queue: FileItem[] = [];
 let active = false;
 let draining = false;
 let database: Promise<IDBDatabase> | null = null;
+let rendering: { id: string; controller: AbortController } | null = null;
 
 function openDatabase(): Promise<IDBDatabase> {
   database ??= new Promise((resolve, reject) => {
@@ -112,6 +114,8 @@ function remember(id: string, blob: Blob, token: string) {
 /** Deleted files take their thumbnails with them. */
 export function forgetModelThumbnails(ids: string[]) {
   for (const id of ids) {
+    dequeue(id);
+    if (rendering?.id === id) rendering.controller.abort();
     forget(id);
     failed.delete(id);
     void deleteStored(id).catch(() => {});
@@ -152,7 +156,8 @@ function whenPageVisible(): Promise<void> {
 
 /** Background rendering only runs while the Outputs panel is on screen. */
 export function setModelThumbnailsActive(next: boolean) {
-  active = next;
+  active = next && !useGenerationSettingsStore.getState().lowResourceMode;
+  if (!active) rendering?.controller.abort();
   if (active) void drain();
 }
 
@@ -160,18 +165,24 @@ async function drain() {
   if (draining) return;
   draining = true;
   try {
-    while (active && queue.length > 0) {
+    while (active && !useGenerationSettingsStore.getState().lowResourceMode && queue.length > 0) {
       await whenPageVisible();
       if (!active) break;
       const file = queue.shift();
       if (!file) break;
       if (hasModelThumbnail(file) || failed.get(file.id) === file.cacheToken) continue;
+      const controller = new AbortController();
+      rendering = { id: file.id, controller };
       try {
         const { renderModelThumbnail } = await import('@/components/ThreeView/renderModelThumbnail');
-        saveModelThumbnail(file, await renderModelThumbnail(file.fullUrl!, file.name));
+        if (controller.signal.aborted) continue;
+        const blob = await renderModelThumbnail(file.fullUrl!, file.name, 20000, controller.signal);
+        if (!controller.signal.aborted) saveModelThumbnail(file, blob);
       } catch {
         // Unreadable or too slow: don't retry this version for the rest of the session.
-        failed.set(file.id, file.cacheToken!);
+        if (!controller.signal.aborted) failed.set(file.id, file.cacheToken!);
+      } finally {
+        rendering = null;
       }
     }
   } finally {
@@ -194,10 +205,11 @@ function canRenderInBackground(file: FileItem): boolean {
  * background rendering.
  */
 export function useModelThumbnail(file: FileItem, target: RefObject<Element | null>): string | null {
+  const lowResourceMode = useGenerationSettingsStore(s => s.lowResourceMode);
   const [, setVersion] = useState(0);
   const isModel = file.type === 'model';
   useEffect(() => {
-    if (!isModel || !target.current) return;
+    if (!isModel || lowResourceMode || !target.current) return;
     const { id } = file;
     const listener = () => setVersion(version => version + 1);
     const fileListeners = listeners.get(id) ?? new Set();
@@ -222,6 +234,7 @@ export function useModelThumbnail(file: FileItem, target: RefObject<Element | nu
       } else {
         visible.delete(id);
         dequeue(id);
+        if (rendering?.id === id) rendering.controller.abort();
       }
     });
     observer.observe(target.current);
@@ -230,9 +243,10 @@ export function useModelThumbnail(file: FileItem, target: RefObject<Element | nu
       observer.disconnect();
       visible.delete(id);
       dequeue(id);
+      if (rendering?.id === id) rendering.controller.abort();
       fileListeners.delete(listener);
       if (fileListeners.size === 0 && listeners.get(id) === fileListeners) listeners.delete(id);
     };
-  }, [file, isModel, target]);
-  return isModel ? currentUrl(file) : null;
+  }, [file, isModel, lowResourceMode, target]);
+  return isModel && !lowResourceMode ? currentUrl(file) : null;
 }

@@ -60,6 +60,7 @@ import { useShowHiddenStore } from "@/hooks/useShowHidden";
 import { hasDotHiddenPathSegment } from "@/utils/hiddenPath";
 import { isInNativeApp } from "@/utils/nativeApp";
 import { useInputFileRevisions } from "@/hooks/useInputFileRevisions";
+import { WindowedComboMenuList } from './WindowedComboMenuList';
 
 const VIDEO_EXTENSIONS = new Set(["mp4", "webm", "mkv", "gif", "mov", "avi", "wmv"]);
 /** Keys that close the list without a pointer gesture still to play out. */
@@ -77,12 +78,23 @@ const isFilterableOption = (opt: ComboSelectOption) =>
 
 const foldSearchText = (text: string) =>
   text.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+const searchTextByOption = new WeakMap<ComboSelectOption, string>();
+let previousSearchInput = '';
+let previousSearchTerms: string[] = [];
 // Every whitespace-separated term must appear somewhere in the label or path,
 // in any order, so "flux paint" finds "Flux/inpaint_v2.safetensors".
 const matchesSearchTerms = (option: FilterOptionOption<ComboSelectOption>, input: string) => {
-  const terms = foldSearchText(input).split(/\s+/).filter(Boolean);
+  if (input !== previousSearchInput) {
+    previousSearchInput = input;
+    previousSearchTerms = foldSearchText(input).split(/\s+/).filter(Boolean);
+  }
+  const terms = previousSearchTerms;
   if (terms.length === 0) return true;
-  const haystack = foldSearchText(`${option.label} ${option.value}`);
+  let haystack = searchTextByOption.get(option.data);
+  if (haystack === undefined) {
+    haystack = foldSearchText(`${option.label} ${option.value}`);
+    searchTextByOption.set(option.data, haystack);
+  }
   return terms.every((term) => haystack.includes(term));
 };
 
@@ -403,6 +415,7 @@ export function ComboControl({
   const selectComponents = useMemo(() => {
     if (isModelMode) {
       return {
+        MenuList: WindowedComboMenuList,
         DropdownIndicator: null,
         IndicatorSeparator: null,
         Option: ModelOption,
@@ -411,6 +424,7 @@ export function ComboControl({
     }
     if (!showImageThumbnails) {
       return {
+        MenuList: WindowedComboMenuList,
         DropdownIndicator: null,
         IndicatorSeparator: null,
       };
@@ -441,6 +455,7 @@ export function ComboControl({
       DropdownIndicator: null,
       IndicatorSeparator: null,
       Option: ThumbnailOption,
+      MenuList: WindowedComboMenuList,
     };
   }, [showImageThumbnails, isModelMode]);
 

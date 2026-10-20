@@ -1,4 +1,5 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useNodeWorkflow } from '@/hooks/useNodeWorkflow';
 import type { HistoryOutputImage, WorkflowInput, WorkflowNode, WorkflowOutput } from '@/api/types';
 import { useWildcards } from '@/hooks/useWildcards';
 import {
@@ -135,7 +136,7 @@ export const NodeCard = memo(function NodeCard({
 }: NodeCardProps) {
   const { t } = useI18n();
   const nodeTypes = useWorkflowStore((s) => s.nodeTypes);
-  const workflow = useWorkflowStore((s) => s.workflow);
+  const workflow = useNodeWorkflow(node.id);
   const scopeStack = useWorkflowStore((s) => s.scopeStack);
   // Which instance of each enclosing subgraph this card is being read through,
   // so a promoted widget fed from outside the subgraph resolves to the value
@@ -471,7 +472,6 @@ export const NodeCard = memo(function NodeCard({
   const expandConnectionsSection = useConnectionSectionFoldsStore((s) => s.expand);
   // Bumped when the card is unfolded, to reset any nested in-Parameters folds
   // (e.g. CR-LoRA groups) back to open so unfolding reveals everything.
-  const [unfoldNonce, setUnfoldNonce] = useState(0);
   const startEditSetGetName = useSetGetNameEditStore((s) => s.startEdit);
   const expandParametersSection = useParameterSectionFoldsStore((s) => s.expand);
   const isLoadImageNode = /LoadImage/i.test(node.type);
@@ -1511,11 +1511,9 @@ export const NodeCard = memo(function NodeCard({
           setItemCollapsed(nodeHierarchicalKey, !isCollapsed);
           if (!willUnfold) return;
           // Unfolding a node reveals everything: open all of its nested foldable
-          // sections (expand* is idempotent, so already-open ones are untouched)
-          // and reset nested in-Parameters folds (e.g. CR-LoRA groups) to open.
+          // sections (expand* is idempotent, so already-open ones are untouched).
           expandParametersSection(nodeHierarchicalKey);
           expandConnectionsSection(nodeHierarchicalKey);
-          setUnfoldNonce((n) => n + 1);
         }}
         expandedBorderColor={canUseNodeTint ? nodeHeaderBorderColor : undefined}
         rightSlot={selectionMode ? (
@@ -1674,7 +1672,6 @@ export const NodeCard = memo(function NodeCard({
               resolveWidgetValue={resolveWidgetValue}
               showFastGroupConfig={showFastGroupConfig}
               setShowFastGroupConfig={setShowFastGroupConfig}
-              unfoldNonce={unfoldNonce}
               promotableWidgets={promotableWidgets}
               promotedWidgetForms={promotedWidgetForms}
               promotedBoundaryLabels={promotedBoundaryLabels}

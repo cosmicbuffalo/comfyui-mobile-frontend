@@ -86,13 +86,13 @@ export function getActiveNodeInputDefinitions(
       return;
     }
     if (
-      String(typeOrOptions).toUpperCase() === 'INT' &&
+      typeof typeOrOptions === 'string' && typeOrOptions.toUpperCase() === 'INT' &&
       (name === 'seed' || name === 'noise_seed') &&
       skipImplicitSeedControlSlot(node, ownWidgetIndex + 1)
     ) {
       cursor = Math.max(cursor, ownWidgetIndex + 2);
     }
-    if (String(typeOrOptions).toUpperCase() !== DYNAMIC_COMBO_V3) return;
+    if (typeof typeOrOptions !== 'string' || typeOrOptions.toUpperCase() !== DYNAMIC_COMBO_V3) return;
 
     const selected = value ?? getDefaultWidgetValue(typeOrOptions, inputOptions);
     for (const sub of getDynamicComboSubInputs(

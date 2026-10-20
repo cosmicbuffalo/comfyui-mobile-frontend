@@ -66,19 +66,18 @@ it('moves the same distance for one long step as for many short ones', () => {
   expect(dragAngle(start, 30, 0.6, 0.6)).toEqual(dragAngle(start, 1, 18, 18));
 });
 
-it('grabs a ring from a finger-width away, but needs a mouse to be closer', () => {
+it('grabs a handle from a finger-width away, but needs a mouse to be closer', () => {
   const grab = (pointerType: string) => {
     const container = document.createElement('div');
     const changes: CameraInputs[] = [];
     const viewport = new CameraViewport(container, 'angle', values => changes.push(values));
-    viewport.updateInputs({ horizontal_angle: 0, vertical_angle: 0, zoom: 5 });
+    // A high camera lifts the pitch and distance handles well clear of the yaw handle on its track.
+    viewport.updateInputs({ horizontal_angle: 0, vertical_angle: 60, zoom: 5 });
     const canvas = container.querySelector('canvas')!;
     canvas.getBoundingClientRect = () => ({ left: 0, top: 0, width: 400, height: 300, right: 400, bottom: 300, x: 0, y: 0, toJSON() {} });
-    // A point on the side of the yaw ring, clear of the pitch ring and zoom dot.
-    const internals = viewport as unknown as { handles: Map<string, import('three').Mesh>; view: { camera: import('three').Camera } };
-    const ring = internals.handles.get('yaw')!;
-    ring.updateMatrixWorld(true);
-    const point = ring.localToWorld(ring.position.clone().set(1, 0, 0)).project(internals.view.camera);
+    const internals = viewport as unknown as { handles: Map<string, import('three').Mesh>; view: { camera: import('three').Camera; scene: import('three').Scene } };
+    internals.view.scene.updateMatrixWorld(true);
+    const point = internals.handles.get('yaw')!.getWorldPosition(internals.handles.get('yaw')!.position.clone()).project(internals.view.camera);
     const x = (point.x + 1) / 2 * 400, y = (1 - point.y) / 2 * 300 + 18;
     const event = (type: string, dx = 0) => {
       const e = pointer(type, x + dx, y);
@@ -93,4 +92,28 @@ it('grabs a ring from a finger-width away, but needs a mouse to be closer', () =
   };
   expect(grab('touch')).toBe(true);
   expect(grab('mouse')).toBe(false);
+});
+
+it('keeps the yaw track still while the camera rises and falls', () => {
+  const viewport = new CameraViewport(document.createElement('div'), 'angle', () => {});
+  const internals = viewport as unknown as { handles: Map<string, import('three').Mesh> };
+  viewport.updateInputs({ horizontal_angle: 90, vertical_angle: -30, zoom: 5 });
+  const low = internals.handles.get('yaw')!.position.clone();
+  viewport.updateInputs({ horizontal_angle: 90, vertical_angle: 60, zoom: 5 });
+  // Only the pitch changed, so the yaw handle stays where it was on its track.
+  expect(internals.handles.get('yaw')!.position.distanceTo(low)).toBeLessThan(1e-9);
+  viewport.remove();
+});
+
+it('hides the roll ring while the move-camera gizmo sits on the camera', () => {
+  const container = document.createElement('div');
+  const viewport = new CameraViewport(container, 'info', () => {});
+  viewport.updateInputs({ mode: 'look_at', 'mode.position_x': 2, 'mode.position_y': 1, 'mode.position_z': 3 });
+  const roll = (viewport as unknown as { handles: Map<string, { visible: boolean }> }).handles.get('roll')!;
+  expect(roll.visible).toBe(true);
+  viewport.setTransformGizmoMode('camera-translate');
+  expect(roll.visible).toBe(false);
+  viewport.setTransformGizmoMode('target');
+  expect(roll.visible).toBe(true);
+  viewport.remove();
 });

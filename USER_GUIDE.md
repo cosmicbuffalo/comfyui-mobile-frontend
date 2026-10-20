@@ -466,8 +466,8 @@ A full-screen manager for the custom nodes installed on your ComfyUI server, ope
 
 App-wide toggles, reached from **Server → Preferences**:
 
-- **Fast image previews** — load lightweight WebP previews instead of full-size originals (faster browsing; turn off if an image looks wrong). Downloads always use the original.
-- **Blur effects** — **on by default.** Blurs the background behind menus, overlays and badges. Turn it off for smoother scrolling and taps on slower phones.
+- **Fast image previews** — load cached, resolution-capped WebP previews instead of full-size originals (faster browsing; turn off if an image looks wrong). Low resource mode always uses these previews while enabled. Downloads always use the original.
+- **Low resource mode** — **off by default.** Replaces the former Blur effects switch. Disables blur and motion, skips model thumbnails and background prefetch, caps image previews at 1024 pixels, pauses latent previews, and plays videos on request. Use **Expand** to open an inline 3D preview; automatic 3D thumbnail rendering is paused. Releases inactive panels and keeps the latest three undo steps; older steps are discarded. This preset applies to this browser and leaves server-wide settings unchanged. Turning it off restores your other saved preferences. Existing blur-off settings enable this preset automatically.
 - **Show latent previews** — show a live preview on sampler nodes during generation, with a choice of **Fast (latent2rgb)** or **Accurate (TAESD)**. See [How do I turn on latent previews?](#how-do-i-turn-on-latent-previews).
 - **Restore lost queue after restart** — automatically re-enqueue pending jobs this device saw if ComfyUI restarts and loses them. See [Connection & Recovery](#connection-and-recovery).
 - **Alias filepaths in embedded metadata** — hide input paths and output filename prefixes in shared workflow metadata.

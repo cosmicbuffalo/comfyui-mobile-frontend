@@ -9,6 +9,7 @@ vi.mock('@/components/ThreeView/renderModelThumbnail', () => ({ renderModelThumb
 let observers: Array<(entries: Array<{ isIntersecting: boolean }>) => void> = [];
 beforeEach(() => {
   vi.resetModules();
+  localStorage.removeItem('generation-settings-storage');
   renderModelThumbnail.mockReset();
   observers = [];
   vi.stubGlobal('IntersectionObserver', class {
@@ -167,4 +168,46 @@ it('releases mounted cards that are off screen once a long gallery passes the me
   expect(cards[0].seen.at(-1)).toBeNull();
   expect(cards[159].seen.at(-1)).toMatch(/^blob:thumb-/);
   act(() => cards.forEach(card => card.root.unmount()));
+});
+
+it('skips automatic 3D thumbnails in low resource mode and resumes when disabled', async () => {
+  renderModelThumbnail.mockResolvedValue(new Blob(['png']));
+  const card = await mountCard(model());
+  const { useGenerationSettingsStore: settings } = await import('@/hooks/useGenerationSettings');
+  await card.onScreen();
+  await act(async () => settings.getState().setLowResourceMode(true));
+  card.setModelThumbnailsActive(true);
+  await act(async () => { await new Promise(resolve => setTimeout(resolve, 30)); });
+  expect(renderModelThumbnail).not.toHaveBeenCalled();
+  expect(card.seen.at(-1)).toBeNull();
+  await act(async () => settings.getState().setLowResourceMode(false));
+  card.setModelThumbnailsActive(true);
+  await act(async () => observers.at(-1)!([{ isIntersecting: true }]));
+  await card.settle(() => expect(card.seen.at(-1)).toMatch(/^blob:thumb-/));
+  expect(renderModelThumbnail).toHaveBeenCalledOnce();
+  card.setModelThumbnailsActive(false);
+  act(() => card.root.unmount());
+});
+
+it('cancels an in-flight render on preset activation without poisoning retries', async () => {
+  let signal: AbortSignal | undefined;
+  renderModelThumbnail.mockImplementationOnce((_src, _name, _timeout, nextSignal: AbortSignal) => {
+    signal = nextSignal;
+    return new Promise((_resolve, reject) => nextSignal.addEventListener('abort', () => reject(new DOMException('cancelled', 'AbortError')), { once: true }));
+  }).mockResolvedValue(new Blob(['retry']));
+  const card = await mountCard(model());
+  const { useGenerationSettingsStore: settings } = await import('@/hooks/useGenerationSettings');
+  card.setModelThumbnailsActive(true);
+  await card.onScreen();
+  await card.settle(() => expect(renderModelThumbnail).toHaveBeenCalledOnce());
+  await act(async () => settings.getState().setLowResourceMode(true));
+  expect(signal?.aborted).toBe(true);
+  expect(card.seen.at(-1)).toBeNull();
+  await act(async () => settings.getState().setLowResourceMode(false));
+  card.setModelThumbnailsActive(true);
+  await act(async () => observers.at(-1)!([{ isIntersecting: true }]));
+  await card.settle(() => expect(card.seen.at(-1)).toMatch(/^blob:thumb-/));
+  expect(renderModelThumbnail).toHaveBeenCalledTimes(2);
+  card.setModelThumbnailsActive(false);
+  act(() => card.root.unmount());
 });

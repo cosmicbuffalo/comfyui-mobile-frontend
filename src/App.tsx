@@ -92,21 +92,24 @@ function App() {
   );
   const { updateAvailable, dismissUpdate } = useAppUpdateCheck();
   useFeedbackActivityCheck();
-  const blurEffectsEnabled = useGenerationSettingsStore((s) => s.blurEffectsEnabled);
+  const lowResourceMode = useGenerationSettingsStore((s) => s.lowResourceMode);
   const serverLogsOpen = useServerLogsWindowStore((s) => s.open);
   const setServerLogsOpen = useServerLogsWindowStore((s) => s.setOpen);
 
   useEffect(() => {
-    document.documentElement.classList.toggle('no-blur', !blurEffectsEnabled);
-  }, [blurEffectsEnabled]);
+    document.documentElement.classList.toggle('no-blur', lowResourceMode);
+    document.documentElement.classList.toggle('low-resource', lowResourceMode);
+  }, [lowResourceMode]);
 
   // Warm the lazy panel chunks once startup has settled, so a server update
   // later can never strand this session on a panel it hadn't opened yet (the
   // update deletes the old hashed chunk files this tab's index names).
   useEffect(() => {
+    const connection = (navigator as Navigator & { connection?: { saveData?: boolean; effectiveType?: string } }).connection;
+    if (lowResourceMode || connection?.saveData || ['slow-2g', '2g'].includes(connection?.effectiveType ?? '')) return;
     const idle = window.setTimeout(() => prefetchLazyPanels(), 3000);
     return () => window.clearTimeout(idle);
-  }, []);
+  }, [lowResourceMode]);
 
   useEffect(() => {
     const persist = useWorkflowStore.persist;
@@ -163,7 +166,7 @@ function App() {
 
   // Tab favicon: pulsing green while anything is generating, solid cyan idle.
   const isGenerating = useQueueStore((s) => s.running.length > 0);
-  useAnimatedFavicon(isGenerating);
+  useAnimatedFavicon(isGenerating, !lowResourceMode);
 
   const handleSwipeLeft = useCallback(() => {
     if (currentPanel === 'workflow') setCurrentPanel('queue');
@@ -409,13 +412,15 @@ function App() {
       >
         <>
           <Suspense fallback={<DeferredPanelFallback visible={currentPanel === 'outputs'} />}>
-            {(activatedPanels.outputs || currentPanel === 'outputs') && (
+            {((activatedPanels.outputs && !lowResourceMode) || currentPanel === 'outputs') && (
               <OutputsPanel visible={currentPanel === 'outputs'} />
             )}
           </Suspense>
-          <WorkflowPanel visible={currentPanel === 'workflow'} onImageClick={openViewer} />
+          {(!lowResourceMode || currentPanel === 'workflow') && (
+            <WorkflowPanel visible={currentPanel === 'workflow'} onImageClick={openViewer} />
+          )}
           <Suspense fallback={<DeferredPanelFallback visible={currentPanel === 'queue'} />}>
-            {(activatedPanels.queue || currentPanel === 'queue') && (
+            {((activatedPanels.queue && !lowResourceMode) || currentPanel === 'queue') && (
               <QueuePanel visible={currentPanel === 'queue'} onImageClick={openViewer} />
             )}
           </Suspense>

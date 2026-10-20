@@ -7,6 +7,14 @@ exactly as before.
 
 ### Added
 
+- **Low resource mode.** The former **Blur effects** switch is now
+  **Preferences → Low resource mode**, off by default. It removes blur and
+  motion, skips model thumbnails and background prefetch, limits previews to
+  1024 pixels, pauses latent previews, and plays videos on request. Inline 3D
+  previews open through **Expand**. Inactive
+  panels are released and undo history keeps the latest three steps. Turning
+  the preset off restores the other saved preferences. Existing blur-off
+  settings migrate to low resource mode.
 - **LoRA stacks.** **Load LoRA (Model)** and **Load LoRA (Text Encoder)** show
   one row per LoRA: pick the file, set its strength, switch it on or off, and
   move or remove it. **Toggle All Loras** switches every row at once, and
@@ -29,6 +37,28 @@ exactly as before.
   workflow, and **Load workflow** opens it from the Outputs menu or the viewer.
 - **License notices.** `THIRD_PARTY_NOTICES.md` lists the open-source
   packages built into the app, with their license texts.
+
+### Improved
+
+- **Faster workflow edits.** Unrelated root node cards no longer refresh for
+  each widget edit. Connected values and graph changes remain reactive;
+  subgraphs and wireless links keep full dependency tracking.
+- **Large pickers.** Long option lists render a window of measured rows, with
+  full filenames, search, keyboard navigation, and selected-option scrolling.
+  Model catalogs are no longer repeatedly joined into strings during widget
+  checks, and model lookup/search data is reused across renders.
+- **Smaller inline image previews.** Workflow cards and other inline images use
+  the bounded, cached preview endpoint already used by queue cards. Downloads
+  and the original-image preference keep their existing behavior.
+
+### Changed
+
+- **One look for every LoRA node.** Native LoRA stacks, LoRA Manager,
+  rgthree's Power Lora Loader and Comfyroll's CR LoRA Stack now share one
+  layout, showing only the controls each node has. A switched-off LoRA turns
+  purple like a bypassed node, with only its LoRA picker dimmed. Power Lora's
+  Toggle All is now a switch that shows whether every LoRA is on, and CR LoRA
+  Stack no longer folds a LoRA away when you switch it off.
 
 ### Notes
 

@@ -53,6 +53,7 @@ function PreferenceSection({
           <button
             type="button"
             role="switch"
+            aria-label={label}
             aria-checked={checked}
             className={`relative inline-flex h-6 w-11 shrink-0 rounded-full border-2 border-transparent transition-colors duration-200 ${
               checked ? 'bg-cyan-500' : 'bg-slate-700'
@@ -96,8 +97,8 @@ export function GenerationSettingsPanel({ onBack }: GenerationSettingsPanelProps
   const setObfuscateSharedInputPaths = useGenerationSettingsStore((s) => s.setObfuscateSharedInputPaths);
   const marketingNoteEnabled = useGenerationSettingsStore((s) => s.marketingNoteEnabled);
   const setMarketingNoteEnabled = useGenerationSettingsStore((s) => s.setMarketingNoteEnabled);
-  const blurEffectsEnabled = useGenerationSettingsStore((s) => s.blurEffectsEnabled);
-  const setBlurEffectsEnabled = useGenerationSettingsStore((s) => s.setBlurEffectsEnabled);
+  const lowResourceMode = useGenerationSettingsStore((s) => s.lowResourceMode);
+  const setLowResourceMode = useGenerationSettingsStore((s) => s.setLowResourceMode);
   // Autocomplete opt-in (server-synced). Only surfaced when a supported source
   // node (ComfyUI-Autocomplete-Plus and/or ComfyUI-Custom-Scripts) is detected
   // on this server.
@@ -146,14 +147,15 @@ export function GenerationSettingsPanel({ onBack }: GenerationSettingsPanelProps
         />
 
         <PreferenceSection
-          label={t('Blur effects')}
-          description={t('Blur the background behind menus, overlays and badges. Turn off to improve performance on slower devices.')}
-          checked={blurEffectsEnabled}
-          onToggle={() => setBlurEffectsEnabled(!blurEffectsEnabled)}
+          label={t('Low resource mode')}
+          description={t('Reduce visual effects, preview resolution and background loading on this device. Videos play on request. Keeps three undo steps and releases inactive panels. Other preferences are restored when turned off.')}
+          checked={lowResourceMode}
+          onToggle={() => setLowResourceMode(!lowResourceMode)}
         />
 
         <PreferenceSection
           label={t('Show latent previews')}
+          description={lowResourceMode ? t('Paused while low resource mode is on.') : undefined}
           checked={previewEnabled}
           onToggle={() => setPreviewMethod(previewEnabled ? 'none' : 'latent2rgb')}
         >

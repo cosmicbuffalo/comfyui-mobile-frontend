@@ -3,6 +3,7 @@ import type { NodeTypes, Workflow, WorkflowNode } from '@/api/types';
 import type { MobileLayout } from '@/utils/mobileLayout';
 import type { HierarchicalKey } from '@/utils/workflowHierarchy';
 import { useWorkflowStore } from '@/hooks/useWorkflow';
+import { useGenerationSettingsStore } from '@/hooks/useGenerationSettings';
 import { diffWorkflowChange, type WorkflowChangeTarget } from '@/utils/workflowUndoDiff';
 import { reconcileScopeStack } from '@/utils/subgraphInstanceNavigation';
 import type { WorkflowJumpTarget } from '@/utils/workflowJumpTargets';
@@ -35,6 +36,7 @@ import {
 // and persisted (see utils/undoHistoryStorage) so a refresh keeps it.
 
 const MAX_STEPS = 10;
+const undoStepLimit = () => useGenerationSettingsStore.getState().lowResourceMode ? 3 : MAX_STEPS;
 const COALESCE_MS = 600;
 
 interface UndoSnapshot {
@@ -514,7 +516,7 @@ export const useWorkflowUndoStore = create<WorkflowUndoState>((set, get) => ({
     set((state) => {
       const h = state.histories[sessionId] ?? { undo: [], redo: [] };
       const redo = [...h.redo, currentForRedo];
-      if (redo.length > MAX_STEPS) redo.shift();
+      if (redo.length > undoStepLimit()) redo.splice(0, redo.length - undoStepLimit());
       return {
         histories: { ...state.histories, [sessionId]: { undo: h.undo.slice(0, -1), redo } },
         feedback: {
@@ -562,7 +564,7 @@ export const useWorkflowUndoStore = create<WorkflowUndoState>((set, get) => ({
     set((state) => {
       const h = state.histories[sessionId] ?? { undo: [], redo: [] };
       const undo = [...h.undo, currentForUndo];
-      if (undo.length > MAX_STEPS) undo.shift();
+      if (undo.length > undoStepLimit()) undo.splice(0, undo.length - undoStepLimit());
       return {
         histories: { ...state.histories, [sessionId]: { undo, redo: h.redo.slice(0, -1) } },
         feedback: {
@@ -643,6 +645,15 @@ useWorkflowUndoStore.subscribe((state, prev) => {
   if (state.histories !== prev.histories) persistHistories();
 });
 
+useGenerationSettingsStore.subscribe((state, previous) => {
+  if (!state.lowResourceMode || previous.lowResourceMode) return;
+  useWorkflowUndoStore.setState(({ histories }) => ({
+    histories: Object.fromEntries(Object.entries(histories).map(([id, history]) => [id, {
+      undo: history.undo.slice(-3), redo: history.redo.slice(-3),
+    }])),
+  }));
+});
+
 function isSnapshotBody(body: unknown): body is UndoSnapshot {
   if (!body || typeof body !== 'object') return false;
   const candidate = body as Partial<UndoSnapshot>;
@@ -683,7 +694,7 @@ async function hydrateFromStorage(): Promise<void> {
     }
     // A half-read history would restore states in the wrong order; drop it.
     if (!complete) continue;
-    restored[sessionId] = { undo, redo };
+    restored[sessionId] = { undo: undo.slice(-undoStepLimit()), redo: redo.slice(-undoStepLimit()) };
   }
 
   useWorkflowUndoStore.setState((current) => {
@@ -853,7 +864,7 @@ useWorkflowStore.subscribe((state, prev) => {
   useWorkflowUndoStore.setState((s) => {
     const history = s.histories[sessionId] ?? { undo: [], redo: [] };
     const undo = [...history.undo, snapshot];
-    if (undo.length > MAX_STEPS) undo.shift();
+    if (undo.length > undoStepLimit()) undo.splice(0, undo.length - undoStepLimit());
     // Any new edit invalidates the redo branch.
     return { histories: { ...s.histories, [sessionId]: { undo, redo: [] } } };
   });

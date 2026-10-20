@@ -1,4 +1,5 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useGenerationSettingsStore } from '@/hooks/useGenerationSettings';
 import { isModelOutput } from '@/utils/model3d';
 import { ModelOutputPreview } from '@/components/ThreeView/ModelOutputPreview';
 import { useShallow } from 'zustand/shallow';
@@ -728,6 +729,7 @@ function QueueCardComponent({
   onMediaReady,
 }: QueueCardProps) {
   const { t } = useI18n();
+  const lowResourceMode = useGenerationSettingsStore((s) => s.lowResourceMode);
   const missingMediaKeys = useMissingMediaStore((s) => s.missingKeys);
   const previewVisibility = useQueueStore((s) => s.previewVisibility);
   const previewVisibilityDefault = useQueueStore((s) => s.previewVisibilityDefault);
@@ -823,7 +825,7 @@ function QueueCardComponent({
   // Anything read off the rendered element is the 1280-capped preview's size
   // for a larger output, so only the server's header read (below) or a
   // measurement that came in under the cap qualifies.
-  const recordDimensions = (
+  const recordDimensions = useCallback((
     src: string,
     w: number,
     h: number,
@@ -837,11 +839,11 @@ function QueueCardComponent({
         // A measurement that came in under the preview cap can't be a
         // downscale, so it is the real size. An aspect-only source (a video
         // poster) is a thumbnail at any size — never a size we can quote.
-        (confidence === 'measured' && Math.max(w, h) < QUEUE_PREVIEW_MAX_EDGE);
+        (confidence === 'measured' && Math.max(w, h) < (lowResourceMode ? 1024 : QUEUE_PREVIEW_MAX_EDGE));
       if (current && (current.exact || !exact)) return prev;
       return { ...prev, [src]: { w, h, exact } };
     });
-  };
+  }, [lowResourceMode]);
   // True dimensions for saved outputs, read from the file header server-side.
   // The card renders a capped preview, so this is the only way to label a
   // 1920x1080 output correctly. One batched request per card, only for outputs
@@ -1393,7 +1395,7 @@ function QueueCardComponent({
   const wantsQueueVideoPlayback = Boolean(
     expanded &&
     activeMediaIsVideo &&
-    (mediaTabPinned || autoplayArmed),
+    (mediaTabPinned || (!lowResourceMode && autoplayArmed)),
   );
   const shouldActivateQueueVideo = Boolean(
     queueVideoPlaybackEnabled &&
@@ -1420,6 +1422,7 @@ function QueueCardComponent({
     const userCollapsed = Boolean(queueItemUserToggled) && !expanded;
     const pinnedToNonVideoTab = mediaTabPinned && !activeMediaIsVideo;
     const eligible =
+      !lowResourceMode &&
       queueVideoPlaybackEnabled &&
       hasVideoOutputs &&
       onScreen &&
@@ -1438,6 +1441,7 @@ function QueueCardComponent({
     onRequestAutoQueueVideoPlayback?.(item.id);
   }, [
     isDone,
+    lowResourceMode,
     item.id,
     queueVideoPlaybackEnabled,
     hasVideoOutputs,
@@ -1612,7 +1616,7 @@ function QueueCardComponent({
     return () => {
       cancelled = true;
     };
-  }, [expanded, activeMediaTab, frontEntry, backEntry, frontSlot, backSlotKey, slotA, slotB, setSlot]);
+  }, [expanded, activeMediaTab, frontEntry, backEntry, frontSlot, backSlotKey, slotA, slotB, setSlot, recordDimensions]);
 
   // Start the active video as soon as its element mounts, including while it is
   // staged in the hidden back slot behind the previous preview/image. Waiting

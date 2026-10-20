@@ -1266,7 +1266,8 @@ const queueWorkflow: WorkflowState["queueWorkflow"] = async (
       // rewrites input paths into opaque hashes, and those match nothing.
       const hiddenWorkflow = isWorkflowHidden(metadataSource, metadataFilename)
         || promptReferencesHiddenFile(prompt, useOutputsStore.getState().hiddenIds);
-      const previewMethod = useGenerationSettingsStore.getState().previewMethod;
+      const settings = useGenerationSettingsStore.getState();
+      const previewMethod = settings.lowResourceMode ? 'none' : settings.previewMethod;
       // VHS's optional animated latent protocol is enabled through
       // workflow metadata rather than ComfyUI's preview_method field.
       // Write both true and false so a desktop-authored workflow cannot

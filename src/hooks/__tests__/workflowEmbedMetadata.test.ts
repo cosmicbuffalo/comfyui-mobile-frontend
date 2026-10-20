@@ -58,7 +58,7 @@ beforeEach(() => {
     errorCycleIndex: 0,
     errorsDismissed: false,
   });
-  useGenerationSettingsStore.setState({ previewMethod: 'none' });
+  useGenerationSettingsStore.setState({ previewMethod: 'none', lowResourceMode: false });
 });
 
 afterEach(() => {
@@ -245,6 +245,17 @@ describe('embed workflow metadata', () => {
     expect(request.extra_data?.preview_method).toBe('latent2rgb');
     expect(embedded.extra?.VHS_latentpreview).toBe(true);
     expect(embedded.extra?.VHS_latentpreviewrate).toBe(0);
+  });
+
+  it('pauses latent previews in low resource mode without changing the saved method', async () => {
+    useWorkflowStore.getState().setNodeTypes({} as NodeTypes);
+    useWorkflowStore.getState().loadWorkflow(loadFixtureWorkflow(), 'low-resource.json', { fresh: true });
+    useGenerationSettingsStore.setState({ previewMethod: 'taesd', lowResourceMode: true });
+    const request = await queueAndGetPromptRequest();
+    const embedded = (request.extra_data?.extra_pnginfo as { workflow?: Workflow } | undefined)?.workflow as Workflow;
+    expect(request.extra_data?.preview_method).toBeUndefined();
+    expect(embedded.extra?.VHS_latentpreview).toBe(false);
+    expect(useGenerationSettingsStore.getState().previewMethod).toBe('taesd');
   });
 
   it('disables imported VHS latent animation when mobile previews are off', async () => {

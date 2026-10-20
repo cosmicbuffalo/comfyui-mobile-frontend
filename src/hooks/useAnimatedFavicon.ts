@@ -51,7 +51,7 @@ function drawDot(
   ctx.globalAlpha = 1;
 }
 
-export function useAnimatedFavicon(active: boolean): void {
+export function useAnimatedFavicon(active: boolean, animate = true): void {
   useEffect(() => {
     const canvas = document.createElement('canvas');
     canvas.width = SIZE;
@@ -71,6 +71,10 @@ export function useAnimatedFavicon(active: boolean): void {
       paint(IDLE_COLOR, 1, 1);
       return;
     }
+    if (!animate) {
+      paint(`rgb(${ACTIVE_BRIGHT.join(',')})`, 1, 1);
+      return;
+    }
 
     const render = () => {
       // Phase from the wall clock so background-tab throttling only lowers the
@@ -83,5 +87,5 @@ export function useAnimatedFavicon(active: boolean): void {
     render();
     const timer = window.setInterval(render, 120);
     return () => window.clearInterval(timer);
-  }, [active]);
+  }, [active, animate]);
 }

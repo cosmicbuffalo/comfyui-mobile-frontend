@@ -77,13 +77,17 @@ describe('native LoRA group controls', () => {
 
   it('toggles an entry without changing its file or strength, and keeps disabled rows editable', () => {
     const onChange = render();
-    expect(groups()[0].classList.contains('opacity-60')).toBe(true);
+    // Off reads like a bypassed node: a purple row, with only the LoRA picker dimmed.
+    expect(groups()[0].classList.contains('bg-purple-950/35')).toBe(true);
+    expect(groups()[0].classList.contains('opacity-60')).toBe(false);
+    expect(groups()[0].querySelector('[data-lora-picker]')!.classList.contains('opacity-60')).toBe(true);
     expect(button('Disabled').getAttribute('aria-pressed')).toBe('false');
     expect(container.querySelectorAll('[data-combo]').length).toBe(0);
     expect([...container.querySelectorAll<HTMLInputElement>('input')].every(input => !input.disabled)).toBe(true);
     click('Disabled');
     expect(onChange).toHaveBeenLastCalledWith({ rows: [row('a.safetensors', true)], order: [0] });
-    expect(groups()[0].classList.contains('opacity-60')).toBe(false);
+    expect(groups()[0].classList.contains('bg-purple-950/35')).toBe(false);
+    expect(groups()[0].querySelector('[data-lora-picker]')!.classList.contains('opacity-60')).toBe(false);
     expect(button('Enabled').getAttribute('aria-pressed')).toBe('true');
     click('Enabled');
     expect(onChange).toHaveBeenLastCalledWith({ rows: [row()], order: [0] });

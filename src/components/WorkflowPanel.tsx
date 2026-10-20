@@ -929,6 +929,17 @@ export const WorkflowPanel = memo(function WorkflowPanel({
       return handler;
     };
   }, [enterSubgraph]);
+  const moveIntoSubgraphHandlers = useMemo(() => {
+    const cache = new Map<string, () => void>();
+    return (itemKey: string) => {
+      let handler = cache.get(itemKey);
+      if (!handler) {
+        handler = () => setMoveIntoSubgraphItemKeys([itemKey]);
+        cache.set(itemKey, handler);
+      }
+      return handler;
+    };
+  }, []);
 
   // Keys are identity-based (group key / placeholder id / node id) — never
   // positional. An index in the key remounts every later sibling's subtree
@@ -1190,12 +1201,12 @@ export const WorkflowPanel = memo(function WorkflowPanel({
                     `subgraph-placeholder ${item.subgraph.id}`,
                   ),
                 )
-                  ? () => setMoveIntoSubgraphItemKeys([
+                  ? moveIntoSubgraphHandlers(
                       requireHierarchicalKey(
                         placeholderNode.itemKey,
                         `subgraph-placeholder ${item.subgraph.id}`,
                       ),
-                    ])
+                    )
                   : undefined
               }
               onEnterSubgraph={enterSubgraphHandlers(placeholderNode.id)}
@@ -1224,9 +1235,9 @@ export const WorkflowPanel = memo(function WorkflowPanel({
               canMoveIntoSubgraph(
                 requireHierarchicalKey(item.node.itemKey, `node ${item.node.id}`),
               )
-                ? () => setMoveIntoSubgraphItemKeys([
+                ? moveIntoSubgraphHandlers(
                     requireHierarchicalKey(item.node.itemKey, `node ${item.node.id}`),
-                  ])
+                  )
                 : undefined
             }
           />

@@ -7,6 +7,7 @@ import {
   getScopedWorkflowView,
 } from '@/utils/canonicalWorkflowOps';
 import { useWorkflowStore } from '@/hooks/useWorkflow';
+import { useNodeWorkflow } from '@/hooks/useNodeWorkflow';
 import { useI18n } from '@/i18n';
 import { useConnectionSectionFoldsStore } from '@/hooks/useConnectionSectionFolds';
 import { useLongPress } from '@/hooks/useLongPress';
@@ -68,7 +69,7 @@ export const ConnectionButton = memo(function ConnectionButton({
   const { t } = useI18n();
   // The store keeps the canonical workflow model in `workflow`, with root nodes
   // at the top level and nested nodes in `definitions.subgraphs`.
-  const workflow = useWorkflowStore((s) => s.workflow);
+  const workflow = useNodeWorkflow(nodeId);
   const scopeStack = useWorkflowStore((s) => s.scopeStack);
   const scrollToNode = useWorkflowStore((s) => s.scrollToNode);
   const jumpToWorkflowItem = useWorkflowStore((s) => s.jumpToWorkflowItem);

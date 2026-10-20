@@ -15,6 +15,8 @@
  * as an argument rather than each caller knowing the markup.
  */
 
+import { useGenerationSettingsStore } from '@/hooks/useGenerationSettings';
+
 /** How long to keep the arrival pulse on. */
 const FLASH_MS = 1200;
 
@@ -117,7 +119,7 @@ function alignWithinList(element: Element | null, alignment: JumpAlignment): boo
       container.scrollHeight - container.clientHeight,
     ),
   );
-  container.scrollTo({ top, behavior: 'smooth' });
+  container.scrollTo({ top, behavior: useGenerationSettingsStore.getState().lowResourceMode ? 'auto' : 'smooth' });
   return true;
 }
 
@@ -198,7 +200,7 @@ export function revealJumpTarget(
     rect != null && rect.bottom > 0 && rect.top < window.innerHeight;
   const aligned = alignment === 'start' ? false : alignWithinList(scroll, alignment);
   if (!aligned) {
-    scroll?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    scroll?.scrollIntoView({ behavior: useGenerationSettingsStore.getState().lowResourceMode ? 'auto' : 'smooth', block: 'start' });
   } else {
     setTimeout(() => alignWithinList(scroll, alignment), REALIGN_MS);
   }

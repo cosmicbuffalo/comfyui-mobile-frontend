@@ -80,6 +80,7 @@ export default function ModelViewer({ src, filename, metadata, onReady, onCaptur
     let mixer: THREE.AnimationMixer | undefined;
     let splatBounds: (() => THREE.Box3) | undefined;
     let sparkRenderer: SparkRenderer | undefined;
+    let sidecars: THREE.LoadingManager | undefined;
     let instance: Viewport3d;
     let status: number | undefined;
     const abort = new AbortController();
@@ -93,6 +94,9 @@ export default function ModelViewer({ src, filename, metadata, onReady, onCaptur
       viewport.current = instance;
       // The splat renderer is a large chunk; fetch it alongside the file when the extension already says splat.
       const sparkModule = SPLAT_EXTENSIONS.has(extension) ? import('@sparkjsdev/spark') : null;
+      // The file fetch can fail or be cancelled before this speculative import
+      // is awaited. Handle an early rejection now; awaiting it still reports it.
+      void sparkModule?.catch(() => {});
       const response = await fetch(src, { signal: abort.signal });
       if (!response.ok) {
         status = response.status;
@@ -101,7 +105,7 @@ export default function ModelViewer({ src, filename, metadata, onReady, onCaptur
       const bytes = await response.arrayBuffer();
       if (removed) return;
       // A per-viewer manager keeps the sidecar mapping out of three's global DefaultLoadingManager.
-      const sidecars = new THREE.LoadingManager().setURLModifier(url => sidecarUrl(src, url));
+      sidecars = new THREE.LoadingManager().setURLModifier(url => sidecarUrl(src, url));
       let animations: THREE.AnimationClip[] = [];
       const plyHeader = extension === 'ply' ? new TextDecoder().decode(bytes.slice(0, 8192)).split('end_header')[0] : '';
       const splat = SPLAT_EXTENSIONS.has(extension) || /property float (?:scale_0|f_dc_0)/.test(plyHeader);
@@ -215,6 +219,7 @@ export default function ModelViewer({ src, filename, metadata, onReady, onCaptur
     return () => {
       removed = true;
       abort.abort();
+      sidecars?.abort();
       cancelAnimationFrame(frame.current);
       frame.current = 0;
       resumeAnimation.current = () => {};

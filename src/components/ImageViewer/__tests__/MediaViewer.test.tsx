@@ -5,6 +5,7 @@ import type { ViewerImage } from '@/utils/viewerImages';
 import { MediaViewer } from '@/components/ImageViewer/MediaViewer';
 import { useImageViewerStore } from '@/hooks/useImageViewer';
 import { useWorkflowStore } from '@/hooks/useWorkflow';
+import { useGenerationSettingsStore } from '@/hooks/useGenerationSettings';
 
 const getFileWorkflowAvailabilityMock = vi.fn();
 const getImageMetadataMock = vi.fn();
@@ -91,8 +92,20 @@ describe('MediaViewer workflow availability', () => {
       root.unmount();
     });
     container.remove();
+    useGenerationSettingsStore.setState({ lowResourceMode: false });
     vi.useRealTimers();
     vi.unstubAllGlobals();
+  });
+
+  it('keeps video playback available without autoplay or preloading in low resource mode', async () => {
+    useGenerationSettingsStore.getState().setLowResourceMode(true);
+    await act(async () => root.render(<MediaViewer open items={[makeVideoItem()]} index={0}
+      onIndexChange={() => {}} onClose={() => {}} onDelete={() => {}}
+      onLoadWorkflow={() => {}} onLoadInWorkflow={() => {}} />));
+    const video = document.querySelector<HTMLVideoElement>('#media-viewer-overlay video');
+    expect(video?.autoplay).toBe(false);
+    expect(video?.preload).toBe('none');
+    expect(document.querySelector('button[aria-label="Play"]')).not.toBeNull();
   });
 
   it('shows load workflow button for video when availability endpoint reports true', async () => {
@@ -850,6 +863,28 @@ describe('MediaViewer workflow availability', () => {
     expect(document.querySelector<HTMLImageElement>('#media-viewer-overlay img')?.src).toBe(
       item.displaySrc,
     );
+  });
+
+  it.each(['large.jpg', 'large.png'])('caps an already-open %s when the preset is enabled', async name => {
+    const item = makeImageItem(`output/${name}`, name);
+    item.src = `/view?filename=${name}&subfolder=&type=output`;
+    item.displaySrc = `/mobile/api/preview?filename=${name}&subfolder=&type=output&maxedge=1280`;
+    await act(async () => root.render(<MediaViewer open items={[item]} index={0}
+      onIndexChange={() => {}} onClose={() => {}} onDelete={() => {}}
+      onLoadWorkflow={() => {}} onLoadInWorkflow={() => {}} />));
+    const before = document.querySelector('#media-viewer-overlay img')!.getAttribute('src');
+    const savedWebp = useGenerationSettingsStore.getState().webpPreviewEnabled;
+    try {
+      await act(async () => useGenerationSettingsStore.setState({ lowResourceMode: true, webpPreviewEnabled: false }));
+      const src = document.querySelector('#media-viewer-overlay img')!.getAttribute('src')!;
+      expect(src).toContain('/mobile/api/preview?');
+      expect(src).toContain('maxedge=1024');
+      expect(src).toContain(`filename=${name}`);
+      await act(async () => useGenerationSettingsStore.setState({ lowResourceMode: false }));
+      expect(document.querySelector('#media-viewer-overlay img')!.getAttribute('src')).toBe(before);
+    } finally {
+      useGenerationSettingsStore.setState({ webpPreviewEnabled: savedWebp });
+    }
   });
 
   it('preloads the next two images on each side while skipping videos', async () => {

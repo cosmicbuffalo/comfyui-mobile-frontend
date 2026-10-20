@@ -382,7 +382,6 @@ interface OutputsState {
   // Current view state
   source: AssetSource;
   currentFolder: string | null;  // null = root, else path string like 'foo/bar'
-  folders: string[];  // Available subfolders for current source
   files: FileItem[];
   /**
    * Folder paths (relative to `source`) the listing reported as hidden while
@@ -458,7 +457,6 @@ interface OutputsState {
   setCurrentFolder: (folder: string | null) => void;
   navigateToPath: (path: string | null) => void;
   navigateUp: () => void;
-  fetchFolders: () => Promise<void>;
   hydrateFileState: (source?: AssetSource) => Promise<boolean>;
   /**
    * Reload the current folder's listing. `quiet` skips the loading flag, so a
@@ -531,7 +529,6 @@ export const useOutputsStore = create<OutputsState>()(
     (set, get) => ({
       source: 'output',
       currentFolder: null,
-      folders: [],
       files: [],
       hiddenFolderPaths: [],
       folderBySource: { output: null, input: null, temp: null },
@@ -584,7 +581,6 @@ export const useOutputsStore = create<OutputsState>()(
           // keep their own source/folder.
           tabs: tabs.map((t) => (t.id === activeTabId ? { ...t, source, folder: restored } : t)),
           files: [],
-          folders: [],
           hiddenFolderPaths: [],
           selectionMode: false,
           selectedIds: [],
@@ -595,7 +591,6 @@ export const useOutputsStore = create<OutputsState>()(
           searchOpen: false,
           searchDraft: '',
         });
-        get().fetchFolders();
         get().fetchFiles();
       },
 
@@ -639,9 +634,9 @@ export const useOutputsStore = create<OutputsState>()(
         // Bulk actions (esp. Move) operate within a single source, so crossing
         // into a different source resets the selection.
         const keepSelection = target.source === state.source;
-        // Don't blank out files/folders here — leave the old tab's contents on
+        // Don't blank out the listing here — leave the old tab's contents on
         // screen until the new tab's data loads, so switching doesn't flash an
-        // empty panel. fetchFiles/fetchFolders replace them when ready.
+        // empty panel. fetchFiles replaces them when ready.
         set({
           activeTabId: tabId,
           source: target.source,
@@ -661,7 +656,6 @@ export const useOutputsStore = create<OutputsState>()(
           searchOpen: false,
           searchDraft: '',
         });
-        get().fetchFolders();
         get().fetchFiles();
       },
 
@@ -716,18 +710,6 @@ export const useOutputsStore = create<OutputsState>()(
           ...(promptSearchActive ? {} : { filter: { ...filter, search: '' } }),
         });
         get().fetchFiles();
-      },
-
-      fetchFolders: async () => {
-        try {
-          const showHidden = useShowHiddenStore.getState().showHidden;
-          const result = await api.getUserImageFolders(showHidden);
-          const { source } = get();
-          set({ folders: source === 'output' ? result.output : result.input });
-        } catch (err) {
-          console.error('Failed to fetch folders:', err);
-          set({ error: (err as Error).message });
-        }
       },
 
       hydrateFileState: async (requestedSource = get().source) => {
@@ -1035,7 +1017,6 @@ export const useOutputsStore = create<OutputsState>()(
             ? s.filter
             : { ...s.filter, search: '' },
         }));
-        get().fetchFolders();
         get().fetchFiles();
         if (promptSearchActive && promptSearchQuery.trim()) {
           void get().runPromptSearch(promptSearchQuery);
@@ -1218,7 +1199,6 @@ export const useOutputsStore = create<OutputsState>()(
         const failure = results.find((result): result is Error => result instanceof Error);
         // Quietly: a loud refresh takes the whole grid down behind a loading
         // state and rebuilds it, for a change already on screen.
-        get().fetchFolders();
         const reconciled = get().fetchFiles({ quiet: true });
         if (failure) {
           // After the refetch, which starts by clearing `error`.
@@ -1353,7 +1333,6 @@ export const useOutputsStore = create<OutputsState>()(
       },
 
       refresh: () => {
-        get().fetchFolders();
         get().fetchFiles();
       },
 

@@ -910,6 +910,7 @@ export function useWebSocket() {
         }
 
         case 'VHS_latentpreview': {
+          if (useGenerationSettingsStore.getState().lowResourceMode) break;
           startVhsLatentSequence(msg.data);
           break;
         }
@@ -1148,6 +1149,7 @@ export function useWebSocket() {
     };
 
     const handleBinaryMessage = (data: ArrayBuffer) => {
+      if (useGenerationSettingsStore.getState().lowResourceMode) return;
       const parsed = parseBinaryPreviewMessage(data);
       if (!parsed) return;
       if (parsed.kind === 'image') {

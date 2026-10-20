@@ -370,20 +370,6 @@ export async function searchUserImagesByPrompt(
   });
 }
 
-export async function getUserImageFolders(showHidden?: boolean): Promise<{ input: string[]; output: string[] }> {
-  // Fetch root directory to get top-level folders
-  const outputResult = await fetchMobileFiles('', false, 'output', showHidden);
-  const inputResult = await fetchMobileFiles('', false, 'input', showHidden);
-  const outputFolders = outputResult.files
-    .filter(f => f.type === 'dir')
-    .map(f => f.name);
-  const inputFolders = inputResult.files
-    .filter(f => f.type === 'dir')
-    .map(f => f.name);
-
-  return { input: inputFolders, output: outputFolders };
-}
-
 export async function getUserImages(
   mode: AssetSource,
   // Note: count, offset, sort params kept for API compatibility but not used by mobile backend

@@ -94,9 +94,14 @@ function WorkflowVideoPreview({
   onEnded?: () => void;
 }) {
   const videoRef = useRef<HTMLVideoElement>(null);
+  const lowResourceMode = useGenerationSettingsStore((s) => s.lowResourceMode);
   // Holds the failed element's MediaError code (null when it gave none).
   const [playbackError, setPlaybackError] = useState<{ code: number | null } | null>(null);
   const viewerOpen = useImageViewerStore((state) => state.viewerOpen);
+
+  useEffect(() => {
+    if (lowResourceMode) videoRef.current?.pause();
+  }, [lowResourceMode]);
 
   useEffect(() => {
     if (viewerOpen) videoRef.current?.pause();
@@ -117,6 +122,7 @@ function WorkflowVideoPreview({
     if (!video) return;
 
     const attemptAutoPlay = () => {
+      if (lowResourceMode) return;
       if (useImageViewerStore.getState().viewerOpen) return;
       video.currentTime = 0;
       const playPromise = video.play();
@@ -142,7 +148,7 @@ function WorkflowVideoPreview({
     }, { threshold: 0.01 });
     observer.observe(video);
     return () => observer.disconnect();
-  }, [autoPlay, src]);
+  }, [autoPlay, src, lowResourceMode]);
 
   // WebKit can retain a decoder and its response after React removes a video.
   // Release both promptly when an output is replaced or its card unmounts.
@@ -174,7 +180,7 @@ function WorkflowVideoPreview({
         muted
         playsInline
         loop={loop}
-        preload={autoPlay ? 'metadata' : 'none'}
+        preload={autoPlay && !lowResourceMode ? 'metadata' : 'none'}
         onCanPlay={() => setPlaybackError(null)}
         onPlay={(event) => {
           setPlaybackError(null);
@@ -348,6 +354,7 @@ export function NodeCardOutputPreview({
   // Subscribe so the preview refreshes immediately when the WebP preference is
   // toggled (must run before the early return to satisfy the rules of hooks).
   useGenerationSettingsStore((s) => s.webpPreviewEnabled);
+  useGenerationSettingsStore((s) => s.lowResourceMode);
   const isTiled = Boolean(previewImages && previewImages.length > 1);
   // Real output beats a live latent, so tiles only render while nothing final
   // has arrived for this node.

@@ -616,6 +616,25 @@ input, textarea, select {
   }
 }
 
+/* Device-local low-resource preset; state changes and loading indicators remain
+   visible without animated movement or repeated GPU compositing. */
+html.low-resource *,
+html.low-resource *::before,
+html.low-resource *::after {
+  animation: none !important;
+  transition: none !important;
+  scroll-behavior: auto !important;
+}
+html.low-resource .highlight-pulse,
+html.low-resource .connection-highlight-pulse,
+html.low-resource .widget-input-highlight-pulse {
+  outline: 2px solid #22d3ee;
+  outline-offset: 2px;
+}
+html.low-resource .widget-label-highlight-pulse {
+  color: #22d3ee !important;
+}
+
 /* Fullscreen widget modal backdrop: span the full LAYOUT viewport so nothing
    shows through in the strip behind the on-screen keyboard. WebKit shrinks
    only the visual viewport when the keyboard opens; 100lvh keeps the backdrop

@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Workflow, WorkflowNode } from '@/api/types';
 import { NodeCard } from '@/components/WorkflowPanel/NodeCard';
 import { useWorkflowStore } from '@/hooks/useWorkflow';
+import { useGenerationSettingsStore } from '@/hooks/useGenerationSettings';
 import { useWorkflowErrorsStore } from '@/hooks/useWorkflowErrors';
 import { useQueueStore } from '@/hooks/useQueue';
 import { useBookmarksStore } from '@/hooks/useBookmarks';
@@ -109,8 +110,18 @@ describe('NodeCard emitted video output', () => {
   afterEach(async () => {
     await act(async () => root.unmount());
     container.remove();
+    useGenerationSettingsStore.setState({ lowResourceMode: false });
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
+  });
+
+  it('leaves workflow videos on manual playback in low resource mode', async () => {
+    useGenerationSettingsStore.getState().setLowResourceMode(true);
+    await act(async () => root.render(<NodeCard node={node} />));
+    const video = container.querySelector<HTMLVideoElement>('video[data-workflow-output-video]');
+    expect(video?.preload).toBe('none');
+    expect(video?.controls).toBe(true);
+    expect(HTMLMediaElement.prototype.play).not.toHaveBeenCalled();
   });
 
   it('promotes an MP4 immediately without passing it through Image preloading', async () => {

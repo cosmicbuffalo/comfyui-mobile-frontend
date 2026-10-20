@@ -231,21 +231,22 @@ function collectWidgetDefinitions(
             name: 'Loras',
             type: 'POWER_LORA_HEADER',
             options: { loraIndices },
-            value: null,
+            value: loraIndices.every((index) => (widgetValues[index] as { on?: unknown }).on !== false),
             widgetIndex: -1,
             isCombo: false,
             connected: false,
             inputIndex: -1
           });
 
-          loraIndices.forEach((index) => {
+          loraIndices.forEach((index, position) => {
             const value = widgetValues[index];
             definitions.push({
               name: 'Lora',
               type: 'POWER_LORA',
               options: {
                 choices: loraOptions.length > 0 ? loraOptions : undefined,
-                showSeparate
+                showSeparate,
+                position
               },
               value,
               widgetIndex: index,
@@ -330,11 +331,10 @@ function collectWidgetDefinitions(
         widgetIndex += 1;
         return;
       }
-      const typeSignature = Array.isArray(typeOrOptions)
-        ? typeOrOptions.map((entry) => String(entry)).join(',')
-        : String(typeOrOptions);
-      const typeSignatureUpper = typeSignature.toUpperCase();
-      const normalizedType = String(typeOrOptions);
+      // A legacy combo array contains values, not a type name. Joining every
+      // filename here repeatedly walked entire model catalogs during edits.
+      const normalizedType = Array.isArray(typeOrOptions) ? 'COMBO' : String(typeOrOptions);
+      const typeSignatureUpper = normalizedType.toUpperCase();
       const isAutocompleteLoras = typeSignatureUpper.includes('AUTOCOMPLETE_TEXT_LORAS');
       const isAutocompletePrompt = typeSignatureUpper.includes('AUTOCOMPLETE_TEXT_PROMPT');
       const isLoraManagerTextInput =
@@ -360,7 +360,7 @@ function collectWidgetDefinitions(
       // PrimitiveString holds free text (often popped out of a multiline widget
       // like CLIP text) — render it as a multiline textarea, not a one-line box.
       const isPrimitiveStringValue =
-        node.type === 'PrimitiveString' && String(typeOrOptions).toUpperCase() === 'STRING';
+        node.type === 'PrimitiveString' && typeSignatureUpper === 'STRING';
       if (isAutocompleteTextInput || isPrimitiveStringValue) {
         comboOptions.multiline = true;
       }
@@ -381,7 +381,7 @@ function collectWidgetDefinitions(
 
       if (isWidgetType) {
         widgetIndex = Math.max(widgetIndex + 1, resolvedWidgetIndex + 1);
-        if (String(typeOrOptions) === 'INT' && (name === 'seed' || name === 'noise_seed')) {
+        if (normalizedType === 'INT' && (name === 'seed' || name === 'noise_seed')) {
           // ComfyUI auto-adds a control_after_generate widget after every INT
           // seed input. Some custom nodes (Efficient KSampler family) strip it
           // on the JS side, so widgets_values may be one slot shorter — or
@@ -398,7 +398,7 @@ function collectWidgetDefinitions(
         // sub-inputs (e.g. width/height/crop) that appear as additional
         // widgets in widgets_values right after the combo value.
         // Process them recursively so they show up as widget definitions.
-        if (String(typeOrOptions).toUpperCase() === 'COMFY_DYNAMICCOMBO_V3') {
+        if (typeSignatureUpper === 'COMFY_DYNAMICCOMBO_V3') {
           const lastDef = definitions[definitions.length - 1];
           const subInputs = getDynamicComboSubInputs(
             typeOrOptions,

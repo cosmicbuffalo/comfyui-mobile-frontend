@@ -64,6 +64,7 @@ import { OutputsContextMenu } from './OutputsPanel/ContextMenu';
 import { usePanelSearchShortcut } from '@/hooks/usePanelSearchShortcut';
 import { useShowHiddenStore } from '@/hooks/useShowHidden';
 import { setModelThumbnailsActive } from '@/utils/modelThumbnails';
+import { useGenerationSettingsStore } from '@/hooks/useGenerationSettings';
 
 const FOLDERS_COLLAPSED_KEY = 'outputs-folders-collapsed';
 const STICKY_SECTION_TOP = -16;
@@ -108,6 +109,7 @@ function useProbedWorkflowAvailability(file: FileItem | null | undefined, source
 }
 
 export const OutputsPanel = memo(function OutputsPanel({ visible }: { visible: boolean }) {
+  const lowResourceMode = useGenerationSettingsStore(s => s.lowResourceMode);
   const { t } = useI18n();
   // Fine-grained selectors: a bare useOutputsStore() destructure would
   // re-render this whole panel on every store write, even while hidden.
@@ -136,7 +138,6 @@ export const OutputsPanel = memo(function OutputsPanel({ visible }: { visible: b
   const switchToTab = useOutputsStore((s) => s.switchToTab);
   const setCurrentFolder = useOutputsStore((s) => s.setCurrentFolder);
   const navigateToPath = useOutputsStore((s) => s.navigateToPath);
-  const fetchFolders = useOutputsStore((s) => s.fetchFolders);
   const fetchFiles = useOutputsStore((s) => s.fetchFiles);
   const toggleFavorite = useOutputsStore((s) => s.toggleFavorite);
   const favoriteItem = useOutputsStore((s) => s.favoriteItem);
@@ -326,9 +327,9 @@ export const OutputsPanel = memo(function OutputsPanel({ visible }: { visible: b
   const menuProbedWorkflowAvailable = useProbedWorkflowAvailability(menuTarget?.file, source);
   // Background thumbnails pause under the viewer, which renders its own copy.
   useEffect(() => {
-    setModelThumbnailsActive(visible && !viewerOpen);
+    setModelThumbnailsActive(visible && !viewerOpen && !lowResourceMode);
     return () => setModelThumbnailsActive(false);
-  }, [visible, viewerOpen]);
+  }, [visible, viewerOpen, lowResourceMode]);
 
   const { menuStyle, resetMenuPosition } = useAnchoredMenuPosition({
     open: !!menuTarget,
@@ -362,10 +363,9 @@ export const OutputsPanel = memo(function OutputsPanel({ visible }: { visible: b
   useEffect(() => {
     if (visible && !hasFetchedRef.current && !isLoading) {
       hasFetchedRef.current = true;
-      fetchFolders();
       fetchFiles();
     }
-  }, [visible, fetchFolders, fetchFiles, isLoading]);
+  }, [visible, fetchFiles, isLoading]);
 
   useEffect(() => {
     if (!visible && viewerOpen) {
