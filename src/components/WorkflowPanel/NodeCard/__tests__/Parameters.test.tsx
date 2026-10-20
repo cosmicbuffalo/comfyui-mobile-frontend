@@ -17,17 +17,20 @@ vi.mock('@/components/InputControls/WidgetControl', () => ({
     value,
     compactTrailingControls,
     isPromoted,
+    options,
   }: {
     name: string;
     value?: unknown;
     compactTrailingControls?: boolean;
     isPromoted?: boolean;
+    options?: Record<string, unknown>;
   }) => (
     <div
       data-widget-control={name}
       data-widget-value={String(value ?? '')}
       data-compact-trailing-controls={compactTrailingControls || undefined}
       data-promoted={isPromoted || undefined}
+      data-options={JSON.stringify(options)}
     >
       {name}
     </div>
@@ -107,6 +110,12 @@ describe('NodeCardParameters seed controls', () => {
   it('reserves bottom clearance for the last parameter focus ring', async () => {
     const content = await renderFirstWidget('STRING');
     expect(content?.classList).toContain('pb-1');
+  });
+
+  it('passes the canonical node key to an ordinary webcam row for capture-on-queue', async () => {
+    await renderFirstWidget('WEBCAM');
+    const control = container.querySelector('[data-widget-control="first"]')!;
+    expect(JSON.parse(control.getAttribute('data-options')!).__nodeKey).toBe('node:21');
   });
 
   it('does not pull up a composite first parameter such as Power LoRA', async () => {

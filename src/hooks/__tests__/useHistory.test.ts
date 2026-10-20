@@ -78,6 +78,14 @@ beforeEach(() => {
 });
 
 describe('useHistoryStore', () => {
+  it('retains standardized 3D files and camera metadata after a history refresh', async () => {
+    const item = makeHistoryItem('model-run', { status_str: 'success', completed: true, messages: [] });
+    const camera = { position: { x: 1, y: 2, z: 3 }, target: { x: 0, y: 0, z: 0 }, zoom: 1, cameraType: 'perspective' };
+    item.outputs = { '9': { '3d': [{ filename: 'mesh.glb', subfolder: 'models', type: 'output' }], camera_info: [camera] } };
+    mockGetHistory.mockResolvedValue({ 'model-run': item });
+    await useHistoryStore.getState().fetchHistory();
+    expect(useHistoryStore.getState().history[0].outputs.images[0]).toMatchObject({ filename: 'mesh.glb', model3d: { camera } });
+  });
   it('reopens completed history whose stored fold was only an automatic default', () => {
     useQueueStore.setState({
       queueItemExpanded: { completed: false },

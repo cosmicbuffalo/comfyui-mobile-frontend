@@ -42,6 +42,7 @@ interface TemplatesPanelProps {
   onBack: () => void;
   onDismissError: () => void;
   onLoadTemplate: (moduleName: string, templateName: string, title?: string) => void;
+  onLoadDefault?: () => void;
 }
 
 /** Bound the first render of the full catalog; later batches are user-driven. */
@@ -94,6 +95,7 @@ export function TemplatesPanel({
   onBack,
   onDismissError,
   onLoadTemplate,
+  onLoadDefault,
 }: TemplatesPanelProps) {
   const { t } = useI18n();
   const [search, setSearch] = useState('');
@@ -155,6 +157,7 @@ export function TemplatesPanel({
     <div className="flex flex-col h-full">
       <MenuSubPageHeader title={t('Templates')} onBack={onBack} />
       <MenuErrorNotice error={error} onDismiss={onDismissError} />
+      {onLoadDefault && <button type="button" disabled={loading} className="my-2 min-h-11 rounded-xl border border-white/10 bg-slate-900 px-3 py-2 text-sm text-cyan-200" onClick={onLoadDefault}>{t('Load starter workflow')}</button>}
 
       {!loading && hasTemplates && (
         <>

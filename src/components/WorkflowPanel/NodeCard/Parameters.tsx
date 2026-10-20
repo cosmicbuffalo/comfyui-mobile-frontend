@@ -1,7 +1,8 @@
 import { WidgetRow } from './WidgetRow';
-import { Fragment, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useNodeWorkflow } from '@/hooks/useNodeWorkflow';
+import { Fragment, Suspense, useMemo, useState, type ReactNode } from 'react';
+import { lazyPanel } from '@/components/lazyPanel';
 import { Collapsible } from '@/components/Collapsible';
-import { FoldIcon } from '@/components/FoldIcon';
 import {
   ArrowDownIcon,
   ArrowToDownRightIcon,
@@ -16,12 +17,10 @@ import { WidgetVariationsModal } from '@/components/modals/WidgetVariationsModal
 import { SectionFoldButton } from './SectionFoldButton';
 import { useParameterSectionFoldsStore } from '@/hooks/useParameterSectionFolds';
 import { WidgetControl } from '../../InputControls/WidgetControl';
+import { LoraRow } from '../../InputControls/LoraRow';
 import { widgetControlHasTopPadding } from '../../InputControls/widgetControlSpacing';
 import { NumberControl } from '../../InputControls/NumberControl';
-import {
-  controlNestedSurfaceClassName,
-  controlSecondaryButtonClassName,
-} from '../../InputControls/controlStyles';
+import { controlSecondaryButtonClassName } from '../../InputControls/controlStyles';
 import type { WorkflowNode } from '@/api/types';
 import {
   generateSeedFromNode,
@@ -70,6 +69,9 @@ import { variationOptionsFor } from '@/utils/widgetVariations';
 import { FastGroupsBypasserControls } from './FastGroupsBypasserControls';
 import { supportsPinnedWidgetEditor } from '@/utils/pinnedWidgetSupport';
 import { promotedWidgetKey, resolvePromotedWidgetKeys } from '@/utils/boundaryPromotion';
+
+const CameraControls = lazyPanel(() => import('@/components/ThreeView/CameraControls'), { prefetch: false });
+const BoundingBoxControls = lazyPanel(() => import('@/components/InputControls/BoundingBoxControls'), { prefetch: false });
 
 interface WidgetDescriptor {
   widgetIndex: number;
@@ -120,10 +122,6 @@ interface NodeCardParametersProps {
   resolveWidgetValue?: (widgetIndex: number) => unknown;
   showFastGroupConfig: boolean;
   setShowFastGroupConfig: (open: boolean) => void;
-  // Incremented by the parent each time the node card is unfolded; when it
-  // changes we reset nested in-Parameters folds (CR-LoRA groups) back to open so
-  // unfolding the node reveals every nested section.
-  unfoldNonce?: number;
   // Whether an outputs section (comparer / output preview) renders below this
   // section — drives the bottom margin so a trailing section doesn't leave dead
   // space when nothing follows.
@@ -184,7 +182,6 @@ export function NodeCardParameters({
   resolveWidgetValue,
   showFastGroupConfig,
   setShowFastGroupConfig,
-  unfoldNonce,
   hasOutputsBelow = false,
   promotableWidgets = [],
   promotedWidgetForms = {},
@@ -241,7 +238,7 @@ export function NodeCardParameters({
   const [renameTarget, setRenameTarget] = useState<{ inputName: string; label: string } | null>(null);
   const [variationsTarget, setVariationsTarget] = useState<WidgetDescriptor | null>(null);
   const [renameDraft, setRenameDraft] = useState('');
-  const workflow = useWorkflowStore((state) => state.workflow);
+  const workflow = useNodeWorkflow(node.id);
   const scopeStack = useWorkflowStore((state) => state.scopeStack);
   const updateSubgraphInnerNodeWidget = useWorkflowStore((state) => state.updateSubgraphInnerNodeWidget);
   const confirmPopOut = () => {
@@ -260,18 +257,6 @@ export function NodeCardParameters({
   const isFastGroupsBypasser = /fast\s+groups/i.test(node.type) && /\(rgthree\)/i.test(node.type);
   const isRgthreeSeedNode = node.type === RGTHREE_SEED_NODE_TYPE;
   const isCrLoraStackNode = /cr\s*lora\s*stack/i.test(node.type);
-  // Per-lora fold state for CR-LoRA-Stack-style nodes, keyed by lora group index.
-  // Default (absent / false) is unfolded so all controls show until collapsed.
-  const [foldedLoras, setFoldedLoras] = useState<Record<number, boolean>>({});
-  const toggleLoraFold = (index: number) =>
-    setFoldedLoras((prev) => ({ ...prev, [index]: !prev[index] }));
-  // When the parent card is unfolded (nonce changes), clear per-group folds so
-  // every nested CR-LoRA group returns to its default-open state. Guarded on a
-  // truthy nonce so the initial mount (nonce 0/undefined) is a no-op.
-  useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- reset local fold UI when the parent is explicitly unfolded
-    if (unfoldNonce) setFoldedLoras({});
-  }, [unfoldNonce]);
   const isLoraManagerNode = isLoraManagerNodeType(node.type);
   const isTriggerWordToggleNode = isTriggerWordToggleNodeType(node.type);
   const seedWidgetIndex = !isKSampler && workflowExists && nodeTypesExists
@@ -357,8 +342,9 @@ export function NodeCardParameters({
     const baseName = widget.name.split(': ').pop() ?? widget.name;
     return baseName !== 'seed' && baseName !== 'noise_seed';
   };
-  const inputWidgetsToRender = visibleInputWidgets.filter(shouldRenderGenericWidget);
-  const widgetsToRender = visibleWidgets.filter(shouldRenderGenericWidget);
+  const genericWidget = (widget: WidgetDescriptor) => !(node.type === 'CreateBoundingBoxes' && ['editor_state', 'last_incoming'].includes(widget.inputName ?? widget.name)) && shouldRenderGenericWidget(widget);
+  const inputWidgetsToRender = visibleInputWidgets.filter(genericWidget);
+  const widgetsToRender = visibleWidgets.filter(genericWidget);
   const showParameters = visibleWidgets.length > 0 || visibleInputWidgets.length > 0;
   // A node that is just a single widget with no other input slots (a
   // primitive-like node) gains nothing from popping its only value out, so the
@@ -1595,7 +1581,10 @@ export function NodeCardParameters({
           onBoundaryJump={widgetBoundaryJump(widget)}
           type={widget.type}
           value={widget.value}
-          options={widget.options}
+          options={widget.type === 'DYNAMIC_GROUP'
+            // Core reports row fields by qualified name (loras.1.lora_name).
+            ? { ...widget.options, __errors: [...errorInputNames].filter(name => name.startsWith(`${widget.inputName ?? widget.name}.`)) }
+            : widget.type === 'WEBCAM' ? { ...widget.options, __nodeKey: node.itemKey, __width: visibleWidgets.find(w => w.name === 'width')?.value, __height: visibleWidgets.find(w => w.name === 'height')?.value } : widget.options}
           onChange={handleWidgetChange(widget)}
           disabled={isBypassed || widget.disabled === true}
           isPinned={canPinWidget(widget.type, widget.name, widget.options) ? isWidgetPinned(widget.widgetIndex) : false}
@@ -1674,6 +1663,8 @@ export function NodeCardParameters({
       )}
       {showParameters && (
         <>
+          {(node.type === 'CameraAngle' || node.type === 'CreateCameraInfo') && <Suspense fallback={<div className="h-72" />}><CameraControls node={node} onChange={onUpdateNodeWidgets} disabled={isBypassed} /></Suspense>}
+          {node.type === 'CreateBoundingBoxes' && <Suspense fallback={<div className="h-72" />}><BoundingBoxControls node={node} onChange={onUpdateNodeWidgets} disabled={isBypassed} /></Suspense>}
           {isKSampler && workflowExists && nodeTypesExists && (() => {
             const seedIndex = kSamplerSeedIndex;
             if (seedIndex === null) return null;
@@ -1733,96 +1724,57 @@ export function NodeCardParameters({
           {isCrLoraStackNode ? (
             <>
               <div className="space-y-3">
-                {crStackGroupedWidgets.groups.map(({ index, widgets }) => (
-                  <div
-                    key={`cr-lora-stack-group-${index}`}
-                    className={`p-3 ${controlNestedSurfaceClassName} ${isBypassed ? 'opacity-80' : ''}`}
-                  >
-                    {(() => {
-                      const switchWidget = widgets.find((widget) => {
-                        const groupMeta = getCrLoraStackGroupMeta(widget.name);
-                        return groupMeta?.base === 'switch';
-                      });
-                      const bodyWidgets = widgets.filter((widget) => widget !== switchWidget);
-                      // Default every LoRA group to open (all foldable things default
-                      // to open). Disabling the switch still collapses the group via
-                      // the toggle handler below; this only sets the initial state.
-                      const switchEnabled = switchWidget ? getCrSwitchValue(switchWidget.value) : true;
-                      const folded = foldedLoras[index] ?? false;
-                      return (
-                        <>
-                          <button
-                            type="button"
-                            aria-expanded={!folded}
-                            onClick={() => toggleLoraFold(index)}
-                            className="flex w-full items-center gap-1 mb-2 text-left text-cyan-300"
-                          >
-                            <FoldIcon open={!folded} className="w-5 h-5 shrink-0" />
-                            <span className="text-xs font-semibold uppercase tracking-wider">
-                              LoRA {index}
-                            </span>
-                          </button>
-                          {switchWidget && (() => {
-                            const enabled = switchEnabled;
-                            return (
-                              <button
-                                type="button"
-                                aria-pressed={enabled}
-                                onClick={() => {
-                                  const nextEnabled = !enabled;
-                                  handleCrWidgetChange(switchWidget)(buildCrSwitchValue(switchWidget.value, nextEnabled));
-                                  // Keep the fold in sync: collapse when disabling, expand when enabling.
-                                  setFoldedLoras((prev) => ({ ...prev, [index]: !nextEnabled }));
-                                }}
-                                className={`w-full py-2 rounded-lg text-sm font-semibold transition-colors ${enabled ? 'bg-cyan-500 text-slate-950' : 'bg-slate-700 text-slate-200'} ${isBypassed ? 'opacity-60 cursor-not-allowed' : ''}`}
-                                disabled={isBypassed}
-                              >
-                                {enabled ? t('Enabled') : t('Disabled')}
-                              </button>
-                            );
-                          })()}
-                          <Collapsible open={!folded} className="space-y-2 pt-2">
-                            {bodyWidgets.map((widget) => {
-                              const groupMeta = getCrLoraStackGroupMeta(widget.name);
-                              const pinAllowed = canPinWidget(widget.type, widget.name, widget.options);
-                              const widgetOptions = applyCrLoraComboDisplayOptions(widget);
-                              const displayName = (() => {
-                                const base = groupMeta?.base ?? '';
-                                if (base.includes('lora_name')) return t('Selected LoRA');
-                                if (base.includes('model_weight')) return t('Model Strength');
-                                if (base.includes('clip_weight')) return t('Clip Strength');
-                                return widget.name;
-                              })();
-                              // Widget is renamed for display ("Selected LoRA"), so
-                              // tell WidgetControl it's a lora picker explicitly.
-                              const crModelKind = (groupMeta?.base ?? '').includes('lora_name')
-                                ? 'loras'
-                                : undefined;
-                              return (
-                                <div key={getWidgetKey(widget, 'cr-lora-widget')}>
-                                  <WidgetControl
-                                    name={displayName}
-                                    type={widget.type}
-                                    value={widget.value}
-                                    options={widgetOptions}
-                                    modelKind={crModelKind}
-                                    onChange={handleCrWidgetChange(widget)}
-                                    disabled={isBypassed}
-                                    labelAccessory={rowMenuFor(widget)}
-                                    isPinned={pinAllowed ? isWidgetPinned(widget.widgetIndex) : false}
-                                    onTogglePin={pinAllowed ? () => toggleWidgetPin(widget.widgetIndex, widget.name, widget.type, widgetOptions, widget.inputName) : undefined}
-                                    hasError={hasWidgetError(widget)}
-                                    isPromoted={isPromotedWidget(widget.name)}
-                                  />
-                                </div>
-                              );
-                            })}
-                          </Collapsible>
-                        </>
-                      );
-                    })()}
-                  </div>
-                ))}
+                {crStackGroupedWidgets.groups.map(({ index, widgets }) => {
+                  const part = (base: string) => widgets.find((widget) => getCrLoraStackGroupMeta(widget.name)?.base === base);
+                  const switchWidget = part('switch');
+                  const loraWidget = part('lora_name');
+                  const modelWidget = part('model_weight');
+                  const clipWidget = part('clip_weight');
+                  const rest = widgets.filter((widget) => ![switchWidget, loraWidget, modelWidget, clipWidget].includes(widget));
+                  // Pins, row menus, errors and promotion still belong to each widget.
+                  const extras = (widget: RenderWidgetDescriptor) => {
+                    const pinAllowed = canPinWidget(widget.type, widget.name, widget.options);
+                    return {
+                      hasError: hasWidgetError(widget),
+                      isPromoted: isPromotedWidget(widget.name),
+                      labelAccessory: rowMenuFor(widget),
+                      isPinned: pinAllowed ? isWidgetPinned(widget.widgetIndex) : false,
+                      onTogglePin: pinAllowed ? () => toggleWidgetPin(widget.widgetIndex, widget.name, widget.type, applyCrLoraComboDisplayOptions(widget), widget.inputName) : undefined,
+                    };
+                  };
+                  const numberField = (widget: RenderWidgetDescriptor) => ({
+                    ...extras(widget), name: widget.name, value: Number(widget.value), options: widget.options as Record<string, unknown>,
+                    onChange: handleCrWidgetChange(widget),
+                  });
+                  if (!loraWidget || !modelWidget) return null;
+                  return (
+                    <div key={`cr-lora-stack-group-${index}`} className="space-y-2">
+                      <LoraRow
+                        index={index - 1}
+                        disabled={isBypassed}
+                        enabled={switchWidget ? {
+                          value: getCrSwitchValue(switchWidget.value),
+                          onChange: (next) => handleCrWidgetChange(switchWidget)(buildCrSwitchValue(switchWidget.value, next)),
+                        } : undefined}
+                        lora={{ ...extras(loraWidget), name: loraWidget.name, value: String(loraWidget.value ?? ''), options: applyCrLoraComboDisplayOptions(loraWidget), onChange: handleCrWidgetChange(loraWidget) }}
+                        strength={numberField(modelWidget)}
+                        clipStrength={clipWidget ? numberField(clipWidget) : undefined}
+                      />
+                      {rest.map((widget) => (
+                        <WidgetControl
+                          key={getWidgetKey(widget, 'cr-lora-widget')}
+                          name={widget.name}
+                          type={widget.type}
+                          value={widget.value}
+                          options={applyCrLoraComboDisplayOptions(widget)}
+                          onChange={handleCrWidgetChange(widget)}
+                          disabled={isBypassed}
+                          {...extras(widget)}
+                        />
+                      ))}
+                    </div>
+                  );
+                })}
               </div>
               {crStackGroupedWidgets.ungrouped.map((widget) => {
                 const pinAllowed = canPinWidget(widget.type, widget.name, widget.options);
@@ -1890,36 +1842,7 @@ export function NodeCardParameters({
                     />
                   </WidgetRow>
                 ))}
-                {widgetsToRender.map((widget) => {
-                  const canPopOut =
-                    !isBypassed && !isSingleWidgetOnlyNode && Boolean(node.itemKey) && canPopOutWidget(widget);
-                  return (
-                    <WidgetRow
-                      key={getWidgetKey(widget, 'widget')}
-                      nodeId={node.id} widgetIndex={widget.widgetIndex}
-                      className={isBypassed ? 'opacity-80' : ''}
-                    >
-                      <WidgetControl
-                        name={widget.name}
-                        displayLabel={widgetDisplayLabel(widget)}
-                        boundaryAnnotation={widgetBoundaryAnnotation(widget)}
-                        onBoundaryJump={widgetBoundaryJump(widget)}
-                        type={widget.type}
-                        value={widget.value}
-                        options={widget.options}
-                        onChange={handleWidgetChange(widget)}
-                        disabled={isBypassed || widget.disabled === true}
-                        isPinned={canPinWidget(widget.type, widget.name, widget.options) ? isWidgetPinned(widget.widgetIndex) : false}
-                        onTogglePin={canPinWidget(widget.type, widget.name, widget.options) ? () => toggleWidgetPin(widget.widgetIndex, widget.name, widget.type, widget.options, widget.inputName) : undefined}
-                        hasError={hasWidgetError(widget)}
-                        isPromoted={isPromotedWidget(widget.name)}
-                        labelAccessory={
-                          rowMenuFor(widget, canPopOut)
-                        }
-                      />
-                    </WidgetRow>
-                  );
-                })}
+                {widgetsToRender.map(renderValueRow)}
                 </>
               )}
             </>

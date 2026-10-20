@@ -10,6 +10,7 @@ import os
 
 import folder_paths
 import file_utils as _file_utils
+import mobile_auth as _mobile_auth
 from file_utils import safe_join as _safe_join
 import mobile_input_aliases as _mobile_input_aliases
 import mobile_file_prefix_aliases as _mobile_file_prefix_aliases
@@ -105,6 +106,13 @@ async def api_copy_file_to_input(request):
             return web.json_response({"error": "Source not found"}, status=404)
         if os.path.isdir(src_path):
             return web.json_response({"error": "Source must be a file"}, status=400)
+        # The copy lands in the shared input tree, so reading the source is
+        # what has to be allowed: otherwise this hands anyone a file they may
+        # not view.
+        guarded = _mobile_auth.is_enabled()
+        viewer = _mobile_auth.current_user() if guarded else None
+        if guarded and not _mobile_auth.can_read_file(src_path, user=viewer):
+            return web.json_response({"error": "Access denied"}, status=403)
 
         filename = os.path.basename(src_path)
         if not filename:
@@ -115,6 +123,10 @@ async def api_copy_file_to_input(request):
             return web.json_response({"error": "Access denied"}, status=403)
         if os.path.exists(dst_path) and not overwrite:
             return web.json_response({"error": "Destination already exists"}, status=409)
+        if guarded and os.path.isfile(dst_path) and not _mobile_auth.can_modify_file(dst_path, user=viewer):
+            # Someone else's input, or the shared pool: copy beside it, not over it.
+            filename = _file_utils.unique_basename(input_dir, filename, ())
+            dst_path = os.path.join(input_dir, filename)
         if os.path.isdir(dst_path):
             # Materializing onto a directory path would raise deep in
             # link_or_copy and the broad handler would turn it into an opaque

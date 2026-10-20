@@ -1,4 +1,8 @@
 import { StringControl } from "./StringControl";
+import { Suspense } from 'react';
+import { lazyPanel } from '@/components/lazyPanel';
+import { DynamicGroupControl } from './DynamicGroupControl';
+import { LoraAddButton, LoraRow, LoraToggleAll } from './LoraRow';
 import { NumberControl } from "./NumberControl";
 import { ComboControl } from "./ComboControl";
 import { ModelComboControl } from "./ModelComboControl";
@@ -10,8 +14,6 @@ import { normalizeTriggerWordEntry } from "@/utils/triggerWordToggle";
 import { modelWidgetKind } from "@/utils/modelWidgetKind";
 import type { LoraManagerPrefix } from "@/api/loraManagerClient";
 import {
-  controlDangerButtonClassName,
-  controlDashedButtonClassName,
   controlGhostButtonClassName,
   controlNestedSurfaceClassName,
   controlToggleButtonClassName,
@@ -62,6 +64,9 @@ interface WidgetControlProps {
    */
   modelKind?: LoraManagerPrefix | null;
 }
+
+const WebcamControl = lazyPanel(() => import('./WebcamControl'), { prefetch: false });
+const BoundingBoxEditor = lazyPanel(() => import('./BoundingBoxEditor'), { prefetch: false });
 
 export function WidgetControl({
   name,
@@ -163,6 +168,7 @@ export function WidgetControl({
   };
 
   const renderControl = () => {
+    if (type === 'DYNAMIC_GROUP') return <DynamicGroupControl name={name} value={value} options={options} onChange={onChange} disabled={disabled} />;
     if (isCombo)
       return <ModelComboControl {...controlProps} modelKind={resolvedModelKind} />;
     if (isNumber)
@@ -184,35 +190,12 @@ export function WidgetControl({
 
   const effectiveModalOpen = forceModalOpen || modalOpen;
 
+  if (type === 'DYNAMIC_GROUP') return <div className={layoutContainerClass}>{renderControl()}</div>;
+  if (type === 'WEBCAM') return <Suspense fallback={null}><WebcamControl value={value} onChange={onChange} disabled={disabled} nodeKey={options?.__nodeKey} width={options?.__width} height={options?.__height} /></Suspense>;
+  if (type === 'BOUNDING_BOXES') return <Suspense fallback={null}><BoundingBoxEditor value={value} onChange={onChange} disabled={disabled} width={options?.__width} height={options?.__height} /></Suspense>;
+
   if (type === "LM_LORA_HEADER") {
-    const allActive = Boolean(value);
-    return (
-      <div
-        className={`${layoutContainerClass} lm-lora-header flex items-center justify-between p-3 bg-cyan-500/10 border border-cyan-400/20 rounded-lg`}
-      >
-        <div className="lm-lora-header-content flex items-center gap-3">
-          <button
-            type="button"
-            role="switch"
-            aria-checked={allActive}
-            onClick={() => onChange(!allActive)}
-            className={`relative inline-flex h-6 w-11 items-center rounded-full transition ${
-              allActive ? "bg-cyan-500" : "bg-slate-700"
-            } ${disabled ? "opacity-60 cursor-not-allowed" : "cursor-pointer"}`}
-            disabled={disabled}
-          >
-            <span
-              className={`inline-block h-5 w-5 transform rounded-full bg-white transition ${
-                allActive ? "translate-x-5" : "translate-x-1"
-              }`}
-            />
-          </button>
-          <span className="lm-lora-header-label text-sm font-semibold text-cyan-300 uppercase tracking-wider">
-            {t('Toggle All Loras')}
-          </span>
-        </div>
-      </div>
-    );
+    return <div className={layoutContainerClass}><LoraToggleAll checked={Boolean(value)} onChange={onChange} disabled={disabled} /></div>;
   }
 
   if (type === "LM_LORA") {
@@ -268,114 +251,31 @@ export function WidgetControl({
     };
 
     return (
-      <div
-        className={`${layoutContainerClass} lm-lora-row flex flex-col gap-3 p-3 ${controlNestedSurfaceClassName} ${!loraActive ? "opacity-60" : ""}`}
-      >
-        <div className="lm-lora-row-actions flex items-center gap-2">
-          <button
-            type="button"
-            onClick={() =>
-              handleEntryChange({ active: !loraActive })
-            }
-            className={`lm-lora-enabled-button flex-1 py-2 text-sm ${controlToggleButtonClassName({ active: loraActive, disabled })}`}
-            disabled={disabled}
-          >
-            {loraActive ? t("Enabled") : t("Disabled")}
-          </button>
-          <button
-            type="button"
-            onClick={() => onChange(null)}
-            className={`lm-lora-remove-button flex-1 ${controlDangerButtonClassName}`}
-            disabled={disabled}
-          >
-            {t('Remove')}
-          </button>
-        </div>
-
-        <div className="lm-lora-row-header flex items-center gap-3">
-          <div className="lm-lora-select flex-grow min-w-0">
-            {choices.length > 0 ? (
-              <ModelComboControl
-                containerClass="space-y-0 w-full"
-                name=""
-                hideLabel
-                modelKind={resolvedModelKind}
-                value={loraValue.name}
-                options={{
-                  options: choices,
-                  stripSafetensorsSuffix: true,
-                }}
-                onChange={(val) => handleEntryChange({ name: String(val) })}
-                disabled={disabled}
-                hasPin={false}
-              />
-            ) : (
-              <StringControl
-                containerClass="space-y-0 w-full"
-                name=""
-                hideLabel
-                value={loraValue.name}
-                options={{ placeholder: t("LoRA name") }}
-                onChange={(val) => handleEntryChange({ name: String(val) })}
-                disabled={disabled}
-                hasPin={false}
-              />
-            )}
-          </div>
-        </div>
-
-        <div className="lm-lora-strengths flex flex-col gap-2">
-          <NumberControl
-            containerClass="space-y-0"
-            name={showClip ? t("Model strength") : t("Strength")}
-            value={Number(loraValue.strength)}
-            options={{ min: -10, max: 10, step: 0.01 }}
-            onChange={(val) => handleEntryChange({ strength: val })}
-            disabled={disabled}
-            type="FLOAT"
-          />
-
-          {showClip && (
-            <NumberControl
-              containerClass="space-y-0"
-              name={t("Clip strength")}
-              value={Number(loraValue.clipStrength ?? loraValue.strength)}
-              options={{ min: -10, max: 10, step: 0.01 }}
-              onChange={(val) => handleEntryChange({ clipStrength: val })}
-              disabled={disabled}
-              type="FLOAT"
-            />
-          )}
-
-          <button
-            type="button"
-            onClick={handleToggleExpanded}
-            className={`lm-lora-clip-toggle ${controlGhostButtonClassName}`}
-            disabled={disabled}
-          >
-            {showClip ? t("Hide clip strength") : t("Separate clip strength")}
-          </button>
-        </div>
+      <div className={layoutContainerClass}>
+        <LoraRow
+          index={Number((options as { entryIndex?: number })?.entryIndex ?? 0)}
+          disabled={disabled}
+          enabled={{ value: loraActive, onChange: (next) => handleEntryChange({ active: next }) }}
+          onRemove={() => onChange(null)}
+          lora={{
+            value: loraValue.name,
+            freeText: choices.length === 0,
+            options: { options: choices, stripSafetensorsSuffix: true },
+            onChange: (next) => handleEntryChange({ name: next }),
+          }}
+          strength={{ value: Number(loraValue.strength), onChange: (next) => handleEntryChange({ strength: next }) }}
+          clipStrength={{ value: Number(loraValue.clipStrength ?? loraValue.strength), onChange: (next) => handleEntryChange({ clipStrength: next }) }}
+          clipToggle={{ open: showClip, onToggle: handleToggleExpanded }}
+        />
       </div>
     );
   }
 
   if (type === "LM_LORA_ADD") {
     const loraOptions = (options as { choices?: unknown[] }) || {};
-    const handleLoraAddClick = () => {
-      onChange(createDefaultLoraEntry(loraOptions.choices));
-    };
-
     return (
       <div className={`${layoutContainerClass} lm-lora-add`}>
-        <button
-          onClick={handleLoraAddClick}
-          className={controlDashedButtonClassName}
-          disabled={disabled}
-        >
-          <PlusIcon className="w-5 h-5" />
-          {t("Add Lora")}
-        </button>
+        <LoraAddButton onClick={() => onChange(createDefaultLoraEntry(loraOptions.choices))} disabled={disabled} />
       </div>
     );
   }
@@ -446,25 +346,7 @@ export function WidgetControl({
   }
 
   if (type === "POWER_LORA_HEADER") {
-    return (
-      <label
-        className={`${layoutContainerClass} power-lora-header flex items-center justify-between p-3 bg-cyan-500/10 border border-cyan-400/20 rounded-lg ${
-          disabled ? "cursor-not-allowed opacity-60" : "cursor-pointer"
-        }`}
-      >
-        <div className="power-lora-header-content flex items-center gap-3">
-          <input
-            type="checkbox"
-            onChange={(e) => onChange(e.target.checked)}
-            className="w-5 h-5 rounded cursor-pointer"
-            disabled={disabled}
-          />
-          <span className="power-lora-header-label text-sm font-semibold text-cyan-300 uppercase tracking-wider">
-            Toggle All Loras
-          </span>
-        </div>
-      </label>
-    );
+    return <div className={layoutContainerClass}><LoraToggleAll checked={Boolean(value)} onChange={onChange} disabled={disabled} /></div>;
   }
 
   if (type === "POWER_LORA") {
@@ -479,10 +361,7 @@ export function WidgetControl({
       strength: 1.0,
     };
     const loraOptions =
-      (options as { choices?: unknown[]; showSeparate?: boolean }) || {};
-    const choices = loraOptions.choices;
-    const showSeparate = loraOptions.showSeparate;
-
+      (options as { choices?: unknown[]; showSeparate?: boolean; position?: number }) || {};
     const handleSubChange = (key: string, val: unknown) => {
       onChange({
         ...loraValue,
@@ -491,85 +370,18 @@ export function WidgetControl({
     };
 
     return (
-      <div
-        className={`${layoutContainerClass} power-lora-row flex flex-col gap-2 p-3 ${controlNestedSurfaceClassName} ${!loraValue.on ? "opacity-60" : ""}`}
-      >
-        <div className="power-lora-row-actions flex items-center gap-2">
-          <button
-            type="button"
-            onClick={() => handleSubChange("on", !loraValue.on)}
-            className={`power-lora-enabled-button flex-1 py-2 text-sm ${controlToggleButtonClassName({ active: loraValue.on, disabled, radius: "lg" })}`}
-            disabled={disabled}
-          >
-            {loraValue.on ? t("Enabled") : t("Disabled")}
-          </button>
-          <button
-            type="button"
-            onClick={() => onChange(null)}
-            className={`power-lora-remove-button flex-1 ${controlDangerButtonClassName}`}
-            disabled={disabled}
-          >
-            {t('Remove')}
-          </button>
-        </div>
-
-        <div className="power-lora-row-header flex items-center gap-3">
-          <div className="power-lora-select flex-grow min-w-0">
-            <WidgetControl
-              name=""
-              hideLabel
-              compact
-              type="COMBO"
-              modelKind="loras"
-              value={loraValue.lora}
-              options={choices}
-              onChange={(val) => handleSubChange("lora", val)}
-              disabled={disabled}
-            />
-          </div>
-        </div>
-
-        <div className="power-lora-strengths flex flex-col">
-          <label className="block text-sm font-medium text-slate-300 ml-1">
-            {showSeparate ? t("Model strength") : t("Strength")}
-          </label>
-          <div className="power-lora-strength-row flex items-center gap-3">
-            <div className="power-lora-strength-input flex-grow">
-              <WidgetControl
-                name=""
-                hideLabel
-                compact
-                type="FLOAT"
-                value={loraValue.strength}
-                options={{ min: -10, max: 10, step: 0.01 }}
-                onChange={(val) => handleSubChange("strength", val)}
-                disabled={disabled}
-              />
-            </div>
-          </div>
-
-          {showSeparate && (
-            <label className="block text-sm font-medium text-slate-300 ml-1">
-              {t('Clip strength')}
-            </label>
-          )}
-          {showSeparate && (
-            <div className="power-lora-strength-row flex items-center gap-3">
-              <div className="power-lora-strength-input flex-grow">
-                <WidgetControl
-                  name=""
-                  hideLabel
-                  compact
-                  type="FLOAT"
-                  value={loraValue.strengthTwo ?? loraValue.strength}
-                  options={{ min: -10, max: 10, step: 0.01 }}
-                  onChange={(val) => handleSubChange("strengthTwo", val)}
-                  disabled={disabled}
-                />
-              </div>
-            </div>
-          )}
-        </div>
+      <div className={layoutContainerClass}>
+        <LoraRow
+          index={loraOptions.position ?? 0}
+          disabled={disabled}
+          enabled={{ value: loraValue.on, onChange: (next) => handleSubChange("on", next) }}
+          onRemove={() => onChange(null)}
+          lora={{ value: loraValue.lora, options: loraOptions.choices, onChange: (next) => handleSubChange("lora", next) }}
+          strength={{ value: loraValue.strength, onChange: (next) => handleSubChange("strength", next) }}
+          clipStrength={loraOptions.showSeparate
+            ? { value: loraValue.strengthTwo ?? loraValue.strength, onChange: (next) => handleSubChange("strengthTwo", next) }
+            : undefined}
+        />
       </div>
     );
   }
@@ -672,14 +484,7 @@ export function WidgetControl({
 
     return (
       <div className={`${layoutContainerClass} power-lora-add`}>
-        <button
-          onClick={handlePowerLoraAddClick}
-          className={controlDashedButtonClassName}
-          disabled={disabled}
-        >
-          <PlusIcon className="w-5 h-5" />
-          {t("Add Lora")}
-        </button>
+        <LoraAddButton onClick={handlePowerLoraAddClick} disabled={disabled} />
       </div>
     );
   }

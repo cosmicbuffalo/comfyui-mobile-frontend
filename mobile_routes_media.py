@@ -15,11 +15,14 @@ import folder_paths
 import file_utils as _file_utils
 from file_utils import safe_join as _safe_join
 from mobile_metadata import (
+    MODEL_METADATA_EXTENSIONS,
     MetadataPathError,
     extract_prompt_from_metadata,
     extract_workflow_from_metadata,
+    read_glb_metadata,
     resolve_metadata_path,
 )
+import mobile_auth as _mobile_auth
 import mobile_image_dimensions as _mobile_image_dimensions
 import mobile_image_preview as _mobile_image_preview
 import mobile_push as _mobile_push
@@ -32,6 +35,23 @@ from mobile_common import (
     _render_image_thumbnail,
     _source_base_dir,
 )
+def _readable(base_dir, paths, viewer):
+    """The requested paths this viewer may read: a batch must not report on
+    other accounts' files by name."""
+    def allowed(rel):
+        full = _safe_join(base_dir, rel) if isinstance(rel, str) else None
+        return full is not None and _mobile_auth.can_read_file(full, user=viewer)
+    return [rel for rel in paths if allowed(rel)]
+
+
+async def _batch_paths(base_dir, paths):
+    paths = paths[:512]
+    if not _mobile_auth.is_enabled():
+        return paths
+    return await asyncio.get_event_loop().run_in_executor(
+        None, _readable, base_dir, paths, _mobile_auth.current_user())
+
+
 async def api_file_dimensions(request):
     """True pixel dimensions for a batch of images.
 
@@ -54,7 +74,7 @@ async def api_file_dimensions(request):
             None,
             _mobile_image_dimensions.get_dimensions_for_paths,
             base_dir,
-            paths[:512],
+            await _batch_paths(base_dir, paths),
         )
         return web.json_response({"dimensions": dimensions})
     except Exception as e:
@@ -77,11 +97,17 @@ async def api_video_durations(request):
             None,
             _mobile_video_metadata.get_durations_for_paths,
             base_dir,
-            paths[:512],
+            await _batch_paths(base_dir, paths),
         )
         return web.json_response({"durations": durations})
     except Exception as e:
         return web.json_response({"error": str(e)}, status=500)
+
+def _read_workflow_metadata(path):
+    if path.lower().endswith(MODEL_METADATA_EXTENSIONS):
+        return read_glb_metadata(path)
+    return _read_pnginfo_metadata(path)
+
 
 async def api_file_metadata(request):
     try:
@@ -95,7 +121,7 @@ async def api_file_metadata(request):
         )
 
         loop = asyncio.get_event_loop()
-        metadata = await loop.run_in_executor(None, _read_pnginfo_metadata, metadata_path)
+        metadata = await loop.run_in_executor(None, _read_workflow_metadata, metadata_path)
         workflow = extract_workflow_from_metadata(metadata)
         prompt = extract_prompt_from_metadata(metadata)
 
@@ -120,7 +146,7 @@ async def api_workflow_availability(request):
         )
 
         loop = asyncio.get_event_loop()
-        metadata = await loop.run_in_executor(None, _read_pnginfo_metadata, metadata_path)
+        metadata = await loop.run_in_executor(None, _read_workflow_metadata, metadata_path)
         workflow = extract_workflow_from_metadata(metadata)
         return web.json_response({"available": bool(workflow)})
     except MetadataPathError as e:
@@ -250,8 +276,11 @@ async def api_get_thumbnail(request):
 
         # Listing clients include the file's cacheToken in this URL, so a
         # reused path gets a new browser entry while scroll-backs for the
-        # same file still avoid re-downloading and re-decoding it.
-        cache_headers = {'Cache-Control': 'public, max-age=86400'}
+        # same file still avoid re-downloading and re-decoding it. Without a
+        # token (or a prompt_id) the path may be replaced in place — an input
+        # overwritten by "Use in workflow" — so revalidate instead.
+        cache_headers = {'Cache-Control': 'public, max-age=86400'
+                         if request.query.get('cb') or prompt_id else 'no-cache'}
 
         # A video's still is always its own first frame. This used to prefer
         # any image sharing the video's basename (VHS writes one beside each
@@ -314,10 +343,12 @@ async def api_get_preview(request):
         return web.Response(
             body=body,
             content_type='image/webp',
-            # The client includes a per-execution `cb` identity, so repeat
-            # views can cache hard without a reused output path inheriting
-            # an older run's preview.
-            headers={'Cache-Control': 'public, max-age=86400'},
+            # A per-execution `cb` identity lets repeat views cache hard
+            # without a reused path inheriting an older file's preview. Input
+            # previews often have none, and an input can be overwritten in
+            # place, so those revalidate.
+            headers={'Cache-Control': 'public, max-age=86400'
+                     if request.query.get('cb') else 'no-cache'},
         )
     except Exception:
         return web.Response(status=500, headers=no_store)

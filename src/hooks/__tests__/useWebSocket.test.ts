@@ -502,6 +502,13 @@ describe('backend reconnect notices', () => {
 });
 
 describe('extractTextPreviewFromOutput', () => {
+  it('shows no text for a Preview 3D result, which reports its model path', () => {
+    expect(extractTextPreviewFromOutput({ result: ['mobile-0.40-showcase/torus-knot.glb', { zoom: 1 }, null] })).toBeNull();
+    expect(extractTextPreviewFromOutput({
+      '3d': [{ filename: 'mesh.glb', subfolder: '', type: 'output' }], result: ['mesh.glb'],
+    })).toBeNull();
+  });
+
   it('extracts text from explicit text-like fields', () => {
     expect(
       extractTextPreviewFromOutput({
@@ -680,6 +687,7 @@ describe('parseBinaryPreviewMessage', () => {
     new DataView(bytes.buffer).setUint32(4, 1, false);
     bytes.set([0xff, 0xd8, 0xff, 0xd9], 8);
     const parsed = parseBinaryPreviewMessage(bytes.buffer);
+    if (parsed?.kind === "text") throw new Error("Expected an image envelope");
     expect(parsed?.kind).toBe('image');
     expect(await blobBytes(parsed!.blob)).toEqual(
       new Uint8Array([0xff, 0xd8, 0xff, 0xd9]),
@@ -704,6 +712,7 @@ describe('parseBinaryPreviewMessage', () => {
     bytes.set(id, 17);
     bytes.set([0xff, 0xd8, 0xff, 0xd9], 32);
     const parsed = parseBinaryPreviewMessage(bytes.buffer);
+    if (parsed?.kind === "text") throw new Error("Expected an image envelope");
     expect(parsed).toMatchObject({ kind: 'vhs', nodeId: '50:7', index: 3 });
     expect(await blobBytes(parsed!.blob)).toEqual(
       new Uint8Array([0xff, 0xd8, 0xff, 0xd9]),
@@ -719,6 +728,7 @@ describe('parseBinaryPreviewMessage', () => {
     bytes.set(json, 8);
     bytes.set([0x89, 0x50, 0x4e, 0x47], 8 + json.length);
     const parsed = parseBinaryPreviewMessage(bytes.buffer);
+    if (parsed?.kind === "text") throw new Error("Expected an image envelope");
     expect(parsed?.kind).toBe('image');
     expect(parsed?.blob.type).toBe('image/png');
 
@@ -742,6 +752,7 @@ describe('parseBinaryPreviewMessage', () => {
   it('decodes the golden VHS envelope captured from upstream', async () => {
     const { frame, expected } = goldenVhsFrame();
     const parsed = parseBinaryPreviewMessage(frame);
+    if (parsed?.kind === 'text') throw new Error('Expected an image envelope');
     expect(parsed).toMatchObject({
       kind: 'vhs',
       nodeId: expected.nodeId,
@@ -777,6 +788,7 @@ describe('parseBinaryPreviewMessage', () => {
 
     for (const frame of frames) {
       const parsed = parseBinaryPreviewMessage(frame);
+      if (parsed?.kind === 'text') throw new Error('Expected an image envelope');
       expect(parsed).not.toBeNull();
       // The whole failure mode of the 3.1.2 outage was a Blob whose first bytes
       // were protocol, not pixels. No decoded result may ever start that way.
@@ -959,6 +971,54 @@ describe('orphaned closed-tab run routing', () => {
       await Promise.resolve();
     });
   }
+
+  it.each([
+    { end: 'finishes', msg: { type: 'executing', data: { node: null, prompt_id: 'bg-prompt' } } },
+    { end: 'errors', msg: { type: 'execution_error', data: { prompt_id: 'bg-prompt', node_id: '9', exception_message: 'boom' } } },
+  ])('drops a background tab\'s last latent frame when its run $end', async ({ msg }) => {
+    const revoke = vi.fn();
+    vi.stubGlobal('URL', class extends URL { static revokeObjectURL = revoke; });
+    useWorkflowStore.setState({
+      sessions: [{ id: 'active' }, { id: 'bg' }],
+      promptToSession: { 'bg-prompt': 'bg' },
+      parkedSessions: { bg: {
+        workflow: emptyWorkflow, expandedNodeIdMap: {}, expandedNodePathMap: {}, pointerByHierarchicalKey: {},
+        promptOutputs: {}, nodeOutputs: {}, isExecuting: true,
+        latentPreviews: { 'root/node:9': 'blob:frame' }, latentPreviewTiles: { 'root/node:9': ['blob:tile', null] },
+      } as never },
+    });
+    await mount();
+    useWorkflowStore.setState({ latentPreviews: { 'root/node:3': 'blob:foreground' } });
+    await fire({ type: 'executing', data: { node: '9', prompt_id: 'bg-prompt' } });
+    await fire(msg);
+    const parked = useWorkflowStore.getState().parkedSessions.bg;
+    expect(parked.latentPreviews).toEqual({});
+    expect(parked.latentPreviewTiles).toEqual({});
+    expect(revoke).toHaveBeenCalledWith('blob:frame');
+    expect(revoke).toHaveBeenCalledWith('blob:tile');
+    // The tab in front keeps its own live preview.
+    expect(useWorkflowStore.getState().latentPreviews).toEqual({ 'root/node:3': 'blob:foreground' });
+  });
+
+  it.each(['active', 'parked', 'closed'])('routes binary text to its %s owning session even in low resource mode', async owner => {
+    const write = vi.spyOn(useWorkflowStore.getState(), 'setNodeTextOutput').mockImplementation(() => {});
+    const mapping = { '5': 'root/node:5' };
+    useWorkflowStore.setState({
+      promptToSession: { textPrompt: owner }, expandedNodeIdMap: mapping,
+      parkedSessions: owner === 'parked' ? { parked: { workflow: emptyWorkflow, expandedNodeIdMap: mapping, expandedNodePathMap: {}, pointerByHierarchicalKey: {} } as never } : {},
+    });
+    useGenerationSettingsStore.setState({ lowResourceMode: true });
+    try {
+      await mount();
+      await fire({ type: 'executing', data: { node: '5', prompt_id: 'textPrompt' } });
+      const id = new TextEncoder().encode('5'), text = new TextEncoder().encode('width: 64');
+      const buffer = new ArrayBuffer(8 + id.length + text.length), view = new DataView(buffer);
+      view.setUint32(0, 3); view.setUint32(4, id.length); new Uint8Array(buffer, 8).set(id); new Uint8Array(buffer, 8 + id.length).set(text);
+      await act(async () => onBinaryMessage?.(buffer));
+      if (owner === 'closed') expect(write).not.toHaveBeenCalled();
+      else expect(write).toHaveBeenCalledWith('root/node:5', 'width: 64', owner);
+    } finally { write.mockRestore(); useGenerationSettingsStore.setState({ lowResourceMode: false }); }
+  });
 
   it.each([
     { fields: { node_id: '7' }, expectedId: '7' },

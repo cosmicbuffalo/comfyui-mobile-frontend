@@ -214,6 +214,34 @@ def _bootstrap():
         server.PromptServer.instance.app.on_startup.append(_mobile_progress_ws.on_startup)
         server.PromptServer.instance.app.on_cleanup.append(_mobile_progress_ws.on_cleanup)
 
+        # Account deletion is the one sweep no self-service route can give us
+        # — the account that would sweep its own registrations no longer
+        # exists — so the auth node announces it and we drop that account's
+        # rows in both push stores. Registered from on_startup rather than at
+        # import: custom nodes load alphabetically, so comfyui-multiuser has
+        # usually not been imported yet when this file runs.
+        async def _register_account_hooks(app):
+            import mobile_auth as _mobile_auth
+            import mobile_app_push as _mobile_app_push
+            import mobile_web_push as _mobile_web_push
+
+            def _sweep_deleted_account(user_id):
+                try:
+                    _mobile_web_push.remove_owned_subscriptions(user_id)
+                    _mobile_app_push.remove_owned_targets(user_id)
+                except Exception as exc:
+                    print(
+                        f'[Mobile Frontend] push sweep for deleted account '
+                        f'failed: {exc}',
+                        flush=True,
+                    )
+
+            # The wrapper already degrades (old/absent auth node -> quietly no
+            # announcements, which is the pre-hook behaviour), so a bare call.
+            _mobile_auth.register_user_deleted_hook(_sweep_deleted_account)
+
+        server.PromptServer.instance.app.on_startup.append(_register_account_hooks)
+
         # Operational telemetry (on by default; see mobile_telemetry.py). The
         # flush loop always runs, so switching it in Preferences needs no
         # restart; while it is off, every entry point returns immediately.

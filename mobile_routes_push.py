@@ -7,6 +7,8 @@ handler bodies are unchanged. ``pywebpush`` stays optional via
 """
 
 import asyncio
+import functools
+
 from aiohttp import web
 
 import mobile_app_prefs as _mobile_app_prefs
@@ -17,6 +19,43 @@ import mobile_telemetry as _mobile_telemetry
 import model_metadata as _model_metadata
 import mobile_push_prefs as _mobile_push_prefs
 import mobile_web_push as _mobile_web_push
+
+
+def _push_owner():
+    """Which account the calling request's push registrations belong to.
+
+    None on a server with no accounts — and that is not a fallback, it is
+    the honest answer there: with one user, "everyone's devices" and "this
+    person's devices" are the same set, and the push modules read None
+    exactly that way.
+
+    Must be called from the handler, on the event loop: the auth ContextVar
+    does not propagate into executor threads.
+
+    Raises _UnresolvedViewer when the gate is on but cannot say who is asking.
+    That state arrives as the same None, and the push modules read None as
+    "every device on the server" -- so returning it would list, buzz and delete
+    other accounts' registrations. Callers turn this into a 503 instead.
+    """
+    if _mobile_auth.viewer_unresolved():
+        raise _UnresolvedViewer()
+    try:
+        user = _mobile_auth.current_user()
+    except Exception:
+        raise _UnresolvedViewer() from None
+    return user.get("id") if user else None
+
+
+class _UnresolvedViewer(Exception):
+    """The gate is on and broken; no push request can be scoped safely."""
+
+
+def _gate_broken_response():
+    return web.json_response(
+        {"error": "auth_unavailable"}, status=503,
+    )
+
+
 # --- Web Push (browser notifications on generation completion) ---
 async def api_push_config(request):
     """Frontend reads this to get the VAPID public key (applicationServerKey)
@@ -27,7 +66,7 @@ async def api_push_config(request):
         return web.json_response({
             "enabled": True,
             "vapidPublicKey": _mobile_web_push.get_public_key(),
-            "subscriptions": _mobile_web_push.subscription_count(),
+            "subscriptions": _mobile_web_push.subscription_count(_push_owner()),
         })
     except Exception as e:
         return web.json_response({"error": str(e)}, status=500)
@@ -42,7 +81,8 @@ async def api_push_subscribe(request):
         locale = body.get("locale") if isinstance(body, dict) else None
         if subscription is None and isinstance(body, dict) and "endpoint" in body:
             subscription = body
-        if not _mobile_web_push.add_subscription(subscription, locale):
+        owner = _push_owner()
+        if not _mobile_web_push.add_subscription(subscription, locale, owner=owner):
             host = _mobile_web_push.refused_host(subscription)
             if host:
                 # The operator is the only one who can fix this, and the log is
@@ -54,7 +94,7 @@ async def api_push_subscribe(request):
                 return web.json_response(
                     {"error": "endpoint_not_allowed", "host": host}, status=400)
             return web.json_response({"error": "invalid_subscription"}, status=400)
-        return web.json_response({"ok": True, "subscriptions": _mobile_web_push.subscription_count()})
+        return web.json_response({"ok": True, "subscriptions": _mobile_web_push.subscription_count(owner)})
     except Exception as e:
         return web.json_response({"error": str(e)}, status=500)
 
@@ -62,7 +102,24 @@ async def api_push_unsubscribe(request):
     try:
         body = await request.json()
         endpoint = body.get("endpoint") if isinstance(body, dict) else None
-        removed = _mobile_web_push.remove_subscription(endpoint)
+        removed = _mobile_web_push.remove_subscription(endpoint, owner=_push_owner())
+        return web.json_response({"ok": True, "removed": removed})
+    except Exception as e:
+        return web.json_response({"error": str(e)}, status=500)
+
+async def api_push_unsubscribe_all(request):
+    """Shed every push subscription belonging to the calling account.
+
+    The logout sweep on shared devices. Owner-scoped by construction; with no
+    resolvable owner there is nothing safe to sweep (no accounts means no
+    logout, and an unresolvable viewer on a gated server must not be able to
+    clear anyone's registrations), so the answer is simply zero.
+    """
+    try:
+        owner = _push_owner()
+        if owner is None:
+            return web.json_response({"ok": True, "removed": 0})
+        removed = _mobile_web_push.remove_owned_subscriptions(owner)
         return web.json_response({"ok": True, "removed": removed})
     except Exception as e:
         return web.json_response({"error": str(e)}, status=500)
@@ -73,8 +130,12 @@ async def api_push_test(request):
     try:
         if not _mobile_web_push.is_available():
             return web.json_response({"error": "push_unavailable"}, status=503)
+        # Resolve the owner here, on the event loop — the auth ContextVar
+        # does not propagate into the executor thread.
+        owner = _push_owner()
         loop = asyncio.get_event_loop()
-        result = await loop.run_in_executor(None, _mobile_web_push.send_test)
+        result = await loop.run_in_executor(
+            None, functools.partial(_mobile_web_push.send_test, owner=owner))
         return web.json_response(result)
     except Exception as e:
         return web.json_response({"error": str(e)}, status=500)
@@ -111,7 +172,7 @@ async def api_push_app_targets_get(request):
     if not _app_push_pairing_enabled:
         return web.json_response({"error": "app_push_pairing_disabled"}, status=403)
     try:
-        return web.json_response({"targets": _mobile_app_push.list_targets()})
+        return web.json_response({"targets": _mobile_app_push.list_targets(_push_owner())})
     except Exception as e:
         return web.json_response({"error": str(e)}, status=500)
 
@@ -127,23 +188,27 @@ async def api_push_app_targets_add(request):
         # add_target now verifies the pairing code against the relay
         # (blocking `requests` call) before persisting it — off the
         # event loop, same as the other relay-touching handlers below.
+        owner = _push_owner()
         loop = asyncio.get_running_loop()
         ok = await loop.run_in_executor(
             None,
-            _mobile_app_push.add_target,
-            body.get("relay_url"),
-            body.get("pairing_code"),
-            body.get("label"),
-            body.get("added"),
-            body.get("server_id"),
-            body.get("live_activity"),
-            body.get("server_label"),
-            body.get("frequent_updates"),
-            body.get("relevance_score"),
+            functools.partial(
+                _mobile_app_push.add_target,
+                body.get("relay_url"),
+                body.get("pairing_code"),
+                body.get("label"),
+                body.get("added"),
+                body.get("server_id"),
+                body.get("live_activity"),
+                body.get("server_label"),
+                body.get("frequent_updates"),
+                body.get("relevance_score"),
+                owner=owner,
+            ),
         )
         if not ok:
             return web.json_response({"error": "invalid_target"}, status=400)
-        return web.json_response({"ok": True, "targets": _mobile_app_push.target_count()})
+        return web.json_response({"ok": True, "targets": _mobile_app_push.target_count(owner)})
     except Exception as e:
         return web.json_response({"error": str(e)}, status=500)
 
@@ -156,6 +221,8 @@ async def api_push_app_targets_remove(request):
             body.get("pairing_code") if isinstance(body, dict) else None,
             body.get("relay_url") if isinstance(body, dict) else None,
             body.get("notifications_only") if isinstance(body, dict) else False,
+            owner=_push_owner(),
+            server_id=body.get("server_id") if isinstance(body, dict) else None,
         )
         return web.json_response({"ok": True, "removed": removed})
     except Exception as e:
@@ -169,6 +236,8 @@ async def api_push_app_live_activity_remove(request):
         removed = _mobile_app_push.remove_live_activity_target(
             body.get("pairing_code") if isinstance(body, dict) else None,
             body.get("relay_url") if isinstance(body, dict) else None,
+            owner=_push_owner(),
+            server_id=body.get("server_id") if isinstance(body, dict) else None,
         )
         return web.json_response({"ok": True, "removed": removed})
     except Exception as e:
@@ -180,22 +249,32 @@ async def api_push_app_test(request):
     if not _app_push_pairing_enabled:
         return web.json_response({"error": "app_push_pairing_disabled"}, status=403)
     try:
+        owner = _push_owner()
         loop = asyncio.get_event_loop()
-        result = await loop.run_in_executor(None, _mobile_app_push.send_test)
+        result = await loop.run_in_executor(
+            None, functools.partial(_mobile_app_push.send_test, owner=owner))
         return web.json_response(result)
     except Exception as e:
         return web.json_response({"error": str(e)}, status=500)
 
 async def api_push_prefs_get(request):
     try:
-        return web.json_response(_mobile_push_prefs.get_prefs())
+        # Resolve the viewer here, on the event loop, and hand it down — the
+        # store choice must not depend on a ContextVar surviving any hop.
+        viewer = _mobile_auth.current_user()
+        return web.json_response(_mobile_push_prefs.get_prefs(viewer=viewer))
     except Exception as e:
         return web.json_response({"error": str(e)}, status=500)
 
 async def api_push_prefs_set(request):
     try:
         body = await request.json()
-        return web.json_response(_mobile_push_prefs.set_prefs(body))
+        # Per-account store: a non-admin's write lands in their own file, so
+        # a demo/public account can no longer silence the whole server's
+        # completion pushes by flipping the shared preferences.
+        viewer = _mobile_auth.current_user()
+        return web.json_response(
+            _mobile_push_prefs.set_prefs(body, viewer=viewer))
     except Exception as e:
         return web.json_response({"error": str(e)}, status=500)
 
@@ -208,6 +287,16 @@ async def api_app_prefs_get(request):
 async def api_app_prefs_set(request):
     try:
         body = await request.json()
+        # These preferences are genuinely server-wide (they configure this
+        # ComfyUI instance for every client), so unlike the per-account push
+        # preferences above the store stays global and the WRITE is gated:
+        # an authenticated non-public account (`can_manage_hidden` is the
+        # established proxy for that), so a demo/public login cannot flip
+        # settings for everyone. Reads stay open — clients need the values
+        # to render. Telemetry and CivitAI lookups are narrower still: below,
+        # only an admin may change them.
+        if not _mobile_auth.can_manage_hidden(_mobile_auth.current_user()):
+            return web.json_response({"error": "forbidden"}, status=403)
         # When the environment decides telemetry, the setting is not the
         # operator's to flip from a browser; ignore it rather than store a
         # value that would silently do nothing. Under multiuser it is also
@@ -238,23 +327,43 @@ async def api_telemetry_status(request):
         return web.json_response({"error": str(e)}, status=500)
 
 
+def _refuse_when_unscopable(handler):
+    """Turn an unresolvable viewer into a 503 rather than a scoped-to-everyone
+    answer.
+
+    Wrapped at registration rather than inside each handler on purpose: every
+    one of them already ends in a broad ``except Exception -> 500``, which
+    would swallow _UnresolvedViewer into an opaque error while still, by luck,
+    failing closed. Catching it out here keeps that guarantee deliberate and
+    reports a status the client can act on.
+    """
+    async def wrapper(request):
+        try:
+            return await handler(request)
+        except _UnresolvedViewer:
+            return _gate_broken_response()
+    wrapper.__name__ = getattr(handler, "__name__", "wrapper")
+    return wrapper
+
+
 def register_routes(mobile_app):
     """Register the push & prefs routes on the mobile sub-app."""
     # Register API routes
     mobile_app.router.add_get('/api/capabilities', api_capabilities)
-    mobile_app.router.add_get('/api/push/config', api_push_config)
-    mobile_app.router.add_post('/api/push/subscribe', api_push_subscribe)
-    mobile_app.router.add_post('/api/push/unsubscribe', api_push_unsubscribe)
-    mobile_app.router.add_post('/api/push/test', api_push_test)
-    mobile_app.router.add_get('/api/push/app-targets', api_push_app_targets_get)
-    mobile_app.router.add_post('/api/push/app-targets', api_push_app_targets_add)
-    mobile_app.router.add_post('/api/push/app-targets/remove', api_push_app_targets_remove)
-    mobile_app.router.add_post('/api/push/app-targets/live-activity/remove', api_push_app_live_activity_remove)
-    mobile_app.router.add_post('/api/push/app-test', api_push_app_test)
-    mobile_app.router.add_get('/api/push/preferences', api_push_prefs_get)
-    mobile_app.router.add_post('/api/push/preferences', api_push_prefs_set)
-    mobile_app.router.add_get('/api/preferences', api_app_prefs_get)
-    mobile_app.router.add_post('/api/preferences', api_app_prefs_set)
-    mobile_app.router.add_get('/api/telemetry', api_telemetry_status)
+    mobile_app.router.add_get('/api/push/config', _refuse_when_unscopable(api_push_config))
+    mobile_app.router.add_post('/api/push/subscribe', _refuse_when_unscopable(api_push_subscribe))
+    mobile_app.router.add_post('/api/push/unsubscribe', _refuse_when_unscopable(api_push_unsubscribe))
+    mobile_app.router.add_post('/api/push/unsubscribe-all', _refuse_when_unscopable(api_push_unsubscribe_all))
+    mobile_app.router.add_post('/api/push/test', _refuse_when_unscopable(api_push_test))
+    mobile_app.router.add_get('/api/push/app-targets', _refuse_when_unscopable(api_push_app_targets_get))
+    mobile_app.router.add_post('/api/push/app-targets', _refuse_when_unscopable(api_push_app_targets_add))
+    mobile_app.router.add_post('/api/push/app-targets/remove', _refuse_when_unscopable(api_push_app_targets_remove))
+    mobile_app.router.add_post('/api/push/app-targets/live-activity/remove', _refuse_when_unscopable(api_push_app_live_activity_remove))
+    mobile_app.router.add_post('/api/push/app-test', _refuse_when_unscopable(api_push_app_test))
+    mobile_app.router.add_get('/api/push/preferences', _refuse_when_unscopable(api_push_prefs_get))
+    mobile_app.router.add_post('/api/push/preferences', _refuse_when_unscopable(api_push_prefs_set))
+    mobile_app.router.add_get('/api/preferences', _refuse_when_unscopable(api_app_prefs_get))
+    mobile_app.router.add_post('/api/preferences', _refuse_when_unscopable(api_app_prefs_set))
+    mobile_app.router.add_get('/api/telemetry', _refuse_when_unscopable(api_telemetry_status))
 
     print(f"[Mobile Frontend] app push pairing {'enabled' if _app_push_pairing_enabled else 'disabled'}")

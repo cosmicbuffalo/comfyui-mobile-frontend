@@ -1,0 +1,993 @@
+{
+  "ReferenceMultiLatent": {
+    "input": {
+      "required": {
+        "positive": [
+          "CONDITIONING",
+          {}
+        ],
+        "resolution": [
+          "COMFY_DYNAMICCOMBO_V3",
+          {
+            "options": [
+              {
+                "key": "keep resolution",
+                "inputs": {
+                  "required": {}
+                }
+              },
+              {
+                "key": "resize",
+                "inputs": {
+                  "required": {
+                    "megapixels": [
+                      "FLOAT",
+                      {
+                        "tooltip": "Target size of each reference image, preserving aspect ratio. 1.0 is about 1024 x 1024 pixels.",
+                        "default": 1.0,
+                        "min": 0.01,
+                        "max": 16.0,
+                        "step": 0.01
+                      }
+                    ]
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "optional": {
+        "negative": [
+          "CONDITIONING",
+          {}
+        ],
+        "vae": [
+          "VAE",
+          {
+            "tooltip": "Reference images are ignored when no VAE is connected."
+          }
+        ],
+        "images": [
+          "COMFY_AUTOGROW_V3",
+          {
+            "template": {
+              "input": {
+                "required": {},
+                "optional": {
+                  "image": [
+                    "IMAGE",
+                    {}
+                  ]
+                }
+              },
+              "prefix": "image",
+              "min": 1,
+              "max": 100
+            }
+          }
+        ]
+      }
+    },
+    "input_order": {
+      "required": [
+        "positive",
+        "resolution"
+      ],
+      "optional": [
+        "negative",
+        "vae",
+        "images"
+      ]
+    },
+    "is_input_list": false,
+    "output": [
+      "CONDITIONING",
+      "CONDITIONING",
+      "LATENT"
+    ],
+    "output_is_list": [
+      false,
+      false,
+      false
+    ],
+    "output_name": [
+      "positive",
+      "negative",
+      "empty_latent"
+    ],
+    "output_tooltips": [
+      null,
+      "Returns the positive output when negative conditioning is not connected.",
+      "First reference latent multiplied by 0.0, or a square empty latent at the selected resolution."
+    ],
+    "output_matchtypes": null,
+    "name": "ReferenceMultiLatent",
+    "display_name": "Set Reference Multi Latent",
+    "description": "Encodes reference images and appends their latents to positive and optional negative conditioning for edit models.",
+    "python_module": "comfy_extras.nodes_edit_model",
+    "category": "model/conditioning",
+    "output_node": false,
+    "deprecated": false,
+    "experimental": false,
+    "dev_only": false,
+    "api_node": false,
+    "price_badge": null,
+    "search_aliases": null,
+    "essentials_category": null,
+    "has_intermediate_output": false
+  },
+  "ImageSDRToHDR": {
+    "input": {
+      "required": {
+        "image": [
+          "IMAGE",
+          {
+            "tooltip": "SDR image(s) in sRGB."
+          }
+        ],
+        "algorithm": [
+          "COMFY_DYNAMICCOMBO_V3",
+          {
+            "tooltip": "Lottes-style rational expansion blended with a calibrated monotonic log-gain curve.",
+            "options": [
+              {
+                "key": "lottes",
+                "inputs": {
+                  "required": {
+                    "target_luminance": [
+                      "FLOAT",
+                      {
+                        "tooltip": "Peak-white target in nits. 0 keeps the calibrated rendering. Dark images are not normalized to this peak.",
+                        "default": 650.0,
+                        "min": 0.0,
+                        "max": 10000.0,
+                        "step": 1.0
+                      }
+                    ]
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "input_order": {
+      "required": [
+        "image",
+        "algorithm"
+      ]
+    },
+    "is_input_list": false,
+    "output": [
+      "IMAGE"
+    ],
+    "output_is_list": [
+      false
+    ],
+    "output_name": [
+      "IMAGE"
+    ],
+    "output_tooltips": [
+      null
+    ],
+    "output_matchtypes": null,
+    "name": "ImageSDRToHDR",
+    "display_name": "Convert SDR to HDR",
+    "description": "Expand sRGB brightness into Rec.2020 HLG HDR. Save the result with the HDR color space selected. Alpha is preserved.",
+    "python_module": "comfy_extras.nodes_images",
+    "category": "image/color",
+    "output_node": false,
+    "deprecated": false,
+    "experimental": false,
+    "dev_only": false,
+    "api_node": false,
+    "price_badge": null,
+    "search_aliases": null,
+    "essentials_category": null,
+    "has_intermediate_output": false
+  },
+  "GetLatentSize": {
+    "input": {
+      "required": {
+        "latent": [
+          "LATENT",
+          {
+            "tooltip": "The image or video latent to inspect."
+          }
+        ]
+      },
+      "hidden": {
+        "unique_id": [
+          "UNIQUE_ID"
+        ]
+      }
+    },
+    "input_order": {
+      "required": [
+        "latent"
+      ],
+      "hidden": [
+        "unique_id"
+      ]
+    },
+    "is_input_list": false,
+    "output": [
+      "INT",
+      "INT",
+      "INT",
+      "INT"
+    ],
+    "output_is_list": [
+      false,
+      false,
+      false,
+      false
+    ],
+    "output_name": [
+      "width",
+      "height",
+      "frames",
+      "batch_size"
+    ],
+    "output_tooltips": [
+      "The latent width.",
+      "The latent height.",
+      "The latent frame count. Image latents have one frame.",
+      "The number of latents in the batch."
+    ],
+    "output_matchtypes": null,
+    "name": "GetLatentSize",
+    "display_name": "Get Image/Video Latent Size",
+    "description": "Returns the width, height, frame count, and batch size of an image or video latent.",
+    "python_module": "comfy_extras.nodes_images",
+    "category": "latent",
+    "output_node": false,
+    "deprecated": false,
+    "experimental": false,
+    "dev_only": false,
+    "api_node": false,
+    "price_badge": null,
+    "search_aliases": [
+      "dimensions",
+      "resolution",
+      "latent info",
+      "video latent size"
+    ],
+    "essentials_category": null,
+    "has_intermediate_output": false
+  },
+  "GetAudioLatentSize": {
+    "input": {
+      "required": {
+        "latent": [
+          "LATENT",
+          {
+            "tooltip": "The audio or audio/video latent to inspect."
+          }
+        ]
+      },
+      "hidden": {
+        "unique_id": [
+          "UNIQUE_ID"
+        ]
+      }
+    },
+    "input_order": {
+      "required": [
+        "latent"
+      ],
+      "hidden": [
+        "unique_id"
+      ]
+    },
+    "is_input_list": false,
+    "output": [
+      "INT",
+      "INT",
+      "INT"
+    ],
+    "output_is_list": [
+      false,
+      false,
+      false
+    ],
+    "output_name": [
+      "length",
+      "audio_channels",
+      "batch_size"
+    ],
+    "output_tooltips": [
+      "The audio latent length.",
+      "The number of audio channels. Latents without an audio channel dimension have one channel.",
+      "The number of latents in the batch."
+    ],
+    "output_matchtypes": null,
+    "name": "GetAudioLatentSize",
+    "display_name": "Get Audio Latent Size",
+    "description": "Returns the length, audio channel count, and batch size of an audio latent.",
+    "python_module": "comfy_extras.nodes_audio",
+    "category": "model/latent",
+    "output_node": false,
+    "deprecated": false,
+    "experimental": false,
+    "dev_only": false,
+    "api_node": false,
+    "price_badge": null,
+    "search_aliases": [
+      "dimensions",
+      "audio latent info",
+      "audio latent length"
+    ],
+    "essentials_category": null,
+    "has_intermediate_output": false
+  },
+  "Flux3LayoutPrompt": {
+    "input": {
+      "required": {
+        "prompt": [
+          "STRING",
+          {
+            "tooltip": "The prompt text. Cite box N as <obj_N> to tie words to it.",
+            "multiline": true,
+            "dynamicPrompts": true
+          }
+        ],
+        "element": [
+          "ARRAY",
+          {
+            "tooltip": "Prompt elements from the node Create Bounding Boxes. Colour palettes are not used, describe colours in the description."
+          }
+        ]
+      }
+    },
+    "input_order": {
+      "required": [
+        "prompt",
+        "element"
+      ]
+    },
+    "is_input_list": false,
+    "output": [
+      "STRING"
+    ],
+    "output_is_list": [
+      false
+    ],
+    "output_name": [
+      "prompt"
+    ],
+    "output_tooltips": [
+      null
+    ],
+    "output_matchtypes": null,
+    "name": "Flux3LayoutPrompt",
+    "display_name": "FLUX 3 Image Layout Prompt",
+    "description": "Appends the boxes from Create Bounding Boxes to a FLUX 3 Image prompt as its layout table.",
+    "python_module": "comfy_extras.nodes_flux",
+    "category": "model/conditioning/flux",
+    "output_node": false,
+    "deprecated": false,
+    "experimental": true,
+    "dev_only": false,
+    "api_node": false,
+    "price_badge": null,
+    "search_aliases": null,
+    "essentials_category": null,
+    "has_intermediate_output": false
+  },
+  "MOSSImageLayoutPrompt": {
+    "input": {
+      "required": {
+        "prompt": [
+          "STRING",
+          {
+            "tooltip": "Description of the whole image.",
+            "multiline": true,
+            "dynamicPrompts": true
+          }
+        ],
+        "element": [
+          "ARRAY",
+          {
+            "tooltip": "Prompt elements from the node Create Bounding Boxes. The description is the box's caption, text boxes also render their text."
+          }
+        ],
+        "width": [
+          "INT",
+          {
+            "tooltip": "Width of the generated image; the boxes are placed in its pixels.",
+            "default": 1024,
+            "min": 16,
+            "max": 16384,
+            "step": 16
+          }
+        ],
+        "height": [
+          "INT",
+          {
+            "tooltip": "Height of the generated image; the boxes are placed in its pixels.",
+            "default": 1024,
+            "min": 16,
+            "max": 16384,
+            "step": 16
+          }
+        ],
+        "character_boxes": [
+          "STRING",
+          {
+            "tooltip": "Numbers of the object boxes to label as characters instead of objects, as tagged in the Create Bounding Boxes preview, e.g. \"1, 3\".",
+            "default": "",
+            "multiline": false
+          }
+        ]
+      }
+    },
+    "input_order": {
+      "required": [
+        "prompt",
+        "element",
+        "width",
+        "height",
+        "character_boxes"
+      ]
+    },
+    "is_input_list": false,
+    "output": [
+      "STRING"
+    ],
+    "output_is_list": [
+      false
+    ],
+    "output_name": [
+      "prompt"
+    ],
+    "output_tooltips": [
+      null
+    ],
+    "output_matchtypes": null,
+    "name": "MOSSImageLayoutPrompt",
+    "display_name": "MOSS-Image Layout Prompt",
+    "description": "Builds a MOSS-Image layout prompt from the prompt and the boxes from Create Bounding Boxes.",
+    "python_module": "comfy_extras.nodes_moss_image",
+    "category": "model/conditioning/moss_image",
+    "output_node": false,
+    "deprecated": false,
+    "experimental": true,
+    "dev_only": false,
+    "api_node": false,
+    "price_badge": null,
+    "search_aliases": null,
+    "essentials_category": null,
+    "has_intermediate_output": false
+  },
+  "RemeshMesh": {
+    "input": {
+      "required": {
+        "mesh": [
+          "MESH",
+          {}
+        ],
+        "resolution": [
+          "INT",
+          {
+            "tooltip": "Voxel grid resolution (output density). 256 ~ 100k faces, 512 ~ 1M. For an exact face count, follow with Decimate Mesh.",
+            "default": 512,
+            "min": 32,
+            "max": 2048
+          }
+        ],
+        "sign_mode": [
+          "COMFY_DYNAMICCOMBO_V3",
+          {
+            "display_name": "sign_mode",
+            "tooltip": "udf: robust to messy/non-manifold input. sdf: clean single surface with QEF (Quadratic Error Function) sharp-feature recovery, but needs consistent winding. solid: one watertight solid from messy input: a global inside/outside graph cut (CelloCut) removes double shells and closes small holes. Slower.",
+            "options": [
+              {
+                "key": "udf",
+                "inputs": {
+                  "required": {
+                    "qef": [
+                      "BOOLEAN",
+                      {
+                        "tooltip": "QEF (Quadratic Error Function) vertex placement: sharp edges on hard-surface input, jagged creases on organic input.",
+                        "advanced": true,
+                        "default": false
+                      }
+                    ],
+                    "drop_inverted_components": [
+                      "BOOLEAN",
+                      {
+                        "tooltip": "Drop inward-normal (negative-volume) closed components \u2014 the UDF inner shell.",
+                        "advanced": true,
+                        "default": false
+                      }
+                    ],
+                    "drop_enclosed_components": [
+                      "BOOLEAN",
+                      {
+                        "tooltip": "Drop components inside the largest's bbox that fail a point-in-mesh raycast. Disable for legitimate nested parts.",
+                        "advanced": true,
+                        "default": false
+                      }
+                    ]
+                  }
+                }
+              },
+              {
+                "key": "sdf",
+                "inputs": {
+                  "required": {
+                    "qef": [
+                      "BOOLEAN",
+                      {
+                        "tooltip": "QEF (Quadratic Error Function) dual-vertex placement (recovers sharp features) vs edge-crossing centroid.",
+                        "default": true
+                      }
+                    ],
+                    "manifold": [
+                      "BOOLEAN",
+                      {
+                        "tooltip": "Manifold Dual Contouring: 1-4 dual verts/voxel for multi-sheet cases. Slower.",
+                        "default": false
+                      }
+                    ]
+                  }
+                }
+              },
+              {
+                "key": "solid",
+                "inputs": {
+                  "required": {
+                    "fill": [
+                      "FLOAT",
+                      {
+                        "tooltip": "Cost of closing an opening relative to following the surface. Lower closes larger openings (0 puts a lid on a cup); higher only closes small holes and cracks.",
+                        "default": 20.0,
+                        "min": 0.0,
+                        "max": 1000.0,
+                        "step": 1.0
+                      }
+                    ],
+                    "qef": [
+                      "BOOLEAN",
+                      {
+                        "tooltip": "QEF (Quadratic Error Function) vertex placement: sharp edges on hard-surface input, jagged creases on organic input.",
+                        "advanced": true,
+                        "default": false
+                      }
+                    ]
+                  }
+                }
+              }
+            ]
+          }
+        ],
+        "band": [
+          "FLOAT",
+          {
+            "tooltip": "Narrow-band width in voxel units. In udf mode also offsets the surface; in solid mode it is the closing radius: creases are filleted and gaps bridged at this size, the surface sits half a voxel out.",
+            "advanced": true,
+            "default": 1.0,
+            "min": 0.5,
+            "max": 4.0,
+            "step": 0.1
+          }
+        ],
+        "project_back": [
+          "FLOAT",
+          {
+            "tooltip": "Linearly interpolate vertices toward the original surface (0 = pure DC, 1 = snapped).",
+            "advanced": true,
+            "default": 0.0,
+            "min": 0.0,
+            "max": 1.0,
+            "step": 0.05
+          }
+        ],
+        "fix_poles": [
+          "BOOLEAN",
+          {
+            "tooltip": "Collapse valence-3 vertex pairs (DC T-junction artifact).",
+            "advanced": true,
+            "default": false
+          }
+        ],
+        "smooth_iters": [
+          "INT",
+          {
+            "tooltip": "Taubin smoothing iterations (0 = off). 2-3 cleans DC staircase-like artifacts; higher over-smooth QEF edges.",
+            "default": 0,
+            "min": 0,
+            "max": 20
+          }
+        ],
+        "drop_small_components": [
+          "FLOAT",
+          {
+            "tooltip": "Drop components below this fraction of the largest's face count. 0 disables.",
+            "advanced": true,
+            "default": 0.01,
+            "min": 0.0,
+            "max": 0.5,
+            "step": 0.005
+          }
+        ],
+        "precluster_max_verts": [
+          "INT",
+          {
+            "tooltip": "Cap input vertex count before the field queries, inputs above this are cluster-decimated to it first. Prevents OOM on huge meshes.",
+            "advanced": true,
+            "default": 20000000,
+            "min": 0,
+            "max": 100000000
+          }
+        ]
+      },
+      "hidden": {
+        "unique_id": [
+          "UNIQUE_ID"
+        ]
+      }
+    },
+    "input_order": {
+      "required": [
+        "mesh",
+        "resolution",
+        "sign_mode",
+        "band",
+        "project_back",
+        "fix_poles",
+        "smooth_iters",
+        "drop_small_components",
+        "precluster_max_verts"
+      ],
+      "hidden": [
+        "unique_id"
+      ]
+    },
+    "is_input_list": false,
+    "output": [
+      "MESH"
+    ],
+    "output_is_list": [
+      false
+    ],
+    "output_name": [
+      "mesh"
+    ],
+    "output_tooltips": [
+      null
+    ],
+    "output_matchtypes": null,
+    "name": "RemeshMesh",
+    "display_name": "Remesh Mesh (Narrow-Band DC)",
+    "description": "Re-extracts a uniformly tessellated mesh via a narrow-band distance field + Dual Contouring, on the active compute device. Normalizes messy / non-manifold / self-intersecting topology; run before Decimate Mesh to hit an exact face count. Output stays welded.",
+    "python_module": "comfy_extras.nodes_mesh_postprocess",
+    "category": "3d/mesh",
+    "output_node": false,
+    "deprecated": false,
+    "experimental": false,
+    "dev_only": false,
+    "api_node": false,
+    "price_badge": null,
+    "search_aliases": null,
+    "essentials_category": null,
+    "has_intermediate_output": false
+  },
+  "CreateBoundingBoxes": {
+    "input": {
+      "required": {
+        "width": [
+          "INT",
+          {
+            "tooltip": "Width of the canvas and the pixel grid for the bounding boxes.",
+            "default": 1024,
+            "min": 64,
+            "max": 16384,
+            "step": 16
+          }
+        ],
+        "height": [
+          "INT",
+          {
+            "tooltip": "Height of the canvas and the pixel grid for the bounding boxes.",
+            "default": 1024,
+            "min": 64,
+            "max": 16384,
+            "step": 16
+          }
+        ],
+        "editor_state": [
+          "BOUNDING_BOXES",
+          {
+            "tooltip": "Draw bounding boxes and set each box type, text, description, color palette. Start with background element first and foreground last.",
+            "default": [],
+            "socketless": false
+          }
+        ]
+      },
+      "optional": {
+        "background": [
+          "IMAGE",
+          {
+            "tooltip": "Optional image used as background in the canvas and preview."
+          }
+        ],
+        "bboxes": [
+          "BOUNDING_BOX,ARRAY,STRING",
+          {
+            "tooltip": "Bounding boxes, elements, or a JSON string to initialize the canvas. A new upstream value initializes the canvas; edits made on the canvas take priority and are kept until the upstream value changes again."
+          }
+        ],
+        "last_incoming": [
+          "BOUNDING_BOXES",
+          {
+            "tooltip": "Internal state managed by the canvas: the upstream bboxes value that last initialized it. Leave empty to re-initialize the canvas from the bboxes input on the next run.",
+            "default": [],
+            "socketless": true
+          }
+        ]
+      },
+      "hidden": {
+        "prompt": [
+          "PROMPT"
+        ],
+        "extra_pnginfo": [
+          "EXTRA_PNGINFO"
+        ]
+      }
+    },
+    "input_order": {
+      "required": [
+        "width",
+        "height",
+        "editor_state"
+      ],
+      "optional": [
+        "background",
+        "bboxes",
+        "last_incoming"
+      ],
+      "hidden": [
+        "prompt",
+        "extra_pnginfo"
+      ]
+    },
+    "is_input_list": false,
+    "output": [
+      "IMAGE",
+      "BOUNDING_BOX",
+      "ARRAY"
+    ],
+    "output_is_list": [
+      false,
+      false,
+      false
+    ],
+    "output_name": [
+      "preview",
+      "bboxes",
+      "elements"
+    ],
+    "output_tooltips": [
+      null,
+      null,
+      null
+    ],
+    "output_matchtypes": null,
+    "name": "CreateBoundingBoxes",
+    "display_name": "Create Bounding Boxes",
+    "description": "Draw bounding boxes in a canvas. Outputs Ideogram prompt elements, pixel-space bounding boxes, and a preview image.",
+    "python_module": "comfy_extras.nodes_bounding_boxes",
+    "category": "utilities",
+    "output_node": true,
+    "deprecated": false,
+    "experimental": true,
+    "dev_only": false,
+    "api_node": false,
+    "price_badge": null,
+    "search_aliases": null,
+    "essentials_category": null,
+    "has_intermediate_output": false
+  },
+  "WebcamCapture": {
+    "input": {
+      "required": {
+        "image": [
+          "WEBCAM",
+          {}
+        ],
+        "width": [
+          "INT",
+          {
+            "default": 0,
+            "min": 0,
+            "max": 16384,
+            "step": 1
+          }
+        ],
+        "height": [
+          "INT",
+          {
+            "default": 0,
+            "min": 0,
+            "max": 16384,
+            "step": 1
+          }
+        ],
+        "capture_on_queue": [
+          "BOOLEAN",
+          {
+            "default": true
+          }
+        ]
+      }
+    },
+    "input_order": {
+      "required": [
+        "image",
+        "width",
+        "height",
+        "capture_on_queue"
+      ]
+    },
+    "is_input_list": false,
+    "output": [
+      "IMAGE"
+    ],
+    "output_is_list": [
+      false
+    ],
+    "output_name": [
+      "IMAGE"
+    ],
+    "name": "WebcamCapture",
+    "display_name": "Webcam Capture",
+    "description": "",
+    "python_module": "comfy_extras.nodes_webcam",
+    "category": "image",
+    "output_node": false,
+    "has_intermediate_output": false,
+    "search_aliases": [
+      "camera input",
+      "live capture",
+      "camera feed",
+      "snapshot"
+    ],
+    "essentials_category": "Basics"
+  },
+  "Krea3ImageNode": {
+    "name": "Krea3ImageNode",
+    "display_name": "Krea 3 Image",
+    "input": {
+      "required": {
+        "model": [
+          "COMFY_DYNAMICCOMBO_V3",
+          {
+            "options": [
+              {
+                "key": "Krea 3",
+                "inputs": {
+                  "required": {
+                    "images": [
+                      "COMFY_AUTOGROW_V3",
+                      {
+                        "tooltip": "Up to 8 images, numbered in connection order. Leave empty for text-to-image.",
+                        "template": {
+                          "input": {
+                            "required": {
+                              "image": [
+                                "IMAGE",
+                                {}
+                              ]
+                            }
+                          },
+                          "prefix": "image_",
+                          "min": 0,
+                          "max": 8
+                        }
+                      }
+                    ],
+                    "prompt": [
+                      "STRING",
+                      {
+                        "tooltip": "What to change and what to keep. Refer to the images as @Image1, @Image2, ... or image 1, image 2, ...",
+                        "default": "",
+                        "multiline": true
+                      }
+                    ],
+                    "aspect_ratio": [
+                      "COMBO",
+                      {
+                        "tooltip": "auto follows the first image, or the prompt when no image is connected.",
+                        "default": "auto",
+                        "multiselect": false,
+                        "options": [
+                          "auto",
+                          "1:1",
+                          "4:5",
+                          "3:4",
+                          "2:3",
+                          "9:16",
+                          "5:4",
+                          "4:3",
+                          "3:2",
+                          "16:9",
+                          "21:9"
+                        ]
+                      }
+                    ],
+                    "resolution": [
+                      "COMBO",
+                      {
+                        "default": "2K",
+                        "multiselect": false,
+                        "options": [
+                          "1K",
+                          "2K"
+                        ]
+                      }
+                    ],
+                    "thinking_mode": [
+                      "COMBO",
+                      {
+                        "tooltip": "fast is recommended. high plans complex edits in more detail and takes longer.",
+                        "default": "fast",
+                        "multiselect": false,
+                        "options": [
+                          "fast",
+                          "high"
+                        ]
+                      }
+                    ],
+                    "precise_edit": [
+                      "BOOLEAN",
+                      {
+                        "tooltip": "Keep everything outside the edited area unchanged. Needs at least one image.",
+                        "default": false
+                      }
+                    ],
+                    "seed": [
+                      "INT",
+                      {
+                        "tooltip": "Krea rewrites the prompt before generating, so the same seed does not repeat an image.",
+                        "default": 42,
+                        "min": 0,
+                        "max": 2147483647,
+                        "control_after_generate": true
+                      }
+                    ]
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "hidden": {
+        "auth_token_comfy_org": [
+          "AUTH_TOKEN_COMFY_ORG"
+        ],
+        "api_key_comfy_org": [
+          "API_KEY_COMFY_ORG"
+        ],
+        "unique_id": [
+          "UNIQUE_ID"
+        ],
+        "comfy_usage_source": [
+          "COMFY_USAGE_SOURCE"
+        ]
+      }
+    },
+    "output": [
+      "IMAGE"
+    ],
+    "output_name": [
+      "IMAGE"
+    ],
+    "category": "partner/image/Krea",
+    "python_module": "comfy_api_nodes.nodes_krea"
+  }
+}

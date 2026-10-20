@@ -64,7 +64,7 @@ export const resolveWriteContext = (
       // node-keyed record field, routing to the parked snapshot or flat state.
       // Returns an empty slice when the identity can't be resolved.
 export const writeNodeKeyedField = <
-        F extends "nodeOutputs" | "nodeComparerOutputs" | "nodeTextOutputs",
+        F extends "nodeOutputs" | "nodeComparerOutputs" | "nodeTextOutputs" | "nodeBoundingBoxOutputs",
       >(
         state: WorkflowState,
         sessionId: string | null | undefined,

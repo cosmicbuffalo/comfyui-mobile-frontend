@@ -538,7 +538,7 @@ def test_non_retryable_keyframe_rejection_is_dropped_but_logged(caplog, monkeypa
         calls = []
 
         @classmethod
-        def send_live_activity(cls, payload):
+        def send_live_activity(cls, payload, owner=None):
             cls.calls.append(payload)
             return {"sent": 1, "pruned": 0, "total": 2, "retryable": 0, "failed": 1}
 
@@ -567,7 +567,7 @@ def test_keyframe_relay_failure_is_retried_until_delivered(monkeypatch):
         calls = []
 
         @classmethod
-        def send_live_activity(cls, payload):
+        def send_live_activity(cls, payload, owner=None):
             cls.calls.append(payload)
             if len(cls.calls) == 1:
                 return {"sent": 0, "pruned": 0, "total": 1}
@@ -604,7 +604,7 @@ def test_keyframes_are_fifo_while_routine_progress_keeps_only_latest(monkeypatch
         calls = []
 
         @classmethod
-        def send_live_activity(cls, payload):
+        def send_live_activity(cls, payload, owner=None):
             cls.calls.append(payload)
             return {"sent": 1, "pruned": 0, "total": 1, "retryable": 0}
 
@@ -670,7 +670,7 @@ def test_restart_restores_active_lifecycle_and_durable_keyframe_outbox(monkeypat
 def test_delivered_keyframe_is_removed_from_the_durable_outbox(monkeypatch):
     class FakeAppPush:
         @classmethod
-        def send_live_activity(cls, payload):
+        def send_live_activity(cls, payload, owner=None):
             return {"sent": 1, "pruned": 0, "total": 1, "retryable": 0}
 
     monkeypatch.setattr(m, "_mobile_app_push", FakeAppPush)
@@ -1184,3 +1184,254 @@ def test_stats_expose_the_backpressure_the_server_saw():
     assert reported["clients"] == 1
     assert reported["clientIntervalsMs"] == [500]
     assert reported["slowSends"] == 0
+
+
+# --- per-account routing --------------------------------------------------
+#
+# With accounts on the server, a broadcast is a disclosure: how far along
+# someone else's job is, and the id of the prompt it belongs to. Snapshots
+# are queued only for sockets whose viewer may watch the job.
+
+
+def _viewer(user_id=None, admin=False):
+    return {"id": user_id, "admin": admin}
+
+
+def _register_as(ws, viewer):
+    state = _register(ws)
+    state.viewer = viewer
+    return state
+
+
+def test_progress_reaches_the_job_owner_while_others_get_only_busy(monkeypatch):
+    monkeypatch.setattr(m, "_owner_cache", {"p1": "u1"})
+    mine, theirs = FakeWS(), FakeWS()
+    _register_as(mine, _viewer("u1"))
+    _register_as(theirs, _viewer("u2"))
+    asyncio.run(m._broadcast({"prompt_id": "p1", "value": 1, "max": 4}))
+    assert len(mine.sent) == 1
+    assert json.loads(mine.sent[0])["prompt_id"] == "p1"
+    # The other viewer learns only that the server is occupied: no prompt id,
+    # no progress, no node name -- the queue panel uses this to explain why
+    # their own pending items are waiting.
+    assert len(theirs.sent) == 1
+    sanitized = json.loads(theirs.sent[0])
+    assert sanitized["foreign_busy"] is True
+    assert sanitized["prompt_id"] is None
+    assert sanitized["value"] == 0 and sanitized["max"] == 0
+    assert sanitized["node_name"] is None
+
+
+def test_an_administrator_can_watch_any_job(monkeypatch):
+    """Mirrors how the auth node already routes ComfyUI's own websocket events
+    — owner plus admins — so the two channels do not disagree about who may
+    see a running job."""
+    monkeypatch.setattr(m, "_owner_cache", {"p1": "u1"})
+    admin = FakeWS()
+    _register_as(admin, _viewer("root", admin=True))
+    asyncio.run(m._broadcast({"prompt_id": "p1", "value": 1, "max": 4}))
+    assert len(admin.sent) == 1
+
+
+def test_an_unowned_job_is_visible_to_everyone(monkeypatch):
+    """No accounts, or a job queued before the gate existed: there is nobody
+    to hide it from, and this is the behaviour the channel has always had."""
+    monkeypatch.setattr(m, "_owner_cache", {"p1": None})
+    a, b = FakeWS(), FakeWS()
+    _register_as(a, dict(m.ANONYMOUS_VIEWER))
+    _register_as(b, _viewer("u2"))
+    asyncio.run(m._broadcast({"prompt_id": "p1", "value": 1, "max": 4}))
+    assert len(a.sent) == 1
+    assert len(b.sent) == 1
+
+
+def test_a_viewer_who_may_not_watch_still_stays_connected(monkeypatch):
+    monkeypatch.setattr(m, "_owner_cache", {"p1": "u1"})
+    theirs = FakeWS()
+    _register_as(theirs, _viewer("u2"))
+    asyncio.run(m._broadcast({"prompt_id": "p1", "value": 1, "max": 4}))
+    # They receive the sanitized busy marker, nothing of the job itself.
+    assert [json.loads(msg).get("foreign_busy") for msg in theirs.sent] == [True]
+    assert theirs in m._clients
+
+
+def test_a_foreign_finished_event_clears_the_busy_marker(monkeypatch):
+    """The registry keeps the last prompt id until a NEW prompt starts, so no
+    clearing snapshot would arrive on its own -- the finished edge is what
+    takes the busy marker down."""
+    monkeypatch.setattr(m, "_owner_cache", {"p1": "u1"})
+    theirs = FakeWS()
+    _register_as(theirs, _viewer("u2"))
+    asyncio.run(m._broadcast(
+        {"type": "finished", "prompt_id": "p1"}, immediate=True))
+    assert len(theirs.sent) == 1
+    cleared = json.loads(theirs.sent[0])
+    assert "foreign_busy" not in cleared
+    assert cleared["prompt_id"] is None
+    assert "type" not in cleared
+
+
+def test_a_future_role_can_unlock_foreign_visibility(monkeypatch):
+    """The contract is admin-only today, but the predicate is a viewer flag
+    the auth node can widen with a role later -- not a hard-coded admin
+    check scattered through the routing."""
+    monkeypatch.setattr(m, "_owner_cache", {"p1": "u1"})
+    watcher = FakeWS()
+    _register_as(watcher, {"id": "u2", "admin": False, "foreign_ok": True})
+    asyncio.run(m._broadcast({"prompt_id": "p1", "value": 1, "max": 4}))
+    assert len(watcher.sent) == 1
+    assert json.loads(watcher.sent[0])["prompt_id"] == "p1"
+
+
+def test_the_connect_snapshot_respects_the_same_rule(monkeypatch):
+    """Connecting mid-run must not be a way to watch a job you otherwise
+    could not: the catch-up snapshot is gated exactly like a broadcast."""
+    monkeypatch.setattr(m, "_owner_cache", {"p1": "u1"})
+    assert m._may_see(_viewer("u2"), "u1") is False
+    assert m._may_see(_viewer("u1"), "u1") is True
+    assert m._may_see(_viewer("root", admin=True), "u1") is True
+    assert m._may_see(dict(m.ANONYMOUS_VIEWER), None) is True
+
+
+def test_the_owner_lookup_is_memoised_per_prompt(monkeypatch):
+    """The watch loop runs many times a second and the answer cannot change
+    for a given job."""
+    calls = []
+
+    class _Auth:
+        @staticmethod
+        def prompt_owner(prompt_tuple):
+            calls.append(prompt_tuple)
+            return "u1"
+
+        @staticmethod
+        def current_user():
+            return None
+
+    queue = types.SimpleNamespace(
+        get_history=lambda prompt_id=None: {
+            prompt_id: {"prompt": ("n", prompt_id, {}, {}, [])}},
+        currently_running={},
+    )
+    fake_server = types.ModuleType("server")
+    fake_server.PromptServer = types.SimpleNamespace(
+        instance=types.SimpleNamespace(prompt_queue=queue))
+    monkeypatch.setitem(sys.modules, "server", fake_server)
+    monkeypatch.setattr(m, "_mobile_auth", _Auth)
+    monkeypatch.setattr(m, "_owner_cache", {})
+
+    assert m._owner_of("p9") == "u1"
+    assert m._owner_of("p9") == "u1"
+    assert len(calls) == 1
+
+
+def test_relay_frames_are_scoped_to_the_prompt_owner(monkeypatch):
+    """A Live Activity frame names the workflow and shows its progress, so it
+    is routed like the completion push: resolved to the prompt's owner at
+    queue time, with the private routing key stripped before the wire."""
+    calls = []
+
+    class FakeAppPush:
+        @staticmethod
+        def send_live_activity(payload, owner=None):
+            calls.append((payload, owner))
+            return {"sent": 1, "pruned": 0, "total": 1, "retryable": 0}
+
+    monkeypatch.setattr(m, "_mobile_auth", types.SimpleNamespace())
+    monkeypatch.setattr(m, "_owner_cache", {"p1": "u1"})
+    monkeypatch.setattr(m, "_mobile_app_push", FakeAppPush)
+    monkeypatch.setattr(m, "_RELAY_PUMP_TICK_SECONDS", 0.001)
+    monkeypatch.setattr(m, "_RELAY_MIN_SEND_GAP_SECONDS", 0.0)
+
+    async def run():
+        m._queue_relay({"phase": "generating", "prompt_id": "p1",
+                        "delivery": "keyframe"})
+        await m._relay_task
+
+    asyncio.run(run())
+    assert calls == [({"phase": "generating", "prompt_id": "p1",
+                       "delivery": "keyframe"}, "u1")]
+
+
+def test_an_unowned_relay_frame_keeps_the_broadcast(monkeypatch):
+    """No accounts, or a prompt from before the gate: there is nobody to hide
+    the frame from, and every paired device keeps its Live Activity."""
+    calls = []
+
+    class FakeAppPush:
+        @staticmethod
+        def send_live_activity(payload, owner=None):
+            calls.append((payload, owner))
+            return {"sent": 1, "pruned": 0, "total": 1, "retryable": 0}
+
+    monkeypatch.setattr(m, "_mobile_auth", None)
+    monkeypatch.setattr(m, "_mobile_app_push", FakeAppPush)
+    monkeypatch.setattr(m, "_RELAY_PUMP_TICK_SECONDS", 0.001)
+    monkeypatch.setattr(m, "_RELAY_MIN_SEND_GAP_SECONDS", 0.0)
+
+    async def run():
+        m._queue_relay({"phase": "done", "prompt_id": "p1",
+                        "delivery": "keyframe"})
+        await m._relay_task
+
+    asyncio.run(run())
+    assert calls == [({"phase": "done", "prompt_id": "p1",
+                       "delivery": "keyframe"}, None)]
+
+
+def test_the_owner_lookup_does_not_memoise_a_miss(monkeypatch):
+    """A lookup can land in the instant between the queue popping a finished
+    prompt and the history write, finding it in neither. Memoising that None
+    would permanently open the prompt's later frames to every viewer."""
+    class _Auth:
+        @staticmethod
+        def prompt_owner(prompt_tuple):
+            return "u1"
+
+    queue = types.SimpleNamespace(
+        get_history=lambda prompt_id=None: {},
+        currently_running={},
+    )
+    fake_server = types.ModuleType("server")
+    fake_server.PromptServer = types.SimpleNamespace(
+        instance=types.SimpleNamespace(prompt_queue=queue))
+    monkeypatch.setitem(sys.modules, "server", fake_server)
+    monkeypatch.setattr(m, "_mobile_auth", _Auth)
+    monkeypatch.setattr(m, "_owner_cache", {})
+
+    assert m._owner_of("p9") is None
+    assert "p9" not in m._owner_cache
+
+    # Once the history write lands, the real owner is found and memoised.
+    queue.get_history = lambda prompt_id=None: {
+        prompt_id: {"prompt": ("n", prompt_id, {}, {}, [])}}
+    assert m._owner_of("p9") == "u1"
+    assert m._owner_cache["p9"] == "u1"
+
+
+def test_the_owner_lookup_walks_the_pending_queue_too(monkeypatch):
+    """A job is somebody's from the moment it is queued, not only once it
+    runs: the shared resolver checks pending items as well, so a queued-not-
+    yet-running prompt's frames are routed to their owner."""
+    class _Auth:
+        @staticmethod
+        def prompt_owner(prompt_tuple):
+            return prompt_tuple[3].get("owner")
+
+    queue = types.SimpleNamespace(
+        get_history=lambda prompt_id=None: {},
+        currently_running={},
+        get_current_queue=lambda: (
+            [], [(2, "p9", {}, {"owner": "u1"}, [])]),
+    )
+    fake_server = types.ModuleType("server")
+    fake_server.PromptServer = types.SimpleNamespace(
+        instance=types.SimpleNamespace(prompt_queue=queue))
+    monkeypatch.setitem(sys.modules, "server", fake_server)
+    monkeypatch.setattr(m, "_mobile_auth", _Auth)
+    monkeypatch.setattr(m, "_owner_cache", {})
+
+    assert m._owner_of("p9") == "u1"
+    assert m._owner_cache["p9"] == "u1"
+
+

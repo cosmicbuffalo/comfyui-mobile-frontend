@@ -20,6 +20,11 @@ describe('downloadTargetFromFileId', () => {
     });
   });
 
+  it('reconstructs 3D files selected in another folder', () => {
+    expect(downloadTargetFromFileId('output/3d/mesh.glb')).toEqual({ src: '/view?filename=mesh.glb&type=output&subfolder=3d', filename: 'mesh.glb' });
+    expect(downloadTargetFromFileId('output/3d/scan.ply')?.filename).toBe('scan.ply');
+  });
+
   it('returns null for folders / non-media ids', () => {
     expect(downloadTargetFromFileId('output/some_folder')).toBeNull();
     expect(downloadTargetFromFileId('output/notes.txt')).toBeNull();

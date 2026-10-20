@@ -1,4 +1,15 @@
-import type { Workflow } from '../types';
+import type { Workflow, NodeTypes } from '../types';
+import { invalidateUserWorkflowList } from './userWorkflowList';
+import { buildStarterWorkflow } from '@/utils/starterWorkflow';
+
+export async function loadDefaultWorkflow(nodeTypes: NodeTypes): Promise<Workflow> {
+  const response = await fetch('/default_workflow', { cache: 'no-store' });
+  if (response.status === 404 || response.status === 405) return buildStarterWorkflow(nodeTypes);
+  if (!response.ok) throw new Error('Failed to load starter workflow');
+  const workflow = await response.json();
+  if (!Array.isArray(workflow?.nodes) || !Array.isArray(workflow?.links)) throw new Error('Invalid starter workflow');
+  return workflow;
+}
 
 const RECENT_WORKFLOWS_PATH = 'mobile/recent_workflows.json';
 const WORKFLOW_HIDDEN_PATH = 'mobile/workflow_hidden.json';
@@ -13,19 +24,7 @@ export interface UserDataFile {
   modified?: number;
 }
 
-export async function listUserWorkflows(): Promise<UserDataFile[]> {
-  const response = await fetch(`/api/v2/userdata?path=workflows`);
-  if (!response.ok) {
-    // Folder may not exist yet
-    if (response.status === 404) return [];
-    throw new Error('Failed to list user workflows');
-  }
-  const data = await response.json();
-  // Keep directories and JSON files
-  return data.filter((item: UserDataFile) =>
-    item.type === 'directory' || (item.type === 'file' && item.name.endsWith('.json'))
-  );
-}
+export { listUserWorkflows } from './userWorkflowList';
 
 // Helper to encode full path for userdata API (slashes must be encoded as %2F)
 function encodeUserDataPath(path: string): string {
@@ -47,6 +46,7 @@ export async function saveUserWorkflow(filename: string, workflow: Workflow): Pr
     body: JSON.stringify(workflow)
   });
   if (!response.ok) throw new Error('Failed to save workflow');
+  invalidateUserWorkflowList();
 }
 
 export async function deleteUserWorkflow(filename: string): Promise<void> {
@@ -54,6 +54,7 @@ export async function deleteUserWorkflow(filename: string): Promise<void> {
     method: 'DELETE'
   });
   if (!response.ok) throw new Error('Failed to delete workflow');
+  invalidateUserWorkflowList();
 }
 
 // Rename/move a workflow file OR folder. Paths are relative to the workflows
@@ -67,6 +68,7 @@ export async function renameUserWorkflowEntry(fromPath: string, toPath: string):
   });
   if (response.status === 409) throw new Error('A file or folder with that name already exists');
   if (!response.ok) throw new Error('Failed to rename');
+  invalidateUserWorkflowList();
 }
 
 // Create an empty folder under the workflows dir (path relative to workflows).
@@ -81,6 +83,7 @@ export async function createUserWorkflowFolder(path: string): Promise<void> {
     const err = await response.json().catch(() => ({}));
     throw new Error(err.error || 'Failed to create folder');
   }
+  invalidateUserWorkflowList();
 }
 
 // Recursively delete a folder under the workflows dir (path relative to
@@ -93,6 +96,7 @@ export async function deleteUserWorkflowFolder(path: string): Promise<void> {
     const err = await response.json().catch(() => ({}));
     throw new Error(err.error || 'Failed to delete folder');
   }
+  invalidateUserWorkflowList();
 }
 
 // Template workflows API

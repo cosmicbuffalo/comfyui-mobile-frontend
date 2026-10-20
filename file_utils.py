@@ -412,6 +412,7 @@ def list_files(base_dir, target_path, *, recursive=False, show_hidden=False,
     """
     IMAGE_EXTENSIONS = {'.png', '.jpg', '.jpeg', '.webp', '.gif'}
     VIDEO_EXTENSIONS = {'.mp4', '.m4v', '.mov', '.webm', '.mkv', '.avi'}
+    MODEL_EXTENSIONS = {'.glb', '.gltf', '.obj', '.fbx', '.stl', '.ply', '.splat', '.spz', '.ksplat'}
 
     results = []
     # Membership is consulted once per walked entry, so keep it a set rather
@@ -446,6 +447,8 @@ def list_files(base_dir, target_path, *, recursive=False, show_hidden=False,
             kind = 'image'
         elif ext in VIDEO_EXTENSIONS:
             kind = 'video'
+        elif ext in MODEL_EXTENSIONS:
+            kind = 'model'
         else:
             return None
 

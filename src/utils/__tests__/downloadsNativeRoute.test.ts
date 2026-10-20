@@ -57,6 +57,19 @@ describe('downloads native-app routing', () => {
   describe('in the native app', () => {
     beforeEach(() => setUserAgent(APP_UA));
 
+    it('neither posts a 3D file to the Photos-only bridge nor navigates to it', async () => {
+      const posted = installChannel(false);
+      expect(await shareOrDownloadFile('/view?filename=mesh.glb&type=output', 'mesh.glb')).toEqual({ route: 'downloads', started: false });
+      await downloadImage('/view?filename=cloud.ply&type=output', 'cloud.ply');
+      await shareOrDownloadBatch([
+        { src: '/view?filename=mesh.glb&type=output', filename: 'mesh.glb' },
+        { src: '/view?filename=still.png&type=output', filename: 'still.png' },
+      ]);
+      // Only the still reaches Photos, and nothing is clicked.
+      expect(posted.map(request => request.filename)).toEqual(['still.png']);
+      expect(clicks).toEqual([]);
+    });
+
     it('routes downloadImage through the bridge and never clicks an anchor', async () => {
       const posted = installChannel(true);
       const onDownloaded = vi.fn();

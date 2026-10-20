@@ -16,7 +16,6 @@ vi.mock('@/api/client', async (importOriginal) => {
   return {
     ...actual,
     getUserImages: vi.fn(async () => []),
-    getUserImageFolders: vi.fn(async () => ({ input: [], output: [] })),
     loadFileState: vi.fn(async () => ({ favorite: [], reject: [], hidden: [] })),
     searchUserImagesByPrompt: vi.fn(async () => []),
     setFileState: vi.fn(async () => undefined),

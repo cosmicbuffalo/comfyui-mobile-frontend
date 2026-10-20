@@ -20,6 +20,8 @@ import time
 
 from aiohttp import web, WSMsgType
 from json_cache_io import atomic_write_json
+import mobile_common as _mobile_common
+import mobile_viewer_scope as _viewer_scope
 
 try:
     import mobile_app_push as _mobile_app_push
@@ -32,6 +34,30 @@ except Exception:  # pragma: no cover - labels are optional
     _mobile_queue_metadata = None
 
 logger = logging.getLogger(__name__)
+
+# Optional: absent on a single-user server, which is the common case.
+try:
+    import mobile_auth as _mobile_auth
+except Exception:  # pragma: no cover - import guard
+    _mobile_auth = None
+
+# The viewer on a server with no accounts: everybody, indistinguishable from
+# everybody else, which is what this channel assumed before it had to route.
+ANONYMOUS_VIEWER = {"id": None, "admin": False, "foreign_ok": False}
+
+# What a viewer who may not watch the running job still learns: the server is
+# occupied. Shaped like an idle snapshot -- no prompt id, no progress, no node
+# name -- plus the marker the queue panel uses to explain why the viewer's own
+# pending items are not moving yet.
+_FOREIGN_BUSY_SNAPSHOT = {
+    "prompt_id": None, "value": 0, "max": 0,
+    "nodes_total": 0, "nodes_done": 0, "node_name": None,
+    "foreign_busy": True,
+}
+_IDLE_SNAPSHOT = {
+    "prompt_id": None, "value": 0, "max": 0,
+    "nodes_total": 0, "nodes_done": 0, "node_name": None,
+}
 
 _clients = {}
 _watch_task = None
@@ -97,9 +123,10 @@ _RELAY_PUMP_TICK_SECONDS = 0.25
 # even when both transitions happen in the same ComfyUI event-loop tick.
 _RELAY_MIN_SEND_GAP_SECONDS = 1.1
 _WORKFLOW_CACHE_SECONDS = 30.0
-_QUEUE_METADATA_PATH = os.path.join(
-    os.path.dirname(os.path.abspath(__file__)), ".cache", "queue_metadata_cache.json"
-)
+# The shared constant, not a re-derived path: if the cache dir ever moves,
+# the workflow-label lookup must move with it rather than silently reading
+# an empty file at the old location.
+_QUEUE_METADATA_PATH = _mobile_common.QUEUE_METADATA_CACHE_PATH
 _RELAY_STATE_VERSION = 1
 
 
@@ -107,7 +134,7 @@ class _ClientState:
     """Pacing state for one connected foreground socket."""
 
     __slots__ = ("interval", "negotiated", "forced", "last_sent",
-                 "last_prompt_id", "pending", "slow_sends", "lock")
+                 "last_prompt_id", "pending", "slow_sends", "lock", "viewer")
 
     def __init__(self):
         # Zero, not one tick: an un-negotiated client must be bit-for-bit
@@ -115,6 +142,8 @@ class _ClientState:
         # interval equal to the tick sounds equivalent but is not, because
         # the two clocks jitter against each other and occasional changes
         # get coalesced away. Upgrading the node alone changes nothing.
+        # Who is on the other end, for routing. Replaced at handshake.
+        self.viewer = dict(ANONYMOUS_VIEWER)
         self.interval = 0.0
         # Distinguishes "asked for this rate" from "left at the default", so
         # server-side backoff can be reported back as advice rather than
@@ -159,11 +188,7 @@ def _relay_state_path():
         push_dir = getattr(_mobile_app_push, "_push_dir", None)
         if callable(push_dir):
             return os.path.join(push_dir(), "live_activity_relay_state.json")
-    return os.path.join(
-        os.path.dirname(os.path.abspath(__file__)),
-        ".cache",
-        "live_activity_relay_state.json",
-    )
+    return os.path.join(_mobile_common.CACHE_DIR, "live_activity_relay_state.json")
 
 
 def _save_relay_state():
@@ -639,7 +664,14 @@ def _relay_available():
 def _queue_relay(payload):
     """Queue keyframes losslessly while retaining only the newest routine state."""
     global _relay_pending, _relay_task
-    item = (dict(payload), 0.0)
+    stamped = dict(payload)
+    # Resolve the owner here, while the prompt is still in the queue or fresh
+    # in history, and carry it with the item: keyframes persist across
+    # restarts, after which the prompt may be gone from both. `_owner` never
+    # reaches the relay wire -- the send loop strips it.
+    if "_owner" not in stamped:
+        stamped["_owner"] = _owner_of(stamped.get("prompt_id"))
+    item = (stamped, 0.0)
     if payload.get("delivery") == "keyframe":
         # A routine snapshot from before this semantic transition must never
         # arrive afterward and make the Live Activity move backwards.
@@ -676,9 +708,11 @@ async def _relay_send_loop():
                 # Clear only the routine sample being sent. A fresher snapshot
                 # arriving during the executor call remains pending.
                 _relay_pending = None
+            owner = payload.get("_owner")
+            wire_payload = {k: v for k, v in payload.items() if k != "_owner"}
             try:
                 result = await loop.run_in_executor(
-                    None, _mobile_app_push.send_live_activity, payload
+                    None, _mobile_app_push.send_live_activity, wire_payload, owner
                 )
             except Exception as exc:
                 logger.warning("[Mobile Live Activity] relay dispatch failed: %s", exc)
@@ -774,12 +808,100 @@ async def _close_quietly(ws):
         pass
 
 
+def _viewer_of(request):
+    """Who opened this socket. Anonymous when there are no accounts here.
+
+    Resolved at handshake, inside the request, because that is where the auth
+    node's per-request context still exists — the socket then outlives it.
+    """
+    if _mobile_auth is None:
+        return dict(ANONYMOUS_VIEWER)
+    try:
+        user = _mobile_auth.current_user()
+    except Exception:
+        user = None
+    if not user:
+        return dict(ANONYMOUS_VIEWER)
+    # The one admin predicate this node has (user dicts carry roles, not an
+    # is_admin flag), so every admin-gated surface widens together.
+    admin = _viewer_scope.is_admin(user)
+    try:
+        foreign_ok = admin or bool(_mobile_auth.can_view_foreign_prompts(user))
+    except Exception:
+        foreign_ok = admin
+    return {"id": user.get("id"), "admin": admin, "foreign_ok": foreign_ok}
+
+
+_owner_cache = {}
+
+
+def _owner_of(prompt_id):
+    """The account a prompt belongs to, or None.
+
+    Delegates to the shared history/queue walk in mobile_common (also used by
+    the system routes), which memoises per prompt id — the watch loop runs
+    many times a second and the answer cannot change for a given job — while
+    never memoising a total miss: the instant between task_done popping a
+    prompt and the history write must not permanently open that prompt's
+    later frames to every viewer.
+    """
+    return _viewer_scope.resolve_prompt_owner(
+        prompt_id, auth=_mobile_auth, cache=_owner_cache)
+
+
+def _may_see(viewer, owner) -> bool:
+    """Whether this socket's viewer may watch that job.
+
+    An unowned job (no accounts, or queued before the gate existed) is visible
+    to everyone: on such a server there is nobody to hide it from.
+
+    But "unowned" and "owner could not be determined" both arrive as None, and
+    only the first is safe to broadcast. `prompt_owner` returns None for an
+    older auth node without the method and for any exception inside it, so on a
+    gated server a single raising call would otherwise put every job's id,
+    progress and running node on every socket. When the gate is on, an
+    undetermined owner is therefore visible only to viewers who may watch
+    foreign jobs anyway.
+    """
+    if owner is None:
+        if not _mobile_auth.is_enabled():
+            return True
+        return bool(viewer.get("admin") or viewer.get("foreign_ok"))
+    return bool(viewer.get("admin") or viewer.get("foreign_ok")
+                or viewer.get("id") == owner)
+
+
 async def _broadcast(snapshot, immediate=False):
-    """Queue a snapshot for every client, then deliver whoever is due for one."""
+    """Queue a snapshot for every client entitled to it, then deliver.
+
+    On a multiuser server a broadcast is a disclosure: how far along someone
+    else's job is, and the id of the prompt it belongs to. So a snapshot is
+    queued only for sockets whose viewer may watch that job. With no auth node
+    the owner is always None and every client is entitled, which reduces to the
+    plain broadcast this channel has always done.
+    """
     if not _clients:
         return
+    owner = _owner_of(snapshot.get("prompt_id") if isinstance(snapshot, dict) else None)
+    is_finished_event = (isinstance(snapshot, dict)
+                         and snapshot.get("type") == "finished")
+    foreign_active = (isinstance(snapshot, dict) and not is_finished_event
+                      and snapshot.get("prompt_id") is not None)
     for state in _clients.values():
-        state.pending = snapshot
+        viewer = getattr(state, "viewer", ANONYMOUS_VIEWER)
+        if _may_see(viewer, owner):
+            state.pending = snapshot
+        elif foreign_active:
+            # A job this viewer may not watch is running. They still deserve
+            # to know why their own pending items are not moving, so they get
+            # the sanitized busy marker instead of silence.
+            state.pending = dict(_FOREIGN_BUSY_SNAPSHOT)
+        elif is_finished_event:
+            # The run they could not watch just ended. Without this the busy
+            # marker would outlive it: the progress registry keeps the last
+            # prompt id until a NEW prompt starts, so no clearing snapshot
+            # would ever arrive on its own.
+            state.pending = dict(_IDLE_SNAPSHOT)
     await _flush(immediate=immediate)
 
 
@@ -960,13 +1082,23 @@ async def api_progress_ws(request):
     ws = web.WebSocketResponse(heartbeat=20)
     await ws.prepare(request)
     state = _ClientState()
+    state.viewer = _viewer_of(request)
     # Send the current state right away — the watch loop only broadcasts on
     # change, which would otherwise leave a client that connects mid-run
-    # blank until the next tick.
+    # blank until the next tick. Subject to the same routing rule: connecting
+    # mid-run must not be a way to see a job you could not otherwise watch.
     try:
         snapshot = _snapshot()
     except Exception:
         snapshot = None
+    if snapshot is not None and not _may_see(
+            state.viewer, _owner_of(snapshot.get("prompt_id"))):
+        # The registry keeps the last prompt id after a run ends, so "may not
+        # see the snapshot" does not mean "something is running". Only claim
+        # busy while the queue actually holds a running entry.
+        queue_now = _current_queue_entries()
+        running_now = bool(queue_now and queue_now[0])
+        snapshot = dict(_FOREIGN_BUSY_SNAPSHOT) if running_now else None
     if snapshot is not None:
         state.last_prompt_id = snapshot.get("prompt_id")
         state.last_sent = _now()

@@ -5,9 +5,12 @@ mobile_web_push.py. Instead of sending directly to a browser, the node POSTs a
 completion event to the push relay (a service the app maker controls), which
 holds the APNs key and fans out to the paired devices.
 
-A "target" is one device's pairing identity: {relay_url, pairing_code, label}.
-The node stores a list, so one server can notify several devices, and the same
-device can be paired with several servers (each server keeps its own list).
+A "target" is one server entry in one device's app: {relay_url, pairing_code,
+server_id, label}. The node stores a list, so one server can notify several
+devices, and the same device can be paired with several servers (each server
+keeps its own list). One device can also hold several targets here: the app
+lets a server be added more than once, signed in as a different account each
+time, and `server_id` is what keeps those entries' notifications apart.
 
 Pairing is automatic: when the user adds this server in the app, the app calls
 POST /mobile/api/push/app-targets with its relay URL + pairing code — no typing.
@@ -164,16 +167,36 @@ def _normalize_relay_url(url) -> str | None:
     return origin
 
 
-def list_targets():
+def _owned_by(targets, owner):
+    """The subset of `targets` belonging to `owner`.
+
+    `owner` is None on a server with no accounts, where "everyone's devices"
+    and "this person's devices" are the same set — that is the single-user
+    behaviour this node has always had, and it stays exactly as it was.
+
+    With an owner, a pairing registered before this file knew about owners has
+    no `user_id` and belongs to nobody, so it is excluded. That silences
+    notifications for a device paired on an older build until it re-pairs,
+    which is the right way round: the alternative is broadcasting one person's
+    completions to whoever happened to pair first.
+    """
+    if owner is None:
+        return list(targets)
+    return [t for t in targets if t.get("user_id") == owner]
+
+
+def list_targets(owner=None):
     """Return a sanitized view (no full pairing code) for display in the UI."""
     with _lock:
-        targets = _load_targets()
+        targets = _owned_by(_load_targets(), owner)
         return [
             {
                 "label": t.get("label") or "Device",
                 "relay_url": t.get("relay_url"),
                 # Only the tail of the code, enough to distinguish devices.
                 "code_hint": (t.get("pairing_code") or "")[-4:],
+                # Which app entry this is, for a phone holding two of them.
+                "server_id": t.get("server_id"),
                 "added": t.get("added"),
             }
             for t in targets
@@ -181,9 +204,18 @@ def list_targets():
         ]
 
 
-def target_count() -> int:
+def target_count(owner=None) -> int:
+    """How many devices list_targets would show — the two must agree.
+
+    Live-Activity-only targets (notifications switched off) are excluded
+    exactly as the listing excludes them; counting them here let the
+    add-response report more devices than the settings screen lists.
+    """
     with _lock:
-        return len(_load_targets())
+        return sum(
+            1 for t in _owned_by(_load_targets(), owner)
+            if t.get("notifications", True) is not False
+        )
 
 
 def live_activity_target_count() -> int:
@@ -244,16 +276,47 @@ def _verify_pairing(relay_url: str, pairing_code: str,
     return True
 
 
-def _without_target(targets, relay_url, pairing_code):
-    """Drop any existing entry for this (relay_url, pairing_code), so re-pairing
-    a known device updates it in place instead of growing the list."""
+def _same_entry(stored, relay_url, pairing_code, server_id, owner) -> bool:
+    """Whether `stored` is the pairing a new registration replaces.
+
+    The app identifies each of its server entries by `server_id`, and one phone
+    can hold two entries for this server, signed in as different accounts.
+    Keying on the device alone made the second pairing overwrite the first, so
+    only one entry ever heard anything. With both ids present they decide.
+
+    A stored target without a `server_id` predates the app sending one. It is
+    this device's earlier registration, so the new one upgrades it in place, but
+    only within the same account: another account's legacy pairing is that
+    entry's to replace when it next pairs. A registration without a `server_id`
+    is an app that predates it, and keeps the old one-per-device rule.
+    """
+    if (
+        _normalize_relay_url(stored.get("relay_url")) != relay_url
+        or stored.get("pairing_code") != pairing_code
+    ):
+        return False
+    stored_server_id = stored.get("server_id")
+    if not server_id:
+        return True
+    if stored_server_id:
+        return stored_server_id == server_id
+    return _mine(stored, owner)
+
+
+def _without_target(targets, relay_url, pairing_code, server_id=None, owner=None):
+    """Drop the existing entry this registration replaces, so re-pairing a
+    known app entry updates it in place instead of growing the list."""
     return [
         t for t in targets
-        if not (
-            _normalize_relay_url(t.get("relay_url")) == relay_url
-            and t.get("pairing_code") == pairing_code
-        )
+        if not _same_entry(t, relay_url, pairing_code, server_id, owner)
     ]
+
+
+def _delivery_key(target):
+    """One target's identity when sending: a relay verdict (410 removed, 409
+    muted) is about one server entry, never about the device's others."""
+    return (target.get("relay_url"), target.get("pairing_code"),
+            target.get("server_id"))
 
 
 def _refuse_if_full(deduped_targets) -> bool:
@@ -278,13 +341,15 @@ def _refuse_if_full(deduped_targets) -> bool:
 
 def add_target(relay_url, pairing_code, label=None, added=None,
                server_id=None, live_activity=False, server_label=None,
-               frequent_updates=None, relevance_score=None) -> bool:
+               frequent_updates=None, relevance_score=None, owner=None) -> bool:
     relay_url = _normalize_relay_url(relay_url)
     if relay_url is None:
         return False
     if not isinstance(pairing_code, str) or not pairing_code.strip():
         return False
     pairing_code = pairing_code.strip()
+    if not isinstance(server_id, str) or not server_id:
+        server_id = None
 
     # Check the cap BEFORE verifying, not after. Every completion POSTs once
     # per target, so an unbounded list turns this server into a relay-hammering
@@ -296,7 +361,8 @@ def add_target(relay_url, pairing_code, label=None, added=None,
     # add is certain to be refused. Reject rather than evict: silently dropping
     # a working device to make room for a new one is worse than refusing.
     with _lock:
-        if _refuse_if_full(_without_target(_load_targets(), relay_url, pairing_code)):
+        if _refuse_if_full(_without_target(
+                _load_targets(), relay_url, pairing_code, server_id, owner)):
             return False
 
     live_activity = live_activity is True
@@ -313,12 +379,9 @@ def add_target(relay_url, pairing_code, label=None, added=None,
         current = _load_targets()
         existing = next((
             target for target in current
-            if (
-                _normalize_relay_url(target.get("relay_url")) == relay_url
-                and target.get("pairing_code") == pairing_code
-            )
+            if _same_entry(target, relay_url, pairing_code, server_id, owner)
         ), None)
-        targets = _without_target(current, relay_url, pairing_code)
+        targets = _without_target(current, relay_url, pairing_code, server_id, owner)
         if _refuse_if_full(targets):
             return False
         entry = {
@@ -339,9 +402,18 @@ def add_target(relay_url, pairing_code, label=None, added=None,
             isinstance(existing, dict) and existing.get("live_activity") is True
         ):
             entry["live_activity"] = True
+        # Who this device belongs to, so completions reach the person whose
+        # job finished rather than every phone on the server. Absent on a
+        # server with no accounts, which is what "nobody in particular" means
+        # everywhere else in this file. Preserved on re-pair with auth off so
+        # briefly disabling accounts does not orphan every pairing.
+        if isinstance(owner, str) and owner:
+            entry["user_id"] = owner
+        elif isinstance(existing, dict) and existing.get("user_id"):
+            entry["user_id"] = existing["user_id"]
         # Carried through to the relay's /event POST so the iOS app can route
         # a notification tap to the right server when several are paired.
-        if isinstance(server_id, str) and server_id:
+        if server_id:
             entry["server_id"] = server_id
         elif isinstance(existing, dict) and existing.get("server_id"):
             entry["server_id"] = existing["server_id"]
@@ -391,7 +463,24 @@ def _relay_match_keys(value):
     return keys
 
 
-def remove_target(pairing_code, relay_url=None, notifications_only=False) -> int:
+def _mine(stored, owner) -> bool:
+    # Unpairing somebody else's phone is not a thing one account may do to
+    # another. With no accounts on the server, every pairing is "mine".
+    return owner is None or stored.get("user_id") == owner
+
+
+def _this_entry(stored, server_id) -> bool:
+    # Turning notifications off for one app entry must leave the same phone's
+    # other entry for this server paired. An app that sends no server_id
+    # predates per-entry targets and removes as before; a stored target with
+    # none predates them too, and is this device's to remove.
+    if not isinstance(server_id, str) or not server_id:
+        return True
+    return stored.get("server_id") in (None, server_id)
+
+
+def remove_target(pairing_code, relay_url=None, notifications_only=False,
+                  owner=None, server_id=None) -> int:
     if not isinstance(pairing_code, str) or not pairing_code:
         return 0
     if relay_url is None:
@@ -415,7 +504,10 @@ def remove_target(pairing_code, relay_url=None, notifications_only=False) -> int
         remaining = []
         for target in targets:
             matches = (
-                target.get("pairing_code") == pairing_code and matches_relay(target)
+                target.get("pairing_code") == pairing_code
+                and matches_relay(target)
+                and _mine(target, owner)
+                and _this_entry(target, server_id)
             )
             if not matches:
                 remaining.append(target)
@@ -431,7 +523,36 @@ def remove_target(pairing_code, relay_url=None, notifications_only=False) -> int
     return affected
 
 
-def remove_live_activity_target(pairing_code, relay_url=None) -> int:
+def remove_owned_targets(owner) -> int:
+    """Drop every target registered under `owner`; the count removed.
+
+    The account-deletion sweep: pairings for a deleted account would still
+    be delivered to if the relay outlived the account, and they anchor no
+    one — so on deletion they are purged here rather than left dormant.
+    Owner-scoped only: an unowned legacy target has nothing tying it to
+    this account, so it stays (same rule as the web-push store).
+    """
+    if not isinstance(owner, str) or not owner:
+        return 0
+    with _lock:
+        targets = _load_targets()
+        remaining = []
+        for target in targets:
+            if isinstance(target, dict) and target.get("user_id") == owner:
+                continue
+            remaining.append(target)
+        # Count BEFORE the in-place replace below: `_load_targets` hands back
+        # the live cache, so `targets` and `_targets` are the same object and
+        # a length diff taken afterwards would always read zero.
+        removed = len(targets) - len(remaining)
+        if removed:
+            _targets[:] = remaining
+            _save_targets()
+        return removed
+
+
+def remove_live_activity_target(pairing_code, relay_url=None, owner=None,
+                                server_id=None) -> int:
     """Remove only the Live Activity role from a native-app target.
 
     A pairing may carry ordinary completion notifications, Live Activity
@@ -462,6 +583,8 @@ def remove_live_activity_target(pairing_code, relay_url=None) -> int:
                 target.get("pairing_code") == pairing_code
                 and matches_relay(target)
                 and target.get("live_activity") is True
+                and _mine(target, owner)
+                and _this_entry(target, server_id)
             )
             if not matches:
                 remaining.append(target)
@@ -543,18 +666,40 @@ def _post_event(target, payload, path="/event") -> str:
         return "retry" if path == "/live-activity/event" else "error"
 
 
-def _send(payload, path="/event") -> dict:
+_warned_unowned = False
+
+
+def _warn_unowned_once(skipped: int) -> None:
+    global _warned_unowned
+    if _warned_unowned:
+        return
+    _warned_unowned = True
+    print(
+        f"{_LOG_PREFIX} {skipped} paired device(s) are not attached to an "
+        f"account and were skipped. Re-pair them from the app to receive "
+        f"notifications on this server.",
+        flush=True,
+    )
+
+
+def _send(payload, path="/event", owner=None) -> dict:
     if not _REQUESTS_AVAILABLE:
         return {"sent": 0, "pruned": 0, "total": 0}
     with _lock:
-        targets = list(_load_targets())
+        stored = list(_load_targets())
+    targets = _owned_by(stored, owner)
+    skipped = len(stored) - len(targets)
+    if skipped:
+        # Worth saying out loud once: "my phone stopped buzzing after we turned
+        # on accounts" is otherwise an unexplainable silence.
+        _warn_unowned_once(skipped)
     if path == "/live-activity/event":
         targets = [t for t in targets if t.get("live_activity") is True]
         if payload.get("delivery") == "routine":
             now = time.monotonic()
             selected = []
             for target in targets:
-                key = (target.get("relay_url"), target.get("pairing_code"))
+                key = _delivery_key(target)
                 # iOS reports whether the user/system granted frequent Live
                 # Activity updates. Keep the smooth two-second stream when it
                 # did; otherwise reduce only replaceable routine snapshots.
@@ -579,9 +724,9 @@ def _send(payload, path="/event") -> dict:
         if result == "ok":
             sent += 1
         elif result == "gone":
-            dead.append((target.get("relay_url"), target.get("pairing_code")))
+            dead.append(_delivery_key(target))
         elif result == "muted":
-            muted.append((target.get("relay_url"), target.get("pairing_code")))
+            muted.append(_delivery_key(target))
         elif result == "retry":
             retryable += 1
         else:
@@ -595,7 +740,7 @@ def _send(payload, path="/event") -> dict:
             current = _load_targets()
             remaining = [
                 t for t in current
-                if (t.get("relay_url"), t.get("pairing_code")) not in dead
+                if _delivery_key(t) not in dead
             ]
             _targets[:] = remaining
             _save_targets()
@@ -604,7 +749,7 @@ def _send(payload, path="/event") -> dict:
         with _lock:
             current = _load_targets()
             for t in current:
-                if (t.get("relay_url"), t.get("pairing_code")) in muted:
+                if _delivery_key(t) in muted:
                     t["notifications"] = False
             _targets[:] = current
             _save_targets()
@@ -617,7 +762,8 @@ def _send(payload, path="/event") -> dict:
 
 
 def send_completion(prompt_id: str, status: str, outputs: int,
-                    image_url: str = None, click_url: str = None) -> dict:
+                    image_url: str = None, click_url: str = None,
+                    owner=None) -> dict:
     # The relay formats the notification copy from status/prompt_id, so the node
     # only forwards the facts. image_url is passed through for a future iOS
     # Notification Service Extension (rich media); text-only until then.
@@ -626,23 +772,28 @@ def send_completion(prompt_id: str, status: str, outputs: int,
         payload["image"] = image_url
     if click_url:
         payload["url"] = click_url
-    return _send(payload)
+    return _send(payload, owner=owner)
 
 
-def send_live_activity(payload: dict) -> dict:
-    """Send one coalesced ActivityKit state snapshot to every paired device.
+def send_live_activity(payload: dict, owner=None) -> dict:
+    """Send one coalesced ActivityKit state snapshot to the owner's devices.
 
     The caller runs this blocking relay request in an executor. Unlike the
     ordinary completion-notification path, a non-200 result matters most for a
     terminal state: mobile_progress_ws uses the returned counts to retain and
     retry that `done`/`error` snapshot until APNs accepts it.
+
+    `owner` scopes delivery exactly like the completion push: on a multiuser
+    server a Live Activity frame names the workflow and shows its progress, so
+    it goes only to the devices of the account the prompt belongs to. None
+    (no accounts, or an unowned prompt) keeps the historical broadcast.
     """
-    return _send(payload, path="/live-activity/event")
+    return _send(payload, path="/live-activity/event", owner=owner)
 
 
-def send_test() -> dict:
+def send_test(owner=None) -> dict:
     return _send({
         "status": "test",
         "title": "Test notification",
         "body": "Push notifications are working \U0001f389",
-    })
+    }, owner=owner)

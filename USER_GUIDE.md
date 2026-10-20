@@ -1,6 +1,6 @@
 # ComfyUI Mobile User Guide
 
-This guide walks through every feature in the mobile frontend as of `v3.3.10`
+This guide walks through every feature in the mobile frontend as of `v3.4.0`
 
 ## Table of Contents
 
@@ -33,6 +33,15 @@ This guide walks through every feature in the mobile frontend as of `v3.3.10`
   - [How do I find a specific node in my workflow?](#how-do-i-find-a-specific-node-in-my-workflow)
   - [How do I quickly edit a widget I change often?](#how-do-i-quickly-edit-a-widget-i-change-often)
   - [How do I use LoRA Manager with this frontend?](#how-do-i-use-lora-manager-with-this-frontend)
+  - [How do I stack LoRAs with ComfyUI's LoRA nodes?](#how-do-i-stack-loras-with-comfyuis-lora-nodes)
+  - [How do I add reference images to growing inputs?](#how-do-i-add-reference-images-to-growing-inputs)
+  - [How do I draw boxes for FLUX.3 and MOSS layout prompts?](#how-do-i-draw-boxes-for-flux3-and-moss-layout-prompts)
+  - [How do I capture a camera image?](#how-do-i-capture-a-camera-image)
+  - [How do I load a starter workflow?](#how-do-i-load-a-starter-workflow)
+  - [How do I aim a camera with the camera nodes?](#how-do-i-aim-a-camera-with-the-camera-nodes)
+  - [How do I view 3D outputs?](#how-do-i-view-3d-outputs)
+  - [How do I load a workflow from a 3D file?](#how-do-i-load-a-workflow-from-a-3d-file)
+  - [How do I reduce resource use on a slower device or connection?](#how-do-i-reduce-resource-use-on-a-slower-device-or-connection)
   - [How do I skip (bypass) a node in my workflow?](#how-do-i-skip-bypass-a-node-in-my-workflow)
   - [How do I re-run a previous generation?](#how-do-i-re-run-a-previous-generation)
   - [How do I trace which nodes are connected to each other?](#how-do-i-trace-which-nodes-are-connected-to-each-other)
@@ -177,7 +186,7 @@ Only the active tab runs live; the others are held in the background with all th
 <a id="how-do-i-organize-my-saved-workflows-into-folders"></a>
 ### How do I organize my saved workflows into folders?
 
-Open the [Main Menu](#main-menu) → **Load Workflow** → **My Workflows**. Use the `...` menu at the top of the panel and choose **New folder** to create one. To move a workflow (or a folder) into a folder, open that item's `...` menu and choose **Move**, then pick a destination. Tap a folder to open it and use the breadcrumb (or swipe) to navigate back out. Folders sort by their most recently modified workflow, so the ones you're actively using float to the top. See [My Workflows](#my-workflows-folders-bookmarks-hidden) for the full set of folder actions (rename, delete).
+Open the [Main Menu](#main-menu) → **Load Workflow** → **My Workflows**. Use the `...` menu at the top of the panel and choose **New folder** to create one. To move a workflow (or a folder) into a folder, open that item's `...` menu and choose **Move**, then pick a destination. Tap a folder to open it and use the back arrow beside its name to navigate back out. Tap **NAME** / **DATE** to change the sort order; in date order, folders with recently modified workflows rise to the top. See [My Workflows](#my-workflows-folders-bookmarks-hidden) for the full set of folder actions (rename, delete).
 
 <a id="how-do-i-bookmark-a-workflow-or-template-i-use-often"></a>
 ### How do I bookmark a workflow or template I use often?
@@ -211,7 +220,7 @@ If you have more than one workflow open in [tabs](#workflow-tabs), the picker fi
 
 Click on the image you would like to load the workflow for in your outputs list, then click the small button with the workflow icon overlaid on top of the image viewer. This will load the workflow embedded in the image into the workflow panel, you will be prompted to confirm if your current loaded workflow has changes, since any unsaved changes will be lost.
 
-You don't have to open the file first: **Load workflow** is also in the file's `...` menu on the [Outputs Page](#outputs-page). For a video that entry appears only once the app has confirmed there is a workflow it can reach, so a clip saved on its own simply doesn't offer it.
+You don't have to open the file first: **Load workflow** is also in the file's `...` menu on the [Outputs Page](#outputs-page). For a video or a 3D file that entry appears only once the app has confirmed there is a workflow it can reach, so a clip saved on its own simply doesn't offer it. Of the 3D formats, only GLB files saved by **Save GLB** carry their workflow.
 
 > [!NOTE]
 > It is currently possible to load workflows for videos too, but only if one of the following applies:
@@ -282,6 +291,97 @@ Use a workflow that contains supported `(LoraManager)` nodes (for example: Lora 
 Once a workflow with LoraManager nodes is loaded, the frontend will automatically accept incoming updates (`lora_code_update`, `trigger_word_update`, and `lm_widget_update`) and apply them to the matching node automatically. Trigger-word nodes connected to LoRA nodes can be refreshed automatically based on active LoRAs.
 
 You can open the LoRA Manager web UI directly from a LoRA node card's `...` menu using **Open LoRA Manager**.
+
+<a id="how-do-i-stack-loras-with-comfyuis-lora-nodes"></a>
+### How do I stack LoRAs with ComfyUI's LoRA nodes?
+
+ComfyUI 0.40's **Load LoRA (Model)** and **Load LoRA (Text Encoder)** nodes hold a list of LoRAs instead of just one. Each row has its own LoRA picker and **Strength**, plus an **Enabled** / **Disabled** button. Disabled rows turn purple, with their picker dimmed, and are skipped when you run, so you can try a LoRA without removing it. **Toggle All Loras** at the top switches every row at once, **Add Lora** adds a row, and each row's arrows and **Remove** button reorder or delete it.
+
+<a id="how-do-i-add-reference-images-to-growing-inputs"></a>
+### How do I add reference images to growing inputs?
+
+Connect an image to the first reference input and another empty input appears.
+The group's **Add** button creates another input without connecting it; its
+numbered remove buttons remove an input and its link. This works with **Set
+Reference Multi Latent**, Krea reference-image groups and other growing inputs,
+including groups inside a model selector. Optional inputs may stay empty.
+
+<a id="how-do-i-draw-boxes-for-flux3-and-moss-layout-prompts"></a>
+### How do I draw boxes for FLUX.3 and MOSS layout prompts?
+
+Use **Create Bounding Boxes** and tap its canvas (**Edit boxes**) to open the
+full-screen editor. Add a box or draw on the empty canvas; **Draw boxes** lets
+you draw inside an existing box. Drag a box to move it, or a corner
+to resize it. The coordinate fields edit exact pixels; arrow keys move the
+selected box, with Shift for ten-pixel steps. Set its object/text type,
+description, text and up to five palette colors. Use **Duplicate box** to reuse
+a box or **Delete box** to remove it. **Move backward** and **Move forward** set the
+layer order, from background to foreground.
+
+Close the editor to return to the node card; your edits are kept. The card's
+preview lets you scroll the page, while drawing and dragging happen in the editor.
+
+Set **width** and **height** for the canvas; editing these fields rescales the
+boxes to fit. If dimensions come from connected inputs, run the workflow to
+show their values in the editor. A connected **editor_state** supplies the
+layout instead of allowing local edits.
+
+Connect an image to **background** to use it behind the boxes. A connected
+**bboxes** input initializes the editor after execution; edits stay until that
+upstream value changes. Connect the **elements** output to a FLUX.3 or MOSS
+layout-prompt node. Layouts save in the workflow and reopen in the stock editor.
+
+<a id="how-do-i-capture-a-camera-image"></a>
+### How do I capture a camera image?
+
+On **Webcam Capture**, press **Start camera** and allow camera access, then
+**Capture image** to save a still. HTTPS or localhost is required. With
+**capture_on_queue** enabled, a running camera captures a fresh frame for each
+queued run. **Stop camera** keeps the saved still; hiding the page or closing
+the control stops its stream. No camera starts automatically when a workflow opens.
+
+<a id="how-do-i-load-a-starter-workflow"></a>
+### How do I load a starter workflow?
+
+Choose **Menu → Templates → Load starter workflow**. Newer cores provide their
+own starter; older ones get a basic image-generation workflow. Select an
+installed checkpoint before running it.
+
+<a id="how-do-i-aim-a-camera-with-the-camera-nodes"></a>
+### How do I aim a camera with the camera nodes?
+
+**Create Camera Info** and **Compose Camera Angle Prompt** show a 3D scene above their settings. Drag the **cyan** handle to go around the subject, **magenta** to change elevation, and **yellow** to change distance or zoom. The node's numbers update as you drag.
+
+On **Create Camera Info**, choose the camera's **mode**, then select what to edit in **Camera transform**:
+
+- **orbit:** **Orbit / roll** moves around the subject; drag the dot on the ring around the camera to roll it. **Move** moves the point it looks at.
+- **look_at:** **Move camera** moves the camera; **Move** moves the point it looks at. The roll dot is available while moving the camera.
+- **quaternion:** **Move camera** changes its position; **Rotate camera** changes its orientation.
+
+**Handles** shows or hides the current handles. **Look through** fills the preview with the camera's view and moves the handles into the bottom-right corner. In the main view, drag to turn, use two fingers or Shift-drag to pan, and pinch or scroll to zoom. Drag empty space in the corner to turn the corner's view without changing the camera. **Reset view** restores the overview angle, or the corner angle while looking through; it does not reset the node's camera values.
+
+On **Compose Camera Angle Prompt**, connect an **image** to see it on the cube. Switch between **Camera view** and **Object view** to choose how you inspect the angle. The transform menu and Look through controls belong to Create Camera Info.
+
+<a id="how-do-i-view-3d-outputs"></a>
+### How do I view 3D outputs?
+
+3D files (meshes, point clouds and Gaussian splats) from nodes such as **Save GLB** and **Preview 3D** appear on the node card and the queue card with a small preview you can turn by dragging sideways (vertical swipes still scroll the page). Tap **Expand**, or open the file from the [Outputs Page](#outputs-page), to view it full screen in the [Image Viewer](#image-viewer) alongside your other outputs. Drag on the model to orbit and pinch or scroll to zoom; because dragging turns the model, use the arrow buttons (or the arrow keys) to move to the next or previous output. **Reset view**, **Wireframe** (meshes only) and **Animation** (animated models only) sit at the top left. Preview 3D's background image appears behind the model after execution.
+
+On the Outputs Page, 3D files show a rendered thumbnail. Thumbnails are made on your device and stored in your browser, so each device makes its own the first time it shows a file. Files over 20 MB get theirs the first time you open them, rather than being downloaded in the background.
+
+With [low resource mode](#how-do-i-reduce-resource-use-on-a-slower-device-or-connection) on, inline models wait for **Expand** and automatic 3D thumbnails are paused. **Load 3D** and **Load 3D (Advanced)** still require the desktop editor to stage a model; uploading 3D files from mobile is not supported. EXR files are not listed or previewed.
+
+<a id="how-do-i-load-a-workflow-from-a-3d-file"></a>
+### How do I load a workflow from a 3D file?
+
+Find a GLB generated by **Save GLB** on the [Outputs Page](#outputs-page). Open its `...` menu and choose **Load workflow**, or open it in the viewer and tap the workflow button. The action appears after the app confirms the file has an embedded workflow. Other 3D formats do not support this action.
+
+<a id="how-do-i-reduce-resource-use-on-a-slower-device-or-connection"></a>
+### How do I reduce resource use on a slower device or connection?
+
+Open **Main Menu → Server → Preferences** and enable **Low resource mode**. It reduces visual effects and preview downloads, skips model thumbnails, pauses live latent previews, and waits for you to play videos or expand 3D outputs. Downloads still use the original file.
+
+Undo history shrinks to the latest **three steps**; older steps are discarded. Save any workflow versions you want to keep before enabling it. The setting applies to this browser. Turn it off to restore your other saved preferences; discarded undo steps cannot be restored. See [Preferences](#preferences) for the full preset. If you previously turned off Blur effects, the preset is already enabled.
 
 <a id="how-do-i-skip-bypass-a-node-in-my-workflow"></a>
 ### How do I skip (bypass) a node in my workflow?
@@ -382,8 +482,8 @@ The **My Workflows** panel is a browser for the workflows saved on your server, 
   - Create a folder from the panel's top `...` menu → **New folder**.
   - Move a workflow or folder into a folder from its `...` menu → **Move**, then choose a destination.
   - Rename or delete a folder from its `...` menu (**Rename** / **Delete**). Deleting a folder removes the workflows inside it.
-  - Tap a folder to open it; use the breadcrumb or swipe to go back up.
-  - Folders sort by their most recently modified workflow, so active folders rise to the top.
+  - Tap a folder to open it; use the back arrow beside the folder name to go back up.
+  - Tap **NAME** / **DATE** at the top to switch between alphabetical and recent-first sorting. In date order, folders use their most recently modified workflow.
 - **Bookmarks**
   - Toggle a bookmark on any workflow or folder (also in the `...` menu as **Bookmark** / **Remove bookmark**).
   - **Show bookmarks only** at the top of the panel filters the list to your bookmarks.
@@ -446,8 +546,8 @@ A full-screen manager for the custom nodes installed on your ComfyUI server, ope
 
 App-wide toggles, reached from **Server → Preferences**:
 
-- **Fast image previews** — load lightweight WebP previews instead of full-size originals (faster browsing; turn off if an image looks wrong). Downloads always use the original.
-- **Blur effects** — **on by default.** Blurs the background behind menus, overlays and badges. Turn it off for smoother scrolling and taps on slower phones.
+- **Fast image previews** — load cached, resolution-capped WebP previews instead of full-size originals (faster browsing; turn off if an image looks wrong). Low resource mode always uses these previews while enabled. Downloads always use the original.
+- **Low resource mode** — **off by default.** Replaces the former Blur effects switch. Disables blur and motion, skips model thumbnails and background prefetch, caps image previews at 1024 pixels, pauses latent previews, and plays videos on request. Use **Expand** to open an inline 3D preview; automatic 3D thumbnail rendering is paused. Releases inactive panels and keeps the latest three undo steps; older steps are discarded. This preset applies to this browser and leaves server-wide settings unchanged. Turning it off restores your other saved preferences. Existing blur-off settings enable this preset automatically.
 - **Show latent previews** — show a live preview on sampler nodes during generation, with a choice of **Fast (latent2rgb)** or **Accurate (TAESD)**. See [How do I turn on latent previews?](#how-do-i-turn-on-latent-previews).
 - **Restore lost queue after restart** — automatically re-enqueue pending jobs this device saw if ComfyUI restarts and loses them. See [Connection & Recovery](#connection-and-recovery).
 - **Alias filepaths in embedded metadata** — hide input paths and output filename prefixes in shared workflow metadata.
@@ -587,7 +687,8 @@ After each undo or redo a brief banner names the action — **Undo: Create subgr
 The panel then goes there: it scrolls that node, group or subgraph into view and flashes it, entering the subgraph the change was made in if that is where it lives. A step that changed a single widget goes all the way down to **that widget's row**, and the banner names it (**Sampler 4 #4 · steps**).
 
 - **Per tab.** Each open [workflow tab](#workflow-tabs) keeps its own history, so undoing in one never reaches into another.
-- **It survives a refresh.** Each tab's history is stored on the device, so reloading the page — or returning to a tab the browser reclaimed in the background — leaves the last ten steps takeable in both directions.
+- **It survives a refresh.** Each tab's history is stored on the device, so reloading the page — or returning to a tab the browser reclaimed in the background — preserves up to ten steps in each direction, or three in low resource mode.
+- **Low resource mode.** Only the latest three steps are kept while the [preset](#how-do-i-reduce-resource-use-on-a-slower-device-or-connection) is enabled; older history is discarded.
 - **Sensible steps.** Fast successive edits to the same widget coalesce into one entry instead of one per keystroke, and composite actions — [popping a widget out](#popping-a-widget-out), applying a batch of connection changes — record as a single step so undo can't strand you halfway through one.
 - **Runs don't pollute history.** Seed values changed by running the workflow are excluded, so queueing a few generations doesn't bury your actual edits.
 - **What is not in it.** History covers the workflow itself — its nodes, values, wiring, groups and subgraphs. Display choices are not edits and are not undoable: hiding or collapsing an item, bookmarks, connection highlighting, which tab is open, and where you are in a subgraph. Saving, running, and anything on the outputs or queue pages are outside it too.
@@ -957,6 +1058,8 @@ Tap the top-right `...` ellipsis when on the Queue page to access:
 - Completed items show saved outputs and, optionally, preview/temp images.
 - The live **latent preview** renders on the card that's actively generating, so you can watch a run take shape from the queue page (turn it on with **Show latent previews** in [Preferences](#preferences)).
 - Video outputs autoplay when the card is expanded and can be replayed. One video plays at a time across the whole queue, so a long list doesn't try to play everything at once.
+- 3D outputs have an interactive preview and an **Expand** button. See [How do I view 3D outputs?](#how-do-i-view-3d-outputs).
+- In **Low resource mode**, videos wait for you to play them, 3D previews wait for **Expand**, and latent previews are paused.
 - Switching between a card's outputs keeps the previous image on screen until the next one has decoded, so tabbing through a batch doesn't flash blank or shift the layout.
 - Each output carries its **favorite** and **reject** state as a corner icon, and rejected outputs show a badge. Both can be toggled straight from the card — see [Rejected Outputs](#rejected-outputs).
 - Downloaded items display a cloud icon badge.
@@ -986,7 +1089,7 @@ The outputs page is a file browser for your generated outputs and input assets. 
 <a id="source-switching"></a>
 ### Source Switching
 
-- Switch between **Outputs** (generated images/videos) and **Inputs** (uploaded assets) using the outputs `...` menu.
+- Switch between **Outputs** (generated images, videos and 3D files) and **Inputs** (uploaded assets) using the outputs `...` menu.
 - The top bar title updates to show which source is active.
 
 <a id="folder-navigation"></a>
@@ -1085,21 +1188,21 @@ Rejecting is the counterpart to favoriting: a way to mark the results of a run y
 <a id="outputs-viewer"></a>
 ### Outputs Viewer
 
-- Tap any image or video to open a full-screen viewer.
-- Swipe left/right to navigate between files.
-- Action buttons in the viewer allow you to delete, load workflow metadata, or use the image in your workflow.
+- Tap an image, video or 3D file to open the [full-screen viewer](#image-viewer).
+- Swipe left/right through images and videos; use the arrow buttons for 3D files, where dragging turns the model.
+- Viewer actions let you download or delete files, load an embedded workflow when available, or use an image in your workflow.
 - Tap the info button to toggle metadata overlays.
 
 <a id="image-viewer"></a>
 ## Image Viewer
 
-The full-screen viewer supports images and videos while keeping access to the bottom bar of the app available.
+The full-screen viewer supports images, videos and [3D outputs](#how-do-i-view-3d-outputs) while keeping access to the bottom bar of the app available.
 
 <a id="open-and-navigate"></a>
 ### Open and Navigate
 
-- Open by tapping any image or video.
-- Swipe left/right to move between files.
+- Open by tapping an image, video or 3D file, or **Expand** on an inline 3D preview.
+- Swipe left/right to move between images and videos. For 3D outputs, dragging orbits the model; use the arrow buttons or arrow keys to move between files.
 - Swipe down to close the viewer. This only applies when the image fits the screen — while you are zoomed in, or on an image taller than the screen, a downward drag pans instead.
 - The counter in the top-left shows your position in the current list.
 
@@ -1125,17 +1228,17 @@ The image viewer accepts these keys when no text input is focused:
 
 | Key | Action |
 | --- | --- |
-| `←` | Previous (newer) image |
-| `→` | Next (older) image |
+| `←` | Previous (newer) file |
+| `→` | Next (older) file |
 | `Space` | Play or pause the current video |
 | `Escape` | Close the topmost open modal if any; otherwise close the viewer |
 | `Delete` / `Backspace` | Open the delete confirmation dialog (same as the trash button) |
 | `f` | Toggle favorite (same as the heart button) |
 | `x` | Reject the current output, or unfavorite it if it's favorited (same as the ✕ button) |
-| `w` | Load this image's embedded workflow (same as the workflow button) |
+| `w` | Load this file's workflow when available (same as the workflow button) |
 | `u` | Use this image in a workflow LoadImage node (images only) |
 | `i` | Toggle the metadata overlay |
-| `d` | Download the current image to device (iOS opens the share sheet) |
+| `d` | Download the current file to device (iOS opens the share sheet) |
 | `q` | In the viewer: toggle Follow Queue mode. From the Workflow or Queue page (with the viewer closed): open the viewer in Follow Queue mode |
 | `p` | Toggle the pinned widget editor (same as the pin button). If the pinned widget is a text widget, focus drops into the textarea with the caret at the end so you can start typing immediately |
 

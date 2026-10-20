@@ -183,6 +183,7 @@ export interface QueueInfo {
 
 // History types
 export interface HistoryOutputImage {
+  model3d?: import('@/utils/model3d').Model3dMetadata;
   filename: string;
   subfolder: string;
   type: string;

@@ -223,9 +223,26 @@ def get_public_key() -> str:
         return _load_or_create_vapid()["public_key"]
 
 
-def subscription_count() -> int:
+def _owned_subs(subs, owner):
+    """The subset of `subs` (endpoint → subscription) belonging to `owner`.
+
+    Same contract as the app-push `_owned_by`: None means a server with no
+    accounts, where everyone's browsers and this person's browsers are the
+    same set. With an owner, a subscription stored before this file knew about
+    owners has no `user_id` and belongs to nobody — it stays silent until that
+    browser re-subscribes.
+    """
+    if owner is None:
+        return dict(subs)
+    return {
+        endpoint: sub for endpoint, sub in subs.items()
+        if isinstance(sub, dict) and sub.get("user_id") == owner
+    }
+
+
+def subscription_count(owner=None) -> int:
     with _lock:
-        return len(_load_subscriptions())
+        return len(_owned_subs(_load_subscriptions(), owner))
 
 
 def _configured_host(entry: str) -> str:
@@ -304,7 +321,7 @@ def _endpoint_of(subscription) -> str:
     return ""
 
 
-def add_subscription(subscription, locale=None) -> bool:
+def add_subscription(subscription, locale=None, owner=None) -> bool:
     """Store a PushSubscription ({endpoint, keys:{p256dh, auth}}). Idempotent —
     keyed by endpoint, so re-subscribing the same browser updates in place.
     `locale` (optional) is remembered so completion notifications can be sent
@@ -318,21 +335,61 @@ def add_subscription(subscription, locale=None) -> bool:
         stored = dict(subscription)
         if isinstance(locale, str) and locale:
             stored["locale"] = locale
+        # Whose browser this is, so completions reach the person whose job
+        # finished. Preserved on re-subscribe with auth off, so briefly
+        # disabling accounts does not orphan every subscription.
+        existing = subs.get(endpoint)
+        if isinstance(owner, str) and owner:
+            stored["user_id"] = owner
+        elif isinstance(existing, dict) and existing.get("user_id"):
+            stored["user_id"] = existing["user_id"]
         subs[endpoint] = stored
         _save_subscriptions()
     return True
 
 
-def remove_subscription(endpoint: str) -> bool:
+def remove_subscription(endpoint: str, owner=None) -> bool:
     if not isinstance(endpoint, str) or not endpoint:
         return False
     with _lock:
         subs = _load_subscriptions()
-        if endpoint in subs:
+        stored = subs.get(endpoint)
+        if stored is None:
+            return False
+        # Unsubscribing somebody else's browser is not a thing one account may
+        # do to another. With no accounts, every subscription is "mine". A
+        # subscription with NO owner (registered before this file knew about
+        # accounts) is removable by whoever presents its endpoint: the
+        # endpoint is a capability URL only that browser holds, and a
+        # signed-in user must be able to shed their own pre-accounts
+        # registration without it belonging to anybody first.
+        stored_owner = stored.get("user_id") if isinstance(stored, dict) else None
+        if owner is not None and stored_owner and stored_owner != owner:
+            return False
+        del subs[endpoint]
+        _save_subscriptions()
+        return True
+
+
+def remove_owned_subscriptions(owner) -> int:
+    """Drop every subscription belonging to `owner`; the count removed.
+
+    The logout sweep: a shared device must not keep receiving the signed-out
+    account's completions. Owner-scoped only — unowned legacy subscriptions
+    are shed one at a time through remove_subscription, since nothing ties
+    them to this account.
+    """
+    if not isinstance(owner, str) or not owner:
+        return 0
+    with _lock:
+        subs = _load_subscriptions()
+        dead = [endpoint for endpoint, stored in subs.items()
+                if isinstance(stored, dict) and stored.get("user_id") == owner]
+        for endpoint in dead:
             del subs[endpoint]
+        if dead:
             _save_subscriptions()
-            return True
-    return False
+        return len(dead)
 
 
 def _send_one(subscription, payload_json: str, vapid_obj):
@@ -359,7 +416,23 @@ def _send_one(subscription, payload_json: str, vapid_obj):
         return "error"
 
 
-def _send_grouped(build_payload, data=None) -> dict:
+_warned_unowned = False
+
+
+def _warn_unowned_once(skipped: int) -> None:
+    global _warned_unowned
+    if _warned_unowned:
+        return
+    _warned_unowned = True
+    print(
+        f"{_LOG_PREFIX} {skipped} subscription(s) are not attached to an "
+        f"account and were skipped. Re-enable notifications in the app to "
+        f"receive them on this server.",
+        flush=True,
+    )
+
+
+def _send_grouped(build_payload, data=None, owner=None) -> dict:
     """Fan out one notification per locale group so each subscription receives
     copy in its own language. `build_payload(locale)` returns (title, body).
     Blocking — call via loop.run_in_executor from async code."""
@@ -367,7 +440,13 @@ def _send_grouped(build_payload, data=None) -> dict:
         return {"sent": 0, "pruned": 0, "total": 0}
     with _lock:
         vapid = _load_or_create_vapid()
-        subs = dict(_load_subscriptions())  # snapshot; send outside the lock
+        stored = dict(_load_subscriptions())  # snapshot; send outside the lock
+    subs = _owned_subs(stored, owner)
+    skipped = len(stored) - len(subs)
+    if skipped:
+        # Worth saying out loud once: "my notifications stopped after we
+        # turned on accounts" is otherwise an unexplainable silence.
+        _warn_unowned_once(skipped)
     if not subs:
         return {"sent": 0, "pruned": 0, "total": 0}
 
@@ -419,7 +498,8 @@ def _send_grouped(build_payload, data=None) -> dict:
 
 
 def send_completion(prompt_id: str, status: str, outputs: int,
-                    image_url: str = None, click_url: str = None) -> dict:
+                    image_url: str = None, click_url: str = None,
+                    owner=None) -> dict:
     """Build + send the 'generation finished' notification. image_url (optional)
     is shown in the notification; click_url is opened when it's tapped."""
     data = {"prompt_id": prompt_id, "status": status}
@@ -438,13 +518,13 @@ def send_completion(prompt_id: str, status: str, outputs: int,
             body = messages["render_complete_body_empty"]
         return messages["render_complete_title"], body
 
-    return _send_grouped(build_payload, data=data)
+    return _send_grouped(build_payload, data=data, owner=owner)
 
 
-def send_test() -> dict:
+def send_test(owner=None) -> dict:
     """Send a test notification in each subscriber's language."""
     def build_payload(locale):
         messages = _messages_for(locale)
         return messages["test_title"], messages["test_body"]
 
-    return _send_grouped(build_payload, data={"test": True})
+    return _send_grouped(build_payload, data={"test": True}, owner=owner)

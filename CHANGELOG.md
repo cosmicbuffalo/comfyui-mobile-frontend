@@ -1,5 +1,55 @@
 # Changelog
 
+## 3.4.0 - 2026-10-20
+
+Supports ComfyUI 0.40 through 0.42.1. Older ComfyUI versions remain supported.
+
+### Added
+
+- **LoRA stacks.** **Load LoRA (Model)** and **Load LoRA (Text Encoder)** show
+  one row per LoRA with its strength, an on/off switch, reorder and remove,
+  plus **Toggle All Loras** and **Add Lora**.
+- **Camera nodes.** **Create Camera Info** and **Compose Camera Angle Prompt**
+  get an interactive 3D preview with drag handles. **Look through** shows the
+  camera's own view; two fingers or Shift-drag pan it.
+- **3D outputs.** Meshes, point clouds and Gaussian splats show on node and
+  queue cards, open in the media viewer and get rendered thumbnails in
+  Outputs. GLB files from **Save GLB** can load their workflow.
+- **Growing inputs** on nodes such as **Set Reference Multi Latent** and
+  **Krea 3 Image**.
+- **Bounding boxes.** A full-screen editor for **Create Bounding Boxes**.
+- **Webcam capture**, optionally on every queued run.
+- **Starter workflow** in **Templates**.
+- **Low resource mode** in **Preferences**, replacing **Blur effects**: less
+  motion, smaller previews, and media that loads on request.
+- `THIRD_PARTY_NOTICES.md` lists bundled open-source packages and licenses.
+
+### Improved
+
+- Faster workflow edits, model pickers, saved-workflow menus and Outputs
+  browsing, with smaller inline previews.
+- Node text diagnostics show on their cards, also in low resource mode.
+
+### Changed
+
+- Every LoRA node, including LoRA Manager, Power Lora Loader and CR LoRA
+  Stack, shares one layout. A switched-off LoRA turns purple like a bypassed
+  node.
+- Groundwork for an upcoming companion node.
+
+### Fixed
+
+- Output previews follow every run, refresh when a file is replaced, and no
+  longer show stale images after switching tabs.
+- Krea reference groups saved in the desktop editor load correctly.
+- The installed app's manifest loads on servers behind a login (fixes #114).
+
+### Notes
+
+- **Load 3D** and **Load 3D (Advanced)** still need the desktop editor;
+  uploading 3D files from mobile isn't supported yet.
+- EXR files are not listed or previewed.
+
 ## 3.3.10 - 2026-10-15
 
 ### Added

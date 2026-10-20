@@ -1,4 +1,6 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { AutogrowControls } from '@/components/InputControls/AutogrowControls';
+import { useNodeWorkflow } from '@/hooks/useNodeWorkflow';
 import type { HistoryOutputImage, WorkflowInput, WorkflowNode, WorkflowOutput } from '@/api/types';
 import { useWildcards } from '@/hooks/useWildcards';
 import {
@@ -60,6 +62,9 @@ import { NodeCardErrorPopover } from './NodeCard/ErrorPopover';
 import { NodeCardNote } from './NodeCard/Note';
 import { MarkdownContent } from './NodeCard/MarkdownContent';
 import { NodeCardOutputPreview } from './NodeCard/OutputPreview';
+import { isModelOutput } from '@/utils/model3d';
+import { ModelOutputPreview } from '@/components/ThreeView/ModelOutputPreview';
+import { buildViewerImages } from '@/utils/viewerImages';
 import { NodeCardImageComparer } from './NodeCard/ImageComparer';
 import { DenoVideoCompare } from './NodeCard/DenoVideoCompare';
 import { isGetNode, isSetGetNode, isSetNode } from '@/utils/setGetNodes';
@@ -106,6 +111,8 @@ function sortPlaceholderWidgetsByBoundaryOrder<T extends { widgetIndex: number }
 const EMPTY_IMAGES: HistoryOutputImage[] = [];
 type ImageLike = (typeof EMPTY_IMAGES)[number];
 const EMPTY_DURATION_STATS: Record<string, { avgMs: number; count: number }> = {};
+// Retries after 1s, 2s and 4s before a new output is shown even though it failed to load.
+const PREVIEW_PRELOAD_RETRIES = 3;
 
 interface NodeCardProps {
   node: WorkflowNode;
@@ -132,7 +139,7 @@ export const NodeCard = memo(function NodeCard({
 }: NodeCardProps) {
   const { t } = useI18n();
   const nodeTypes = useWorkflowStore((s) => s.nodeTypes);
-  const workflow = useWorkflowStore((s) => s.workflow);
+  const workflow = useNodeWorkflow(node.id);
   const scopeStack = useWorkflowStore((s) => s.scopeStack);
   // Which instance of each enclosing subgraph this card is being read through,
   // so a promoted widget fed from outside the subgraph resolves to the value
@@ -185,7 +192,9 @@ export const NodeCard = memo(function NodeCard({
   const setPinnedWidget = usePinnedWidgetStore((s) => s.setPinnedWidget);
   const bookmarkedItems = useBookmarksStore((s) => s.bookmarkedItems);
   const toggleBookmark = useBookmarksStore((s) => s.toggleBookmark);
-  const nodeImages = useWorkflowStore((s) => s.nodeOutputs[String(node.id)]);
+  const nodeMedia = useWorkflowStore((s) => s.nodeOutputs[String(node.id)]);
+  const nodeImages = useMemo(() => nodeMedia?.filter(output => !isModelOutput(output)), [nodeMedia]);
+  const modelOutputs = useMemo(() => nodeMedia?.filter(isModelOutput) ?? [], [nodeMedia]);
   const comparerOutput = useWorkflowStore((s) => s.nodeComparerOutputs[String(node.id)]);
   const latentPreviewUrl = useWorkflowStore((s) =>
     s.latentPreviews[nodeHierarchicalKey] ?? null
@@ -327,7 +336,12 @@ export const NodeCard = memo(function NodeCard({
     : null;
 
   useEffect(() => {
-    if (!latestImage) return;
+    // Cards are reused across tabs and workflows by node id: a node with no
+    // outputs here must not keep another workflow's image.
+    if (!latestImage) {
+      setPreviewMedia(null);
+      return;
+    }
     if (latestKey === previewKey) return;
     // Videos load through their own seekable playback + poster endpoints. Do
     // not gate them behind `new Image()`: that path can decode only a still (or
@@ -342,14 +356,28 @@ export const NodeCard = memo(function NodeCard({
       latestImage.type,
       latestImage.cacheToken,
     );
-    const img = new Image();
     let cancelled = false;
-    img.onload = () => {
-      if (!cancelled) setPreviewMedia(latestImage);
+    let attempt = 0;
+    let retry: ReturnType<typeof setTimeout> | undefined;
+    const preload = () => {
+      const img = new Image();
+      img.onload = () => {
+        if (!cancelled) setPreviewMedia(latestImage);
+      };
+      // A failed preload used to leave the previous run's image standing in
+      // for this one until a reload. Retry in case the file isn't readable
+      // yet, then show the new output regardless.
+      img.onerror = () => {
+        if (cancelled) return;
+        if (attempt < PREVIEW_PRELOAD_RETRIES) retry = setTimeout(preload, 1000 * 2 ** attempt++);
+        else setPreviewMedia(latestImage);
+      };
+      img.src = nextSrc;
     };
-    img.src = nextSrc;
+    preload();
     return () => {
       cancelled = true;
+      clearTimeout(retry);
     };
   }, [latestKey, previewKey, latestImage, latestOutputIsVideo]);
 
@@ -466,7 +494,6 @@ export const NodeCard = memo(function NodeCard({
   const expandConnectionsSection = useConnectionSectionFoldsStore((s) => s.expand);
   // Bumped when the card is unfolded, to reset any nested in-Parameters folds
   // (e.g. CR-LoRA groups) back to open so unfolding reveals everything.
-  const [unfoldNonce, setUnfoldNonce] = useState(0);
   const startEditSetGetName = useSetGetNameEditStore((s) => s.startEdit);
   const expandParametersSection = useParameterSectionFoldsStore((s) => s.expand);
   const isLoadImageNode = /LoadImage/i.test(node.type);
@@ -1103,7 +1130,7 @@ export const NodeCard = memo(function NodeCard({
           img.type,
           img.cacheToken,
         ),
-        mediaType,
+        mediaType: 'image' as const,
         alt: displayName,
       };
     });
@@ -1506,11 +1533,9 @@ export const NodeCard = memo(function NodeCard({
           setItemCollapsed(nodeHierarchicalKey, !isCollapsed);
           if (!willUnfold) return;
           // Unfolding a node reveals everything: open all of its nested foldable
-          // sections (expand* is idempotent, so already-open ones are untouched)
-          // and reset nested in-Parameters folds (e.g. CR-LoRA groups) to open.
+          // sections (expand* is idempotent, so already-open ones are untouched).
           expandParametersSection(nodeHierarchicalKey);
           expandConnectionsSection(nodeHierarchicalKey);
-          setUnfoldNonce((n) => n + 1);
         }}
         expandedBorderColor={canUseNodeTint ? nodeHeaderBorderColor : undefined}
         rightSlot={selectionMode ? (
@@ -1647,6 +1672,7 @@ export const NodeCard = memo(function NodeCard({
               allOutputs={node.outputs}
             />
 
+            <AutogrowControls node={node} itemKey={nodeHierarchicalKey} disabled={isBypassed} />
             {!isSetGet && <NodeCardParameters
               node={node}
               isBypassed={isBypassed}
@@ -1669,7 +1695,6 @@ export const NodeCard = memo(function NodeCard({
               resolveWidgetValue={resolveWidgetValue}
               showFastGroupConfig={showFastGroupConfig}
               setShowFastGroupConfig={setShowFastGroupConfig}
-              unfoldNonce={unfoldNonce}
               promotableWidgets={promotableWidgets}
               promotedWidgetForms={promotedWidgetForms}
               promotedBoundaryLabels={promotedBoundaryLabels}
@@ -1725,6 +1750,7 @@ export const NodeCard = memo(function NodeCard({
                 setWidgetLabel(nodeHierarchicalKey, inputName, label);
               }}
               hasOutputsBelow={
+                modelOutputs.length > 0 ||
                 Boolean(noteText) ||
                 (showComparer && Boolean(comparerOutput)) ||
                 showImagePreview ||
@@ -1791,7 +1817,10 @@ export const NodeCard = memo(function NodeCard({
             )}
 
             <NodeCardOutputPreview
-              show={showImagePreview || showTextPreview || !!latentPreviewUrl || isBatchOutput}
+              show={showImagePreview || showTextPreview || !!latentPreviewUrl || isBatchOutput || modelOutputs.length > 0}
+              models={modelOutputs.length > 0
+                ? modelOutputs.map((output, index) => <ModelOutputPreview key={`${output.type}/${output.subfolder}/${output.filename}`} output={output} onExpand={() => onImageClick?.(buildViewerImages([{ outputs: { images: modelOutputs }, prompt: null }]), index, false)} />)
+                : null}
               previewImage={effectivePreviewImage}
               previewImages={batchTiles}
               frontendPreview={effectiveFrontendMediaPreview}

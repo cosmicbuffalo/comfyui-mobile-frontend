@@ -49,3 +49,30 @@ def test_same_execution_token_reuses_rendered_preview(tmp_path, monkeypatch):
     assert preview.get_or_render(str(source), 1280) == b"preview"
     assert preview.get_or_render(str(source), 1280) == b"preview"
     assert renders == [True]
+
+
+def test_previews_cache_hard_only_with_a_cache_bust_token(tmp_path, monkeypatch):
+    """An input overwritten in place keeps its URL; without `cb` it must revalidate."""
+    import asyncio
+    from types import SimpleNamespace
+
+    import mobile_routes_media as routes
+
+    class FakeWeb:
+        @staticmethod
+        def Response(status=200, body=None, content_type=None, headers=None, text=None):
+            return SimpleNamespace(status=status, headers=headers or {})
+
+    (tmp_path / 'ref.png').write_bytes(b'pixels')
+    monkeypatch.setattr(routes, 'web', FakeWeb)
+    monkeypatch.setattr(routes, '_source_base_dir', lambda source: str(tmp_path))
+    monkeypatch.setattr(routes._mobile_image_preview, 'get_or_render', lambda path, edge: b'webp')
+    monkeypatch.setattr(routes, '_render_image_thumbnail', lambda path: (b'webp', 'image/webp'))
+
+    def get(handler, **query):
+        return asyncio.run(handler(SimpleNamespace(query=query))).headers['Cache-Control']
+
+    assert get(routes.api_get_preview, filename='ref.png', type='input') == 'no-cache'
+    assert get(routes.api_get_preview, filename='ref.png', type='input', cb='7') == 'public, max-age=86400'
+    assert get(routes.api_get_thumbnail, filename='ref.png', source='input') == 'no-cache'
+    assert get(routes.api_get_thumbnail, filename='ref.png', source='input', cb='7') == 'public, max-age=86400'

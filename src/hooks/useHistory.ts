@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { model3dMetadata, standardize3dOutput } from '@/utils/model3d';
 import * as api from '@/api/client';
 import type { HistoryItem, HistoryOutputImage, Workflow } from '@/api/types';
 import type { PromptQueueRequest } from '@/api/client';
@@ -9,6 +10,7 @@ import { HIDDEN_WORKFLOW_EXTRA_DATA_KEY } from '@/utils/workflowHidden';
 import { useOutputsStore } from '@/hooks/useOutputs';
 import { bustImageCache } from '@/utils/imageCacheBust';
 import { getHistoryImageFileId } from '@/utils/viewerImages';
+import { forgetModelThumbnails } from '@/utils/modelThumbnails';
 import { isMediaMissing, useMissingMediaStore, type MissingMediaRef } from '@/hooks/useMissingMedia';
 import { t } from '@/i18n';
 
@@ -180,12 +182,12 @@ function isHistoryOutputImage(value: unknown): value is HistoryOutputImage {
 
 /**
  * Queue media comes only from the standard UI keys (`images`, `gifs`,
- * `videos`). Extensions publish other file arrays with the same descriptor
+ * `videos`, `3d`). Extensions publish other file arrays with the same descriptor
  * shape — Image Compare's `a_images`/`b_images` temp copies (already handled
- * by the dedicated comparer store), audio, text, 3D — and none of those
+ * by the dedicated comparer store), audio and text — and none of those
  * belong on queue cards.
  */
-const HISTORY_MEDIA_KEYS = ['images', 'gifs', 'videos'] as const;
+const HISTORY_MEDIA_KEYS = ['images', 'gifs', 'videos', '3d'] as const;
 
 function collectHistoryOutputImages(
   outputs: HistoryItem['outputs'],
@@ -195,11 +197,12 @@ function collectHistoryOutputImages(
   const images: HistoryOutputImage[] = [];
   const seen = new Set<string>();
 
-  for (const output of Object.values(outputs)) {
+  for (const rawOutput of Object.values(outputs)) {
+    const output = standardize3dOutput(rawOutput);
     for (const key of HISTORY_MEDIA_KEYS) {
       const value = output[key];
       if (!Array.isArray(value)) continue;
-      for (const candidate of value) {
+      for (const [index, candidate] of value.entries()) {
         if (!isHistoryOutputImage(candidate)) continue;
         const id = getHistoryImageFileId(candidate);
         if (seen.has(id)) continue;
@@ -213,6 +216,7 @@ function collectHistoryOutputImages(
         // it so a new run never inherits the older run's browser cache entry.
         images.push({
           ...candidate,
+          ...(key === '3d' ? { model3d: model3dMetadata(output, index) } : {}),
           cacheToken: candidate.cacheToken ?? executionCacheToken,
         });
       }
@@ -596,6 +600,7 @@ export const useHistoryStore = create<HistoryState>((set, get) => ({
 
   removeOutputImages: async (fileIds) => {
     if (fileIds.length === 0) return;
+    forgetModelThumbnails(fileIds);
     const deleted = new Set(fileIds);
     const history = get().history;
 

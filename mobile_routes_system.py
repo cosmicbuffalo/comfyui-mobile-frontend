@@ -80,7 +80,27 @@ async def api_history_count(request):
     except Exception as e:
         return web.json_response({"error": str(e)}, status=500)
 
+_EVERYONE = object()
+
+
+def _queue_metadata_owner():
+    """Whose queue metadata this request may touch: everyone's without
+    accounts or for an admin, the viewer's own otherwise. None when accounts
+    are on and nobody is signed in."""
+    if not _mobile_auth.is_enabled():
+        return _EVERYONE
+    user = _mobile_auth.current_user()
+    if not user:
+        return None
+    if 'admin' in {role.casefold() for role in (user.get('roles') or [])}:
+        return _EVERYONE
+    return str(user["id"])
+
+
 async def api_queue_metadata_get(request):
+    owner = _queue_metadata_owner()
+    if owner is None:
+        return web.json_response({"error": "Access denied"}, status=403)
     try:
         prompt_ids = request.query.getall('prompt_id', [])
         if not prompt_ids:
@@ -89,12 +109,16 @@ async def api_queue_metadata_get(request):
         metadata = _mobile_queue_metadata.get_prompt_metadata(
             QUEUE_METADATA_CACHE_PATH,
             prompt_ids if prompt_ids else None,
+            None if owner is _EVERYONE else owner,
         )
         return web.json_response({"prompts": metadata})
     except Exception as e:
         return web.json_response({"error": str(e)}, status=500)
 
 async def api_queue_metadata_post(request):
+    owner = _queue_metadata_owner()
+    if owner is None:
+        return web.json_response({"error": "Access denied"}, status=403)
     try:
         data = await request.json()
         prompt_id = data.get('promptId')
@@ -104,12 +128,18 @@ async def api_queue_metadata_post(request):
             QUEUE_METADATA_CACHE_PATH,
             prompt_id.strip(),
             data,
+            None if owner is _EVERYONE else owner,
         )
+        if entry is None:
+            return web.json_response({"error": "Access denied"}, status=403)
         return web.json_response({"prompt": entry})
     except Exception as e:
         return web.json_response({"error": str(e)}, status=500)
 
 async def api_queue_metadata_remap(request):
+    owner = _queue_metadata_owner()
+    if owner is None:
+        return web.json_response({"error": "Access denied"}, status=403)
     try:
         data = await request.json()
         old_prompt_id = data.get('oldPromptId')
@@ -122,6 +152,7 @@ async def api_queue_metadata_remap(request):
             QUEUE_METADATA_CACHE_PATH,
             old_prompt_id.strip(),
             new_prompt_id.strip(),
+            None if owner is _EVERYONE else owner,
         )
         return web.json_response({"prompt": entry})
     except Exception as e:

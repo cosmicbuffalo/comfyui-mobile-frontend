@@ -200,7 +200,7 @@ export async function resolveFilePrefixAliases(aliases: string[]): Promise<Recor
 export interface FileItem {
   id: string;
   name: string;
-  type: 'image' | 'video' | 'folder';
+  type: 'image' | 'video' | 'model' | 'folder';
   previewUrl?: string;
   fullUrl?: string;
   date?: number;
@@ -253,7 +253,7 @@ export type SortMode =
 interface MobileFileItem {
   name: string;
   path: string;
-  type: 'image' | 'video' | 'dir';
+  type: 'image' | 'video' | 'model' | 'dir';
   size?: number;
   date: number;
   createdDate?: number;
@@ -284,7 +284,7 @@ function mediaUrlsForListedFile(
   // may advance for favorite/rename activity without content changing.
   const cacheToken = file.cacheToken ?? `${file.date}-${file.size ?? ''}`;
   return {
-    previewUrl: getMediaThumbnailUrl(file.name, folder, source, cacheToken),
+    previewUrl: file.type === 'model' ? undefined : getMediaThumbnailUrl(file.name, folder, source, cacheToken),
     fullUrl: getImageUrl(file.name, folder, source, cacheToken),
     cacheToken,
   };
@@ -356,7 +356,7 @@ export async function searchUserImagesByPrompt(
     return {
       id: `${source}/${f.path}`,
       name: f.name,
-      type: f.type as 'image' | 'video',
+      type: f.type as 'image' | 'video' | 'model',
       ...mediaUrlsForListedFile(f, folderPath, source),
       date: f.modifiedDate ?? f.date,
       createdDate: f.createdDate ?? f.date,
@@ -368,20 +368,6 @@ export async function searchUserImagesByPrompt(
       rejected: f.rejected,
     };
   });
-}
-
-export async function getUserImageFolders(showHidden?: boolean): Promise<{ input: string[]; output: string[] }> {
-  // Fetch root directory to get top-level folders
-  const outputResult = await fetchMobileFiles('', false, 'output', showHidden);
-  const inputResult = await fetchMobileFiles('', false, 'input', showHidden);
-  const outputFolders = outputResult.files
-    .filter(f => f.type === 'dir')
-    .map(f => f.name);
-  const inputFolders = inputResult.files
-    .filter(f => f.type === 'dir')
-    .map(f => f.name);
-
-  return { input: inputFolders, output: outputFolders };
 }
 
 export async function getUserImages(

@@ -60,6 +60,7 @@ import { resolveWorkflowColor, themeColors } from "@/theme/colors";
 import { stripNodeWidgetIndexMap } from "./helpers";
 import { t } from "@/i18n";
 import { usePinnedWidgetStore } from "@/hooks/usePinnedWidget";
+import { useGenerationSettingsStore } from '@/hooks/useGenerationSettings';
 import { useParameterSectionFoldsStore } from "@/hooks/useParameterSectionFolds";
 import {
   useWorkflowErrorsStore,
@@ -815,9 +816,9 @@ export function createNodeControlActions(set: WorkflowSet, get: WorkflowGet) {
                 0,
                 container.scrollTop + measureOffset(),
               );
-              container.scrollTo({ top: targetTop, behavior: "smooth" });
+              container.scrollTo({ top: targetTop, behavior: useGenerationSettingsStore.getState().lowResourceMode ? 'auto' : 'smooth' });
             } else {
-              anchor.scrollIntoView({ behavior: "smooth", block: "start" });
+              anchor.scrollIntoView({ behavior: useGenerationSettingsStore.getState().lowResourceMode ? 'auto' : 'smooth', block: "start" });
             }
           };
 

@@ -1,4 +1,4 @@
-import { Suspense, useRef, useState, useEffect, useCallback } from 'react';
+import { Suspense, useRef, useState, useEffect } from 'react';
 import { BackendStatusOverlay } from './BackendStatusOverlay';
 import { LoadingSpinner } from './LoadingSpinner';
 import { useConnectionStatusStore } from '@/hooks/useConnectionStatus';
@@ -9,6 +9,7 @@ import { MenuLegend } from './AppMenu/MenuLegend';
 import { MainMenuPanel } from './AppMenu/MainMenuPanel';
 import { PasteJsonPanel } from './AppMenu/PasteJsonPanel';
 import { SaveWorkflowPanel } from './AppMenu/SaveWorkflowPanel';
+import { useUserWorkflowList } from '@/hooks/useUserWorkflowList';
 import { getDisplayName } from './AppMenu/userWorkflowHelpers';
 import { isWorkflowModified, useWorkflowStore } from '@/hooks/useWorkflow';
 import { getWorkflowForPersistence } from '@/utils/workflowPersistence';
@@ -23,7 +24,6 @@ import { lazyPanel } from '@/components/lazyPanel';
 import type { CustomNodeFilterValue } from '@/utils/customNodesManager';
 import type { Workflow } from '@/api/types';
 import {
-  listUserWorkflows,
   loadUserWorkflow,
   restartServer,
   fetchSystemStats,
@@ -33,7 +33,7 @@ import {
   getCoreWorkflowTemplates,
   getWorkflowTemplates,
   loadTemplateWorkflow,
-  type UserDataFile,
+  loadDefaultWorkflow,
   type CoreTemplateCategory,
   type WorkflowTemplates,
   type SystemStats,
@@ -151,7 +151,7 @@ export function AppMenu({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<TabType>('menu');
-  const [userWorkflows, setUserWorkflows] = useState<UserDataFile[]>([]);
+  const userWorkflowList = useUserWorkflowList(open && activeTab === 'userWorkflows');
   const [templates, setTemplates] = useState<WorkflowTemplates>({});
   const [coreTemplates, setCoreTemplates] = useState<CoreTemplateCategory[]>([]);
   const [loading, setLoading] = useState(false);
@@ -215,25 +215,6 @@ export function AppMenu({
     }
   }, [open, currentFilename]);
 
-  // Fetch user workflows. `silent` re-lists without flipping the loading
-  // spinner — used to refresh after a folder/workflow mutation.
-  const refreshUserWorkflows = useCallback((silent = false) => {
-    if (!silent) setLoading(true);
-    listUserWorkflows()
-      .then(setUserWorkflows)
-      .catch((err) => setError(err.message))
-      .finally(() => {
-        if (!silent) setLoading(false);
-      });
-  }, []);
-
-  // Fetch user workflows when tab opens
-  useEffect(() => {
-    if (activeTab === 'userWorkflows') {
-      refreshUserWorkflows();
-    }
-  }, [activeTab, refreshUserWorkflows]);
-
   // Fetch templates when tab opens. The two catalogs are independent: the core
   // one resolves to [] on a server without the templates package, and a failed
   // custom-node fetch must not hide the core catalog.
@@ -260,10 +241,10 @@ export function AppMenu({
   }, [activeTab, locale]);
 
   // Fetch system stats when the menu's main panel is showing, refreshing
-  // periodically. Pause while the custom-nodes modal covers the menu — the stats
-  // aren't visible there, so polling system_stats/cpu-stats every 5s is wasted.
+  // periodically. Submenus and the custom-nodes modal cover these stats, so
+  // polling system_stats/cpu-stats every 5s there only competes with their work.
   useEffect(() => {
-    if (!open || customNodesOpen) return;
+    if (!open || customNodesOpen || activeTab !== 'menu') return;
     let cancelled = false;
     const load = () => {
       fetchSystemStats()
@@ -276,7 +257,7 @@ export function AppMenu({
     load();
     const interval = setInterval(load, 5000);
     return () => { cancelled = true; clearInterval(interval); };
-  }, [open, customNodesOpen]);
+  }, [open, customNodesOpen, activeTab]);
 
   // Helper for haptic feedback
   const vibrate = (pattern: number | number[]) => {
@@ -356,6 +337,18 @@ export function AppMenu({
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleLoadDefault = async () => {
+    try {
+      setLoading(true);
+      const types = useWorkflowStore.getState().nodeTypes;
+      if (!types) throw new Error(t('Node types are still loading. Try again in a moment.'));
+      const data = await loadDefaultWorkflow(types);
+      loadWorkflow(data, t('Starter workflow'), { fresh: true });
+      setError(null); onClose(); vibrate(10);
+    } catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); }
+    finally { setLoading(false); }
   };
 
   const handleLoadFileWorkflow = async (
@@ -583,13 +576,13 @@ export function AppMenu({
       {activeTab === 'userWorkflows' && (
         <Suspense fallback={<DeferredMenuContent />}>
           <UserWorkflowsPanel
-            error={error}
-            loading={loading}
-            userWorkflows={userWorkflows}
+            error={error ?? userWorkflowList.error}
+            loading={userWorkflowList.loading}
+            userWorkflows={userWorkflowList.files}
             onBack={() => setActiveTab('menu')}
-            onDismissError={() => setError(null)}
+            onDismissError={() => { setError(null); userWorkflowList.dismissError(); }}
             onLoadWorkflow={handleLoadUserWorkflow}
-            onRefresh={() => refreshUserWorkflows(true)}
+            onRefresh={userWorkflowList.refresh}
           />
         </Suspense>
       )}
@@ -610,6 +603,7 @@ export function AppMenu({
             loading={loading}
             templates={templates}
             coreTemplates={coreTemplates}
+            onLoadDefault={handleLoadDefault}
             onBack={() => setActiveTab('menu')}
             onDismissError={() => setError(null)}
             onLoadTemplate={handleLoadTemplate}

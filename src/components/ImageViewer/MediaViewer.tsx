@@ -1,8 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { lazyPanel } from '@/components/lazyPanel';
 import { createPortal } from 'react-dom';
 import { useTextareaFocus } from '@/hooks/useTextareaFocus';
 import { useBodyScrollLock } from '@/hooks/useBodyScrollLock';
 import { useWorkflowStore } from '@/hooks/useWorkflow';
+import { useGenerationSettingsStore } from '@/hooks/useGenerationSettings';
+import { getScreenPreviewUrl } from '@/api/client/base';
 import { useImageViewerStore } from '@/hooks/useImageViewer';
 import { useI18n } from '@/i18n';
 import { usePinnedWidgetStore } from '@/hooks/usePinnedWidget';
@@ -19,11 +22,13 @@ import { VideoPlaybackControls } from './MediaViewer/VideoPlaybackControls';
 import { PlaybackSpeedControls } from './MediaViewer/PlaybackSpeedControls';
 import { CloseButton } from '@/components/buttons/CloseButton';
 import { OverlayCircleButton } from '@/components/buttons/OverlayCircleButton';
-import { HeartIcon, RejectedIcon, SpeakerWaveIcon, SpeakerXIcon } from '@/components/icons';
+import { ChevronLeftBoldIcon, HeartIcon, RejectedIcon, SpeakerWaveIcon, SpeakerXIcon } from '@/components/icons';
 import { MenuIcon } from '@/components/icons/MenuIcon';
 import { extractMetadata } from '@/utils/metadata';
 import { isVideoFilename } from '@/utils/media';
-import { canSaveToPhotosInNativeApp } from '@/utils/nativeSave';
+import { isModelFilename } from '@/utils/model3d';
+import { hasModelThumbnail, saveModelThumbnail } from '@/utils/modelThumbnails';
+import { canSaveFile, canSaveToPhotosInNativeApp } from '@/utils/nativeSave';
 import {
   getImageMetadata,
   getMediaThumbnailUrlFromAssetUrl,
@@ -31,6 +36,7 @@ import {
 } from '@/api/client';
 import { resolveFilePath, resolveFileSource } from '@/utils/workflowOperations';
 import {
+  canCarryWorkflow,
   getCachedWorkflowAvailability,
   probeWorkflowAvailability,
 } from '@/utils/workflowAvailability';
@@ -116,8 +122,33 @@ function isEditableElement(element: HTMLElement | null): boolean {
 }
 
 function getFullScreenImageSrc(item: ViewerImage): string {
+  if (useGenerationSettingsStore.getState().lowResourceMode) {
+    // A viewer can already be open when the preset is enabled. Rebuild its
+    // display URL from the original, including JPEGs normally shown directly.
+    try {
+      const url = new URL(item.src, window.location.href);
+      if (url.origin === window.location.origin && url.pathname.endsWith('/view')) return getScreenPreviewUrl(item.src);
+    } catch { /* Non-URL viewer sources keep their existing display path. */ }
+  }
   const name = item.filename ?? item.file?.name ?? item.src;
   return /\.jpe?g(?:$|[?#])/i.test(name) ? item.src : (item.displaySrc ?? item.src);
+}
+
+const ModelViewer = lazyPanel(() => import('@/components/ThreeView/ModelViewer'), { prefetch: false });
+
+function isViewerModel(item: ViewerImage): boolean {
+  const name = item.filename ?? item.file?.name ?? item.alt ?? item.src ?? '';
+  return item.mediaType === 'model' || item.file?.type === 'model' || item.model3d !== undefined || isModelFilename(name);
+}
+
+/** An image: the viewer decodes, sizes and preloads only these. */
+function isViewerStill(item: ViewerImage): boolean {
+  return !isViewerVideo(item) && !isViewerModel(item);
+}
+
+/** Pointer/wheel input inside a 3D canvas orbits the model, not the viewer. */
+function isModelViewerEvent(event: { target: EventTarget | null }): boolean {
+  return event.target instanceof Element && event.target.closest('[data-model-viewer]') !== null;
 }
 
 function isViewerVideo(item: ViewerImage): boolean {
@@ -174,6 +205,7 @@ export function MediaViewer({
   zoomResetKey,
 }: MediaViewerProps) {
   const { t } = useI18n();
+  const lowResourceMode = useGenerationSettingsStore((s) => s.lowResourceMode);
   const overlayRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const imageRef = useRef<HTMLImageElement>(null);
@@ -181,6 +213,9 @@ export function MediaViewer({
   // zooms/pans in lockstep with the base image instead of catching up on render.
   const compareImageRef = useRef<HTMLImageElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
+  useEffect(() => {
+    if (lowResourceMode) videoRef.current?.pause();
+  }, [lowResourceMode]);
   const naturalSizeRef = useRef<{ width: number; height: number } | null>(null);
   const adjacentPreloadsRef = useRef<
     Map<string, { image: HTMLImageElement; itemIndex: number }>
@@ -253,7 +288,7 @@ export function MediaViewer({
   const [workflowAvailableById, setWorkflowAvailableById] = useState<Record<string, boolean>>({});
   // Holds the failed element's MediaError code (null when it gave none).
   const [videoError, setVideoError] = useState<{ code: number | null } | null>(null);
-  const [videoPlaying, setVideoPlaying] = useState(true);
+  const [videoPlaying, setVideoPlaying] = useState(!lowResourceMode);
   const [videoMuted, setVideoMuted] = useState(true);
   const [videoCurrentTime, setVideoCurrentTime] = useState(0);
   const [videoDuration, setVideoDuration] = useState(0);
@@ -354,6 +389,7 @@ export function MediaViewer({
 
   const currentItem = index >= 0 ? (items[index] ?? items[0] ?? null) : null;
   const isVideo = Boolean(currentItem && isViewerVideo(currentItem));
+  const isModel = Boolean(currentItem && isViewerModel(currentItem));
 
   // Double-buffered display: keep the previously rendered item visible until the
   // next image is decoded, then swap atomically with its computed transform so
@@ -374,7 +410,7 @@ export function MediaViewer({
   // finished decoding yet (these full-res outputs can be tens of MB). A short
   // delay keeps fast/cached images from flashing a spinner.
   const currentFullSrc =
-    currentItem && !isViewerVideo(currentItem)
+    currentItem && isViewerStill(currentItem)
       ? getFullScreenImageSrc(currentItem)
       : null;
   const isCurrentImageLoading = Boolean(
@@ -391,14 +427,15 @@ export function MediaViewer({
     return () => window.clearTimeout(timer);
   }, [isCurrentImageLoading]);
   const renderIsVideo = Boolean(renderItem && isViewerVideo(renderItem));
+  const renderIsModel = Boolean(renderItem && isViewerModel(renderItem));
   // A/B comparison mode: when the item carries a `comparison`, render both images
   // sharing one transform with a wipe divider. The item's `src` is image B (the
   // base that drives sizing/load), so the existing load machinery is untouched;
   // image A is the clipped overlay. `isComparisonMode` (off currentItem) gates
   // the overlay to just the X button.
-  const renderComparison = !renderIsVideo ? renderItem?.comparison ?? null : null;
+  const renderComparison = !renderIsVideo && !renderIsModel ? renderItem?.comparison ?? null : null;
   const isComparisonMode = Boolean(currentItem?.comparison);
-  const renderFullSrc = renderItem && !renderIsVideo ? getFullScreenImageSrc(renderItem) : null;
+  const renderFullSrc = renderItem && !renderIsVideo && !renderIsModel ? getFullScreenImageSrc(renderItem) : null;
   const fileId = currentItem?.file?.id ?? null;
   const fetchedMetadata = fileId ? metadataById[fileId] : undefined;
   // A video file carries no readable generation metadata of its own; what the
@@ -407,7 +444,7 @@ export function MediaViewer({
   // by the queue/history list builders from the run's own prompt) is honestly
   // the video's, so a video never shows fetched metadata.
   const metadata = currentItem?.metadata
-    ?? (isVideo ? null : fetchedMetadata === undefined ? undefined : fetchedMetadata);
+    ?? (isVideo || isModel ? null : fetchedMetadata === undefined ? undefined : fetchedMetadata);
   const durationLabel = formatDuration(currentItem?.durationSeconds);
   const displayName = currentItem?.filename || currentItem?.alt || t('Output');
   /**
@@ -423,7 +460,8 @@ export function MediaViewer({
   // metadata; with nothing honest to show, a video gets no metadata UI at all
   // (no button, no overlay) rather than a "no metadata" placeholder for a
   // sibling image's data it refuses to claim.
-  const metadataToggleAvailable = showMetadataToggle && (!isVideo || Boolean(currentItem?.metadata));
+  const ownMetadata = Boolean(currentItem?.metadata && Object.keys(currentItem.metadata).length > 0);
+  const metadataToggleAvailable = showMetadataToggle && ((!isVideo && !isModel) || ownMetadata);
   const canToggleMetadata = metadataToggleAvailable;
   const metadataIsLoading = fileId ? Boolean(metadataLoading[fileId]) : false;
   const workflowAvailabilityKnown = fileId ? Object.prototype.hasOwnProperty.call(workflowAvailableById, fileId) : false;
@@ -698,7 +736,7 @@ export function MediaViewer({
     currentItem?.file && onToggleFavorite,
   );
   const canRejectCurrent = Boolean(currentItem?.file && onReject);
-  const canDownloadCurrent = Boolean(currentItem?.src && onDownload);
+  const canDownloadCurrent = Boolean(currentItem?.src && onDownload && canSaveFile(currentItem.filename ?? currentItem.file?.name ?? ''));
   const canPickCurrent = Boolean(
     currentItem && pickAction && (pickAction.canPick?.(currentItem) ?? true),
   );
@@ -766,7 +804,12 @@ export function MediaViewer({
   }, [open, index, items, isMissingItem, findViewableIndex, onIndexChange]);
 
   useEffect(() => {
-    if (!open || index < 0 || items.length <= 1) {
+    if (lowResourceMode || !open || index < 0 || items.length <= 1) {
+      for (const { image } of adjacentPreloadsRef.current.values()) {
+        image.onload = null;
+        image.onerror = null;
+        image.removeAttribute('src');
+      }
       adjacentPreloadsRef.current.clear();
       return;
     }
@@ -782,7 +825,7 @@ export function MediaViewer({
         candidateIndex += direction
       ) {
         const candidate = items[candidateIndex];
-        if (!candidate || isViewerVideo(candidate)) continue;
+        if (!candidate || !isViewerStill(candidate)) continue;
         // A slot already known to be deleted is one the user will be stepped
         // over, so preload past it rather than spending a slot on it.
         if (isMissingItem(candidate)) continue;
@@ -797,7 +840,7 @@ export function MediaViewer({
     >();
     const currentIndexBySrc = new Map<string, number>();
     items.forEach((item, itemIndex) => {
-      if (isViewerVideo(item)) return;
+      if (!isViewerStill(item)) return;
       currentIndexBySrc.set(getFullScreenImageSrc(item), itemIndex);
     });
     for (const [src, preload] of adjacentPreloadsRef.current) {
@@ -837,7 +880,7 @@ export function MediaViewer({
       nextPreloads.set(src, { image: preload, itemIndex });
     }
     adjacentPreloadsRef.current = nextPreloads;
-  }, [open, index, items, currentItem, markLoaded, isMissingItem, probeMissingMedia]);
+  }, [lowResourceMode, open, index, items, currentItem, markLoaded, isMissingItem, probeMissingMedia]);
 
   /* eslint-disable react-hooks/set-state-in-effect */
   useEffect(() => {
@@ -860,10 +903,8 @@ export function MediaViewer({
       return;
     }
 
-    // Videos handle their own loading state via <video>; swap immediately.
-    const displayedIsVideoItem = isViewerVideo(displayed);
-    const currentIsVideoItem = isViewerVideo(currentItem);
-    if (displayedIsVideoItem || currentIsVideoItem) {
+    // Videos and 3D models handle their own loading state; swap immediately.
+    if (!isViewerStill(displayed) || !isViewerStill(currentItem)) {
       setDisplayedItem(currentItem);
       return;
     }
@@ -966,6 +1007,8 @@ export function MediaViewer({
     const id = fileId;
     if (!file || !id) return;
     if (workflowAvailabilityKnown) return;
+    // Other 3D formats carry no workflow; the server would only answer 400.
+    if (currentItem && isViewerModel(currentItem) && !canCarryWorkflow(file.name)) return;
 
     const cached = getCachedWorkflowAvailability(file);
     if (cached !== undefined) {
@@ -1000,7 +1043,7 @@ export function MediaViewer({
   /* eslint-disable react-hooks/set-state-in-effect */
   useEffect(() => {
     setVideoError(null);
-    setVideoPlaying(true);
+    setVideoPlaying(!lowResourceMode);
     setVideoMuted(true);
     // Metadata can arrive before this passive effect. Read the mounted video
     // so the reset cannot erase its duration and leave the timeline disabled.
@@ -1014,7 +1057,7 @@ export function MediaViewer({
     }
     // Clear the resolution subtitle until the new media reports its dimensions.
     setNaturalSize(null);
-  }, [renderItem?.src, renderIsVideo]);
+  }, [renderItem?.src, renderIsVideo, lowResourceMode]);
   /* eslint-enable react-hooks/set-state-in-effect */
 
   // The playback rate lives in the viewer store rather than on an individual
@@ -1103,7 +1146,7 @@ export function MediaViewer({
           return;
         case 'u':
         case 'U':
-          if (!isVideo && currentItem) {
+          if (!isVideo && !isModel && currentItem) {
             event.preventDefault();
             handleLoadInWorkflowClick();
           }
@@ -1169,6 +1212,7 @@ export function MediaViewer({
     currentItem,
     currentIsFavorited,
     isVideo,
+    isModel,
     canFavoriteCurrent,
     canRejectCurrent,
     canLoadWorkflow,
@@ -1199,6 +1243,8 @@ export function MediaViewer({
     // Never fetch for a video: the endpoint answers with the same-basename
     // sibling image's metadata, which is not this file's to show.
     if (isViewerVideo(currentItem)) return;
+    // A 3D file carries no image metadata; only run-sourced metadata applies.
+    if (isViewerModel(currentItem)) return;
     if (!fileId) return;
     if (metadata !== undefined || metadataIsLoading) return;
 
@@ -1409,6 +1455,10 @@ export function MediaViewer({
   };
 
   const handlePointerDown = (event: React.PointerEvent) => {
+    if (isModelViewerEvent(event)) {
+      resetIdleTimer();
+      return;
+    }
     (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
 
     const pointers = getActivePointers(containerRef.current);
@@ -1443,6 +1493,7 @@ export function MediaViewer({
   };
 
   const handlePointerMove = (event: React.PointerEvent) => {
+    if (isModelViewerEvent(event)) return;
     const pointers = getActivePointers(containerRef.current);
     if (!pointers.has(event.pointerId)) return;
     pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
@@ -1490,6 +1541,7 @@ export function MediaViewer({
   };
 
   const handlePointerUp = (event: React.PointerEvent) => {
+    if (isModelViewerEvent(event)) return;
     const pointers = getActivePointers(containerRef.current);
     pointers.delete(event.pointerId);
 
@@ -1576,6 +1628,7 @@ export function MediaViewer({
   };
 
   const handleWheel = useCallback((event: WheelEvent) => {
+    if (isModelViewerEvent(event)) return;
     // No modifier: pan with the scroll wheel / trackpad (desktop). clampTranslate
     // keeps a fit image centered, so this only moves the image when zoomed in.
     if (!event.ctrlKey) {
@@ -1738,7 +1791,23 @@ export function MediaViewer({
           </div>
         ) : renderItem && (
           <>
-            {renderIsVideo ? (
+            {renderIsModel ? (
+              <div className="absolute inset-0">
+                <Suspense fallback={<div className="absolute inset-0 grid place-items-center text-sm text-white/70">{t('Loading 3D viewer…')}</div>}>
+                  <ModelViewer
+                    key={renderItem.src}
+                    src={renderItem.src}
+                    filename={renderItem.filename ?? renderItem.file?.name ?? ''}
+                    metadata={renderItem.model3d}
+                    onError={() => probeMissingMedia(renderItem)}
+                    onCapture={renderItem.file?.cacheToken && !hasModelThumbnail(renderItem.file)
+                      ? (snapshot) => saveModelThumbnail(renderItem.file!, snapshot)
+                      : undefined}
+                    toolbarClassName="top-14 left-3"
+                  />
+                </Suspense>
+              </div>
+            ) : renderIsVideo ? (
               <>
                 <video
                   // Key by src so swiping to another video remounts the element
@@ -1748,11 +1817,11 @@ export function MediaViewer({
                   ref={videoRef}
                   src={getPlayableVideoUrl(renderItem.src)}
                   poster={getMediaThumbnailUrlFromAssetUrl(renderItem.src)}
-                  autoPlay
+                  autoPlay={!lowResourceMode}
                   loop
                   muted={videoMuted}
                   playsInline
-                  preload="auto"
+                  preload={lowResourceMode ? 'none' : 'auto'}
                   className="w-full h-auto block select-none relative"
                   style={{
                     transform: imageTransform,
@@ -1967,6 +2036,30 @@ export function MediaViewer({
             separately above) — no header/actions/metadata. */}
         {currentItem && !isComparisonMode && (
           <>
+            {/* Drags on a 3D model orbit it, so swiping can't change items there. */}
+            {isModel && items.length > 1 && (
+              <>
+                <div className="absolute left-3 top-1/2 -translate-y-1/2">
+                  <OverlayCircleButton
+                    onClick={() => { resetIdleTimer(); stepIndex(-1); }}
+                    disabled={index <= 0}
+                    ariaLabel={t('Previous')}
+                    icon={<ChevronLeftBoldIcon className="h-5 w-5" />}
+                  />
+                </div>
+                <div
+                  className="absolute top-1/2 -translate-y-1/2"
+                  style={{ right: rightControlsInset ? `calc(0.75rem + ${rightControlsInset})` : '0.75rem' }}
+                >
+                  <OverlayCircleButton
+                    onClick={() => { resetIdleTimer(); stepIndex(1); }}
+                    disabled={index >= items.length - 1}
+                    ariaLabel={t('Next')}
+                    icon={<ChevronLeftBoldIcon className="h-5 w-5 rotate-180" />}
+                  />
+                </div>
+              </>
+            )}
             {isVideo && (
               <div
                 className="video-mute-toggle-container absolute top-14"
@@ -1987,12 +2080,12 @@ export function MediaViewer({
               index={index}
               total={items.length}
               displayName={displayName}
-              resolution={naturalSize}
+              resolution={isModel ? null : naturalSize}
               rightInset={rightControlsInset}
               selectionCount={selectionMode ? selectedCount : null}
             />
             <MediaViewerActions
-              isVideo={isVideo}
+              canUseInWorkflow={!isVideo && !isModel}
               canLoadWorkflow={canLoadWorkflow}
               showMetadataToggle={metadataToggleAvailable}
               canToggleMetadata={canToggleMetadata}

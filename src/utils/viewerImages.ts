@@ -2,6 +2,7 @@ import { getImageUrl, getImagePreviewUrl, type FileItem } from '@/api/client';
 import type { Workflow } from '@/api/types';
 import { extractMetadata } from '@/utils/metadata';
 import { getMediaType, type MediaType } from '@/utils/media';
+import type { Model3dMetadata } from '@/utils/model3d';
 
 export interface ViewerImage {
   src: string;
@@ -25,6 +26,8 @@ export interface ViewerImage {
   // sharing one zoom/pan transform. `src`/`displaySrc` above point at image A so
   // non-comparer code paths still have a usable single image.
   comparison?: ViewerComparison;
+  /** Camera/placement a 3D output was saved with. */
+  model3d?: Model3dMetadata;
 }
 
 export interface ViewerComparison {
@@ -39,6 +42,7 @@ export interface HistoryImageSource {
   subfolder: string;
   type: string;
   cacheToken?: string | number;
+  model3d?: Model3dMetadata;
 }
 
 export function getHistoryImageFileId(image: HistoryImageSource): string {
@@ -107,15 +111,16 @@ export function buildViewerImages(
       if (onlyOutput && img.type !== 'output') return;
       if (itemHasOutput && img.type !== 'output') return;
       const altText = typeof alt === 'function' ? alt(imageIndex, itemIndex) : alt;
-      const mediaType = getMediaType(img.filename);
-      const fileType = mediaType === 'video' ? 'video' : 'image';
+      // Anything in the standard 3d bucket is a model, whatever its extension.
+      const mediaType = img.model3d ? 'model' : getMediaType(img.filename);
       images.push({
         src: getImageUrl(img.filename, img.subfolder, img.type, img.cacheToken),
-        displaySrc: fileType === 'image'
+        displaySrc: mediaType === 'image'
           ? getImagePreviewUrl(img.filename, img.subfolder, img.type, img.cacheToken)
           : undefined,
         alt: altText,
         mediaType,
+        model3d: img.model3d,
         metadata,
         workflow: item.workflow,
         executedPrompt: item.prompt,
@@ -126,7 +131,7 @@ export function buildViewerImages(
         file: {
           id: getHistoryImageFileId(img),
           name: img.filename,
-          type: fileType,
+          type: mediaType,
           fullUrl: getImageUrl(img.filename, img.subfolder, img.type, img.cacheToken),
           hidden: item.hidden,
         }
@@ -169,7 +174,7 @@ export function ensureViewerImageIdentity(item: ViewerImage): ViewerImage {
     file: item.file ?? {
       id: fileId,
       name,
-      type: mediaType === 'video' ? 'video' : 'image',
+      type: mediaType,
       fullUrl: item.src,
     },
   };

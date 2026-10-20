@@ -9,6 +9,8 @@ import { useWorkflowStore } from '../useWorkflow';
 import { useWorkflowUndoStore } from '../useWorkflowUndo';
 import { useWorkflowClipboardStore } from '../useWorkflowClipboard';
 import { useLoraManagerStore } from '../useLoraManager';
+import core042 from '@/utils/__tests__/fixtures/core042Nodes.json';
+import { buildDefaultConnectionInputs, buildDefaultWidgetValues } from '@/utils/workflowInputs';
 
 
 /**
@@ -301,6 +303,16 @@ const CASES: Record<string, Case> = {
   updateNodeWidgets: {
     setup: () => load(rootWorkflow()),
     run: () => store().updateNodeWidgets(key(2), { 0: 16 }),
+  },
+  setNodeBoundingBoxResult: {
+    setup: () => {
+      const def = core042.CreateBoundingBoxes as unknown as NodeTypes[string];
+      const wf = rootWorkflow();
+      wf.nodes.push(node(99, 'CreateBoundingBoxes', { inputs: buildDefaultConnectionInputs(def).map(input => ({ ...input, link: null })), widgets_values: buildDefaultWidgetValues(def) }));
+      load(wf);
+      useWorkflowStore.setState({ nodeTypes: { ...useWorkflowStore.getState().nodeTypes, CreateBoundingBoxes: def } });
+    },
+    run: () => store().setNodeBoundingBoxResult(key(99), { input_bboxes: [{ x: 10, y: 20, width: 50, height: 60 }] }),
   },
   updateSubgraphInnerNodeWidget: {
     setup: () => load(subgraphWorkflow()),

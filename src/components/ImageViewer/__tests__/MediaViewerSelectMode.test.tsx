@@ -16,7 +16,7 @@ describe('MediaViewerActions in select mode', () => {
   let root: Root;
 
   const baseProps = {
-    isVideo: false,
+    canUseInWorkflow: true,
     canLoadWorkflow: true,
     showMetadataToggle: true,
     canToggleMetadata: true,

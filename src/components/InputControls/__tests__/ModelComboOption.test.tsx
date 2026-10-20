@@ -3,6 +3,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { LoraManagerModel } from '@/api/loraManagerClient';
 import { ModelRowContent } from '@/components/InputControls/ModelComboOption';
+import { useGenerationSettingsStore } from '@/hooks/useGenerationSettings';
 
 function modelWithPreview(previewUrl: string): LoraManagerModel {
   return {
@@ -29,8 +30,17 @@ describe('ModelRowContent previews', () => {
   });
 
   afterEach(async () => {
+    useGenerationSettingsStore.setState({ lowResourceMode: false });
     await act(async () => root.unmount());
     container.remove();
+  });
+
+  it('keeps names and badges while suppressing model thumbnail downloads in low resource mode', async () => {
+    useGenerationSettingsStore.getState().setLowResourceMode(true);
+    await act(async () => root.render(<ModelRowContent option={{ value: 'demo', label: 'Demo',
+      model: modelWithPreview('/mobile/api/models/previews?path=demo.png') }} />));
+    expect(container.textContent).toContain('Demo');
+    expect(container.querySelector('img')).toBeNull();
   });
 
   it('uses a cached still thumbnail for standalone video previews', async () => {

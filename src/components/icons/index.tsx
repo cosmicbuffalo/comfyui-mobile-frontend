@@ -34,6 +34,7 @@ export { WorkflowIcon } from './WorkflowIcon';
 export { ThickArrowRightIcon } from './ThickArrowRightIcon';
 export { CopyIcon } from './CopyIcon';
 export { DownloadIcon } from './DownloadIcon';
+export { FullscreenIcon } from './FullscreenIcon';
 export { ClipboardIcon } from './ClipboardIcon';
 export { MinusCircleIcon } from './MinusCircleIcon';
 export { ChevronDownIcon } from './ChevronDownIcon';

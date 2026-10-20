@@ -36,6 +36,7 @@ export const UNDO_ACTION_LABELS: Record<string, string> = {
   // Widget values
   updateNodeWidget: 'Edit value',
   updateNodeWidgets: 'Edit value',
+  setNodeBoundingBoxResult: 'Update incoming boxes',
   updateSubgraphInnerNodeWidget: 'Edit value',
   setPowerPuterOutputs: 'Edit outputs',
   setWidgetLabel: 'Rename widget',

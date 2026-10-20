@@ -31,6 +31,20 @@ describe('buildViewerImages', () => {
     ]);
   });
 
+  it('includes 3D outputs as model items carrying their camera, with no image preview', () => {
+    const camera = { position: { x: 1, y: 2, z: 3 }, target: { x: 0, y: 0, z: 0 }, zoom: 1, cameraType: 'perspective' as const };
+    const [image, model] = buildViewerImages([{
+      outputs: { images: [
+        { filename: 'still.png', subfolder: '', type: 'output' },
+        { filename: 'mesh.glb', subfolder: '3d', type: 'output', model3d: { camera } },
+      ] },
+      prompt: {},
+    }]);
+    expect(image.mediaType).toBe('image');
+    expect(model).toMatchObject({ mediaType: 'model', filename: 'mesh.glb', model3d: { camera }, file: { type: 'model', name: 'mesh.glb' } });
+    expect(model.displaySrc).toBeUndefined();
+  });
+
   it('can filter to output-only images when requested', () => {
     const images = buildViewerImages(items, { onlyOutput: true, alt: 'Generation' });
     expect(images.map((img) => img.filename)).toEqual([

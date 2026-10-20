@@ -387,7 +387,10 @@ def test_a_409_corrects_the_notifications_flag_without_deleting(monkeypatch):
     monkeypatch.setattr(m.requests, "post", lambda *a, **k: _Resp(409))
     result = m.send_completion("p", "success", 1)
     assert result["sent"] == 0
-    assert m.target_count() == 1
+    # Survives in the raw store; target_count() agrees with list_targets()
+    # and so reads 0 once notifications are off.
+    assert len(m._load_targets()) == 1
+    assert m.target_count() == 0
     # list_targets() hides notifications-off entries (the app's bell reads
     # that view, so a corrected target reads as disabled) — check raw state.
     target = m._load_targets()[0]
@@ -753,3 +756,271 @@ def test_send_test_payload_shape(monkeypatch):
     assert body["status"] == "test"
     assert body["title"] == "Test notification"
     assert "body" in body
+# --- per-account routing --------------------------------------------------
+#
+# On a server running comfyui-multiuser, "every paired device" is several
+# different people's phones. A completion belongs to the account that queued
+# it, and so does the notification.
+
+
+def test_a_pairing_records_the_account_that_registered_it():
+    assert m.add_target("https://relay.example/", "ABCD-EFGH", label="iPhone",
+                        owner="u1")
+    assert m._load_targets()[0]["user_id"] == "u1"
+
+
+def test_a_completion_reaches_only_the_owners_devices(monkeypatch):
+    m.add_target("https://relay.example/", "AAAA", label="u1 phone", owner="u1")
+    m.add_target("https://relay.example/", "BBBB", label="u2 phone", owner="u2")
+    posted = []
+    monkeypatch.setattr(m.requests, "post",
+                        lambda url, json=None, timeout=None: (
+                            posted.append(json["pairing_code"]) or _Resp(200)))
+
+    result = m.send_completion("pid-1", "success", 1, owner="u1")
+    assert posted == ["AAAA"]
+    assert result["sent"] == 1
+
+
+def test_a_server_without_accounts_still_notifies_every_device(monkeypatch):
+    """The single-user behaviour this node has always had. `owner=None` is not
+    a fallback here — it is the correct answer when there is one user."""
+    m.add_target("https://relay.example/", "AAAA", label="Phone")
+    m.add_target("https://relay.example/", "BBBB", label="Tablet")
+    posted = []
+    monkeypatch.setattr(m.requests, "post",
+                        lambda url, json=None, timeout=None: (
+                            posted.append(json["pairing_code"]) or _Resp(200)))
+
+    m.send_completion("pid-1", "success", 1)
+    assert sorted(posted) == ["AAAA", "BBBB"]
+
+
+def test_a_device_paired_before_accounts_existed_is_skipped(monkeypatch, capsys):
+    """It belongs to nobody, so it cannot be shown to somebody. Silencing it
+    until it re-pairs beats broadcasting one person's completions to whoever
+    happened to pair first — but say so, or the silence is unexplainable."""
+    m.add_target("https://relay.example/", "LEGACY", label="Old phone")
+    monkeypatch.setattr(m, "_warned_unowned", False)
+    posted = []
+    monkeypatch.setattr(m.requests, "post",
+                        lambda url, json=None, timeout=None: (
+                            posted.append(json["pairing_code"]) or _Resp(200)))
+
+    m.send_completion("pid-1", "success", 1, owner="u1")
+    assert posted == []
+    assert "re-pair" in capsys.readouterr().out.lower()
+
+
+def test_the_target_list_shows_only_your_own_devices():
+    m.add_target("https://relay.example/", "AAAA", label="u1 phone", owner="u1")
+    m.add_target("https://relay.example/", "BBBB", label="u2 phone", owner="u2")
+    assert [t["label"] for t in m.list_targets(owner="u1")] == ["u1 phone"]
+    assert m.target_count(owner="u1") == 1
+    # With no accounts on the server, every pairing is yours.
+    assert m.target_count() == 2
+
+
+def test_the_deletion_sweep_drops_only_that_account():
+    """`remove_owned_targets` is the account-deletion sweep for this store:
+    the deleted account's pairings go, everyone else's — including unowned
+    legacy ones — stays."""
+    m.add_target("https://relay.example/", "AAAA", label="u1 phone", owner="u1")
+    m.add_target("https://relay.example/", "BBBB", label="u2 phone", owner="u2")
+    m.add_target("https://relay.example/", "CCCC", label="legacy phone")
+
+    assert m.remove_owned_targets("u1") == 1
+
+    assert [t["label"] for t in m.list_targets()] == ["u2 phone", "legacy phone"]
+    assert m.target_count(owner="u2") == 1
+    assert m.target_count() == 2
+
+
+def test_the_deletion_sweep_is_inert_for_junk_and_strays():
+    m.add_target("https://relay.example/", "AAAA", label="u1 phone", owner="u1")
+    assert m.remove_owned_targets(None) == 0
+    assert m.remove_owned_targets("") == 0
+    assert m.remove_owned_targets("nobody") == 0
+    assert m.target_count() == 1
+
+
+def test_one_account_cannot_unpair_anothers_phone():
+    m.add_target("https://relay.example/", "AAAA", label="u1 phone", owner="u1")
+    assert m.remove_target("AAAA", owner="u2") == 0
+    assert m.target_count() == 1
+    assert m.remove_target("AAAA", owner="u1") == 1
+
+
+def test_a_test_notification_goes_to_your_own_devices(monkeypatch):
+    m.add_target("https://relay.example/", "AAAA", label="u1 phone", owner="u1")
+    m.add_target("https://relay.example/", "BBBB", label="u2 phone", owner="u2")
+    posted = []
+    monkeypatch.setattr(m.requests, "post",
+                        lambda url, json=None, timeout=None: (
+                            posted.append(json["pairing_code"]) or _Resp(200)))
+
+    m.send_test(owner="u2")
+    assert posted == ["BBBB"]
+
+
+def test_live_activity_frames_go_only_to_the_owners_devices(monkeypatch):
+    """The ActivityKit relay was the one push channel with no owner scoping:
+    every paired iPhone animated every user's workflow label in real time."""
+    monkeypatch.setattr(m.requests, "post", lambda *a, **k: _Resp(200))
+    m.add_target("https://relay.example/", "AAAA", owner="u1",
+                 live_activity=True)
+    m.add_target("https://relay.example/", "BBBB", owner="u2",
+                 live_activity=True)
+    posted = []
+    monkeypatch.setattr(m.requests, "post",
+                        lambda url, json=None, timeout=None: (
+                            posted.append(json["pairing_code"]) or _Resp(200)))
+
+    m.send_live_activity({"phase": "generating", "prompt_id": "p1",
+                          "delivery": "keyframe"}, owner="u1")
+    assert posted == ["AAAA"]
+
+    posted.clear()
+    # An unowned prompt (or a server with no accounts) keeps the broadcast.
+    m.send_live_activity({"phase": "generating", "prompt_id": "p1",
+                          "delivery": "keyframe"})
+    assert sorted(posted) == ["AAAA", "BBBB"]
+
+
+def test_target_count_agrees_with_the_listed_targets():
+    """The add-response's count is what the settings screen shows, so it must
+    never exceed the devices the listing renders — a Live-Activity-only
+    pairing (notifications off) is hidden from both."""
+    assert m.add_target("https://relay.example/", "AAAA", label="iPhone")
+    assert m.add_target("https://relay.example/", "BBBB", live_activity=True)
+    assert len(m._load_targets()) == 2
+    assert len(m.list_targets()) == 1
+    assert m.target_count() == 1
+    # Still owner-scoped like the listing.
+    assert m.add_target("https://relay.example/", "CCCC", owner="u1")
+    assert m.target_count(owner="u1") == len(m.list_targets(owner="u1")) == 1
+
+
+# --- one phone, two entries for this server --------------------------------
+#
+# The app lets a server be added twice, signed in as a different account each
+# time. Both entries share the phone's pairing code; `server_id` is what keeps
+# them two separate pairings rather than one that the last sign-in owns.
+
+
+def _pair_admin_and_demo_on_one_phone(**kwargs):
+    assert m.add_target("https://relay.example/", "PHONE", owner="admin",
+                        server_id="entry-admin", **kwargs)
+    assert m.add_target("https://relay.example/", "PHONE", owner="demo",
+                        server_id="entry-demo", **kwargs)
+
+
+def _record_posts(monkeypatch, status=200):
+    posted = []
+    monkeypatch.setattr(m.requests, "post",
+                        lambda url, json=None, timeout=None: (
+                            posted.append(json.get("server_id")) or _Resp(status)))
+    return posted
+
+
+def test_a_second_entry_on_the_same_phone_does_not_replace_the_first():
+    _pair_admin_and_demo_on_one_phone()
+    stored = {t["server_id"]: t["user_id"] for t in m._load_targets()}
+    assert stored == {"entry-admin": "admin", "entry-demo": "demo"}
+
+
+def test_each_accounts_completion_reaches_its_own_entry(monkeypatch):
+    _pair_admin_and_demo_on_one_phone()
+    posted = _record_posts(monkeypatch)
+
+    m.send_completion("p-demo", "success", 1, owner="demo")
+    assert posted == ["entry-demo"]
+
+    posted.clear()
+    m.send_completion("p-admin", "success", 1, owner="admin")
+    assert posted == ["entry-admin"]
+
+
+def test_re_pairing_an_entry_updates_only_that_entry():
+    _pair_admin_and_demo_on_one_phone()
+    assert m.add_target("https://relay.example/", "PHONE", label="re-paired",
+                        owner="demo", server_id="entry-demo")
+    labels = {t["server_id"]: t["label"] for t in m._load_targets()}
+    assert labels == {"entry-admin": "Device", "entry-demo": "re-paired"}
+
+
+def test_an_entry_signed_into_another_account_moves_with_it():
+    assert m.add_target("https://relay.example/", "PHONE", owner="admin",
+                        server_id="entry-1")
+    assert m.add_target("https://relay.example/", "PHONE", owner="demo",
+                        server_id="entry-1")
+    assert [(t["server_id"], t["user_id"]) for t in m._load_targets()] == [
+        ("entry-1", "demo"),
+    ]
+
+
+def test_turning_one_entry_off_leaves_the_other_paired():
+    _pair_admin_and_demo_on_one_phone()
+    assert m.remove_target("PHONE", "https://relay.example", owner="demo",
+                           server_id="entry-demo") == 1
+    assert [t["server_id"] for t in m._load_targets()] == ["entry-admin"]
+
+
+def test_turning_one_entry_off_on_a_server_without_accounts():
+    """Same phone, same server, no accounts: still two entries."""
+    assert m.add_target("https://relay.example/", "PHONE", server_id="a")
+    assert m.add_target("https://relay.example/", "PHONE", server_id="b")
+    assert m.remove_target("PHONE", "https://relay.example", server_id="a") == 1
+    assert [t["server_id"] for t in m._load_targets()] == ["b"]
+
+
+def test_an_app_without_server_ids_still_unpairs_the_whole_device():
+    _pair_admin_and_demo_on_one_phone()
+    assert m.remove_target("PHONE", "https://relay.example") == 2
+
+
+def test_live_activity_removal_is_per_entry():
+    _pair_admin_and_demo_on_one_phone(live_activity=True)
+    assert m.remove_live_activity_target(
+        "PHONE", "https://relay.example", owner="admin",
+        server_id="entry-admin") == 1
+    # Live-only pairings, so admin's goes entirely; demo's is untouched.
+    assert [(t["server_id"], t.get("live_activity"))
+            for t in m._load_targets()] == [("entry-demo", True)]
+
+
+def test_a_legacy_pairing_is_upgraded_in_place_by_the_same_account():
+    assert m.add_target("https://relay.example/", "PHONE", owner="demo")
+    assert m.add_target("https://relay.example/", "PHONE", owner="demo",
+                        server_id="entry-demo")
+    assert [t.get("server_id") for t in m._load_targets()] == ["entry-demo"]
+
+
+def test_another_accounts_legacy_pairing_is_left_for_it_to_replace():
+    assert m.add_target("https://relay.example/", "PHONE", owner="admin")
+    assert m.add_target("https://relay.example/", "PHONE", owner="demo",
+                        server_id="entry-demo")
+    assert sorted((t.get("server_id") or "", t["user_id"])
+                  for t in m._load_targets()) == [("", "admin"),
+                                                  ("entry-demo", "demo")]
+
+
+def test_a_relay_410_prunes_only_the_removed_entry(monkeypatch):
+    _pair_admin_and_demo_on_one_phone()
+    monkeypatch.setattr(m.requests, "post", lambda *a, **k: _Resp(410))
+    m.send_completion("p", "success", 1, owner="demo")
+    assert [t["server_id"] for t in m._load_targets()] == ["entry-admin"]
+
+
+def test_a_relay_409_mutes_only_that_entry(monkeypatch):
+    _pair_admin_and_demo_on_one_phone()
+    monkeypatch.setattr(m.requests, "post", lambda *a, **k: _Resp(409))
+    m.send_completion("p", "success", 1, owner="demo")
+    flags = {t["server_id"]: t.get("notifications", True)
+             for t in m._load_targets()}
+    assert flags == {"entry-admin": True, "entry-demo": False}
+
+
+def test_the_listing_names_each_entry():
+    _pair_admin_and_demo_on_one_phone()
+    assert [t["server_id"] for t in m.list_targets(owner="demo")] == ["entry-demo"]

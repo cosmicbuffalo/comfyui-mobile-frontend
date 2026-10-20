@@ -186,6 +186,13 @@ def tree(tmp_path):
 
 
 class TestNonRecursiveListing:
+    def test_lists_3d_outputs_as_models(self, tmp_path):
+        for name in ("mesh.glb", "cloud.ply", "scene.spz"):
+            (tmp_path / name).write_bytes(b"model")
+        results = list_files(str(tmp_path), str(tmp_path))
+        assert {entry["name"] for entry in results} == {"mesh.glb", "cloud.ply", "scene.spz"}
+        assert all(entry["type"] == "model" for entry in results)
+
     def test_lists_files_and_dirs(self, tree):
         results = list_files(str(tree), str(tree))
         names = [r["name"] for r in results]

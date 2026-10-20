@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import {
   getImagePreviewUrl,
   getImageUrl,
@@ -27,6 +27,8 @@ export interface NodeCardBatchPreview {
 
 interface NodeCardOutputPreviewProps {
   show: boolean;
+  /** 3D outputs, drawn first under the same heading. */
+  models?: ReactNode;
   previewImage: {
     filename: string;
     subfolder: string;
@@ -94,9 +96,14 @@ function WorkflowVideoPreview({
   onEnded?: () => void;
 }) {
   const videoRef = useRef<HTMLVideoElement>(null);
+  const lowResourceMode = useGenerationSettingsStore((s) => s.lowResourceMode);
   // Holds the failed element's MediaError code (null when it gave none).
   const [playbackError, setPlaybackError] = useState<{ code: number | null } | null>(null);
   const viewerOpen = useImageViewerStore((state) => state.viewerOpen);
+
+  useEffect(() => {
+    if (lowResourceMode) videoRef.current?.pause();
+  }, [lowResourceMode]);
 
   useEffect(() => {
     if (viewerOpen) videoRef.current?.pause();
@@ -117,6 +124,7 @@ function WorkflowVideoPreview({
     if (!video) return;
 
     const attemptAutoPlay = () => {
+      if (lowResourceMode) return;
       if (useImageViewerStore.getState().viewerOpen) return;
       video.currentTime = 0;
       const playPromise = video.play();
@@ -142,7 +150,7 @@ function WorkflowVideoPreview({
     }, { threshold: 0.01 });
     observer.observe(video);
     return () => observer.disconnect();
-  }, [autoPlay, src]);
+  }, [autoPlay, src, lowResourceMode]);
 
   // WebKit can retain a decoder and its response after React removes a video.
   // Release both promptly when an output is replaced or its card unmounts.
@@ -174,7 +182,7 @@ function WorkflowVideoPreview({
         muted
         playsInline
         loop={loop}
-        preload={autoPlay ? 'metadata' : 'none'}
+        preload={autoPlay && !lowResourceMode ? 'metadata' : 'none'}
         onCanPlay={() => setPlaybackError(null)}
         onPlay={(event) => {
           setPlaybackError(null);
@@ -320,6 +328,7 @@ function FrontendMediaPlaylist({
 
 export function NodeCardOutputPreview({
   show,
+  models = null,
   previewImage,
   previewImages = null,
   frontendPreview = null,
@@ -348,6 +357,7 @@ export function NodeCardOutputPreview({
   // Subscribe so the preview refreshes immediately when the WebP preference is
   // toggled (must run before the early return to satisfy the rules of hooks).
   useGenerationSettingsStore((s) => s.webpPreviewEnabled);
+  useGenerationSettingsStore((s) => s.lowResourceMode);
   const isTiled = Boolean(previewImages && previewImages.length > 1);
   // Real output beats a live latent, so tiles only render while nothing final
   // has arrived for this node.
@@ -382,7 +392,7 @@ export function NodeCardOutputPreview({
     : null;
 
   if (!show || (
-    !previewImage && !previewText && !latentPreviewUrl && !isTiled && !frontendPreview
+    !previewImage && !previewText && !latentPreviewUrl && !isTiled && !frontendPreview && !models
   )) return null;
 
   return (
@@ -390,6 +400,7 @@ export function NodeCardOutputPreview({
       <div className="text-xs text-slate-500 mb-1.5 uppercase tracking-wide">
         {t('Output Preview')}
       </div>
+      {models}
       {isTiled ? (
         <div className="output-batch-grid grid grid-cols-2 gap-2">
           {previewImages!.map((media, i) => (

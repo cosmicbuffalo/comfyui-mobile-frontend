@@ -24,10 +24,10 @@ interface GenerationSettingsState {
   // cosmetic provenance, never shown in the mobile UI — opt out to never add it.
   marketingNoteEnabled: boolean;
   setMarketingNoteEnabled: (value: boolean) => void;
-  // Backdrop blur forces constant repaints on lower-end mobile GPUs; turning
-  // it off strips every backdrop-filter app-wide (see .no-blur in index.css).
-  blurEffectsEnabled: boolean;
-  setBlurEffectsEnabled: (value: boolean) => void;
+  // Device-local preset. Other preferences remain stored so switching back
+  // restores them; expensive features use their effective setting at runtime.
+  lowResourceMode: boolean;
+  setLowResourceMode: (value: boolean) => void;
 }
 
 export const useGenerationSettingsStore = create<GenerationSettingsState>()(
@@ -49,12 +49,18 @@ export const useGenerationSettingsStore = create<GenerationSettingsState>()(
       setObfuscateSharedInputPaths: (value) => set({ obfuscateSharedInputPaths: value }),
       marketingNoteEnabled: true,
       setMarketingNoteEnabled: (value) => set({ marketingNoteEnabled: value }),
-      blurEffectsEnabled: true,
-      setBlurEffectsEnabled: (value) => set({ blurEffectsEnabled: value }),
+      lowResourceMode: false,
+      setLowResourceMode: (value) => set({ lowResourceMode: value }),
     }),
     {
       name: 'generation-settings-storage',
       storage: createJSONStorage(() => localStorage),
+      version: 1,
+      migrate: (persisted) => {
+        const stored = persisted && typeof persisted === 'object' ? persisted : {};
+        const { blurEffectsEnabled, ...preferences } = stored as Partial<GenerationSettingsState> & { blurEffectsEnabled?: boolean };
+        return { ...preferences, lowResourceMode: typeof preferences.lowResourceMode === 'boolean' ? preferences.lowResourceMode : blurEffectsEnabled === false };
+      },
     }
   )
 );

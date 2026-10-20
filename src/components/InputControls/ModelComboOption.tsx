@@ -2,6 +2,7 @@ import { components } from "react-select";
 import type { OptionProps, SingleValueProps } from "react-select";
 import { getBaseModelAbbreviation, getSubTypeAbbreviation } from "@/utils/modelBadges";
 import type { LoraManagerModel } from "@/api/loraManagerClient";
+import { useGenerationSettingsStore } from '@/hooks/useGenerationSettings';
 
 // A combo option enriched with optional Lora Manager model metadata. Plain
 // (non-model) combos leave `model` undefined and render as a simple label.
@@ -21,6 +22,7 @@ function ModelThumb({
   model: LoraManagerModel | null;
   compact?: boolean;
 }) {
+  const lowResourceMode = useGenerationSettingsStore((s) => s.lowResourceMode);
   const rawUrl = model?.preview_url || "";
   let previewPath = rawUrl;
   try {
@@ -53,7 +55,7 @@ function ModelThumb({
       className={`relative shrink-0 rounded-sm overflow-hidden bg-slate-800 ${compact ? "" : "self-stretch"}`}
       style={compact ? { width: 28, height: 28 } : { width: 44 }}
     >
-      {url ? (
+      {url && !lowResourceMode ? (
         isVideo && !supportsThumbnail ? (
           // Unknown providers cannot be safely converted to a poster. Avoid a
           // metadata request here; the neutral play mark is preferable to a

@@ -99,6 +99,7 @@ function clearedWorkflowContent(): Partial<WorkflowState> {
     nodeOutputs: {},
     nodeComparerOutputs: {},
     nodeTextOutputs: {},
+    nodeBoundingBoxOutputs: {},
     latentPreviews: {},
     latentPreviewTiles: {},
     promptOutputs: {},

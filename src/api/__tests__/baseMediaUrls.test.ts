@@ -5,10 +5,15 @@ import {
   getMediaThumbnailUrlFromAssetUrl,
   getPlayableVideoUrl,
   getScreenPreviewUrl,
+  getImagePreviewUrl,
 } from '@/api/client/base';
 import { bustImageCache } from '@/utils/imageCacheBust';
 
 describe('media thumbnail URLs', () => {
+  it('bounds ordinary inline previews and shares the queue preview cache', () => {
+    expect(getImagePreviewUrl('large.png', '', 'output')).toBe(getQueueImagePreviewUrl('large.png', '', 'output'));
+    expect(getImagePreviewUrl('large.png', '', 'output')).toContain('maxedge=1280');
+  });
   it('routes queue images through the bounded mobile preview cache', () => {
     expect(getQueueImagePreviewUrl('image one.png', 'nested/folder', 'output')).toBe(
       '/mobile/api/preview?filename=image%20one.png&subfolder=nested%2Ffolder&type=output&maxedge=1280',

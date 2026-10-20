@@ -149,7 +149,7 @@ export const useWorkflowStore = create<WorkflowState>()(
         setBoundarySlotLabel,
       } = createBoundaryEditActions(set, get);
       const { setPromotedWidgetLabel, setInstanceWidgetLabel, forkSubgraphType, replaceSubgraphInstance, renameSubgraphType, deleteSubgraphType } = createSubgraphTypeActions(set, get);
-      const { setExecutionState, setNodeOutput, setNodeComparerOutput, setNodeTextOutput, clearNodeOutputs, setLatentPreviewTiles, setLatentPreview, clearAllLatentPreviews, setQueueLatentPreviewTiles, setQueueLatentPreview, clearQueueLatentPreviews, addPromptOutputs, clearPromptOutputs, setRunCount, setInfiniteLoop, setIsStopping, setSavingSessionId, setFollowQueue, applyControlAfterGenerate, queueWorkflow } = createExecutionActions(set, get);
+      const { setNodeBoundingBoxResult, setExecutionState, setNodeOutput, setNodeComparerOutput, setNodeTextOutput, clearNodeOutputs, setLatentPreviewTiles, setLatentPreview, clearAllLatentPreviews, setQueueLatentPreviewTiles, setQueueLatentPreview, clearQueueLatentPreviews, addPromptOutputs, clearPromptOutputs, setRunCount, setInfiniteLoop, setIsStopping, setSavingSessionId, setFollowQueue, applyControlAfterGenerate, queueWorkflow } = createExecutionActions(set, get);
       const { setMobileLayout, commitRepositionLayout, switchToSession, closeSession, resolveCloseForNewWorkflow, cancelCloseForNewWorkflow, loadWorkflow, unloadWorkflow, setSavedWorkflow, setNodeTypes, addInputComboOption, saveCurrentWorkflowState, setSearchQuery, setSearchOpen, requestAddNodeModal, clearAddNodeModalRequest, clearEditContainerLabelRequest, prepareRepositionScrollTarget, toggleConnectionButtonsVisible, updateWorkflowDuration, clearWorkflowCache, ensureHierarchicalKeysAndRepair } = createSessionActions(set, get);
 
       // Wrapped so every undoable action names itself in the Undo/Redo toast
@@ -184,6 +184,7 @@ export const useWorkflowStore = create<WorkflowState>()(
         nodeOutputs: {},
         nodeComparerOutputs: {},
         nodeTextOutputs: {},
+        nodeBoundingBoxOutputs: {},
         latentPreviews: {},
         latentPreviewTiles: {},
         promptOutputs: {},
@@ -263,6 +264,7 @@ export const useWorkflowStore = create<WorkflowState>()(
         setNodeOutput,
         setNodeComparerOutput,
         setNodeTextOutput,
+        setNodeBoundingBoxResult,
         clearNodeOutputs,
         setLatentPreview,
         setLatentPreviewTiles,
@@ -390,6 +392,7 @@ export const useWorkflowStore = create<WorkflowState>()(
         nodeOutputs: state.nodeOutputs,
         nodeComparerOutputs: state.nodeComparerOutputs,
         nodeTextOutputs: state.nodeTextOutputs,
+        nodeBoundingBoxOutputs: state.nodeBoundingBoxOutputs,
         // Session registry
         sessions: state.sessions,
         activeSessionId: state.activeSessionId,

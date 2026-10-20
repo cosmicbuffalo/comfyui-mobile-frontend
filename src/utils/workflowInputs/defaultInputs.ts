@@ -1,6 +1,8 @@
 import type { NodeTypeDefinition } from '@/api/types';
 import { DYNAMIC_COMBO_V3, getComboOptions, getDynamicComboSubInputs, isComboType, isMultiSelectCombo, normalizeComboValue, orderedInputNames } from './comboValues';
 import { isWidgetInputType } from './widgetSlots';
+import { isDynamicGroup, groupLimits, getDynamicGroupSubInputs } from './dynamicGroups';
+import { isAutogrow, autogrowInputs } from './autogrow';
 
 /**
  * Widget types stock creates but never saves into widgets_values
@@ -14,22 +16,53 @@ const UNSAVED_WIDGET_INITIAL_VALUES: Record<string, () => unknown> = {
   IMAGECOMPARE: () => ['', ''],
 };
 
+/** Stock widgets that hold only editor state: never saved and never sent. */
+const EDITOR_ONLY_WIDGET_TYPES = new Set(['CAMERA_INFO_STATE']);
+
+/**
+ * The 3D nodes' own viewport (Load 3D, the new 3D previews). Stock saves its
+ * slot and sends the viewer's camera when queueing; the node accepts the saved
+ * value too, so mobile keeps and sends it but draws no control for it.
+ */
+const VIEWPORT_WIDGET_TYPES = new Set(['LOAD_3D', 'LOAD_3D_ADVANCED']);
+
+export function isViewportWidgetType(typeOrOptions: string | unknown[]): boolean {
+  return typeof typeOrOptions === 'string' && VIEWPORT_WIDGET_TYPES.has(typeOrOptions.toUpperCase());
+}
+
+export function isEditorOnlyWidgetType(typeOrOptions: string | unknown[]): boolean {
+  return typeof typeOrOptions === 'string' && EDITOR_ONLY_WIDGET_TYPES.has(typeOrOptions.toUpperCase());
+}
+
+/** Widget types that take no widgets_values slot. */
 export function isUnsavedWidgetType(typeOrOptions: string | unknown[]): boolean {
-  return typeof typeOrOptions === 'string'
-    && Object.prototype.hasOwnProperty.call(UNSAVED_WIDGET_INITIAL_VALUES, typeOrOptions.toUpperCase());
+  return isEditorOnlyWidgetType(typeOrOptions) || (typeof typeOrOptions === 'string'
+    && Object.prototype.hasOwnProperty.call(UNSAVED_WIDGET_INITIAL_VALUES, typeOrOptions.toUpperCase()));
+}
+
+/**
+ * Inputs the prompt never carries: editor-only widgets, CameraAngle's saved
+ * `view` (a widgetType override on a STRING), and a DynamicGroup's row count,
+ * whose rows go in as their own `name.N.field` inputs.
+ */
+export function isOmittedFromPrompt(typeOrOptions: string | unknown[], inputOptions?: Record<string, unknown>): boolean {
+  return isAutogrow(typeOrOptions) || isDynamicGroup(typeOrOptions) || isEditorOnlyWidgetType(typeOrOptions) || inputOptions?.widgetType === 'CAMERA_ANGLE_VIEW';
 }
 
 /** The prompt value of an unsaved widget type; undefined for any other type. */
 export function unsavedWidgetInitialValue(typeOrOptions: string | unknown[]): unknown {
-  if (!isUnsavedWidgetType(typeOrOptions)) return undefined;
-  return UNSAVED_WIDGET_INITIAL_VALUES[(typeOrOptions as string).toUpperCase()]();
+  if (typeof typeOrOptions !== 'string') return undefined;
+  return UNSAVED_WIDGET_INITIAL_VALUES[typeOrOptions.toUpperCase()]?.();
 }
 
 export function isWidgetBackedInput(
   typeOrOptions: string | unknown[],
   inputOptions?: Record<string, unknown>
 ): boolean {
+  if (isAutogrow(typeOrOptions)) return false;
+  if (typeOrOptions === 'WEBCAM') return true;
   if (inputOptions?.forceInput === true || inputOptions?.defaultInput === true) return false;
+  if (isDynamicGroup(typeOrOptions)) return true;
   if (inputOptions?.socketless === true) return true;
   if (typeof inputOptions?.widgetType === 'string' && inputOptions.widgetType) return true;
   if (isComboType(typeOrOptions) || isWidgetInputType(typeOrOptions)) return true;
@@ -47,7 +80,10 @@ export function isConnectionSocketInput(
   typeOrOptions: string | unknown[],
   inputOptions?: Record<string, unknown>,
 ): boolean {
+  if (typeOrOptions === 'WEBCAM') return false;
+  if (isAutogrow(typeOrOptions)) return false;
   if (inputOptions?.forceInput === true || inputOptions?.defaultInput === true) return true;
+  if (isDynamicGroup(typeOrOptions)) return false;
   // Legacy array combos are widget-only. Serializing their entire option list
   // as a comma-joined socket type bloats workflows and cannot participate in
   // meaningful connection compatibility checks.
@@ -64,6 +100,9 @@ export function getDefaultWidgetValue(
   inputOptions?: Record<string, unknown>
 ): unknown {
   const declared = inputOptions?.default;
+  if (typeOrOptions === 'WEBCAM') return declared ?? '';
+  if (isDynamicGroup(typeOrOptions)) return groupLimits(inputOptions).min;
+  if (inputOptions?.widgetType === 'CAMERA_ANGLE_VIEW') return 'camera';
   if (isComboType(typeOrOptions)) {
     const comboOptions = getComboOptions(typeOrOptions, inputOptions);
     if (isMultiSelectCombo(inputOptions)) {
@@ -124,6 +163,9 @@ export function buildDefaultWidgetValues(
     if (isUnsavedWidgetType(typeOrOptions)) return;
     const value = getDefaultWidgetValue(typeOrOptions, inputOptions);
     values.push(value);
+    if (isDynamicGroup(typeOrOptions)) {
+      for (const sub of getDynamicGroupSubInputs(inputOptions, name, Number(value))) emit(sub.inputDef, sub.qualifiedName);
+    }
     const seedControl = inputOptions?.control_after_generate;
     if (
       emitSeedControl &&
@@ -165,6 +207,18 @@ function collectDefaultConnectionInputs(
 ): void {
   const [typeOrOptions, inputOptions] = inputDef;
   const widgetBacked = isWidgetBackedInput(typeOrOptions, inputOptions);
+  if (isAutogrow(typeOrOptions)) {
+    for (const child of autogrowInputs(inputOptions, qualifiedName)) {
+      collectDefaultConnectionInputs(child.qualifiedName, child.inputDef, result);
+    }
+    return;
+  }
+  if (isDynamicGroup(typeOrOptions)) {
+    for (const sub of getDynamicGroupSubInputs(inputOptions, qualifiedName, groupLimits(inputOptions).min)) {
+      collectDefaultConnectionInputs(sub.qualifiedName, sub.inputDef, result);
+    }
+    return;
+  }
   if (isConnectionSocketInput(typeOrOptions, inputOptions)) {
     result.push({
       name: qualifiedName,

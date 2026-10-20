@@ -4,6 +4,8 @@ import type { FileItem } from '@/api/client';
 import { CheckIcon, HeartIcon, HeartOutlineIcon, RejectedIcon, RejectXIcon, DownloadDeviceIcon, EyeIcon, EyeOffIcon, FolderIcon, WorkflowIcon, ThickArrowRightIcon, TrashIcon, EditIcon } from '@/components/icons';
 import { ContextMenuBuilder } from '@/components/menus/ContextMenuBuilder';
 import { useI18n } from '@/i18n';
+import { needsWorkflowProbe } from '@/utils/workflowAvailability';
+import { canSaveFile } from '@/utils/nativeSave';
 
 interface OutputsContextMenuProps {
   menuTarget: { file: FileItem } | null;
@@ -25,7 +27,7 @@ interface OutputsContextMenuProps {
    * same-basename sibling image). Ignored for stills, which always offer the
    * entry.
    */
-  videoWorkflowAvailable: boolean;
+  probedWorkflowAvailable: boolean;
   handleDownload: () => void;
   handleDeleteRequest: () => void;
 }
@@ -45,7 +47,7 @@ export function OutputsContextMenu({
   handleRenameRequest,
   handleLoadWorkflow,
   handleLoadInWorkflow,
-  videoWorkflowAvailable,
+  probedWorkflowAvailable,
   handleDownload,
   handleDeleteRequest
 }: OutputsContextMenuProps) {
@@ -105,11 +107,11 @@ export function OutputsContextMenu({
       onClick: () => handleLoadWorkflow(),
       // A video carries no metadata of its own, but one saved beside its
       // preview frame loads that frame's workflow — the same resolution the
-      // full-screen viewer's Load Workflow button uses. Offer the entry only
-      // once the probe confirms it, so clips saved on their own don't get an
-      // action that can only fail.
-      hidden: menuTarget.file.type === 'video'
-        ? !videoWorkflowAvailable
+      // full-screen viewer's Load Workflow button uses. A GLB from SaveGLB
+      // embeds its own. Offer the entry only once the probe confirms it, so
+      // files without a workflow don't get an action that can only fail.
+      hidden: needsWorkflowProbe(menuTarget.file)
+        ? !probedWorkflowAvailable
         : menuTarget.file.type !== 'image'
     },
     {
@@ -124,7 +126,7 @@ export function OutputsContextMenu({
       label: t('Download'),
       icon: <DownloadDeviceIcon className="w-4 h-4" />,
       onClick: () => handleDownload(),
-      hidden: menuTarget.file.type === 'folder'
+      hidden: menuTarget.file.type === 'folder' || !canSaveFile(menuTarget.file.name)
     },
     {
       key: 'delete',

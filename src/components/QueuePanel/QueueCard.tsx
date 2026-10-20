@@ -1,4 +1,7 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useGenerationSettingsStore } from '@/hooks/useGenerationSettings';
+import { isModelOutput } from '@/utils/model3d';
+import { ModelOutputPreview } from '@/components/ThreeView/ModelOutputPreview';
 import { useShallow } from 'zustand/shallow';
 import { getImageUrl, getQueueImagePreviewUrl, getMediaThumbnailUrl, getPlayableVideoUrl, getFileDimensions, QUEUE_PREVIEW_MAX_EDGE } from '@/api/client';
 import type { Workflow } from '@/api/types';
@@ -726,6 +729,7 @@ function QueueCardComponent({
   onMediaReady,
 }: QueueCardProps) {
   const { t } = useI18n();
+  const lowResourceMode = useGenerationSettingsStore((s) => s.lowResourceMode);
   const missingMediaKeys = useMissingMediaStore((s) => s.missingKeys);
   const previewVisibility = useQueueStore((s) => s.previewVisibility);
   const previewVisibilityDefault = useQueueStore((s) => s.previewVisibilityDefault);
@@ -821,7 +825,7 @@ function QueueCardComponent({
   // Anything read off the rendered element is the 1280-capped preview's size
   // for a larger output, so only the server's header read (below) or a
   // measurement that came in under the cap qualifies.
-  const recordDimensions = (
+  const recordDimensions = useCallback((
     src: string,
     w: number,
     h: number,
@@ -835,11 +839,11 @@ function QueueCardComponent({
         // A measurement that came in under the preview cap can't be a
         // downscale, so it is the real size. An aspect-only source (a video
         // poster) is a thumbnail at any size — never a size we can quote.
-        (confidence === 'measured' && Math.max(w, h) < QUEUE_PREVIEW_MAX_EDGE);
+        (confidence === 'measured' && Math.max(w, h) < (lowResourceMode ? 1024 : QUEUE_PREVIEW_MAX_EDGE));
       if (current && (current.exact || !exact)) return prev;
       return { ...prev, [src]: { w, h, exact } };
     });
-  };
+  }, [lowResourceMode]);
   // True dimensions for saved outputs, read from the file header server-side.
   // The card renders a capped preview, so this is the only way to label a
   // 1920x1080 output correctly. One batched request per card, only for outputs
@@ -867,7 +871,7 @@ function QueueCardComponent({
     // Any still the card can label, not just type 'output': PreviewImage nodes
     // write 'temp', and those cards showed a correct badge before this gating.
     const wanted = historyImages.filter(
-      (img) => img.type !== 'input' && !isVideoFilename(img.filename),
+      (img) => img.type !== 'input' && getMediaType(img.filename) === 'image',
     );
     if (wanted.length === 0) return;
     const missing = wanted.filter((img) => {
@@ -1023,7 +1027,7 @@ function QueueCardComponent({
     () => (showPromptPreview && item.data.prompt ? getPromptInputImages(item.data.prompt) : []),
     [item.data.prompt, showPromptPreview],
   );
-  const sourceImages = useMemo(() => {
+  const allSourceImages = useMemo(() => {
     if (mediaOrderPromptIdRef.current !== item.id) {
       mediaOrderPromptIdRef.current = item.id;
       mediaOrderRef.current = [];
@@ -1045,6 +1049,8 @@ function QueueCardComponent({
     historyData, isRunning, item.data.prompt_id, item.id, missingMediaKeys,
     promptSourceInputImages, runningImages, showPromptPreview,
   ]);
+  const sourceImages = useMemo(() => allSourceImages.filter(output => !isModelOutput(output)), [allSourceImages]);
+  const modelOutputs = useMemo(() => allSourceImages.filter(isModelOutput), [allSourceImages]);
   const previewsVisible = Boolean(
     item.data.prompt_id
       ? previewVisibility[item.data.prompt_id] ?? previewVisibilityDefault
@@ -1069,8 +1075,8 @@ function QueueCardComponent({
     sourceImages.some((img: HistoryOutputImage) => !isVideoFilename(img.filename))
   ), [sourceImages]);
   const preferredOutputFilename = useMemo(
-    () => getPreferredOutputFilename(sourceImages),
-    [sourceImages],
+    () => getPreferredOutputFilename(allSourceImages),
+    [allSourceImages],
   );
   const headerLabel = getQueueCardHeaderLabel({
     isGenerating,
@@ -1131,16 +1137,17 @@ function QueueCardComponent({
   // isn't in the panel-wide list, so it has to carry the same identity the
   // panel's own buildViewerImages attaches.
   const cardViewerImages = useMemo(() => (
-    visibleImages.map((img: HistoryOutputImage) => {
+    [...visibleImages, ...modelOutputs].map((img: HistoryOutputImage) => {
       const fullUrl = getImageUrl(img.filename, img.subfolder, img.type, img.cacheToken);
-      const mediaType = getMediaType(img.filename);
+      const mediaType = img.model3d ? 'model' : getMediaType(img.filename);
       return {
         src: fullUrl,
-        displaySrc: isVideoFilename(img.filename)
-          ? undefined
-          : getQueueImagePreviewUrl(img.filename, img.subfolder, img.type, img.cacheToken),
+        displaySrc: mediaType === 'image'
+          ? getQueueImagePreviewUrl(img.filename, img.subfolder, img.type, img.cacheToken)
+          : undefined,
         alt: t('Generation'),
         mediaType,
+        model3d: img.model3d,
         filename: img.filename,
         promptId: item.data.prompt_id || item.id,
         metadata: viewerMetadata,
@@ -1151,7 +1158,7 @@ function QueueCardComponent({
         file: {
           id: getHistoryImageFileId(img),
           name: img.filename,
-          type: mediaType === 'video' ? ('video' as const) : ('image' as const),
+          type: mediaType,
           fullUrl,
           hidden: historyData?.hidden,
         },
@@ -1159,6 +1166,7 @@ function QueueCardComponent({
     })
   ), [
     visibleImages,
+    modelOutputs,
     t,
     item.data.prompt_id,
     item.data.prompt,
@@ -1387,7 +1395,7 @@ function QueueCardComponent({
   const wantsQueueVideoPlayback = Boolean(
     expanded &&
     activeMediaIsVideo &&
-    (mediaTabPinned || autoplayArmed),
+    (mediaTabPinned || (!lowResourceMode && autoplayArmed)),
   );
   const shouldActivateQueueVideo = Boolean(
     queueVideoPlaybackEnabled &&
@@ -1414,6 +1422,7 @@ function QueueCardComponent({
     const userCollapsed = Boolean(queueItemUserToggled) && !expanded;
     const pinnedToNonVideoTab = mediaTabPinned && !activeMediaIsVideo;
     const eligible =
+      !lowResourceMode &&
       queueVideoPlaybackEnabled &&
       hasVideoOutputs &&
       onScreen &&
@@ -1432,6 +1441,7 @@ function QueueCardComponent({
     onRequestAutoQueueVideoPlayback?.(item.id);
   }, [
     isDone,
+    lowResourceMode,
     item.id,
     queueVideoPlaybackEnabled,
     hasVideoOutputs,
@@ -1606,7 +1616,7 @@ function QueueCardComponent({
     return () => {
       cancelled = true;
     };
-  }, [expanded, activeMediaTab, frontEntry, backEntry, frontSlot, backSlotKey, slotA, slotB, setSlot]);
+  }, [expanded, activeMediaTab, frontEntry, backEntry, frontSlot, backSlotKey, slotA, slotB, setSlot, recordDimensions]);
 
   // Start the active video as soon as its element mounts, including while it is
   // staged in the hidden back slot behind the previous preview/image. Waiting
@@ -1892,6 +1902,8 @@ function QueueCardComponent({
       </div>
 
       <Collapsible open={expanded}>
+        {expanded && modelOutputs.map(output => <ModelOutputPreview key={`${output.type}/${output.subfolder}/${output.filename}`} output={output} className="" onReady={() => onMediaReady?.(item.id)}
+          onError={() => probeMissingMedia(output, item.data.prompt_id || item.id)} onExpand={handleMediaClick(getImageUrl(output.filename, output.subfolder, output.type, output.cacheToken), 0, isTopDoneItem)} />)}
         <div className="relative w-full">
           {showPromptPreview && (
             <PromptPreview
@@ -2068,7 +2080,7 @@ function QueueCardComponent({
                 )}
               </div>
               )
-            ) : isDone ? (
+            ) : isDone && modelOutputs.length > 0 ? null : isDone ? (
               <div className={placeholderClass}>
                 <span className={donePlaceholderClass}>{donePlaceholderMessage}</span>
               </div>

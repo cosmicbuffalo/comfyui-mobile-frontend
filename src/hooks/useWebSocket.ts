@@ -615,6 +615,7 @@ export function useWebSocket() {
             setExecutionState(false, null, null, 0);
             for (const sid of Object.keys(ws.parkedSessions)) {
               setExecutionState(false, null, null, 0, null, sid);
+              storeActionsRef.current.clearAllLatentPreviews(sid);
             }
             storeActionsRef.current.clearAllLatentPreviews();
             clearVhsLatentSequences();
@@ -692,9 +693,7 @@ export function useWebSocket() {
             if (promptId) delete promptStartedAtRef.current[promptId];
             executingPromptIdRef.current = null;
             setExecutionState(false, null, null, 0, null, ctx.sessionId);
-            if (ctx.sessionId === useWorkflowStore.getState().activeSessionId) {
-              storeActionsRef.current.clearAllLatentPreviews();
-            }
+            storeActionsRef.current.clearAllLatentPreviews(ctx.sessionId);
             clearVhsLatentSequences();
 
             // Apply control_after_generate for PrimitiveNodes
@@ -783,6 +782,9 @@ export function useWebSocket() {
           // the backend and appear in the Outputs panel via the history fetch.
           if (ctx.orphaned) break;
           const itemKeysForOutput = resolveNodeHierarchicalKeysForOutput(node, ctx);
+          if (Array.isArray(output?.dims)) {
+            itemKeysForOutput.forEach(key => useWorkflowStore.getState().setNodeBoundingBoxResult(key, output, ctx.sessionId));
+          }
           const mediaOutputs = collectExecutedMediaOutputs(
             output,
             `${prompt_id}:${node}:${Date.now()}`,
@@ -910,6 +912,7 @@ export function useWebSocket() {
         }
 
         case 'VHS_latentpreview': {
+          if (useGenerationSettingsStore.getState().lowResourceMode) break;
           startVhsLatentSequence(msg.data);
           break;
         }
@@ -1014,12 +1017,9 @@ export function useWebSocket() {
           if (promptId) delete promptStartedAtRef.current[promptId];
           executingPromptIdRef.current = null;
           setExecutionState(false, null, null, 0, null, errCtx.sessionId);
-          // Latent previews only ever exist for the active tab, so only clear
-          // them when the active tab is the one that errored — a background
-          // (parked) session's error must not wipe the foreground run's preview.
-          if (errCtx.sessionId === useWorkflowStore.getState().activeSessionId) {
-            storeActionsRef.current.clearAllLatentPreviews();
-          }
+          // The errored tab's previews only: a background session's error
+          // must not wipe the foreground run's preview.
+          storeActionsRef.current.clearAllLatentPreviews(errCtx.sessionId);
           clearVhsLatentSequences();
           // Only clear the errored prompt's outputs. A prompt-id-less error must
           // NOT fall through to the wipe-all branch — that would destroy output
@@ -1148,8 +1148,21 @@ export function useWebSocket() {
     };
 
     const handleBinaryMessage = (data: ArrayBuffer) => {
+      // Diagnostics still work when expensive image previews are disabled.
+      if (data.byteLength >= 4 && new DataView(data).getUint32(0, false) === 3) {
+        const parsed = parseBinaryPreviewMessage(data);
+        const promptId = executingPromptIdRef.current;
+        if (parsed?.kind !== 'text' || !promptId) return;
+        const ctx = getSessionContext(promptId);
+        if (ctx.orphaned) return;
+        for (const key of resolveNodeHierarchicalKeysForOutput(parsed.nodeId, ctx)) {
+          storeActionsRef.current.setNodeTextOutput(key, parsed.text, ctx.sessionId);
+        }
+        return;
+      }
+      if (useGenerationSettingsStore.getState().lowResourceMode) return;
       const parsed = parseBinaryPreviewMessage(data);
-      if (!parsed) return;
+      if (!parsed || parsed.kind === 'text') return;
       if (parsed.kind === 'image') {
         dispatchPreviewFrame(parsed.blob);
         return;
@@ -1210,9 +1223,7 @@ export function useWebSocket() {
             storeActionsRef.current.removeRunning(finishedPromptId);
 
             if (finishedCtx) {
-              if (finishedCtx.sessionId === useWorkflowStore.getState().activeSessionId) {
-                storeActionsRef.current.clearAllLatentPreviews();
-              }
+              storeActionsRef.current.clearAllLatentPreviews(finishedCtx.sessionId);
               clearVhsLatentSequences();
             }
             return;

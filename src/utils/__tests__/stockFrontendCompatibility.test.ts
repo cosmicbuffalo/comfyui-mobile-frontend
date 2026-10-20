@@ -25,6 +25,7 @@ import * as crypto from 'node:crypto';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import { gunzipSync } from 'node:zlib';
 import { describe, expect, it } from 'vitest';
 import type { Workflow } from '@/api/types';
 import { createSubgraphFromSelection } from '@/utils/createSubgraphFromSelection';
@@ -399,7 +400,11 @@ describe.skipIf(!CORPUS)('workflows we edit still load in the stock frontend', (
       `No blessed corpus manifest at ${MANIFEST_PATH}. Create one with UPDATE_TEMPLATE_MANIFEST=1.`,
     ).toBe(true);
 
-    const blessed = JSON.parse(fs.readFileSync(MANIFEST_PATH, 'utf8')) as CorpusManifest;
+    const latest = JSON.parse(fs.readFileSync(MANIFEST_PATH, 'utf8')) as CorpusManifest;
+    // Both the 0.40 and 0.42 pinned catalogs were audited. Accept the older
+    // catalog only on an exact match; all unknown drift still uses latest.
+    const legacy = JSON.parse(gunzipSync(fs.readFileSync(path.join(path.dirname(MANIFEST_PATH), 'templateCorpus-0.11.82.manifest.json.gz'))).toString()) as CorpusManifest;
+    const blessed = describeCorpusDrift(corpusDrift(legacy, found)) === '' ? legacy : latest;
     const drift = corpusDrift(blessed, found);
 
     // CI has to tell benign churn apart from a change that needs a person, and
