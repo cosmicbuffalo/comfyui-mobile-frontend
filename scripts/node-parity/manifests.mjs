@@ -61,7 +61,7 @@ export const MANIFESTS = [
   {
     pack: 'comfyui',
     repo: 'https://github.com/comfyanonymous/ComfyUI',
-    verifiedVersion: '0.40.0',
+    verifiedVersion: '0.42.1',
     localDir: '..',
     // cli_args.py carries no version; without a pattern the check reported no
     // upstream version at all, so a stale verifiedVersion could sit unnoticed.
@@ -238,6 +238,22 @@ export const MANIFESTS = [
         ours: 'src/utils/workflowInputs/dynamicGroups.ts',
         file: 'comfy_api/latest/_io.py',
         contains: [/io_type="COMFY_DYNAMICGROUP_V3"/, /slot_id = f"\{finalized_prefix\}\.\{row\}\.\{field_id\}"/],
+      },
+      {
+        id: 'autogrow-template-sockets',
+        since: '0.41.0',
+        why: 'ReferenceMultiLatent and Krea references flatten concrete named sockets without a saved controller widget.',
+        ours: 'src/utils/workflowInputs/autogrow.ts',
+        file: 'comfy_api/latest/_io.py',
+        contains: [/io_type="COMFY_AUTOGROW_V3"/, /class TemplatePrefix/, /class TemplateNames/, /expected_id = finalize_prefix\(curr_prefix, name\)/],
+      },
+      {
+        id: 'node-text-envelope',
+        since: '0.41.0',
+        why: 'Latent size diagnostics use a big-endian node-id length followed by UTF-8 node id and text.',
+        ours: 'src/hooks/useWebSocket/binaryPreview.ts',
+        file: 'server.py',
+        contains: [/struct\.pack\(">I", len\(node_id_bytes\)\) \+ node_id_bytes \+ text/, /send_sync\(BinaryEventTypes\.TEXT, message/],
       },
       {
         id: 'standard-3d-output-metadata',

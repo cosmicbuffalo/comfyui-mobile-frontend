@@ -7,6 +7,12 @@ import { cameraPose, limit, lookDrag, numberInput, wheelChange, type CameraInput
 export type TransformMode = 'none' | 'target' | 'camera-translate' | 'camera-rotate';
 type Handle = 'yaw' | 'pitch' | 'distance' | 'roll';
 
+export function pickTransformGizmo(scene: THREE.Scene, controls: TransformControls, pointer: THREE.Vector2) {
+  // Input can arrive before the next demand-rendered frame updates the picker.
+  scene.updateMatrixWorld(true);
+  controls.pointerHover(pointer as unknown as PointerEvent);
+}
+
 const DEG = Math.PI / 180;
 // The orbit gizmo has a fixed size around the target, whatever the camera's
 // real distance: a horizontal track with the yaw handle, a vertical arc with
@@ -299,7 +305,7 @@ export class CameraViewport {
     // A press on the transform gizmo is the gizmo's, however close a ring is.
     if (this.transformControl.enabled) {
       // pointerHover reads x/y as device coordinates, though its typings say PointerEvent.
-      this.transformControl.pointerHover(this.pointer(event) as unknown as PointerEvent);
+      pickTransformGizmo(this.view.scene, this.transformControl, this.pointer(event));
       if (this.transformControl.axis !== null) return;
     }
     const handle = this.lookingThrough ? null : this.pickHandle(event);

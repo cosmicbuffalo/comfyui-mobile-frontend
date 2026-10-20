@@ -33,6 +33,7 @@ import {
   getCoreWorkflowTemplates,
   getWorkflowTemplates,
   loadTemplateWorkflow,
+  loadDefaultWorkflow,
   type CoreTemplateCategory,
   type WorkflowTemplates,
   type SystemStats,
@@ -338,6 +339,18 @@ export function AppMenu({
     }
   };
 
+  const handleLoadDefault = async () => {
+    try {
+      setLoading(true);
+      const types = useWorkflowStore.getState().nodeTypes;
+      if (!types) throw new Error(t('Node types are still loading. Try again in a moment.'));
+      const data = await loadDefaultWorkflow(types);
+      loadWorkflow(data, t('Starter workflow'), { fresh: true });
+      setError(null); onClose(); vibrate(10);
+    } catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); }
+    finally { setLoading(false); }
+  };
+
   const handleLoadFileWorkflow = async (
     filePath: string,
     assetSource: AssetSource,
@@ -590,6 +603,7 @@ export function AppMenu({
             loading={loading}
             templates={templates}
             coreTemplates={coreTemplates}
+            onLoadDefault={handleLoadDefault}
             onBack={() => setActiveTab('menu')}
             onDismissError={() => setError(null)}
             onLoadTemplate={handleLoadTemplate}

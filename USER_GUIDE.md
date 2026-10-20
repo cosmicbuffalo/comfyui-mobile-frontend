@@ -291,6 +291,42 @@ You can open the LoRA Manager web UI directly from a LoRA node card's `...` menu
 
 ComfyUI 0.40's **Load LoRA (Model)** and **Load LoRA (Text Encoder)** nodes hold a list of LoRAs instead of just one. Each row has its own LoRA picker and **Strength**, plus an **Enabled** / **Disabled** button. Disabled rows are dimmed and skipped when you run, so you can try a LoRA without removing it. **Toggle All Loras** at the top switches every row at once, **Add Lora** adds a row, and each row's arrows and **Remove** button reorder or delete it.
 
+### How do I add reference images to growing inputs?
+
+Connect an image to the first reference input and another empty input appears.
+The group's **Add** button creates another input without connecting it; its
+numbered remove buttons remove an input and its link. This works with **Set
+Reference Multi Latent**, Krea reference-image groups and other growing inputs,
+including groups inside a model selector. Optional inputs may stay empty.
+
+### How do I draw boxes for FLUX.3 and MOSS layout prompts?
+
+Use **Create Bounding Boxes**. Add a box or draw on the empty canvas; **Draw
+boxes** lets you draw inside an existing box. Drag a box to move it, or a corner
+to resize it. The coordinate fields edit exact pixels; arrow keys move the
+selected box, with Shift for ten-pixel steps. Set its object/text type,
+description, text and up to five palette colors. **Move backward** and **Move
+forward** set the layer order, from background to foreground.
+
+Connect an image to **background** to use it behind the boxes. A connected
+**bboxes** input initializes the editor after execution; edits stay until that
+upstream value changes. Connect the **elements** output to a FLUX.3 or MOSS
+layout-prompt node. Layouts save in the workflow and reopen in the stock editor.
+
+### How do I capture a camera image?
+
+On **Webcam Capture**, press **Start camera** and allow camera access, then
+**Capture image** to save a still. HTTPS or localhost is required. With
+**capture_on_queue** enabled, a running camera captures a fresh frame for each
+queued run. **Stop camera** keeps the saved still; hiding the page or closing
+the control stops its stream. No camera starts automatically when a workflow opens.
+
+### How do I load a starter workflow?
+
+Choose **Menu → Templates → Load starter workflow**. Newer cores provide their
+own starter; older ones get a basic image-generation workflow. Select an
+installed checkpoint before running it.
+
 <a id="how-do-i-aim-a-camera-with-the-camera-nodes"></a>
 ### How do I aim a camera with the camera nodes?
 

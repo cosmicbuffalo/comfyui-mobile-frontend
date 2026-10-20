@@ -1,4 +1,6 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
+import * as THREE from 'three';
+import { TransformControls } from 'three/examples/jsm/controls/TransformControls.js';
 import type { CameraInputs } from './cameraMath';
 
 // The real scene, gestures and controls, with a renderer that draws nothing.
@@ -22,7 +24,7 @@ vi.mock('three', async importOriginal => {
   return { ...three, WebGLRenderer };
 });
 
-const { CameraViewport } = await import('./CameraViewport');
+const { CameraViewport, pickTransformGizmo } = await import('./CameraViewport');
 
 beforeEach(() => {
   vi.stubGlobal('ResizeObserver', class { observe() {} disconnect() {} });
@@ -116,4 +118,22 @@ it('hides the roll ring while the move-camera gizmo sits on the camera', () => {
   viewport.setTransformGizmoMode('target');
   expect(roll.visible).toBe(true);
   viewport.remove();
+});
+
+it('picks a newly enabled transform gizmo before its first render frame', () => {
+  const canvas = document.createElement('canvas');
+  canvas.getBoundingClientRect = () => ({ x: 0, y: 0, left: 0, top: 0, right: 512, bottom: 288, width: 512, height: 288, toJSON() {} });
+  const camera = new THREE.PerspectiveCamera(35, 512 / 288, 0.1, 1000);
+  camera.position.set(8, 6, 10); camera.lookAt(0, 0, 0); camera.updateMatrixWorld(true);
+  const scene = new THREE.Scene(), object = new THREE.Object3D();
+  const control = new TransformControls(camera, canvas); control.setSize(0.8); control.attach(object);
+  scene.add(object, control.getHelper());
+  scene.updateMatrixWorld(true);
+  // Input changes and visibility arrive ahead of the scheduled WebGL frame.
+  object.position.set(-3, 2, 1); control.enabled = true; control.getHelper().visible = true;
+  const point = object.position.clone().project(camera);
+  pickTransformGizmo(scene, control, new THREE.Vector2(point.x, point.y));
+  expect(control.axis).not.toBeNull();
+  expect((control as unknown as { worldPosition: THREE.Vector3 }).worldPosition.toArray()).toEqual([-3, 2, 1]);
+  control.dispose();
 });

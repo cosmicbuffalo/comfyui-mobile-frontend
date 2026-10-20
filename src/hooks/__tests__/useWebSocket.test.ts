@@ -687,6 +687,7 @@ describe('parseBinaryPreviewMessage', () => {
     new DataView(bytes.buffer).setUint32(4, 1, false);
     bytes.set([0xff, 0xd8, 0xff, 0xd9], 8);
     const parsed = parseBinaryPreviewMessage(bytes.buffer);
+    if (parsed?.kind === "text") throw new Error("Expected an image envelope");
     expect(parsed?.kind).toBe('image');
     expect(await blobBytes(parsed!.blob)).toEqual(
       new Uint8Array([0xff, 0xd8, 0xff, 0xd9]),
@@ -711,6 +712,7 @@ describe('parseBinaryPreviewMessage', () => {
     bytes.set(id, 17);
     bytes.set([0xff, 0xd8, 0xff, 0xd9], 32);
     const parsed = parseBinaryPreviewMessage(bytes.buffer);
+    if (parsed?.kind === "text") throw new Error("Expected an image envelope");
     expect(parsed).toMatchObject({ kind: 'vhs', nodeId: '50:7', index: 3 });
     expect(await blobBytes(parsed!.blob)).toEqual(
       new Uint8Array([0xff, 0xd8, 0xff, 0xd9]),
@@ -726,6 +728,7 @@ describe('parseBinaryPreviewMessage', () => {
     bytes.set(json, 8);
     bytes.set([0x89, 0x50, 0x4e, 0x47], 8 + json.length);
     const parsed = parseBinaryPreviewMessage(bytes.buffer);
+    if (parsed?.kind === "text") throw new Error("Expected an image envelope");
     expect(parsed?.kind).toBe('image');
     expect(parsed?.blob.type).toBe('image/png');
 
@@ -749,6 +752,7 @@ describe('parseBinaryPreviewMessage', () => {
   it('decodes the golden VHS envelope captured from upstream', async () => {
     const { frame, expected } = goldenVhsFrame();
     const parsed = parseBinaryPreviewMessage(frame);
+    if (parsed?.kind === 'text') throw new Error('Expected an image envelope');
     expect(parsed).toMatchObject({
       kind: 'vhs',
       nodeId: expected.nodeId,
@@ -784,6 +788,7 @@ describe('parseBinaryPreviewMessage', () => {
 
     for (const frame of frames) {
       const parsed = parseBinaryPreviewMessage(frame);
+      if (parsed?.kind === 'text') throw new Error('Expected an image envelope');
       expect(parsed).not.toBeNull();
       // The whole failure mode of the 3.1.2 outage was a Blob whose first bytes
       // were protocol, not pixels. No decoded result may ever start that way.
@@ -966,6 +971,26 @@ describe('orphaned closed-tab run routing', () => {
       await Promise.resolve();
     });
   }
+
+  it.each(['active', 'parked', 'closed'])('routes binary text to its %s owning session even in low resource mode', async owner => {
+    const write = vi.spyOn(useWorkflowStore.getState(), 'setNodeTextOutput').mockImplementation(() => {});
+    const mapping = { '5': 'root/node:5' };
+    useWorkflowStore.setState({
+      promptToSession: { textPrompt: owner }, expandedNodeIdMap: mapping,
+      parkedSessions: owner === 'parked' ? { parked: { workflow: emptyWorkflow, expandedNodeIdMap: mapping, expandedNodePathMap: {}, pointerByHierarchicalKey: {} } as never } : {},
+    });
+    useGenerationSettingsStore.setState({ lowResourceMode: true });
+    try {
+      await mount();
+      await fire({ type: 'executing', data: { node: '5', prompt_id: 'textPrompt' } });
+      const id = new TextEncoder().encode('5'), text = new TextEncoder().encode('width: 64');
+      const buffer = new ArrayBuffer(8 + id.length + text.length), view = new DataView(buffer);
+      view.setUint32(0, 3); view.setUint32(4, id.length); new Uint8Array(buffer, 8).set(id); new Uint8Array(buffer, 8 + id.length).set(text);
+      await act(async () => onBinaryMessage?.(buffer));
+      if (owner === 'closed') expect(write).not.toHaveBeenCalled();
+      else expect(write).toHaveBeenCalledWith('root/node:5', 'width: 64', owner);
+    } finally { write.mockRestore(); useGenerationSettingsStore.setState({ lowResourceMode: false }); }
+  });
 
   it.each([
     { fields: { node_id: '7' }, expectedId: '7' },

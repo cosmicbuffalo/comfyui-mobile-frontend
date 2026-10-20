@@ -2,10 +2,23 @@
 
 ## 3.4.0 - 2026-10-15
 
-Supports the new nodes in ComfyUI 0.40. Older ComfyUI versions keep working
-exactly as before.
+Supports ComfyUI 0.40 through 0.42.1, including growing reference inputs and
+visual layout authoring. Older ComfyUI versions remain supported.
 
 ### Added
+
+- **Growing inputs.** Reference-image groups in **Set Reference Multi Latent**,
+  **Krea 3 Image**, and other nodes offer typed connections that grow as you
+  connect them. Add or remove inputs directly, including groups inside selectors.
+- **Visual bounding boxes.** **Create Bounding Boxes** supports drawing, moving,
+  resizing, duplicating and ordering boxes, with object/text labels, captions,
+  five-color palettes and background images. Saved layouts work with the new
+  FLUX.3 and MOSS layout-prompt nodes and ComfyUI's desktop editor.
+- **Webcam capture.** **Start camera**, capture a still, or leave the camera
+  running to capture each queued run. Stopping the camera keeps the saved still;
+  hiding the page or closing the control releases the camera.
+- **Starter workflow.** **Menu → Templates → Load starter workflow** uses the
+  core's starter workflow, with a basic editable starter on older cores.
 
 - **Low resource mode.** The former **Blur effects** switch is now
   **Preferences → Low resource mode**, off by default. It removes blur and
@@ -41,6 +54,11 @@ exactly as before.
 
 ### Improved
 
+- **New node diagnostics.** Image/video and audio latent-size nodes show their
+  text diagnostics, including in low resource mode and background workflow tabs.
+- **Nested reference groups.** Stock-saved Krea 3 prompts and subsequent settings
+  retain their correct widget positions even when no reference images are linked.
+
 - **Faster workflow edits.** Unrelated root node cards no longer refresh for
   each widget edit. Connected values and graph changes remain reactive;
   subgraphs and wireless links keep full dependency tracking.
@@ -60,6 +78,11 @@ exactly as before.
   purple like a bypassed node, with only its LoRA picker dimmed. Power Lora's
   Toggle All is now a switch that shows whether every LoRA is on, and CR LoRA
   Stack no longer folds a LoRA away when you switch it off.
+
+### Fixed
+
+- **Camera gizmos.** The first drag after enabling or moving a camera gizmo
+  uses its current position, even before the next preview frame renders.
 
 ### Notes
 

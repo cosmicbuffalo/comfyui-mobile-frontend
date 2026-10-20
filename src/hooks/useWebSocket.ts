@@ -783,6 +783,9 @@ export function useWebSocket() {
           // the backend and appear in the Outputs panel via the history fetch.
           if (ctx.orphaned) break;
           const itemKeysForOutput = resolveNodeHierarchicalKeysForOutput(node, ctx);
+          if (Array.isArray(output?.dims)) {
+            itemKeysForOutput.forEach(key => useWorkflowStore.getState().setNodeBoundingBoxResult(key, output, ctx.sessionId));
+          }
           const mediaOutputs = collectExecutedMediaOutputs(
             output,
             `${prompt_id}:${node}:${Date.now()}`,
@@ -1149,9 +1152,21 @@ export function useWebSocket() {
     };
 
     const handleBinaryMessage = (data: ArrayBuffer) => {
+      // Diagnostics still work when expensive image previews are disabled.
+      if (data.byteLength >= 4 && new DataView(data).getUint32(0, false) === 3) {
+        const parsed = parseBinaryPreviewMessage(data);
+        const promptId = executingPromptIdRef.current;
+        if (parsed?.kind !== 'text' || !promptId) return;
+        const ctx = getSessionContext(promptId);
+        if (ctx.orphaned) return;
+        for (const key of resolveNodeHierarchicalKeysForOutput(parsed.nodeId, ctx)) {
+          storeActionsRef.current.setNodeTextOutput(key, parsed.text, ctx.sessionId);
+        }
+        return;
+      }
       if (useGenerationSettingsStore.getState().lowResourceMode) return;
       const parsed = parseBinaryPreviewMessage(data);
-      if (!parsed) return;
+      if (!parsed || parsed.kind === 'text') return;
       if (parsed.kind === 'image') {
         dispatchPreviewFrame(parsed.blob);
         return;

@@ -5,6 +5,7 @@ import { findLoraListIndex, isLoraList, isLoraManagerNodeType, isPowerLoraLoader
 import { isPowerPuterNodeType, readPowerPuterWidgets, POWER_PUTER_MAX_OUTPUTS, POWER_PUTER_OUTPUT_TYPES } from '@/utils/powerPuter';
 import { modelWidgetKind } from '@/utils/modelWidgetKind';
 import { isDynamicGroup, groupRowCount, readGroupRows, groupFields } from './workflowInputs/dynamicGroups';
+import { isAutogrow } from './workflowInputs/autogrow';
 import { isEditorOnlyWidgetType, isViewportWidgetType } from './workflowInputs/defaultInputs';
 import {
   extractTriggerWordList,
@@ -318,6 +319,7 @@ function collectWidgetDefinitions(
     ) => {
       if (!input) return; // Defensive check
       const [typeOrOptions, inputOptions] = input;
+      if (isAutogrow(typeOrOptions)) return;
       if (isDynamicGroup(typeOrOptions)) {
         const count = groupRowCount(getWidgetValue(node, qualifiedName, widgetIndex), inputOptions);
         definitions.push({ name, inputName: qualifiedName, type: 'DYNAMIC_GROUP', value: readGroupRows(node, qualifiedName, widgetIndex, inputOptions), widgetIndex, isCombo: false, connected: false, inputIndex: -1,

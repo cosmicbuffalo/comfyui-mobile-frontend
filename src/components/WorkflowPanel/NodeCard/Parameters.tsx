@@ -71,6 +71,7 @@ import { supportsPinnedWidgetEditor } from '@/utils/pinnedWidgetSupport';
 import { promotedWidgetKey, resolvePromotedWidgetKeys } from '@/utils/boundaryPromotion';
 
 const CameraControls = lazyPanel(() => import('@/components/ThreeView/CameraControls'), { prefetch: false });
+const BoundingBoxControls = lazyPanel(() => import('@/components/InputControls/BoundingBoxControls'), { prefetch: false });
 
 interface WidgetDescriptor {
   widgetIndex: number;
@@ -341,8 +342,9 @@ export function NodeCardParameters({
     const baseName = widget.name.split(': ').pop() ?? widget.name;
     return baseName !== 'seed' && baseName !== 'noise_seed';
   };
-  const inputWidgetsToRender = visibleInputWidgets.filter(shouldRenderGenericWidget);
-  const widgetsToRender = visibleWidgets.filter(shouldRenderGenericWidget);
+  const genericWidget = (widget: WidgetDescriptor) => !(node.type === 'CreateBoundingBoxes' && ['editor_state', 'last_incoming'].includes(widget.inputName ?? widget.name)) && shouldRenderGenericWidget(widget);
+  const inputWidgetsToRender = visibleInputWidgets.filter(genericWidget);
+  const widgetsToRender = visibleWidgets.filter(genericWidget);
   const showParameters = visibleWidgets.length > 0 || visibleInputWidgets.length > 0;
   // A node that is just a single widget with no other input slots (a
   // primitive-like node) gains nothing from popping its only value out, so the
@@ -1582,7 +1584,7 @@ export function NodeCardParameters({
           options={widget.type === 'DYNAMIC_GROUP'
             // Core reports row fields by qualified name (loras.1.lora_name).
             ? { ...widget.options, __errors: [...errorInputNames].filter(name => name.startsWith(`${widget.inputName ?? widget.name}.`)) }
-            : widget.options}
+            : widget.type === 'WEBCAM' ? { ...widget.options, __nodeKey: node.itemKey, __width: visibleWidgets.find(w => w.name === 'width')?.value, __height: visibleWidgets.find(w => w.name === 'height')?.value } : widget.options}
           onChange={handleWidgetChange(widget)}
           disabled={isBypassed || widget.disabled === true}
           isPinned={canPinWidget(widget.type, widget.name, widget.options) ? isWidgetPinned(widget.widgetIndex) : false}
@@ -1662,6 +1664,7 @@ export function NodeCardParameters({
       {showParameters && (
         <>
           {(node.type === 'CameraAngle' || node.type === 'CreateCameraInfo') && <Suspense fallback={<div className="h-72" />}><CameraControls node={node} onChange={onUpdateNodeWidgets} disabled={isBypassed} /></Suspense>}
+          {node.type === 'CreateBoundingBoxes' && <Suspense fallback={<div className="h-72" />}><BoundingBoxControls node={node} onChange={onUpdateNodeWidgets} disabled={isBypassed} /></Suspense>}
           {isKSampler && workflowExists && nodeTypesExists && (() => {
             const seedIndex = kSamplerSeedIndex;
             if (seedIndex === null) return null;
@@ -1839,36 +1842,7 @@ export function NodeCardParameters({
                     />
                   </WidgetRow>
                 ))}
-                {widgetsToRender.map((widget) => {
-                  const canPopOut =
-                    !isBypassed && !isSingleWidgetOnlyNode && Boolean(node.itemKey) && canPopOutWidget(widget);
-                  return (
-                    <WidgetRow
-                      key={getWidgetKey(widget, 'widget')}
-                      nodeId={node.id} widgetIndex={widget.widgetIndex}
-                      className={isBypassed ? 'opacity-80' : ''}
-                    >
-                      <WidgetControl
-                        name={widget.name}
-                        displayLabel={widgetDisplayLabel(widget)}
-                        boundaryAnnotation={widgetBoundaryAnnotation(widget)}
-                        onBoundaryJump={widgetBoundaryJump(widget)}
-                        type={widget.type}
-                        value={widget.value}
-                        options={widget.options}
-                        onChange={handleWidgetChange(widget)}
-                        disabled={isBypassed || widget.disabled === true}
-                        isPinned={canPinWidget(widget.type, widget.name, widget.options) ? isWidgetPinned(widget.widgetIndex) : false}
-                        onTogglePin={canPinWidget(widget.type, widget.name, widget.options) ? () => toggleWidgetPin(widget.widgetIndex, widget.name, widget.type, widget.options, widget.inputName) : undefined}
-                        hasError={hasWidgetError(widget)}
-                        isPromoted={isPromotedWidget(widget.name)}
-                        labelAccessory={
-                          rowMenuFor(widget, canPopOut)
-                        }
-                      />
-                    </WidgetRow>
-                  );
-                })}
+                {widgetsToRender.map(renderValueRow)}
                 </>
               )}
             </>

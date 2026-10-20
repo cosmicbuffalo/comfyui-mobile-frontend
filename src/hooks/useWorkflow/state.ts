@@ -614,6 +614,7 @@ export interface WorkflowState {
     text: string,
     sessionId?: string | null,
   ) => void;
+  setNodeBoundingBoxResult: (itemKey: HierarchicalKey, output: Record<string, unknown>, sessionId?: string | null) => void;
   clearNodeOutputs: () => void;
   latentPreviews: Record<string, string>;
   // Batched runs preview every image in the batch, so a node can hold several

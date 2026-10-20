@@ -32,6 +32,8 @@ import {queueWorkflowLabel, yieldToBrowserPaint} from "./helpers";
 import {patchParkedSession, resolveWriteTarget, writeNodeKeyedField} from "./writeTarget";
 import type {SeedLastValues, WorkflowGet, WorkflowSet, WorkflowState} from "./state";
 import {createApplyNodeErrors} from "./nodeErrors";
+import {applyBoundingBoxResult} from '@/utils/boundingBoxes';
+import {captureQueuedWebcams} from '@/utils/webcamCapture';
 
 let queueLatentSeq = 0;
 
@@ -259,6 +261,18 @@ const setNodeTextOutput: WorkflowState["setNodeTextOutput"] = (
 
 const clearNodeOutputs: WorkflowState["clearNodeOutputs"] = () => {
   set({ nodeOutputs: {}, nodeComparerOutputs: {}, nodeTextOutputs: {} });
+};
+
+const setNodeBoundingBoxResult: WorkflowState["setNodeBoundingBoxResult"] = (key, output, sessionId) => {
+  set(state => {
+    if (sessionId && sessionId !== state.activeSessionId && !state.parkedSessions[sessionId]) return {};
+    const parked = resolveWriteTarget(state, sessionId);
+    const workflow = parked?.workflow ?? state.workflow;
+    if (!workflow) return {};
+    const next = applyBoundingBoxResult(workflow, state.nodeTypes, key, output);
+    if (next === workflow) return {};
+    return parked ? patchParkedSession(state, sessionId!, { workflow: next }) : { workflow: next };
+  });
 };
 
 const setLatentPreviewTiles: WorkflowState["setLatentPreviewTiles"] = (urls, itemKey) => {
@@ -1008,6 +1022,8 @@ const queueWorkflow: WorkflowState["queueWorkflow"] = async (
 
     let frontBatchBaseNumber: number | null = null;
     for (let i = 0; i < count; i++) {
+      if (liveTarget() === 'gone') return false;
+      currentWorkflow = await captureQueuedWebcams(currentWorkflow, nodeTypes, sid);
       const seedOverrides: Record<string, number> = {};
       // A variation run deliberately skips seed handling entirely. Its whole
       // point is that ONE input differs between the queued runs, so a seed set
@@ -1566,5 +1582,5 @@ const queueWorkflow: WorkflowState["queueWorkflow"] = async (
   }
 };
 
-  return { setExecutionState, setNodeOutput, setNodeComparerOutput, setNodeTextOutput, clearNodeOutputs, setLatentPreviewTiles, setLatentPreview, clearAllLatentPreviews, setQueueLatentPreviewTiles, setQueueLatentPreview, clearQueueLatentPreviews, addPromptOutputs, clearPromptOutputs, setRunCount, setInfiniteLoop, setIsStopping, setSavingSessionId, setFollowQueue, applyControlAfterGenerate, queueWorkflow };
+  return { setNodeBoundingBoxResult, setExecutionState, setNodeOutput, setNodeComparerOutput, setNodeTextOutput, clearNodeOutputs, setLatentPreviewTiles, setLatentPreview, clearAllLatentPreviews, setQueueLatentPreviewTiles, setQueueLatentPreview, clearQueueLatentPreviews, addPromptOutputs, clearPromptOutputs, setRunCount, setInfiniteLoop, setIsStopping, setSavingSessionId, setFollowQueue, applyControlAfterGenerate, queueWorkflow };
 }

@@ -2,6 +2,7 @@ import type { NodeTypeDefinition } from '@/api/types';
 import { DYNAMIC_COMBO_V3, getComboOptions, getDynamicComboSubInputs, isComboType, isMultiSelectCombo, normalizeComboValue, orderedInputNames } from './comboValues';
 import { isWidgetInputType } from './widgetSlots';
 import { isDynamicGroup, groupLimits, getDynamicGroupSubInputs } from './dynamicGroups';
+import { isAutogrow, autogrowInputs } from './autogrow';
 
 /**
  * Widget types stock creates but never saves into widgets_values
@@ -45,7 +46,7 @@ export function isUnsavedWidgetType(typeOrOptions: string | unknown[]): boolean 
  * whose rows go in as their own `name.N.field` inputs.
  */
 export function isOmittedFromPrompt(typeOrOptions: string | unknown[], inputOptions?: Record<string, unknown>): boolean {
-  return isDynamicGroup(typeOrOptions) || isEditorOnlyWidgetType(typeOrOptions) || inputOptions?.widgetType === 'CAMERA_ANGLE_VIEW';
+  return isAutogrow(typeOrOptions) || isDynamicGroup(typeOrOptions) || isEditorOnlyWidgetType(typeOrOptions) || inputOptions?.widgetType === 'CAMERA_ANGLE_VIEW';
 }
 
 /** The prompt value of an unsaved widget type; undefined for any other type. */
@@ -58,6 +59,8 @@ export function isWidgetBackedInput(
   typeOrOptions: string | unknown[],
   inputOptions?: Record<string, unknown>
 ): boolean {
+  if (isAutogrow(typeOrOptions)) return false;
+  if (typeOrOptions === 'WEBCAM') return true;
   if (inputOptions?.forceInput === true || inputOptions?.defaultInput === true) return false;
   if (isDynamicGroup(typeOrOptions)) return true;
   if (inputOptions?.socketless === true) return true;
@@ -77,6 +80,8 @@ export function isConnectionSocketInput(
   typeOrOptions: string | unknown[],
   inputOptions?: Record<string, unknown>,
 ): boolean {
+  if (typeOrOptions === 'WEBCAM') return false;
+  if (isAutogrow(typeOrOptions)) return false;
   if (inputOptions?.forceInput === true || inputOptions?.defaultInput === true) return true;
   if (isDynamicGroup(typeOrOptions)) return false;
   // Legacy array combos are widget-only. Serializing their entire option list
@@ -95,6 +100,7 @@ export function getDefaultWidgetValue(
   inputOptions?: Record<string, unknown>
 ): unknown {
   const declared = inputOptions?.default;
+  if (typeOrOptions === 'WEBCAM') return declared ?? '';
   if (isDynamicGroup(typeOrOptions)) return groupLimits(inputOptions).min;
   if (inputOptions?.widgetType === 'CAMERA_ANGLE_VIEW') return 'camera';
   if (isComboType(typeOrOptions)) {
@@ -201,6 +207,12 @@ function collectDefaultConnectionInputs(
 ): void {
   const [typeOrOptions, inputOptions] = inputDef;
   const widgetBacked = isWidgetBackedInput(typeOrOptions, inputOptions);
+  if (isAutogrow(typeOrOptions)) {
+    for (const child of autogrowInputs(inputOptions, qualifiedName)) {
+      collectDefaultConnectionInputs(child.qualifiedName, child.inputDef, result);
+    }
+    return;
+  }
   if (isDynamicGroup(typeOrOptions)) {
     for (const sub of getDynamicGroupSubInputs(inputOptions, qualifiedName, groupLimits(inputOptions).min)) {
       collectDefaultConnectionInputs(sub.qualifiedName, sub.inputDef, result);

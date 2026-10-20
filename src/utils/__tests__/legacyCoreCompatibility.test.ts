@@ -74,7 +74,18 @@ describe.each(VERSIONS)('ComfyUI core %s', version => {
       fs.writeFileSync(path.join(outDir, `legacyCore-${version}.baseline.json.gz`), zlib.gzipSync(JSON.stringify(digest), { level: 9 }));
       return;
     }
-    const baseline = readGzipJson(path.join(FIXTURES, `legacyCore-${version}.baseline.json.gz`));
+    const original = readGzipJson(path.join(FIXTURES, `legacyCore-${version}.baseline.json.gz`));
+    // 3.4 repairs authoring of existing Autogrow and Webcam nodes too. Keep
+    // the released baseline intact and snapshot only those intentional fixes.
+    const correctionDir = process.env.LEGACY_CORE_CORRECTIONS_DIR;
+    if (correctionDir) {
+      const corrections = Object.fromEntries(Object.keys(original).filter(type => JSON.stringify(digest[type]) !== JSON.stringify(original[type])).map(type => [type, digest[type]]));
+      fs.writeFileSync(path.join(correctionDir, `legacyCore-${version}.authoring.json.gz`), zlib.gzipSync(JSON.stringify(corrections), { level: 9 }));
+      return;
+    }
+    const corrections = readGzipJson(path.join(FIXTURES, `legacyCore-${version}.authoring.json.gz`));
+    for (const type of Object.keys(corrections)) expect(type === 'WebcamCapture' || JSON.stringify(objectInfo[type].input).includes('COMFY_AUTOGROW_V3')).toBe(true);
+    const baseline = { ...original, ...corrections };
     expect(Object.keys(digest)).toEqual(Object.keys(baseline));
     const changed = Object.keys(baseline).filter(type => JSON.stringify(digest[type]) !== JSON.stringify(baseline[type]));
     expect(changed).toEqual([]);

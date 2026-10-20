@@ -36,6 +36,8 @@ export const controlModalInputBaseClassName =
 export const controlSecondaryButtonClassName =
   "w-full py-2 px-3 bg-slate-950/80 border border-white/10 rounded-lg text-sm font-medium text-slate-200 enabled:hover:bg-slate-800/95 enabled:hover:text-cyan-300 enabled:hover:border-cyan-400/40 transition disabled:opacity-50 disabled:cursor-not-allowed";
 
+export const controlInlineButtonClassName = controlSecondaryButtonClassName.replace('w-full', 'min-h-10');
+
 export const controlSecondaryButtonDisabledClassName =
   "opacity-60 cursor-not-allowed border-white/10 text-slate-500 bg-slate-950/80";
 

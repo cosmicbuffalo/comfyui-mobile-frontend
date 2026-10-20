@@ -1,4 +1,5 @@
 export type ParsedBinaryPreview =
+  | { kind: 'text'; nodeId: string; text: string }
   | { kind: 'image'; blob: Blob }
   | { kind: 'vhs'; nodeId: string; index: number; blob: Blob }
   | null;
@@ -42,6 +43,16 @@ export function parseBinaryPreviewMessage(data: ArrayBuffer): ParsedBinaryPrevie
   if (data.byteLength < 8) return null;
   const view = new DataView(data);
   const type = view.getUint32(0, false);
+  if (type === 3) {
+    const length = view.getUint32(4, false);
+    if (!length || length > 4096 || 8 + length > data.byteLength || data.byteLength - 8 - length > 65536) return null;
+    try {
+      const decoder = new TextDecoder('utf-8', { fatal: true });
+      const nodeId = decoder.decode(data.slice(8, 8 + length));
+      const text = decoder.decode(data.slice(8 + length));
+      return nodeId.trim() && text.trim() ? { kind: 'text', nodeId, text } : null;
+    } catch { return null; }
+  }
   if (type === 1) {
     const imageType = view.getUint32(4, false);
     const bytes = new Uint8Array(data);

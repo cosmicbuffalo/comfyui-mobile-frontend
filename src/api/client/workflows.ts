@@ -1,5 +1,15 @@
-import type { Workflow } from '../types';
+import type { Workflow, NodeTypes } from '../types';
 import { invalidateUserWorkflowList } from './userWorkflowList';
+import { buildStarterWorkflow } from '@/utils/starterWorkflow';
+
+export async function loadDefaultWorkflow(nodeTypes: NodeTypes): Promise<Workflow> {
+  const response = await fetch('/default_workflow', { cache: 'no-store' });
+  if (response.status === 404 || response.status === 405) return buildStarterWorkflow(nodeTypes);
+  if (!response.ok) throw new Error('Failed to load starter workflow');
+  const workflow = await response.json();
+  if (!Array.isArray(workflow?.nodes) || !Array.isArray(workflow?.links)) throw new Error('Invalid starter workflow');
+  return workflow;
+}
 
 const RECENT_WORKFLOWS_PATH = 'mobile/recent_workflows.json';
 const WORKFLOW_HIDDEN_PATH = 'mobile/workflow_hidden.json';

@@ -1,4 +1,5 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { AutogrowControls } from '@/components/InputControls/AutogrowControls';
 import { useNodeWorkflow } from '@/hooks/useNodeWorkflow';
 import type { HistoryOutputImage, WorkflowInput, WorkflowNode, WorkflowOutput } from '@/api/types';
 import { useWildcards } from '@/hooks/useWildcards';
@@ -1650,6 +1651,7 @@ export const NodeCard = memo(function NodeCard({
               allOutputs={node.outputs}
             />
 
+            <AutogrowControls node={node} itemKey={nodeHierarchicalKey} disabled={isBypassed} />
             {!isSetGet && <NodeCardParameters
               node={node}
               isBypassed={isBypassed}

@@ -3,6 +3,7 @@ import { DYNAMIC_COMBO_V3, getDynamicComboSubInputs, orderedInputNames, type Dyn
 import { buildDefaultWidgetValues, getDefaultWidgetValue, getDynamicComboConnectionInputs, isUnsavedWidgetType, isWidgetBackedInput } from './defaultInputs';
 import { getNodePropertyWidgetIndexMap, getWidgetValue, skipImplicitSeedControlSlot } from './widgetSlots';
 import { isDynamicGroup, groupRowCount, groupFields, getDynamicGroupSubInputs, readGroupRows, type DynamicGroupEdit } from './dynamicGroups';
+import { isAutogrow, autogrowInputs, editAutogrow, type AutogrowEdit } from './autogrow';
 
 export function occupiesWidgetSlot(
   node: WorkflowNode,
@@ -10,6 +11,7 @@ export function occupiesWidgetSlot(
   typeOrOptions: string | unknown[],
   inputOptions?: Record<string, unknown>
 ): boolean {
+  if (isAutogrow(typeOrOptions)) return false;
   const inputEntry = node.inputs.find((i) => i.name === name);
   if (inputOptions?.forceInput === true || inputOptions?.defaultInput === true) return false;
   // Stock never saves these, so they hold no position in widgets_values.
@@ -76,6 +78,10 @@ export function getActiveNodeInputDefinitions(
       value,
     });
 
+    if (isAutogrow(typeOrOptions)) {
+      for (const child of autogrowInputs(inputOptions, qualifiedName, node)) process(child.name, child.qualifiedName, child.inputDef);
+      return;
+    }
     if (!hasWidgetSlot) return;
     const ownWidgetIndex = widgetIndex ?? cursor;
     cursor = Math.max(cursor + 1, ownWidgetIndex + 1);
@@ -200,6 +206,18 @@ export interface DynamicComboNodeRebuild {
   removedLinkIds: number[];
 }
 
+/** Keep one unconnected socket ready, without allocating the whole template. */
+export function growAutogrowNode(node: WorkflowNode, typeDef: NodeTypeDefinition | undefined): WorkflowNode {
+  if (!typeDef) return node;
+  let next = node;
+  for (const group of getActiveNodeInputDefinitions(typeDef, node).filter(d => isAutogrow(d.inputDef[0]))) {
+    const children = autogrowInputs(group.inputDef[1], group.qualifiedName, next);
+    if (children.some(child => next.inputs.find(input => input.name === child.qualifiedName)?.link == null)) continue;
+    next = editAutogrow(next, group.qualifiedName, group.inputDef[1], { add: true })?.node ?? next;
+  }
+  return next;
+}
+
 /**
  * Reconcile a DynamicCombo's conditional sockets alongside its widget span.
  * Shared sockets keep their links; sockets exclusive to the old option are
@@ -215,6 +233,7 @@ export function rebuildDynamicComboNode(
   comboIndex: number,
   nextValue: unknown,
 ): DynamicComboNodeRebuild | null {
+  if (isAutogrow(inputDef[0])) return editAutogrow(node, inputName, inputDef[1], nextValue as AutogrowEdit);
   if (isDynamicGroup(inputDef[0])) return rebuildDynamicGroupNode(node, typeDef, inputName, inputDef[1], comboIndex, nextValue);
   const rebuiltValues = rebuildDynamicComboWidgetValues(
     node,
@@ -235,6 +254,17 @@ export function rebuildDynamicComboNode(
     if (input.name.startsWith(prefix)) oldDescendantNames.add(input.name);
   }
   const newSockets = getDynamicComboConnectionInputs(inputName, inputDef, nextValue);
+  // A surviving group keeps its materialized sockets, not just the first
+  // socket emitted by the default schema. This also preserves named gaps.
+  const nextNode = { ...node, widgets_values: rebuiltValues };
+  for (const group of getActiveNodeInputDefinitions(typeDef, nextNode).filter(d => isAutogrow(d.inputDef[0]))) {
+    if (!group.qualifiedName.startsWith(prefix)) continue;
+    const children = autogrowInputs(group.inputDef[1], group.qualifiedName, node);
+    if (!children.length) continue;
+    const names = new Set(autogrowInputs(group.inputDef[1], group.qualifiedName).map(child => child.qualifiedName));
+    for (let i = newSockets.length - 1; i >= 0; i--) if (names.has(newSockets[i].name)) newSockets.splice(i, 1);
+    for (const child of children) newSockets.push({ name: child.qualifiedName, type: String(child.inputDef[0]) });
+  }
   const newSocketByName = new Map(newSockets.map((input) => [input.name, input]));
   const removedLinkIds: number[] = [];
 

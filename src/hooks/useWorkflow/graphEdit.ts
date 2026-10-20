@@ -6,6 +6,7 @@ import {useParameterSectionFoldsStore} from "@/hooks/useParameterSectionFolds";
 import {useWorkflowClipboardStore, type WorkflowClipboardPayload} from "@/hooks/useWorkflowClipboard";
 import {applyClipboardPaste, buildGroupClipboardPayload, buildNodeClipboardPayload, buildMultiNodeClipboardPayload, collectGroupMoveSelection, placeGroupsIntoGroup, placePastedNodesIntoGroup} from "@/utils/workflowClipboard";
 import {isComboType, buildDefaultConnectionInputs, buildDefaultWidgetValues} from "@/utils/workflowInputs";
+import {growAutogrowNode} from '@/utils/workflowInputs/dynamicComboRebuild';
 import {collectMoveIntoSubgraphTargets} from "@/utils/moveIntoSubgraphTargets";
 import {nodeTypeStripsSeedControl} from "@/utils/seedUtils";
 import {areTypesCompatible} from "@/utils/connectionUtils";
@@ -376,7 +377,7 @@ const connectNodes: WorkflowState["connectNodes"] = (
     if (n.id === tgtNodeId) {
       const newInputs = [...n.inputs];
       newInputs[tgtSlot] = { ...newInputs[tgtSlot], link: newLinkId };
-      return { ...n, inputs: newInputs };
+      return growAutogrowNode({ ...n, inputs: newInputs }, nodeTypes?.[n.type]);
     }
     if (n.id === srcNodeId) {
       const newOutputs = [...n.outputs];
@@ -416,9 +417,13 @@ const connectNodes: WorkflowState["connectNodes"] = (
 
   const nextWorkflow = scope.applyPatch(workflow, {
     nodes: newNodes,
-    links: scope.subgraphId == null
-      ? (newLinks as WorkflowLink[])
-      : (newLinks as WorkflowSubgraphLink[]),
+    links: newLinks.map(link => {
+      if (getLinkTargetId(link) !== tgtNodeId) return link;
+      const slot = newNodes.find(node => node.id === tgtNodeId)!.inputs.findIndex(input => input.link === getLinkId(link));
+      if (slot < 0 || slot === getLinkTargetSlot(link)) return link;
+      if (Array.isArray(link)) { const updated: WorkflowLink = [...link]; updated[4] = slot; return updated; }
+      return { ...link, target_slot: slot };
+    }) as typeof scope.links,
     last_link_id: nextLastLinkId,
   });
   set({

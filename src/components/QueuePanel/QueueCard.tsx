@@ -1902,7 +1902,7 @@ function QueueCardComponent({
       </div>
 
       <Collapsible open={expanded}>
-        {expanded && modelOutputs.map(output => <ModelOutputPreview key={`${output.type}/${output.subfolder}/${output.filename}`} output={output} onReady={() => onMediaReady?.(item.id)}
+        {expanded && modelOutputs.map(output => <ModelOutputPreview key={`${output.type}/${output.subfolder}/${output.filename}`} output={output} className="" onReady={() => onMediaReady?.(item.id)}
           onError={() => probeMissingMedia(output, item.data.prompt_id || item.id)} onExpand={handleMediaClick(getImageUrl(output.filename, output.subfolder, output.type, output.cacheToken), 0, isTopDoneItem)} />)}
         <div className="relative w-full">
           {showPromptPreview && (

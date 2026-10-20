@@ -12,7 +12,11 @@ import { DownloadIcon, FullscreenIcon } from '@/components/icons';
 const overlayButton = 'grid h-11 w-11 place-items-center rounded-full border border-white/15 bg-slate-950/80 text-slate-100 shadow-lg backdrop-blur-sm hover:text-cyan-300';
 
 const ModelViewer = lazyPanel(() => import('./ModelViewer'), { prefetch: false });
-export function ModelOutputPreview({ output, onReady, onError, onExpand }: { output: HistoryOutputImage; onReady?: () => void; onError?: () => void; onExpand: () => void }) {
+export function ModelOutputPreview({ output, onReady, onError, onExpand, className = 'my-2 rounded-lg border border-white/10' }: {
+  output: HistoryOutputImage; onReady?: () => void; onError?: () => void; onExpand: () => void;
+  /** Frame and spacing; a queue card draws its outputs edge to edge. */
+  className?: string;
+}) {
   const { t } = useI18n();
   const [visible, setVisible] = useState(false);
   const lowResourceMode = useGenerationSettingsStore(s => s.lowResourceMode);
@@ -31,7 +35,7 @@ export function ModelOutputPreview({ output, onReady, onError, onExpand }: { out
   useEffect(() => {
     if (lowResourceMode) ready.current?.();
   }, [lowResourceMode, src]);
-  return <section ref={container} className="relative my-2 rounded-lg border border-white/10 overflow-hidden" aria-label={t('3D output {name}', { name: output.filename })}>
+  return <section ref={container} className={`relative overflow-hidden ${className}`} aria-label={t('3D output {name}', { name: output.filename })}>
     <div className="h-80">{lowResourceMode
       ? <div className="h-full grid place-items-center text-slate-400">3D</div>
       // The viewer's own controls keep the left; the round buttons take the bottom right.

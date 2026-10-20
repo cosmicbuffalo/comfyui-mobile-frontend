@@ -1,4 +1,6 @@
 import { StringControl } from "./StringControl";
+import { Suspense } from 'react';
+import { lazyPanel } from '@/components/lazyPanel';
 import { DynamicGroupControl } from './DynamicGroupControl';
 import { LoraAddButton, LoraRow, LoraToggleAll } from './LoraRow';
 import { NumberControl } from "./NumberControl";
@@ -62,6 +64,9 @@ interface WidgetControlProps {
    */
   modelKind?: LoraManagerPrefix | null;
 }
+
+const WebcamControl = lazyPanel(() => import('./WebcamControl'), { prefetch: false });
+const BoundingBoxEditor = lazyPanel(() => import('./BoundingBoxEditor'), { prefetch: false });
 
 export function WidgetControl({
   name,
@@ -186,6 +191,8 @@ export function WidgetControl({
   const effectiveModalOpen = forceModalOpen || modalOpen;
 
   if (type === 'DYNAMIC_GROUP') return <div className={layoutContainerClass}>{renderControl()}</div>;
+  if (type === 'WEBCAM') return <Suspense fallback={null}><WebcamControl value={value} onChange={onChange} disabled={disabled} nodeKey={options?.__nodeKey} width={options?.__width} height={options?.__height} /></Suspense>;
+  if (type === 'BOUNDING_BOXES') return <Suspense fallback={null}><BoundingBoxEditor value={value} onChange={onChange} disabled={disabled} width={options?.__width} height={options?.__height} /></Suspense>;
 
   if (type === "LM_LORA_HEADER") {
     return <div className={layoutContainerClass}><LoraToggleAll checked={Boolean(value)} onChange={onChange} disabled={disabled} /></div>;
