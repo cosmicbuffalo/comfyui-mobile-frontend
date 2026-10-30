@@ -591,6 +591,32 @@ describe('resolveSource', () => {
     expect(result).toEqual({ nodeId: 1, slotIndex: 0 });
   });
 
+  it('passes a bypassed node through an input of a comma-separated type', () => {
+    // isValidConnection matches CONDITIONING against `H3_COND,CONDITIONING`.
+    const wf = (inputType: string): Workflow => ({
+      last_node_id: 3,
+      last_link_id: 2,
+      nodes: [
+        makeNode(1, 'Encoder', { outputs: [{ name: 'CONDITIONING', type: 'CONDITIONING', links: [1] }] }),
+        makeNode(2, 'Apply', {
+          mode: 4,
+          inputs: [{ name: 'conditioning', type: inputType, link: 1 }],
+          outputs: [{ name: 'conditioning', type: 'CONDITIONING', links: [2] }],
+        }),
+        makeNode(3, 'Guider', { inputs: [{ name: 'conditioning', type: 'CONDITIONING', link: 2 }] }),
+      ],
+      links: [
+        [1, 1, 0, 2, 0, 'CONDITIONING'],
+        [2, 2, 0, 3, 0, 'CONDITIONING'],
+      ],
+      groups: [],
+      config: {},
+      version: 1,
+    });
+    expect(resolveSource(wf('H3_COND,CONDITIONING'), 2)).toEqual({ nodeId: 1, slotIndex: 0 });
+    expect(resolveSource(wf('H3_COND,LATENT'), 2)).toBeNull();
+  });
+
   it('returns null for non-existent link', () => {
     const wf: Workflow = {
       last_node_id: 1,

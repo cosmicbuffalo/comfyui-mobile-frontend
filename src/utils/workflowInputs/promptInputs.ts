@@ -10,12 +10,16 @@ import { finalizeInputValue } from './textReplacements';
 import { processDynamicPrompt } from '@/utils/dynamicPrompts';
 import { getPrimitiveInlineValue, getWidgetValue, isRecord } from './widgetSlots';
 
-/** ComfyUI treats `*` and the empty type as matching anything. */
+/**
+ * LiteGraph.isValidConnection: `*` and the empty type match anything, and a
+ * comma-separated type connects when any of its members does.
+ */
 function typesConnect(a: string, b: string): boolean {
   const left = a.toUpperCase();
   const right = b.toUpperCase();
   if (left === '' || left === '*' || right === '' || right === '*') return true;
-  return left === right;
+  if (!left.includes(',') && !right.includes(',')) return left === right;
+  return left.split(',').some((l) => right.split(',').some((r) => typesConnect(l, r)));
 }
 
 /**
