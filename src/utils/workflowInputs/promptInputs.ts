@@ -101,6 +101,30 @@ export function resolveSource(
 
   if (!sourceNode) return null;
 
+  // A muted node produces no output at all — ComfyUI's ExecutableNodeDTO
+  // .resolveOutput returns early on LGraphEventMode.NEVER, and the consuming
+  // input is simply left out of the prompt.
+  if (sourceNode.mode === 2) return null;
+
+  // Stock checks modes before virtual links: a bypassed getter can only
+  // forward a physical input, so an inputless getter supplies nothing.
+  if (sourceNode.mode === 4 || sourceNode.type === 'Reroute') {
+    const outputDef = sourceNode.outputs[sourceSlotIndex];
+    if (!outputDef) return null;
+
+    const bypassSlot = findBypassInputSlot(
+      sourceNode,
+      sourceSlotIndex,
+      String(outputDef.type),
+      String(link[5] ?? ''),
+    );
+    const bypassLink = bypassSlot === null ? null : sourceNode.inputs[bypassSlot]?.link;
+    if (bypassLink != null) {
+      return resolveSource(workflow, bypassLink, visitedLinkIds, promptKeyMap);
+    }
+    return null;
+  }
+
   if (sourceNode.type === 'GetNode') {
     const getterName = getKJSetGetNodeName(sourceNode);
     if (!getterName) return null;
@@ -117,28 +141,6 @@ export function resolveSource(
     if (setterInputLink == null) return null;
 
     return resolveSource(workflow, setterInputLink, visitedLinkIds, promptKeyMap);
-  }
-
-  // A muted node produces no output at all — ComfyUI's ExecutableNodeDTO
-  // .resolveOutput returns early on LGraphEventMode.NEVER, and the consuming
-  // input is simply left out of the prompt.
-  if (sourceNode.mode === 2) return null;
-
-  if (sourceNode.mode === 4 || sourceNode.type === 'Reroute') {
-    const outputDef = sourceNode.outputs[sourceSlotIndex];
-    if (!outputDef) return null;
-
-    const bypassSlot = findBypassInputSlot(
-      sourceNode,
-      sourceSlotIndex,
-      String(outputDef.type),
-      String(link[5] ?? ''),
-    );
-    const bypassLink = bypassSlot === null ? null : sourceNode.inputs[bypassSlot]?.link;
-    if (bypassLink != null) {
-      return resolveSource(workflow, bypassLink, visitedLinkIds, promptKeyMap);
-    }
-    return null;
   }
 
   return { nodeId: sourceNodeId, slotIndex: sourceSlotIndex };
