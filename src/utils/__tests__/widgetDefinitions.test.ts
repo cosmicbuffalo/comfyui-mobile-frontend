@@ -1300,3 +1300,59 @@ describe('a boundary input that feeds a reroute', () => {
     expect(byKey.get('39:3')?.widgets_values).toEqual([false]);
   });
 });
+
+describe('a promoted DynamicCombo child', () => {
+  // A placeholder promotes `sampling_mode.temperature` and `sampling_mode.seed`
+  // from a TextGenerate-style node. Expansion has to find those children by
+  // their qualified names; matching bare names dropped both promoted values.
+  const types = {
+    Gen: {
+      input: { required: {
+        max_length: ['INT', { default: 512 }],
+        sampling_mode: ['COMFY_DYNAMICCOMBO_V3', { options: [
+          { key: 'on', inputs: { required: { temperature: ['FLOAT', { default: 0.7 }], seed: ['INT', { default: 0 }] } } },
+          { key: 'off', inputs: { required: {} } },
+        ] }],
+      } },
+      input_order: { required: ['max_length', 'sampling_mode'] },
+      output: [], output_name: [], name: 'Gen', display_name: 'Gen', description: '', python_module: '', category: '',
+    },
+  } as unknown as NodeTypes;
+  const subgraph = {
+    id: 'sg-gen', name: 'Gen',
+    nodes: [{
+      id: 1, type: 'Gen', outputs: [], widgets_values: [512, 'on', 0.7, 0],
+      inputs: [
+        { name: 'max_length', type: 'INT', link: 1, widget: { name: 'max_length' } },
+        { name: 'sampling_mode.temperature', type: 'FLOAT', link: 2, widget: { name: 'sampling_mode.temperature' } },
+        { name: 'sampling_mode.seed', type: 'INT', link: 3, widget: { name: 'sampling_mode.seed' } },
+      ],
+    }],
+    inputs: [
+      { name: 'max_length', type: 'INT', linkIds: [1] },
+      { name: 'sampling_mode.temperature', type: 'FLOAT', linkIds: [2] },
+      { name: 'sampling_mode.seed', type: 'INT', linkIds: [3] },
+    ],
+    outputs: [],
+    links: [
+      { id: 1, origin_id: -10, origin_slot: 0, target_id: 1, target_slot: 0, type: 'INT' },
+      { id: 2, origin_id: -10, origin_slot: 1, target_id: 1, target_slot: 1, type: 'FLOAT' },
+      { id: 3, origin_id: -10, origin_slot: 2, target_id: 1, target_slot: 2, type: 'INT' },
+    ],
+  };
+
+  it('reaches the inner node when expanded', () => {
+    const placeholder = {
+      id: 605, type: 'sg-gen', pos: [0, 0], size: [200, 100], flags: {}, order: 0, mode: 0, outputs: [], properties: {},
+      inputs: subgraph.inputs.map((input) => ({ name: input.name, type: input.type, link: null, widget: { name: input.name } })),
+      widgets_values: [2560, 0.9, 42],
+    } as unknown as WorkflowNode;
+    const wf = {
+      last_node_id: 605, last_link_id: 0, nodes: [placeholder], links: [], groups: [],
+      definitions: { subgraphs: [subgraph] }, version: 0.4,
+    } as unknown as Workflow;
+    const { workflow: expanded, promptKeyMap } = expandWorkflowSubgraphs(wf, types);
+    const inner = expanded.nodes.find((node) => promptKeyMap.get(node.id) === '605:1');
+    expect(inner?.widgets_values).toEqual([2560, 'on', 0.9, 42]);
+  });
+});
