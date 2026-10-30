@@ -1356,3 +1356,25 @@ describe('a promoted DynamicCombo child', () => {
     expect(inner?.widgets_values).toEqual([2560, 'on', 0.9, 42]);
   });
 });
+
+describe('a schema input the saved node predates', () => {
+  // The node was saved before its optional audio_vae socket existed, and its
+  // widgets_values carry a spare trailing entry. A core data socket never takes
+  // a widget slot, so the spare value is not read as audio_vae.
+  const types = {
+    Preview: {
+      input: { required: { quality: ['INT', { default: 80 }] }, optional: { audio_vae: ['VAE', {}], style: ['PREVIEW_STYLE', {}] } },
+      input_order: { required: ['quality'], optional: ['audio_vae', 'style'] },
+      output: [], output_name: [], name: 'Preview', display_name: 'Preview', description: '', python_module: '', category: '',
+    },
+  } as unknown as NodeTypes;
+  const node = {
+    id: 1, type: 'Preview', pos: [0, 0], size: [200, 100], flags: {}, order: 0, mode: 0,
+    inputs: [], outputs: [], properties: {}, widgets_values: [90, 'soft'],
+  } as unknown as WorkflowNode;
+
+  it('holds no widget slot for a core socket, but still does for a custom type', () => {
+    const defs = getWidgetDefinitions(types, node).map((d) => [d.name, d.widgetIndex]);
+    expect(defs).toEqual([['quality', 0], ['style', 1]]);
+  });
+});

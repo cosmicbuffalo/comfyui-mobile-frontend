@@ -5,6 +5,14 @@ import { getNodePropertyWidgetIndexMap, getWidgetValue, skipImplicitSeedControlS
 import { isDynamicGroup, groupRowCount, groupFields, getDynamicGroupSubInputs, readGroupRows, type DynamicGroupEdit } from './dynamicGroups';
 import { isAutogrow, autogrowInputs, editAutogrow, type AutogrowEdit } from './autogrow';
 
+// ComfyUI's built-in data types, which no frontend renders as a widget.
+const CORE_SOCKET_TYPES = new Set([
+  'MODEL', 'CLIP', 'VAE', 'CONDITIONING', 'LATENT', 'IMAGE', 'MASK', 'AUDIO', 'VIDEO',
+  'CONTROL_NET', 'CLIP_VISION', 'CLIP_VISION_OUTPUT', 'STYLE_MODEL', 'GLIGEN', 'UPSCALE_MODEL',
+  'SIGMAS', 'SAMPLER', 'GUIDER', 'NOISE', 'TAESD', 'LATENT_UPSCALE_MODEL', 'AUDIO_ENCODER',
+  'AUDIO_ENCODER_OUTPUT', 'MESH', 'VOXEL', 'HOOKS', 'TIMESTEPS_RANGE',
+]);
+
 export function occupiesWidgetSlot(
   node: WorkflowNode,
   name: string,
@@ -20,8 +28,9 @@ export function occupiesWidgetSlot(
   if (isWidgetBackedInput(typeOrOptions, inputOptions)) return true;
   // Saved workflows omit socketless/legacy custom widgets from node.inputs.
   // Preserve that concrete workflow evidence even when object_info lacks a
-  // modern `socketless` or `widgetType` declaration.
-  return inputEntry === undefined;
+  // modern `socketless` or `widgetType` declaration. A core data socket is
+  // never a widget: missing, it is just newer than the saved node.
+  return inputEntry === undefined && !CORE_SOCKET_TYPES.has(String(typeOrOptions).toUpperCase());
 }
 
 export interface ActiveNodeInputDefinition extends DynamicComboSubInput {
