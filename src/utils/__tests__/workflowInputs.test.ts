@@ -1539,3 +1539,32 @@ describe('a widget the saved node predates', () => {
     expect(buildWorkflowPromptInputs(workflow, types, node, 'Join', new Set([1]), null)).toEqual({ delimiter: '. ', text_a: '', count: 0 });
   });
 });
+
+describe('a widget input fed by a muted node', () => {
+  it('keeps its own value, as stock serializes widgets before links', () => {
+    const types = {
+      VAELoader: { input: { required: { vae_name: [['a.safetensors', 'b.safetensors'], {}] } }, output: ['VAE'], output_name: ['VAE'], name: 'VAELoader', display_name: 'Load VAE', description: '', python_module: '', category: '' },
+    } as unknown as NodeTypes;
+    const wf = (sourceMode: number): Workflow => ({
+      last_node_id: 2,
+      last_link_id: 1,
+      nodes: [
+        makeNode(1, 'Sliders', { mode: sourceMode, outputs: [{ name: 'value', type: '*', links: [1] }] }),
+        makeNode(2, 'VAELoader', {
+          inputs: [{ name: 'vae_name', type: 'COMBO', widget: { name: 'vae_name' }, link: 1 }],
+          widgets_values: ['b.safetensors'],
+        }),
+      ],
+      links: [[1, 1, 0, 2, 0, 'COMBO']],
+      groups: [],
+      config: {},
+      version: 1,
+    });
+    const build = (mode: number) => {
+      const workflow = wf(mode);
+      return buildWorkflowPromptInputs(workflow, types, workflow.nodes[1], 'VAELoader', new Set([1, 2]), null);
+    };
+    expect(build(2).vae_name).toBe('b.safetensors');
+    expect(build(0).vae_name).toEqual(['1', 0]);
+  });
+});

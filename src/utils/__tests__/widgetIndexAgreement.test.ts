@@ -255,7 +255,8 @@ describe('materialized widget input', () => {
         .toBe(trueValue);
       expect(prompt[name], `prompt value for "${name}"`).toBe(trueValue);
     }
-    expect(prompt.color).toBeUndefined();
+    // Link 2 leads nowhere, so stock keeps the widget's own value.
+    expect(prompt.color).toBe('#FF0000');
   });
 });
 

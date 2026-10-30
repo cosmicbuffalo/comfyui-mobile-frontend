@@ -206,6 +206,10 @@ export function buildWorkflowPromptInputs(
 ): Record<string, unknown> {
   const inputs: Record<string, unknown> = {};
   const linkKeys = new Set<string>();
+  // Stock serializes every widget first and overwrites it only where the link
+  // resolves, so a widget whose link leads nowhere (a muted source) keeps its
+  // own value.
+  const deadLinks = new Set<string>();
 
   for (const [slotIndex, input] of node.inputs.entries()) {
     // An input with no link may still be fed by a Use Everywhere broadcast. UE
@@ -221,7 +225,10 @@ export function buildWorkflowPromptInputs(
       continue;
     }
     const resolved = resolveSource(workflow, input.link, new Set(), promptKeyMap);
-    if (!resolved) continue;
+    if (!resolved) {
+      deadLinks.add(input.name);
+      continue;
+    }
     if (allowedNodeIds.has(resolved.nodeId)) {
       const nodeKey = promptKeyMap?.get(resolved.nodeId) ?? String(resolved.nodeId);
       inputs[input.name] = [nodeKey, resolved.slotIndex];
@@ -269,13 +276,14 @@ export function buildWorkflowPromptInputs(
       const [typeOrOptions, inputOptions] = inputDef;
       if (isOmittedFromPrompt(typeOrOptions, inputOptions)) continue;
       // No widgets_values slot to read, but stock still sends its value.
+      const linked = connected && !deadLinks.has(qualifiedName);
       if (isUnsavedWidgetType(typeOrOptions)) {
-        if (!connected && !(qualifiedName in inputs)) {
+        if (!linked && !(qualifiedName in inputs)) {
           inputs[qualifiedName] = unsavedWidgetInitialValue(typeOrOptions);
         }
         continue;
       }
-      if (widgetIndex === null || connected || qualifiedName in inputs) continue;
+      if (widgetIndex === null || linked || qualifiedName in inputs) continue;
 
       // Apply the seed override for either conventional seed name. Dynamic seed
       // children submit under their qualified key just like every other child.
