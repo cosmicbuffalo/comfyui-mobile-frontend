@@ -153,6 +153,7 @@ export function normalizeComboValue(
   value: unknown,
   options: unknown[],
   multiSelect = false,
+  declaredDefault?: unknown,
 ): unknown {
   if (multiSelect) {
     const values = Array.isArray(value)
@@ -160,7 +161,7 @@ export function normalizeComboValue(
       : value === undefined || value === null
         ? []
         : [value];
-    return values.map((entry) => normalizeComboValue(entry, options, false));
+    return values.map((entry) => normalizeComboValue(entry, options, false, declaredDefault));
   }
   if (options.length === 0) return value;
   const resolved = resolveComboOption(value, options);
@@ -181,7 +182,8 @@ export function normalizeComboValue(
   //   widgets_values at save time. ComfyUI does not error on an out-of-range
   //   combo value; it silently EXCLUDES that node (and its whole downstream
   //   branch) from the run, completing with "success" and no output. To keep the
-  //   prompt executable we fall back to the first option (ComfyUI's default).
+  //   prompt executable we fall back to ComfyUI's default: the declared default
+  //   when it is an option, else the first option.
   //
   // Only substitute when NEITHER the option list nor the stale value looks
   // file-like. A picker whose options happen to lack a recognizable extension
@@ -189,7 +191,7 @@ export function normalizeComboValue(
   // enum and a genuine file selection clobbered; keeping a file-like value as-is
   // lets the server resolve or clearly reject it instead.
   if (!optionsAreFileLike(options) && !isFileLikeToken(value)) {
-    return options[0];
+    return options.includes(declaredDefault) ? declaredDefault : options[0];
   }
   return value;
 }

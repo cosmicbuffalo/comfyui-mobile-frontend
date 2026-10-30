@@ -308,6 +308,7 @@ export function buildWorkflowPromptInputs(
           promptValue,
           getComboOptions(typeOrOptions, inputOptions),
           isMultiSelectCombo(inputOptions),
+          inputOptions?.default,
         );
       } else {
         promptValue = normalizeWidgetValue(promptValue, typeOrOptions);

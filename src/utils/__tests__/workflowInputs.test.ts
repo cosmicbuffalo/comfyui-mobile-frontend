@@ -358,6 +358,11 @@ describe('normalizeComboValue', () => {
     ).toBe('subdir/new.safetensors');
   });
 
+  it("falls back to a CLOSED ENUM's declared default when it has one", () => {
+    expect(normalizeComboValue('Manual', ['SD (480p)', '1.3K (768p)'], false, '1.3K (768p)')).toBe('1.3K (768p)');
+    expect(normalizeComboValue('Manual', ['SD (480p)', '1.3K (768p)'], false, 'gone')).toBe('SD (480p)');
+  });
+
   it('falls back to the first option for a CLOSED ENUM when nothing matches', () => {
     // Closed enums list every valid value, so an unmatched value is stale.
     // ComfyUI silently drops a node with an out-of-range combo value (and its
