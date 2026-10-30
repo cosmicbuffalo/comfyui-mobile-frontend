@@ -7,6 +7,7 @@ import { getComboOptions, isComboType, isMultiSelectCombo, normalizeComboValue, 
 import { getActiveNodeInputDefinitions } from './dynamicComboRebuild';
 import { isOmittedFromPrompt, isUnsavedWidgetType, unsavedWidgetInitialValue } from './defaultInputs';
 import { finalizeInputValue } from './textReplacements';
+import { processDynamicPrompt } from '@/utils/dynamicPrompts';
 import { getPrimitiveInlineValue, getWidgetValue, isRecord } from './widgetSlots';
 
 /** ComfyUI treats `*` and the empty type as matching anything. */
@@ -227,7 +228,13 @@ export function buildWorkflowPromptInputs(
     if (!sourceNode) continue;
     const value = getPrimitiveInlineValue(sourceNode);
     if (value !== undefined) {
-      inputs[input.name] = value;
+      // Stock copies a PrimitiveNode's value into the target widget before
+      // serializing it, so the target's dynamicPrompts applies to it too.
+      const targetOptions = nodeTypes[classType]?.input?.required?.[input.name]?.[1]
+        ?? nodeTypes[classType]?.input?.optional?.[input.name]?.[1];
+      inputs[input.name] = targetOptions?.dynamicPrompts === true && typeof value === 'string'
+        ? processDynamicPrompt(value)
+        : value;
     } else {
       console.warn(
         `[workflowInputs] Missing source node for input '${input.name}' on node ${node.id} (${node.type}).`,
@@ -293,6 +300,9 @@ export function buildWorkflowPromptInputs(
         );
       } else {
         promptValue = normalizeWidgetValue(promptValue, typeOrOptions);
+      }
+      if (inputOptions?.dynamicPrompts === true && typeof promptValue === 'string') {
+        promptValue = processDynamicPrompt(promptValue);
       }
       inputs[qualifiedName] = finalizeInputValue(workflow, qualifiedName, promptValue);
     } catch (e) {

@@ -293,6 +293,27 @@ export const MANIFESTS = [
     versionFile: 'package.json',
     versionPattern: /"version":\s*"([^"]+)"/,
     assumptions: [
+      {
+        id: 'dynamic-prompts-serialize',
+        why: 'Comfy.DynamicPrompts resolves every widget whose input declares dynamicPrompts in serializeValue, which feeds only the prompt; the embedded workflow keeps the authored text. buildWorkflowPromptInputs() does the same.',
+        ours: 'src/utils/workflowInputs/promptInputs.ts',
+        file: 'src/extensions/core/dynamicPrompts.ts',
+        contains: [
+          /node\.widgets\.filter\(\(w\) => w\.dynamicPrompts\)/,
+          /widget\.serializeValue = \(\) => \{\s*if \(typeof widget\.value !== 'string'\) return widget\.value\s*return processDynamicPrompt\(widget\.value\)/,
+        ],
+      },
+      {
+        id: 'dynamic-prompts-grammar',
+        why: 'src/utils/dynamicPrompts.ts is a line-for-line port: comments stripped, {a|b} chosen with Math.random and recursed into, backslash escapes kept then unescaped. A change to that grammar changes the text mobile sends.',
+        ours: 'src/utils/dynamicPrompts.ts',
+        file: 'packages/shared-frontend-utils/src/formatUtil.ts',
+        contains: [
+          /str\.replace\(\/\\\/\\\*\[\\s\\S\]\*\?\\\*\\\/\|\\\/\\\/\.\*\/g, ''\)/,
+          /const chosenOption = options\[Math\.floor\(Math\.random\(\) \* options\.length\)\]/,
+          /return result\.replace\(\/\\\\\(\[\{\}\|\]\)\/g, '\$1'\)/,
+        ],
+      },
       // ---------------------------------------------------------------
       // The subgraph rules our stock-compatibility work is built on.
       //
