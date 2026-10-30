@@ -1234,3 +1234,69 @@ describe('renaming a shared type boundary slot', () => {
     expect(widget.name).toBe('just this one');
   });
 });
+
+describe('a boundary input that feeds a reroute', () => {
+  /**
+   * prompt → Reroute → …   (the reroute's `value` input copies a widget marker)
+   * size   → Switch.switch  (a real widget)
+   * fast   → Switch.switch  (a real widget)
+   *
+   * Stock asks the inner node for the widget (getWidgetFromSlot) and a reroute
+   * has none, so only `size` and `fast` are promoted and the placeholder saves
+   * just their two values. Counting the reroute put `size` one slot late, so a
+   * saved `true` was read as the empty slot after it.
+   */
+  const subgraph = {
+    id: 'sg-reroute',
+    name: 'Reroute boundary',
+    nodes: [
+      { id: 1, type: 'Reroute', inputs: [{ name: '', type: '*', link: 1, widget: { name: 'value' } }], outputs: [], widgets_values: [] },
+      { id: 2, type: 'Switch', inputs: [{ name: 'switch', type: 'BOOLEAN', link: 2, widget: { name: 'switch' } }], outputs: [], widgets_values: [false] },
+      { id: 3, type: 'Switch', inputs: [{ name: 'switch', type: 'BOOLEAN', link: 3, widget: { name: 'switch' } }], outputs: [], widgets_values: [true] },
+    ],
+    inputs: [
+      { name: 'prompt', type: '*', linkIds: [1] },
+      { name: 'size', type: 'BOOLEAN', linkIds: [2] },
+      { name: 'fast', type: 'BOOLEAN', linkIds: [3] },
+    ],
+    outputs: [],
+    links: [
+      { id: 1, origin_id: -10, origin_slot: 0, target_id: 1, target_slot: 0, type: '*' },
+      { id: 2, origin_id: -10, origin_slot: 1, target_id: 2, target_slot: 0, type: 'BOOLEAN' },
+      { id: 3, origin_id: -10, origin_slot: 2, target_id: 3, target_slot: 0, type: 'BOOLEAN' },
+    ],
+  };
+
+  it('promotes nothing for the reroute, so the widgets read their own saved slots', () => {
+    expect(getSubgraphBoundaryWidgetIndexForSlot(subgraph as never, 0)).toBeNull();
+    expect(getSubgraphBoundaryWidgetIndexForSlot(subgraph as never, 1)).toBe(0);
+    expect(getSubgraphBoundaryWidgetIndexForSlot(subgraph as never, 2)).toBe(1);
+  });
+
+  it('queues the saved values into the inner nodes', () => {
+    const switchType = {
+      Switch: {
+        input: { required: { switch: ['BOOLEAN', { default: false }] } },
+        output: [], output_name: [], name: 'Switch', display_name: 'Switch', description: '', python_module: '', category: '',
+      },
+    } as unknown as NodeTypes;
+    const placeholder = {
+      id: 39, type: 'sg-reroute', pos: [0, 0], size: [200, 100], flags: {}, order: 0, mode: 0,
+      inputs: [
+        { name: 'prompt', type: '*', link: null },
+        { name: 'size', type: 'BOOLEAN', link: null, widget: { name: 'size' } },
+        { name: 'fast', type: 'BOOLEAN', link: null, widget: { name: 'fast' } },
+      ],
+      outputs: [], properties: {}, widgets_values: [true, false],
+    } as unknown as WorkflowNode;
+    const wf = {
+      last_node_id: 39, last_link_id: 0, nodes: [placeholder], links: [], groups: [],
+      definitions: { subgraphs: [subgraph] }, version: 0.4,
+    } as unknown as Workflow;
+
+    const { workflow: expanded, promptKeyMap } = expandWorkflowSubgraphs(wf, switchType);
+    const byKey = new Map(expanded.nodes.map((node) => [promptKeyMap.get(node.id), node]));
+    expect(byKey.get('39:2')?.widgets_values).toEqual([true]);
+    expect(byKey.get('39:3')?.widgets_values).toEqual([false]);
+  });
+});

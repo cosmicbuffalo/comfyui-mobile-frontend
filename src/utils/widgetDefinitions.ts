@@ -538,7 +538,10 @@ function boundaryInputHasWidget(
     const targetInput = innerNode?.inputs?.[link.target_slot];
     if (!targetInput) continue;
     // Stock iterates every link and takes the first that yields a widget.
-    if (targetInput.widget != null) return true;
+    // It asks the node for the widget (getWidgetFromSlot), and a reroute has
+    // none even when its input copied a `widget` marker from where it leads,
+    // so a boundary feeding a reroute promotes nothing.
+    if (targetInput.widget != null && innerNode?.type !== 'Reroute' && innerNode?.type !== 'Reroute (rgthree)') return true;
     resolvedAnyLink = true;
   }
 
