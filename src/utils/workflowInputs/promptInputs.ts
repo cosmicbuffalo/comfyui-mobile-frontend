@@ -5,7 +5,7 @@ import { isPowerPuterNodeType, readPowerPuterWidgets, toPowerPuterOutputsValue, 
 import { extractTriggerWordList, extractTriggerWordListLoose, isTriggerWordList, extractTriggerWordMessage, findTriggerWordListIndex, findTriggerWordMessageIndex, isTriggerWordToggleNodeType } from '@/utils/triggerWordToggle';
 import { getComboOptions, isComboType, isMultiSelectCombo, normalizeComboValue, normalizeWidgetValue } from './comboValues';
 import { getActiveNodeInputDefinitions } from './dynamicComboRebuild';
-import { isOmittedFromPrompt, isUnsavedWidgetType, unsavedWidgetInitialValue } from './defaultInputs';
+import { getDefaultWidgetValue, isOmittedFromPrompt, isUnsavedWidgetType, unsavedWidgetInitialValue } from './defaultInputs';
 import { finalizeInputValue } from './textReplacements';
 import { processDynamicPrompt } from '@/utils/dynamicPrompts';
 import { getPrimitiveInlineValue, getWidgetValue, isRecord } from './widgetSlots';
@@ -288,11 +288,10 @@ export function buildWorkflowPromptInputs(
       }
 
       let promptValue = value;
-      if (
-        promptValue === undefined &&
-        Object.prototype.hasOwnProperty.call(inputOptions ?? {}, 'default')
-      ) {
-        promptValue = inputOptions?.default;
+      // A widget with no saved slot (the node is older than the input) still
+      // serializes the value stock creates it with.
+      if (promptValue === undefined) {
+        promptValue = getDefaultWidgetValue(typeOrOptions, inputOptions);
       }
       if (promptValue === undefined) continue;
 

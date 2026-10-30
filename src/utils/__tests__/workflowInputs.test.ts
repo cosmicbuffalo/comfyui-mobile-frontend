@@ -1524,3 +1524,18 @@ describe('filename_prefix replacements', () => {
   });
 
 });
+
+describe('a widget the saved node predates', () => {
+  it('sends the value stock creates the widget with', () => {
+    const workflow = { last_node_id: 1, last_link_id: 0, nodes: [], links: [], groups: [], config: {}, version: 0.4 } as Workflow;
+    const types = {
+      Join: {
+        input: { required: { delimiter: ['STRING', { default: ', ' }] }, optional: { text_a: ['STRING', { multiline: true }], count: ['INT', {}] } },
+        input_order: { required: ['delimiter'], optional: ['text_a', 'count'] },
+        output: ['STRING'], output_name: ['STRING'], name: 'Join', display_name: 'Join', description: '', python_module: '', category: '',
+      },
+    } as unknown as NodeTypes;
+    const node = makeNode(1, 'Join', { widgets_values: ['. '] });
+    expect(buildWorkflowPromptInputs(workflow, types, node, 'Join', new Set([1]), null)).toEqual({ delimiter: '. ', text_a: '', count: 0 });
+  });
+});
