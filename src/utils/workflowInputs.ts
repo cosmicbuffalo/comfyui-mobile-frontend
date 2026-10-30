@@ -5,6 +5,7 @@ export {
   getWidgetValue,
   getWorkflowWidgetIndexMap,
   skipImplicitSeedControlSlot,
+  hasSeedControlSlot,
   getNodePropertyWidgetIndexMap,
   getNodeWidgetIndexMap,
   isWidgetInputType,

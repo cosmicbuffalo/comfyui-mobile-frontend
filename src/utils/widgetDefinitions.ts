@@ -1,6 +1,6 @@
 import { mentionsSeed } from '@/utils/seedUtils';
 import type { WorkflowInput, WorkflowLink, WorkflowNode, NodeTypes, NodeTypeDefinition, NodeInputEntry, Workflow, WorkflowSubgraphLink, WorkflowSubgraphDefinition } from '@/api/types';
-import { getDefaultWidgetValue, getNodePropertyWidgetIndexMap, getWidgetValue, isComboType, isV3ComboType, isWidgetInputType, getComboOptions, getDynamicComboSubInputs, occupiesWidgetSlot, skipImplicitSeedControlSlot } from '@/utils/workflowInputs';
+import { getDefaultWidgetValue, getNodePropertyWidgetIndexMap, getWidgetValue, isComboType, isV3ComboType, isWidgetInputType, getComboOptions, getDynamicComboSubInputs, hasSeedControlSlot, occupiesWidgetSlot } from '@/utils/workflowInputs';
 import { findLoraListIndex, isLoraList, isLoraManagerNodeType, isPowerLoraLoaderNodeType } from '@/utils/loraManager';
 import { isPowerPuterNodeType, readPowerPuterWidgets, POWER_PUTER_MAX_OUTPUTS, POWER_PUTER_OUTPUT_TYPES } from '@/utils/powerPuter';
 import { modelWidgetKind } from '@/utils/modelWidgetKind';
@@ -388,7 +388,7 @@ function collectWidgetDefinitions(
 
       if (isWidgetType) {
         widgetIndex = Math.max(widgetIndex + 1, resolvedWidgetIndex + 1);
-        if (normalizedType === 'INT' && (name === 'seed' || name === 'noise_seed')) {
+        if (hasSeedControlSlot(node, name, normalizedType, inputOptions, resolvedWidgetIndex + 1)) {
           // ComfyUI auto-adds a control_after_generate widget after every INT
           // seed input. Some custom nodes (Efficient KSampler family) strip it
           // on the JS side, so widgets_values may be one slot shorter — or
@@ -397,9 +397,7 @@ function collectWidgetDefinitions(
           // strings ('fixed'/'randomize'/etc.), null, and out-of-bounds
           // (slot absent entirely), but NOT for numbers/booleans/objects
           // which would be the value of the next real widget.
-          if (skipImplicitSeedControlSlot(node, resolvedWidgetIndex + 1)) {
-            widgetIndex = Math.max(widgetIndex, resolvedWidgetIndex + 2);
-          }
+          widgetIndex = Math.max(widgetIndex, resolvedWidgetIndex + 2);
         }
         // COMFY_DYNAMICCOMBO_V3: the selected option exposes conditional
         // sub-inputs (e.g. width/height/crop) that appear as additional

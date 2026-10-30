@@ -1,7 +1,7 @@
 import type { WorkflowNode, NodeTypeDefinition } from '@/api/types';
 import { DYNAMIC_COMBO_V3, getDynamicComboSubInputs, orderedInputNames, type DynamicComboSubInput } from './comboValues';
 import { buildDefaultWidgetValues, getDefaultWidgetValue, getDynamicComboConnectionInputs, isUnsavedWidgetType, isWidgetBackedInput } from './defaultInputs';
-import { getNodePropertyWidgetIndexMap, getWidgetValue, skipImplicitSeedControlSlot } from './widgetSlots';
+import { getNodePropertyWidgetIndexMap, getWidgetValue, hasSeedControlSlot } from './widgetSlots';
 import { isDynamicGroup, groupRowCount, groupFields, getDynamicGroupSubInputs, readGroupRows, type DynamicGroupEdit } from './dynamicGroups';
 import { isAutogrow, autogrowInputs, editAutogrow, type AutogrowEdit } from './autogrow';
 
@@ -100,11 +100,7 @@ export function getActiveNodeInputDefinitions(
       }
       return;
     }
-    if (
-      typeof typeOrOptions === 'string' && typeOrOptions.toUpperCase() === 'INT' &&
-      (name === 'seed' || name === 'noise_seed') &&
-      skipImplicitSeedControlSlot(node, ownWidgetIndex + 1)
-    ) {
+    if (hasSeedControlSlot(node, name, typeOrOptions, inputOptions, ownWidgetIndex + 1)) {
       cursor = Math.max(cursor, ownWidgetIndex + 2);
     }
     if (typeof typeOrOptions !== 'string' || typeOrOptions.toUpperCase() !== DYNAMIC_COMBO_V3) return;
@@ -140,9 +136,7 @@ function advancePastSubInputs(
     if (!occupiesWidgetSlot(node, sub.qualifiedName, subType, subOpts)) continue;
     const ownIndex = index;
     index += 1;
-    if (String(subType).toUpperCase() === 'INT' && (sub.name === 'seed' || sub.name === 'noise_seed')) {
-      if (skipImplicitSeedControlSlot(node, index)) index += 1;
-    }
+    if (hasSeedControlSlot(node, sub.name, subType, subOpts, index)) index += 1;
     if (String(subType).toUpperCase() === DYNAMIC_COMBO_V3) {
       // Nested DynamicCombo (e.g. SaveVideo.codec/h264/encoding): its own
       // sub-inputs sit inline, so recurse using the value actually stored.

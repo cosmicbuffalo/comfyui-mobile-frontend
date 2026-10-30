@@ -83,6 +83,26 @@ export function skipImplicitSeedControlSlot(
   return false;
 }
 
+/**
+ * Whether an input is followed by a control_after_generate slot. Stock adds the
+ * control for an INT that declares `control_after_generate`, or by convention
+ * for one named seed/noise_seed that leaves it unset; an explicit `false` means
+ * none. The saved value still decides, for the packs that strip it in JS.
+ */
+export function hasSeedControlSlot(
+  node: WorkflowNode,
+  name: string,
+  typeOrOptions: unknown,
+  inputOptions: Record<string, unknown> | undefined,
+  controlSlotIndex: number,
+): boolean {
+  if (String(typeOrOptions).toUpperCase() !== 'INT') return false;
+  const declared = inputOptions?.control_after_generate;
+  if (declared === false) return false;
+  if (declared === undefined && name !== 'seed' && name !== 'noise_seed') return false;
+  return skipImplicitSeedControlSlot(node, controlSlotIndex);
+}
+
 export function getNodePropertyWidgetIndexMap(
   node: WorkflowNode
 ): Record<string, number> | null {
