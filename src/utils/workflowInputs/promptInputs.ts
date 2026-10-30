@@ -165,6 +165,17 @@ function getPromptScope(promptKey: string | undefined): string | null {
   return scopeEnd === -1 ? '' : promptKey.slice(0, scopeEnd);
 }
 
+/** The scopes enclosing `scope`, nearest first, ending at the root (''). */
+function ancestorScopes(scope: string): string[] {
+  const ancestors: string[] = [];
+  while (scope !== '') {
+    const cut = scope.lastIndexOf(':');
+    scope = cut === -1 ? '' : scope.slice(0, cut);
+    ancestors.push(scope);
+  }
+  return ancestors;
+}
+
 function findKJSetterNode(
   workflow: Workflow,
   getterNode: WorkflowNode,
@@ -177,10 +188,18 @@ function findKJSetterNode(
 
   const getterScope = getPromptScope(promptKeyMap?.get(getterNode.id));
   if (getterScope === null) return candidates[0];
+  const scopeOf = (node: WorkflowNode) => getPromptScope(promptKeyMap?.get(node.id));
 
-  return candidates.find(
-    (node) => getPromptScope(promptKeyMap?.get(node.id)) === getterScope
-  );
+  const own = candidates.find((node) => scopeOf(node) === getterScope);
+  if (own) return own;
+  // resolveVirtualOutput: a Set in an enclosing graph, but none at all when
+  // more than one of that name is in reach.
+  const ancestors = ancestorScopes(getterScope);
+  const inReach = candidates.filter((node) => {
+    const scope = scopeOf(node);
+    return scope !== null && ancestors.includes(scope);
+  });
+  return inReach.length === 1 ? inReach[0] : undefined;
 }
 
 /**

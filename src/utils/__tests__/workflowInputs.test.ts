@@ -765,6 +765,56 @@ describe('resolveSource', () => {
     expect(resolveSource(wf, 2, new Set(), promptKeyMap)).toBeNull();
   });
 
+  describe('a KJNodes GetNode inside a subgraph reading a Set in an enclosing graph', () => {
+    // 1 Loader → 2 SetNode('vae') at the root; 3 GetNode('vae') → 4 VAEDecode
+    // inside instance 10. KJ's resolveVirtualOutput looks up through the
+    // ancestors, and gives up when more than one Set of that name is in reach.
+    const wf = (extraSetter: boolean): Workflow => ({
+      last_node_id: 6,
+      last_link_id: 3,
+      nodes: [
+        makeNode(1, 'Loader', { outputs: [{ name: 'VAE', type: 'VAE', links: [1] }] }),
+        makeNode(2, 'SetNode', { inputs: [{ name: 'VAE', type: 'VAE', link: 1 }], widgets_values: ['vae'] }),
+        makeNode(3, 'GetNode', { outputs: [{ name: 'VAE', type: 'VAE', links: [2] }], widgets_values: ['vae'] }),
+        makeNode(4, 'VAEDecode', { inputs: [{ name: 'vae', type: 'VAE', link: 2 }] }),
+        ...(extraSetter
+          ? [
+            makeNode(5, 'Loader', { outputs: [{ name: 'VAE', type: 'VAE', links: [3] }] }),
+            makeNode(6, 'SetNode', { inputs: [{ name: 'VAE', type: 'VAE', link: 3 }], widgets_values: ['vae'] }),
+          ]
+          : []),
+      ],
+      links: [
+        [1, 1, 0, 2, 0, 'VAE'],
+        [2, 3, 0, 4, 0, 'VAE'],
+        ...(extraSetter ? [[3, 5, 0, 6, 0, 'VAE'] as Workflow['links'][number]] : []),
+      ],
+      groups: [],
+      config: {},
+      version: 1,
+    });
+    const promptKeyMap = new Map<number, string>([
+      [1, '1'], [2, '2'], [3, '10:3'], [4, '10:4'], [5, '10:20:5'], [6, '10:20:6'],
+    ]);
+
+    it('resolves to the root Set', () => {
+      expect(resolveSource(wf(false), 2, new Set(), promptKeyMap)).toEqual({ nodeId: 1, slotIndex: 0 });
+    });
+
+    it('ignores a Set in a nested subgraph below it', () => {
+      expect(resolveSource(wf(true), 2, new Set(), promptKeyMap)).toEqual({ nodeId: 1, slotIndex: 0 });
+    });
+
+    it('resolves nothing when two Sets of that name are in reach', () => {
+      const nested = new Map(promptKeyMap);
+      nested.set(3, '10:30:3');
+      nested.set(4, '10:30:4');
+      nested.set(5, '10:5');
+      nested.set(6, '10:6');
+      expect(resolveSource(wf(true), 2, new Set(), nested)).toBeNull();
+    });
+  });
+
   it('serializes scoped KJNodes sources with prompt keys through buildWorkflowPromptInputs', () => {
     const target = makeNode(104, 'KSampler', {
       inputs: [{ name: 'model', type: 'MODEL', link: 3 }],
