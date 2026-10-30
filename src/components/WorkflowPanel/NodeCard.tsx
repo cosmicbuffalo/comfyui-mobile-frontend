@@ -68,6 +68,7 @@ import { buildViewerImages } from '@/utils/viewerImages';
 import { NodeCardImageComparer } from './NodeCard/ImageComparer';
 import { DenoVideoCompare } from './NodeCard/DenoVideoCompare';
 import { isGetNode, isSetGetNode, isSetNode } from '@/utils/setGetNodes';
+import { savedTextPreview } from '@/utils/savedTextPreview';
 import { isUseEverywhereNode } from '@/utils/useEverywhere';
 import { isUninstalledNodeType } from '@/utils/missingNodes';
 import { useCustomNodesManager } from '@/hooks/useCustomNodesManager';
@@ -203,7 +204,8 @@ export const NodeCard = memo(function NodeCard({
   const latentPreviewTiles = useWorkflowStore((s) =>
     s.latentPreviewTiles[nodeHierarchicalKey] ?? null
   );
-  const nodeTextOutput = useWorkflowStore((s) => s.nodeTextOutputs[String(node.id)] ?? null);
+  const executedText = useWorkflowStore((s) => s.nodeTextOutputs[String(node.id)] ?? null);
+  const nodeTextOutput = executedText ?? savedTextPreview(node);
   // By item key first: ComfyUI reports an error against a node inside a
   // subgraph under a hierarchical prompt id (`57:3`), which matches no
   // `node.id` here, so the raw-id lookup alone left the offending card with no
