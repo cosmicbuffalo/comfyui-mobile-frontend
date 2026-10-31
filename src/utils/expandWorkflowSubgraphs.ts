@@ -422,6 +422,16 @@ function expandWorkflowSubgraphsOnce(
       }
     }
 
+    // Stock reads an output through its slot's first linkId
+    // (SubgraphNode.resolveSubgraphOutputLink), not the link's target_slot,
+    // which some saved files carry as -1.
+    (subgraph.outputs ?? []).forEach((output, slot) => {
+      const link = (subgraph.links ?? []).find((entry) => entry.id === output.linkIds?.[0]);
+      const mappedOrigin = link ? nodeIdMap.get(link.origin_id) : undefined;
+      if (!link || mappedOrigin === undefined) return;
+      outputSources.set(slot, [{ origin_id: mappedOrigin, origin_slot: link.origin_slot, target_id: -20, target_slot: slot, type: link.type }]);
+    });
+
     // The placeholder's widgets_values are authoritative for every widget-typed
     // boundary input, including inputs omitted from the placeholder's shorter
     // inputs[] list. Push the complete boundary set into this instance's cloned
