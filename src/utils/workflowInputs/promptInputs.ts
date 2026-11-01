@@ -3,7 +3,7 @@ import { ueSlotKey, type UeLinkMap } from '@/utils/useEverywhere';
 import { extractLoraList, findLoraListIndex, isLoraList, isPowerLoraLoaderNodeType } from '@/utils/loraManager';
 import { isPowerPuterNodeType, readPowerPuterWidgets, toPowerPuterOutputsValue, POWER_PUTER_CODE_WIDGET, POWER_PUTER_OUTPUTS_WIDGET } from '@/utils/powerPuter';
 import { extractTriggerWordList, extractTriggerWordListLoose, isTriggerWordList, extractTriggerWordMessage, findTriggerWordListIndex, findTriggerWordMessageIndex, isTriggerWordToggleNodeType } from '@/utils/triggerWordToggle';
-import { getComboOptions, isComboType, isMultiSelectCombo, normalizeComboValue, normalizeWidgetValue } from './comboValues';
+import { getComboOptions, isComboType, isMultiSelectCombo, normalizeWidgetValue, sentComboValue } from './comboValues';
 import { getActiveNodeInputDefinitions } from './dynamicComboRebuild';
 import { getDefaultWidgetValue, isOmittedFromPrompt, isUnsavedWidgetType, unsavedWidgetInitialValue } from './defaultInputs';
 import { finalizeInputValue } from './textReplacements';
@@ -304,12 +304,7 @@ export function buildWorkflowPromptInputs(
       if (promptValue === undefined) continue;
 
       if (isComboType(typeOrOptions)) {
-        promptValue = normalizeComboValue(
-          promptValue,
-          getComboOptions(typeOrOptions, inputOptions),
-          isMultiSelectCombo(inputOptions),
-          inputOptions?.default,
-        );
+        promptValue = sentComboValue(promptValue, getComboOptions(typeOrOptions, inputOptions), isMultiSelectCombo(inputOptions));
       } else {
         promptValue = normalizeWidgetValue(promptValue, typeOrOptions);
       }

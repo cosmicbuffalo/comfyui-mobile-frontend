@@ -1,3 +1,5 @@
+import { insertPickerFor } from '@/utils/wildcardWidgets';
+
 // ComfyUI's newer DynamicCombo widget type. Every slot/branch check in this
 // package compares against this constant instead of re-spelling the literal.
 export const DYNAMIC_COMBO_V3 = 'COMFY_DYNAMICCOMBO_V3';
@@ -149,6 +151,24 @@ export function normalizeWidgetValue(
   return value;
 }
 
+/**
+ * The value a combo serializes into the prompt, as stock does: the matching
+ * option, else the saved value unchanged, so a value the server doesn't offer
+ * is rejected the same way on both frontends. An Easy-Use or Impact
+ * "Select … to add to the text" picker always sends its placeholder (Easy-Use's
+ * serializeValue), whatever it last held.
+ */
+export function sentComboValue(value: unknown, options: unknown[], multiSelect = false): unknown {
+  if (multiSelect) {
+    const values = Array.isArray(value) ? value : value === undefined || value === null ? [] : [value];
+    return values.map((entry) => sentComboValue(entry, options));
+  }
+  const picker = insertPickerFor(options);
+  if (picker) return picker.placeholder;
+  if (options.length === 0) return value;
+  return resolveComboOption(value, options) ?? value;
+}
+
 export function normalizeComboValue(
   value: unknown,
   options: unknown[],
@@ -168,22 +188,10 @@ export function normalizeComboValue(
   if (resolved !== undefined) {
     return resolved;
   }
-  // No exact/basename/extensionless match. How we recover depends on whether the
-  // combo is a file picker or a closed enum:
-  //
-  // - File pickers (loras, checkpoints, images, …) have an inherently incomplete
-  //   option list — uploads and newly-added files never appear in object_info —
-  //   so an unmatched value may still be valid. Keep it as-is and let the server
-  //   decide, rather than swapping in a different (wrong) file.
-  //
-  // - Closed enums (action widgets like "Select to add Wildcard", sampler /
-  //   scheduler names, …) enumerate EVERY valid value, so an unmatched value is
-  //   stale — e.g. a dynamic combo whose placeholder option was captured into
-  //   widgets_values at save time. ComfyUI does not error on an out-of-range
-  //   combo value; it silently EXCLUDES that node (and its whole downstream
-  //   branch) from the run, completing with "success" and no output. To keep the
-  //   prompt executable we fall back to ComfyUI's default: the declared default
-  //   when it is an option, else the first option.
+  // No exact/basename/extensionless match. This picks the value a NEW widget
+  // starts with (a declared default that is not an option falls back to the
+  // first option); the prompt uses sentComboValue, which keeps a saved value
+  // the server doesn't offer so it is rejected as stock's is.
   //
   // Only substitute when NEITHER the option list nor the stale value looks
   // file-like. A picker whose options happen to lack a recognizable extension
