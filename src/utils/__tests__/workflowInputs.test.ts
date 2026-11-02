@@ -17,6 +17,7 @@ import {
   resolveSource,
 } from '../workflowInputs';
 import type { NodeTypes, Workflow, WorkflowNode } from '@/api/types';
+import { sentComboValue } from '../workflowInputs/comboValues';
 
 // ComfyUI seed inputs declare max = 2^64; computed (not a literal) because a
 // 0xffffffffffffffff literal silently rounds to 2^64 in a float anyway.
@@ -320,17 +321,7 @@ describe('normalizeWidgetValue', () => {
     expect(normalizeWidgetValue('abc', 'FLOAT')).toBe('abc');
   });
 
-  it('resolves combo index to value when comboIndexToValue is true', () => {
-    const options = ['euler', 'ddim', 'dpm'];
-    expect(normalizeWidgetValue(1, options, { comboIndexToValue: true })).toBe('ddim');
-  });
-
-  it('returns original value if combo index is out of range', () => {
-    const options = ['euler', 'ddim'];
-    expect(normalizeWidgetValue(99, options, { comboIndexToValue: true })).toBe(99);
-  });
-
-  it('passes through combo value without comboIndexToValue', () => {
+  it('passes a combo value through unchanged', () => {
     expect(normalizeWidgetValue('euler', ['euler', 'ddim'])).toBe('euler');
   });
 });
@@ -1193,9 +1184,12 @@ describe('resolveComboOption', () => {
     expect(resolveComboOption('nested/path/bar.safetensors', options)).toBe('bar.safetensors');
   });
 
-  it('resolves numeric combo index values to option value', () => {
-    const options = ['euler', 'ddim', 'dpmpp'];
-    expect(resolveComboOption(1, options)).toBe('ddim');
+  it('never reads a number as an option index, as stock sends it unchanged', () => {
+    // ConditioningKrea2Rebalance gained a leading preset combo, so a saved
+    // multiplier of 0.5 lands in it; stock sends 0.5 and the server rejects it.
+    expect(resolveComboOption(0.5, ['balanced', 'detail', 'subtle'])).toBeUndefined();
+    expect(resolveComboOption(1, ['euler', 'ddim', 'dpmpp'])).toBeUndefined();
+    expect(sentComboValue(0.5, ['balanced', 'detail', 'subtle'])).toBe(0.5);
   });
 
   it('prefers a numeric option value over interpreting it as an index', () => {

@@ -121,16 +121,7 @@ export function getDynamicComboSubInputs(
 export function normalizeWidgetValue(
   value: unknown,
   typeOrOptions: string | unknown[],
-  options?: { comboIndexToValue?: boolean }
 ): unknown {
-  if (Array.isArray(typeOrOptions)) {
-    if (options?.comboIndexToValue && typeof value === 'number' && Number.isFinite(value)) {
-      const idx = Math.trunc(value);
-      return typeOrOptions[idx] ?? value;
-    }
-    return value;
-  }
-
   if (typeOrOptions === 'INT') {
     if (typeof value === 'string' && value.trim() !== '' && !Number.isNaN(Number(value))) {
       return Math.trunc(Number(value));
@@ -240,23 +231,15 @@ export function resolveComboOption(
 ): unknown | undefined {
   if (!Array.isArray(options) || options.length === 0) return undefined;
 
-  // Numeric combo values are ambiguous: legacy workflows may store an option
-  // index, while V3 COMBO schemas may use numbers as the option values. Prefer
-  // a real value match and only interpret the number as an index when no option
-  // has that value (HitPawGeneralImageEnhance.upscale_factor is [1, 2, 4]).
+  // A number is never read as an option index: stock sends it as saved, so a
+  // value a pack update shifted into the combo is rejected on both frontends.
   const valueMatch = options.find((opt) => Object.is(opt, value) || String(opt) === String(value));
   if (valueMatch !== undefined) {
     return valueMatch;
   }
 
-  const normalized = normalizeWidgetValue(value, options, { comboIndexToValue: true });
-  const normalizedString = String(normalized);
+  const normalizedString = String(value);
   const normalizedBase = getComboBase(normalizedString);
-
-  const directMatch = options.find((opt) => String(opt) === normalizedString);
-  if (directMatch !== undefined) {
-    return directMatch;
-  }
 
   // U+FE0E/U+FE0F alter emoji presentation without changing the label's
   // meaning. Some custom-node schemas include one in `default` but omit it
