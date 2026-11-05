@@ -1271,36 +1271,6 @@ export function NodeCardParameters({
     handleWidgetChange(widget)(newValue);
   };
 
-  const firstParameterHasStandardTopPadding = (() => {
-    // This custom block renders before every descriptor-backed parameter.
-    if (isFastGroupsBypasser) return false;
-    if (!showParameters) return false;
-    if (rendersSpecializedSeedBlock) return true;
-
-    if (isCrLoraStackNode) {
-      // Group cards provide their own padded surface. Only a stack consisting
-      // entirely of ungrouped widgets can begin with a standard control.
-      if (crStackGroupedWidgets.groups.length > 0) return false;
-      const firstWidget = crStackGroupedWidgets.ungrouped[0];
-      return firstWidget
-        ? widgetControlHasTopPadding(firstWidget.type, firstWidget.options)
-        : false;
-    }
-
-    const firstWidget = inputWidgetsToRender[0] ?? widgetsToRender[0];
-    if (firstWidget) {
-      return widgetControlHasTopPadding(firstWidget.type, firstWidget.options);
-    }
-
-    // PrimitiveNode can append a synthetic standard combo after its descriptor
-    // list. This is mostly defensive for unusual serialized primitives.
-    if (node.type === 'PrimitiveNode' && widgetValues.length >= 2) {
-      const outputType = String(node.outputs?.[0]?.type).toUpperCase();
-      return outputType === 'INT' || outputType === 'FLOAT';
-    }
-    return false;
-  })();
-
   if (!showParameters && !isFastGroupsBypasser && !showFastGroupConfig) return null;
 
   const promotedSeedBlock: ReactNode =
@@ -1600,23 +1570,20 @@ export function NodeCardParameters({
   };
 
   /**
-   * Every row this card draws, in the order the boundary declares.
-   *
-   * Only placeholders use it. Elsewhere the two lists and the seed block keep
-   * their own grouping, which is fine because nothing there is reorderable —
-   * but on a placeholder the drawn order IS the boundary order the Move
-   * actions step through, so the two have to be one list.
+   * Widget rows follow boundary order on placeholders and desktop widget order
+   * on regular nodes. Only placeholders inline the seed block in this list.
    */
-  const orderedPlaceholderRows = ((): ReactNode[] => {
-    if (!isPlaceholder) return [];
-    const rows: { slot: number; node: ReactNode }[] = [
+  const orderedWidgetRows = (() => {
+    const rows: { slot: number; node: ReactNode; widget?: WidgetDescriptor }[] = [
       ...inputWidgetsToRender.map((widget) => ({
-        slot: widget.inputIndex ?? -1,
+        slot: isPlaceholder ? widget.inputIndex ?? -1 : widget.widgetIndex,
         node: renderComboRow(widget),
+        widget,
       })),
       ...widgetsToRender.map((widget) => ({
-        slot: widget.inputIndex ?? -1,
+        slot: isPlaceholder ? widget.inputIndex ?? -1 : widget.widgetIndex,
         node: renderValueRow(widget),
+        widget,
       })),
       // The widget rows carry their own keys; the seed block is a bare
       // element, so it needs one to sit in this list.
@@ -1627,7 +1594,37 @@ export function NodeCardParameters({
           }]
         : []),
     ];
-    return rows.sort((left, right) => left.slot - right.slot).map((row) => row.node);
+    return rows.sort((left, right) => left.slot - right.slot);
+  })();
+
+  const firstParameterHasStandardTopPadding = (() => {
+    // This custom block renders before every descriptor-backed parameter.
+    if (isFastGroupsBypasser) return false;
+    if (!showParameters) return false;
+    if (rendersSpecializedSeedBlock) return true;
+
+    if (isCrLoraStackNode) {
+      // Group cards provide their own padded surface. Only a stack consisting
+      // entirely of ungrouped widgets can begin with a standard control.
+      if (crStackGroupedWidgets.groups.length > 0) return false;
+      const firstWidget = crStackGroupedWidgets.ungrouped[0];
+      return firstWidget
+        ? widgetControlHasTopPadding(firstWidget.type, firstWidget.options)
+        : false;
+    }
+
+    const firstWidget = orderedWidgetRows[0]?.widget;
+    if (firstWidget) {
+      return widgetControlHasTopPadding(firstWidget.type, firstWidget.options);
+    }
+
+    // PrimitiveNode can append a synthetic standard combo after its descriptor
+    // list. This is mostly defensive for unusual serialized primitives.
+    if (node.type === 'PrimitiveNode' && widgetValues.length >= 2) {
+      const outputType = String(node.outputs?.[0]?.type).toUpperCase();
+      return outputType === 'INT' || outputType === 'FLOAT';
+    }
+    return false;
   })();
 
   return (
@@ -1799,53 +1796,7 @@ export function NodeCardParameters({
               })}
             </>
           ) : (
-            <>
-              {isPlaceholder ? orderedPlaceholderRows : (
-                <>
-                {inputWidgetsToRender.map((inputWidget) => (
-                  // Identified so a jump can land on this row rather than on the
-                  // whole card — an undo of a widget edit goes to the widget.
-                  // The wrapper carries it, not the control, so combos (which
-                  // WidgetControl hands off before it draws its own markup) are
-                  // addressable on the same terms as everything else.
-                  <WidgetRow
-                    key={getWidgetKey(inputWidget, 'input-widget')}
-                    nodeId={node.id} widgetIndex={inputWidget.widgetIndex}
-                    className={isBypassed ? 'opacity-80' : ''}
-                  >
-                    <WidgetControl
-                      name={inputWidget.name}
-                      displayLabel={widgetDisplayLabel(inputWidget)}
-                      boundaryAnnotation={widgetBoundaryAnnotation(inputWidget)}
-                      onBoundaryJump={widgetBoundaryJump(inputWidget)}
-                      type={inputWidget.type}
-                      value={inputWidget.value}
-                      options={inputWidget.options}
-                      onChange={handleInputWidgetChange(inputWidget)}
-                      disabled={isBypassed}
-                      isPinned={canPinWidget(inputWidget.type, inputWidget.name, inputWidget.options) ? isWidgetPinned(inputWidget.widgetIndex) : false}
-                      onTogglePin={canPinWidget(inputWidget.type, inputWidget.name, inputWidget.options) ? () => toggleWidgetPin(inputWidget.widgetIndex, inputWidget.name, inputWidget.type, inputWidget.options, inputWidget.inputName) : undefined}
-                      hasError={hasWidgetError(inputWidget)}
-                      isPromoted={isPromotedWidget(inputWidget.name)}
-                      labelAccessory={
-                        <RowActionsMenu
-                          // Identity, not position: the row is remounted by a
-                          // reorder, and the menu has to survive that.
-                          menuKey={`widget:${menuScopeKey}:${node.id}:${rowMenuIdentity(inputWidget)}`}
-                          rowName={inputWidget.name}
-                          rowNameAnnotation={menuRowAnnotation(inputWidget)}
-            onHeadingClick={menuHeadingJump(inputWidget)}
-                          typeLabel={widgetTypeLabel(inputWidget)}
-                          sections={buildWidgetMenu(inputWidget, false)}
-                        />
-                      }
-                    />
-                  </WidgetRow>
-                ))}
-                {widgetsToRender.map(renderValueRow)}
-                </>
-              )}
-            </>
+            orderedWidgetRows.map((row) => row.node)
           )}
           {node.type === 'PrimitiveNode' && (() => {
             const outputType = node.outputs?.[0]?.type;
