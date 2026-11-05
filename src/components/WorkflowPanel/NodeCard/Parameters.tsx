@@ -1572,16 +1572,30 @@ export function NodeCardParameters({
   /**
    * Widget rows follow boundary order on placeholders and desktop widget order
    * on regular nodes. Only placeholders inline the seed block in this list.
+   *
+   * On a regular node each list is already in declared order, but not every
+   * row owns a widgets_values slot (a RESOLUTION_PREVIEW is -1, trigger-word
+   * rows share their list's index). Carrying the highest slot seen so far keeps
+   * such a row behind the row it follows instead of sorting it to the top.
    */
+  const declaredSlots = (widgets: WidgetDescriptor[]) => {
+    let slot = -1;
+    return widgets.map((widget) => {
+      slot = isPlaceholder ? widget.inputIndex ?? -1 : Math.max(slot, widget.widgetIndex);
+      return slot;
+    });
+  };
+  const comboSlots = declaredSlots(inputWidgetsToRender);
+  const valueSlots = declaredSlots(widgetsToRender);
   const orderedWidgetRows = (() => {
     const rows: { slot: number; node: ReactNode; widget?: WidgetDescriptor }[] = [
-      ...inputWidgetsToRender.map((widget) => ({
-        slot: isPlaceholder ? widget.inputIndex ?? -1 : widget.widgetIndex,
+      ...inputWidgetsToRender.map((widget, index) => ({
+        slot: comboSlots[index],
         node: renderComboRow(widget),
         widget,
       })),
-      ...widgetsToRender.map((widget) => ({
-        slot: isPlaceholder ? widget.inputIndex ?? -1 : widget.widgetIndex,
+      ...widgetsToRender.map((widget, index) => ({
+        slot: valueSlots[index],
         node: renderValueRow(widget),
         widget,
       })),
