@@ -1,5 +1,15 @@
 # Changelog
 
+## 3.4.1 - 2026-11-04
+
+### Fixed
+
+- **Widgets draw in the node's own order.** A node card listed every dropdown
+  before every number, text box and toggle, so nodes that pair each dropdown
+  with its own value (such as Portrait Master's strength sliders) had the
+  pairs pulled apart. Widgets now follow the order the node declares, as on
+  desktop. ([#123](https://github.com/cosmicbuffalo/comfyui-mobile-frontend/issues/123))
+
 ## 3.4.0 - 2026-10-20
 
 Supports ComfyUI 0.40 through 0.42.1. Older ComfyUI versions remain supported.
