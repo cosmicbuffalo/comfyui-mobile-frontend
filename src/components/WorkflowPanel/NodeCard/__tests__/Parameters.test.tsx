@@ -123,6 +123,117 @@ describe('NodeCardParameters seed controls', () => {
     expect(content?.classList).not.toContain('-mt-2');
   });
 
+  it('draws regular COMBO and FLOAT rows in declared widget order', async () => {
+    const node: WorkflowNode = {
+      id: 22,
+      itemKey: 'node:22',
+      type: 'TestNode',
+      pos: [0, 0],
+      size: [320, 200],
+      flags: {},
+      order: 0,
+      mode: 0,
+      inputs: [],
+      outputs: [],
+      properties: {},
+      widgets_values: ['soft', 0.5, 'bold', 0.8],
+    };
+
+    await act(async () => {
+      root.render(
+        <NodeCardParameters
+          node={node}
+          isBypassed={false}
+          isKSampler={false}
+          workflowExists={false}
+          nodeTypesExists={false}
+          visibleInputWidgets={[
+            { widgetIndex: 0, inputIndex: -1, name: 'style_a', type: 'COMBO', value: 'soft', options: ['soft', 'bold'] },
+            { widgetIndex: 2, inputIndex: -1, name: 'style_b', type: 'COMBO', value: 'bold', options: ['soft', 'bold'] },
+          ]}
+          visibleWidgets={[
+            { widgetIndex: 1, inputIndex: -1, name: 'style_a_weight', type: 'FLOAT', value: 0.5 },
+            { widgetIndex: 3, inputIndex: -1, name: 'style_b_weight', type: 'FLOAT', value: 0.8 },
+          ]}
+          errorInputNames={new Set()}
+          onUpdateNodeWidget={vi.fn()}
+          onUpdateNodeWidgets={vi.fn()}
+          getWidgetIndexForInput={() => null}
+          findSeedWidgetIndex={() => null}
+          setSeedMode={vi.fn()}
+          isWidgetPinned={() => false}
+          toggleWidgetPin={vi.fn()}
+          showFastGroupConfig={false}
+          setShowFastGroupConfig={vi.fn()}
+        />,
+      );
+    });
+
+    const renderedNames = Array.from(
+      container.querySelectorAll<HTMLElement>('[data-widget-control]'),
+      (element) => element.dataset.widgetControl,
+    );
+    expect(renderedNames).toEqual([
+      'style_a', 'style_a_weight', 'style_b', 'style_b_weight',
+    ]);
+  });
+
+  it('keeps a slotless row behind the row it follows (core ResolutionSelector)', async () => {
+    const node: WorkflowNode = {
+      id: 23,
+      itemKey: 'node:23',
+      type: 'ResolutionSelector',
+      pos: [0, 0],
+      size: [320, 200],
+      flags: {},
+      order: 0,
+      mode: 0,
+      inputs: [],
+      outputs: [],
+      properties: {},
+      widgets_values: ['1:1 (Square)', 1, 8],
+    };
+
+    await act(async () => {
+      root.render(
+        <NodeCardParameters
+          node={node}
+          isBypassed={false}
+          isKSampler={false}
+          workflowExists={false}
+          nodeTypesExists={false}
+          visibleInputWidgets={[
+            { widgetIndex: 0, inputIndex: -1, name: 'aspect_ratio', type: 'COMBO', value: '1:1 (Square)', options: ['1:1 (Square)'] },
+          ]}
+          visibleWidgets={[
+            { widgetIndex: 1, inputIndex: -1, name: 'megapixels', type: 'FLOAT', value: 1 },
+            { widgetIndex: 2, inputIndex: -1, name: 'multiple', type: 'INT', value: 8 },
+            // Not a widgets_values slot: widgetDefinitions gives the preview -1.
+            { widgetIndex: -1, inputIndex: -1, name: 'preview', type: 'RESOLUTION_PREVIEW', value: { width: 1024, height: 1024 } },
+          ]}
+          errorInputNames={new Set()}
+          onUpdateNodeWidget={vi.fn()}
+          onUpdateNodeWidgets={vi.fn()}
+          getWidgetIndexForInput={() => null}
+          findSeedWidgetIndex={() => null}
+          setSeedMode={vi.fn()}
+          isWidgetPinned={() => false}
+          toggleWidgetPin={vi.fn()}
+          showFastGroupConfig={false}
+          setShowFastGroupConfig={vi.fn()}
+        />,
+      );
+    });
+
+    const renderedNames = Array.from(
+      container.querySelectorAll<HTMLElement>('[data-widget-control]'),
+      (element) => element.dataset.widgetControl,
+    );
+    expect(renderedNames).toEqual([
+      'aspect_ratio', 'megapixels', 'multiple', 'preview',
+    ]);
+  });
+
   it('renders a proxied control_after_generate only through the specialized seed control', async () => {
     const node: WorkflowNode = {
       id: 911,
