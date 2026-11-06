@@ -230,42 +230,42 @@ export function resolveComboOption(
 ): unknown | undefined {
   if (!Array.isArray(options) || options.length === 0) return undefined;
 
-  // A number is never read as an option index: stock sends it as saved, so a
-  // value a pack update shifted into the combo is rejected on both frontends.
-  const valueMatch = options.find((opt) => Object.is(opt, value) || String(opt) === String(value));
+  const valueMatch = options.find((opt) => Object.is(opt, value));
   if (valueMatch !== undefined) {
     return valueMatch;
   }
+  // Stock sends a combo's saved value as is, and the server checks it with
+  // Python's `in`, which never equates a number with a string: 1 is not in
+  // ['1', '2'], and '1' is not in [1, 2]. So only a string is matched loosely,
+  // and only against string options. A number is never read as an option index
+  // either, so a value a pack update shifted into the combo is rejected on both.
+  if (typeof value !== 'string') return undefined;
+  const textOptions = options.filter((opt): opt is string => typeof opt === 'string');
 
-  const normalizedString = String(value);
-  const normalizedBase = getComboBase(normalizedString);
+  const normalizedBase = getComboBase(value);
 
   // U+FE0E/U+FE0F alter emoji presentation without changing the label's
   // meaning. Some custom-node schemas include one in `default` but omit it
   // from the corresponding option. Resolve to the server-advertised option.
-  const displayString = normalizedString.replace(/[\uFE0E\uFE0F]/g, '');
-  const displayMatch = options.find(
-    (opt) => String(opt).replace(/[\uFE0E\uFE0F]/g, '') === displayString,
+  const displayString = value.replace(/[\uFE0E\uFE0F]/g, '');
+  const displayMatch = textOptions.find(
+    (opt) => opt.replace(/[\uFE0E\uFE0F]/g, '') === displayString,
   );
   if (displayMatch !== undefined) {
     return displayMatch;
   }
 
-  const baseMatch = options.find((opt) => String(opt) === normalizedBase);
+  const baseMatch = textOptions.find((opt) => opt === normalizedBase);
   if (baseMatch !== undefined) {
     return baseMatch;
   }
 
   const normalizedNoExt = stripSafetensorsSuffix(normalizedBase);
   const normalizedNoExtLower = normalizedNoExt.toLowerCase();
-  const extensionlessMatch = options.find((opt) => {
-    const optString = String(opt);
-    const optBase = getComboBase(optString);
-    const optNoExt = stripSafetensorsSuffix(optBase);
+  return textOptions.find((opt) => {
+    const optNoExt = stripSafetensorsSuffix(getComboBase(opt));
     return optNoExt.toLowerCase() === normalizedNoExtLower;
   });
-
-  return extensionlessMatch;
 }
 
 export function isValueCompatible(value: unknown, typeOrOptions: string | unknown[]): boolean {

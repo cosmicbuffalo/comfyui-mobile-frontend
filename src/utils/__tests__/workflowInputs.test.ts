@@ -1242,6 +1242,17 @@ describe('resolveComboOption', () => {
     expect(sentComboValue(0.5, ['balanced', 'detail', 'subtle'])).toBe(0.5);
   });
 
+  it('never matches a number with a string option or the reverse, as the server does not', () => {
+    expect(resolveComboOption(1, ['1', '2'])).toBeUndefined();
+    expect(resolveComboOption('1', [1, 2])).toBeUndefined();
+    expect(sentComboValue(1, ['1', '2'])).toBe(1);
+    expect(sentComboValue('1', [1, 2])).toBe('1');
+    expect(resolveComboOption(512, [512, 768])).toBe(512);
+    // The loose matching of strings against strings is unchanged.
+    expect(resolveComboOption('loras/style.safetensors', ['style.safetensors'])).toBe('style.safetensors');
+    expect(resolveComboOption('style', [1, 'style.safetensors'])).toBe('style.safetensors');
+  });
+
   it('prefers a numeric option value over interpreting it as an index', () => {
     expect(resolveComboOption(1, [1, 2, 4])).toBe(1);
     expect(resolveComboOption(0, ['disabled', 'center', 0])).toBe(0);
