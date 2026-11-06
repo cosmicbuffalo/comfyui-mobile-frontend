@@ -180,10 +180,11 @@ function typeTokens(type: unknown): string[] {
 }
 
 /**
- * UE compares slot types with `!=` on the raw strings, so this is deliberately
- * an exact match rather than the looser token-overlap used elsewhere in the app:
- * treating "IMAGE" as compatible with "IMAGE,MASK" would wire connections the
- * desktop never makes. Case and surrounding space are still normalised.
+ * UE compares slot types with `==` on the raw strings, so this is deliberately
+ * an exact match rather than the looser token-overlap used elsewhere in the app.
+ * The one widening (8.0+) goes from a single broadcast type to one entry of a
+ * comma-separated input type, handled in broadcastMatches. Case and surrounding
+ * space are still normalised.
  */
 function typesEqual(a: unknown, b: unknown): boolean {
   const left = String(a ?? '').trim().toUpperCase();
@@ -458,15 +459,19 @@ function broadcastMatches(
   }
 
   if (!typesEqual(broadcast.type, input.type)) {
-    // Two opt-in escapes from strict type equality, both driven by controller
-    // properties: a STRING may feed a COMBO, and (pack 7.8+) anything may feed a
-    // wildcard input.
+    // Escapes from strict type equality: a STRING may feed a COMBO and (7.8+)
+    // anything may feed a wildcard input, both opted into by controller
+    // properties; and a type may feed a list of options that includes it.
     const isStringToCombo =
       broadcast.stringToCombo &&
       typeTokens(broadcast.type).includes('STRING') &&
       typeTokens(input.type).includes('COMBO');
     const isSendToAny = broadcast.sendToAny && typeTokens(input.type).includes('*');
-    if (!isStringToCombo && !isSendToAny) return false;
+    // "Connect if type matches any input option", on by default in UE 8: an
+    // INT broadcast feeds a FLOAT,INT input. Mobile can't read the desktop
+    // setting, so it follows the default, as with bypassed nodes.
+    const isFlexible = String(input.type ?? '').split(',').some((option) => typesEqual(broadcast.type, option));
+    if (!isStringToCombo && !isSendToAny && !isFlexible) return false;
   }
 
   if (broadcast.inputRegex) {
