@@ -38,8 +38,10 @@
 - **Dropdown values the server doesn't offer** are sent as saved, so the
   server reports them as it does for desktop, instead of mobile quietly
   running another option. A number saved in a dropdown is sent as that
-  number rather than read as an option's position. Impact's wildcard picker
-  still sends its placeholder.
+  number rather than read as an option's position, and a number or text that
+  only matches an option of the other type (`1` against `"1"`) is shown as
+  missing, as the server rejects it. Impact's wildcard picker still sends its
+  placeholder.
 - **Show Text**, **Display Any** and Easy-Use **showAnything** cards show the
   text the workflow saved until a run replaces it.
 - **Outputs** keeps a folder's scroll position when you come back to it from
