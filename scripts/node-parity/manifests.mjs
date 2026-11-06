@@ -305,7 +305,7 @@ export const MANIFESTS = [
       },
       {
         id: 'dynamic-prompts-grammar',
-        why: 'src/utils/dynamicPrompts.ts is a line-for-line port: comments stripped, {a|b} chosen with Math.random and recursed into, backslash escapes kept then unescaped. A change to that grammar changes the text mobile sends.',
+        why: 'src/utils/dynamicPrompts.ts reimplements this grammar (stock is GPL-3, so its code is not copied): comments stripped, {a|b} chosen with Math.random and the pick processed again, backslash escapes kept then unescaped. A change to that grammar changes the text mobile sends.',
         ours: 'src/utils/dynamicPrompts.ts',
         file: 'packages/shared-frontend-utils/src/formatUtil.ts',
         contains: [
