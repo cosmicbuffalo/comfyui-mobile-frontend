@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { NodeTypes, Workflow, WorkflowNode } from '@/api/types';
 import { expandWorkflowSubgraphs } from '@/utils/expandWorkflowSubgraphs';
 import {
+  getInputWidgetDefinitions,
   getWidgetDefinitions,
   getPlaceholderWidgetIndexForInput,
   getSubgraphBoundaryWidgetIndexForSlot,
@@ -14,6 +15,7 @@ import {
   resolveSubgraphBoundaryWidgetDefs,
   resolveSubgraphBoundaryInputWidgetDefs,
 } from '../widgetDefinitions';
+import { buildDefaultWidgetValues, rebuildDynamicComboWidgetValues } from '../workflowInputs';
 
 function makeNode(id: number, type: string, widgetsValues: unknown[]): WorkflowNode {
   return {
@@ -1376,5 +1378,33 @@ describe('a schema input the saved node predates', () => {
   it('holds no widget slot for a core socket, but still does for a custom type', () => {
     const defs = getWidgetDefinitions(types, node).map((d) => [d.name, d.widgetIndex]);
     expect(defs).toEqual([['quality', 0], ['style', 1]]);
+  });
+});
+
+describe('an INT that declares control_after_generate under another name', () => {
+  const steps = ['INT', { default: 3, control_after_generate: true }] as [string, Record<string, unknown>];
+  const read = (types: NodeTypes, node: WorkflowNode) =>
+    Object.fromEntries([...getInputWidgetDefinitions(types, node), ...getWidgetDefinitions(types, node)].map((def) => [def.name, def.value]));
+
+  it('reads back aligned on a node built from the defaults', () => {
+    const types = {
+      Counter: { input: { required: { steps, label: ['STRING', { default: 'x' }], count: ['INT', { default: 9 }] } }, input_order: { required: ['steps', 'label', 'count'] }, output: [], name: 'Counter' },
+    } as unknown as NodeTypes;
+    const node = makeNode(1, 'Counter', buildDefaultWidgetValues(types.Counter));
+    expect(node.widgets_values).toEqual([3, 'randomize', 'x', 9]);
+    expect(read(types, node)).toEqual({ steps: 3, label: 'x', count: 9 });
+  });
+
+  it('reads back aligned after switching a DynamicCombo to the branch that holds it', () => {
+    const mode: [string, Record<string, unknown>] = ['COMFY_DYNAMICCOMBO_V3', { options: [
+      { key: 'plain', inputs: {} },
+      { key: 'counted', inputs: { required: { steps, label: ['STRING', { default: 'x' }] } } },
+    ] }];
+    const types = {
+      Picker: { input: { required: { mode, count: ['INT', { default: 9 }] } }, input_order: { required: ['mode', 'count'] }, output: [], name: 'Picker' },
+    } as unknown as NodeTypes;
+    const node = makeNode(1, 'Picker', ['plain', 9]);
+    node.widgets_values = rebuildDynamicComboWidgetValues(node, 'mode', mode, 0, 'counted') ?? undefined;
+    expect(read(types, node)).toEqual({ mode: 'counted', steps: 3, label: 'x', count: 9 });
   });
 });
