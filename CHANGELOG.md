@@ -18,6 +18,9 @@
   instead of being left out.
 - **Bypassed nodes** pass through inputs whose type lists several types
   (such as `IMAGE,MASK`), instead of dropping them.
+- **Use Everywhere** broadcasts reach inputs that accept several types (an
+  INT broadcast into a `FLOAT,INT` input), as Use Everywhere 8 does by
+  default, instead of leaving them out of the prompt.
 - **KJNodes Get nodes.** A muted or bypassed Get node no longer passes its
   value on, and a Get node inside a subgraph finds a Set node in an enclosing
   graph.
