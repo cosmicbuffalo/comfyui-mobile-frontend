@@ -71,6 +71,15 @@ export function resolvePromotedInlineValue(
 }
 
 /**
+ * A widget by the name a promotion targets. A DynamicCombo child is promoted
+ * under its qualified name (`sampling_mode.seed`), which is its definition's
+ * inputName, so that is matched before a bare name that two branches can share.
+ */
+function findWidgetDefinition<T extends { name: string; inputName?: string }>(definitions: T[], widgetName: string): T | undefined {
+  return definitions.find((def) => def.inputName === widgetName) ?? definitions.find((def) => def.name === widgetName);
+}
+
+/**
  * Write a promoted value into a cloned inner node's widgets_values.
  * When the target is itself a nested subgraph placeholder, the value lands in
  * its promoted-input slot and the next expansion pass pushes it further down.
@@ -113,9 +122,9 @@ export function applyPromotedValueToTarget(
   } else {
     index =
       getNodePropertyWidgetIndexMap(innerNode)?.[widgetName] ??
-      (
-        getWidgetDefinitions(nodeTypes, innerNode).find((def) => def.name === widgetName) ??
-        getInputWidgetDefinitions(nodeTypes, innerNode).find((def) => def.name === widgetName)
+      findWidgetDefinition(
+        [...getWidgetDefinitions(nodeTypes, innerNode), ...getInputWidgetDefinitions(nodeTypes, innerNode)],
+        widgetName,
       )?.widgetIndex;
   }
   if (index === undefined || index < 0) return;
@@ -412,6 +421,16 @@ function expandWorkflowSubgraphsOnce(
         });
       }
     }
+
+    // Stock reads an output through its slot's first linkId
+    // (SubgraphNode.resolveSubgraphOutputLink), not the link's target_slot,
+    // which some saved files carry as -1.
+    (subgraph.outputs ?? []).forEach((output, slot) => {
+      const link = (subgraph.links ?? []).find((entry) => entry.id === output.linkIds?.[0]);
+      const mappedOrigin = link ? nodeIdMap.get(link.origin_id) : undefined;
+      if (!link || mappedOrigin === undefined) return;
+      outputSources.set(slot, [{ origin_id: mappedOrigin, origin_slot: link.origin_slot, target_id: -20, target_slot: slot, type: link.type }]);
+    });
 
     // The placeholder's widgets_values are authoritative for every widget-typed
     // boundary input, including inputs omitted from the placeholder's shorter

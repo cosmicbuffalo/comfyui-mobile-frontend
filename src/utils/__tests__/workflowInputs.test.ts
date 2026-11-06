@@ -17,6 +17,7 @@ import {
   resolveSource,
 } from '../workflowInputs';
 import type { NodeTypes, Workflow, WorkflowNode } from '@/api/types';
+import { sentComboValue } from '../workflowInputs/comboValues';
 
 // ComfyUI seed inputs declare max = 2^64; computed (not a literal) because a
 // 0xffffffffffffffff literal silently rounds to 2^64 in a float anyway.
@@ -320,17 +321,7 @@ describe('normalizeWidgetValue', () => {
     expect(normalizeWidgetValue('abc', 'FLOAT')).toBe('abc');
   });
 
-  it('resolves combo index to value when comboIndexToValue is true', () => {
-    const options = ['euler', 'ddim', 'dpm'];
-    expect(normalizeWidgetValue(1, options, { comboIndexToValue: true })).toBe('ddim');
-  });
-
-  it('returns original value if combo index is out of range', () => {
-    const options = ['euler', 'ddim'];
-    expect(normalizeWidgetValue(99, options, { comboIndexToValue: true })).toBe(99);
-  });
-
-  it('passes through combo value without comboIndexToValue', () => {
+  it('passes a combo value through unchanged', () => {
     expect(normalizeWidgetValue('euler', ['euler', 'ddim'])).toBe('euler');
   });
 });
@@ -356,6 +347,11 @@ describe('normalizeComboValue', () => {
     expect(
       normalizeComboValue('subdir/new.safetensors', ['a.safetensors', 'b.safetensors']),
     ).toBe('subdir/new.safetensors');
+  });
+
+  it("falls back to a CLOSED ENUM's declared default when it has one", () => {
+    expect(normalizeComboValue('Manual', ['SD (480p)', '1.3K (768p)'], false, '1.3K (768p)')).toBe('1.3K (768p)');
+    expect(normalizeComboValue('Manual', ['SD (480p)', '1.3K (768p)'], false, 'gone')).toBe('SD (480p)');
   });
 
   it('falls back to the first option for a CLOSED ENUM when nothing matches', () => {
@@ -591,6 +587,32 @@ describe('resolveSource', () => {
     expect(result).toEqual({ nodeId: 1, slotIndex: 0 });
   });
 
+  it('passes a bypassed node through an input of a comma-separated type', () => {
+    // isValidConnection matches CONDITIONING against `H3_COND,CONDITIONING`.
+    const wf = (inputType: string): Workflow => ({
+      last_node_id: 3,
+      last_link_id: 2,
+      nodes: [
+        makeNode(1, 'Encoder', { outputs: [{ name: 'CONDITIONING', type: 'CONDITIONING', links: [1] }] }),
+        makeNode(2, 'Apply', {
+          mode: 4,
+          inputs: [{ name: 'conditioning', type: inputType, link: 1 }],
+          outputs: [{ name: 'conditioning', type: 'CONDITIONING', links: [2] }],
+        }),
+        makeNode(3, 'Guider', { inputs: [{ name: 'conditioning', type: 'CONDITIONING', link: 2 }] }),
+      ],
+      links: [
+        [1, 1, 0, 2, 0, 'CONDITIONING'],
+        [2, 2, 0, 3, 0, 'CONDITIONING'],
+      ],
+      groups: [],
+      config: {},
+      version: 1,
+    });
+    expect(resolveSource(wf('H3_COND,CONDITIONING'), 2)).toEqual({ nodeId: 1, slotIndex: 0 });
+    expect(resolveSource(wf('H3_COND,LATENT'), 2)).toBeNull();
+  });
+
   it('returns null for non-existent link', () => {
     const wf: Workflow = {
       last_node_id: 1,
@@ -741,6 +763,56 @@ describe('resolveSource', () => {
     ]);
 
     expect(resolveSource(wf, 2, new Set(), promptKeyMap)).toBeNull();
+  });
+
+  describe('a KJNodes GetNode inside a subgraph reading a Set in an enclosing graph', () => {
+    // 1 Loader → 2 SetNode('vae') at the root; 3 GetNode('vae') → 4 VAEDecode
+    // inside instance 10. KJ's resolveVirtualOutput looks up through the
+    // ancestors, and gives up when more than one Set of that name is in reach.
+    const wf = (extraSetter: boolean): Workflow => ({
+      last_node_id: 6,
+      last_link_id: 3,
+      nodes: [
+        makeNode(1, 'Loader', { outputs: [{ name: 'VAE', type: 'VAE', links: [1] }] }),
+        makeNode(2, 'SetNode', { inputs: [{ name: 'VAE', type: 'VAE', link: 1 }], widgets_values: ['vae'] }),
+        makeNode(3, 'GetNode', { outputs: [{ name: 'VAE', type: 'VAE', links: [2] }], widgets_values: ['vae'] }),
+        makeNode(4, 'VAEDecode', { inputs: [{ name: 'vae', type: 'VAE', link: 2 }] }),
+        ...(extraSetter
+          ? [
+            makeNode(5, 'Loader', { outputs: [{ name: 'VAE', type: 'VAE', links: [3] }] }),
+            makeNode(6, 'SetNode', { inputs: [{ name: 'VAE', type: 'VAE', link: 3 }], widgets_values: ['vae'] }),
+          ]
+          : []),
+      ],
+      links: [
+        [1, 1, 0, 2, 0, 'VAE'],
+        [2, 3, 0, 4, 0, 'VAE'],
+        ...(extraSetter ? [[3, 5, 0, 6, 0, 'VAE'] as Workflow['links'][number]] : []),
+      ],
+      groups: [],
+      config: {},
+      version: 1,
+    });
+    const promptKeyMap = new Map<number, string>([
+      [1, '1'], [2, '2'], [3, '10:3'], [4, '10:4'], [5, '10:20:5'], [6, '10:20:6'],
+    ]);
+
+    it('resolves to the root Set', () => {
+      expect(resolveSource(wf(false), 2, new Set(), promptKeyMap)).toEqual({ nodeId: 1, slotIndex: 0 });
+    });
+
+    it('ignores a Set in a nested subgraph below it', () => {
+      expect(resolveSource(wf(true), 2, new Set(), promptKeyMap)).toEqual({ nodeId: 1, slotIndex: 0 });
+    });
+
+    it('resolves nothing when two Sets of that name are in reach', () => {
+      const nested = new Map(promptKeyMap);
+      nested.set(3, '10:30:3');
+      nested.set(4, '10:30:4');
+      nested.set(5, '10:5');
+      nested.set(6, '10:6');
+      expect(resolveSource(wf(true), 2, new Set(), nested)).toBeNull();
+    });
   });
 
   it('serializes scoped KJNodes sources with prompt keys through buildWorkflowPromptInputs', () => {
@@ -1162,9 +1234,23 @@ describe('resolveComboOption', () => {
     expect(resolveComboOption('nested/path/bar.safetensors', options)).toBe('bar.safetensors');
   });
 
-  it('resolves numeric combo index values to option value', () => {
-    const options = ['euler', 'ddim', 'dpmpp'];
-    expect(resolveComboOption(1, options)).toBe('ddim');
+  it('never reads a number as an option index, as stock sends it unchanged', () => {
+    // ConditioningKrea2Rebalance gained a leading preset combo, so a saved
+    // multiplier of 0.5 lands in it; stock sends 0.5 and the server rejects it.
+    expect(resolveComboOption(0.5, ['balanced', 'detail', 'subtle'])).toBeUndefined();
+    expect(resolveComboOption(1, ['euler', 'ddim', 'dpmpp'])).toBeUndefined();
+    expect(sentComboValue(0.5, ['balanced', 'detail', 'subtle'])).toBe(0.5);
+  });
+
+  it('never matches a number with a string option or the reverse, as the server does not', () => {
+    expect(resolveComboOption(1, ['1', '2'])).toBeUndefined();
+    expect(resolveComboOption('1', [1, 2])).toBeUndefined();
+    expect(sentComboValue(1, ['1', '2'])).toBe(1);
+    expect(sentComboValue('1', [1, 2])).toBe('1');
+    expect(resolveComboOption(512, [512, 768])).toBe(512);
+    // The loose matching of strings against strings is unchanged.
+    expect(resolveComboOption('loras/style.safetensors', ['style.safetensors'])).toBe('style.safetensors');
+    expect(resolveComboOption('style', [1, 'style.safetensors'])).toBe('style.safetensors');
   });
 
   it('prefers a numeric option value over interpreting it as an index', () => {
@@ -1497,4 +1583,68 @@ describe('filename_prefix replacements', () => {
     expect(inputs.filename_prefix).toBe('video/2026-02-21/140509_768?bad');
   });
 
+});
+
+describe('a widget the saved node predates', () => {
+  it('sends the value stock creates the widget with', () => {
+    const workflow = { last_node_id: 1, last_link_id: 0, nodes: [], links: [], groups: [], config: {}, version: 0.4 } as Workflow;
+    const types = {
+      Join: {
+        input: { required: { delimiter: ['STRING', { default: ', ' }] }, optional: { text_a: ['STRING', { multiline: true }], count: ['INT', {}] } },
+        input_order: { required: ['delimiter'], optional: ['text_a', 'count'] },
+        output: ['STRING'], output_name: ['STRING'], name: 'Join', display_name: 'Join', description: '', python_module: '', category: '',
+      },
+    } as unknown as NodeTypes;
+    const node = makeNode(1, 'Join', { widgets_values: ['. '] });
+    expect(buildWorkflowPromptInputs(workflow, types, node, 'Join', new Set([1]), null)).toEqual({ delimiter: '. ', text_a: '', count: 0 });
+  });
+});
+
+describe('a widget input fed by a muted node', () => {
+  it('keeps its own value, as stock serializes widgets before links', () => {
+    const types = {
+      VAELoader: { input: { required: { vae_name: [['a.safetensors', 'b.safetensors'], {}] } }, output: ['VAE'], output_name: ['VAE'], name: 'VAELoader', display_name: 'Load VAE', description: '', python_module: '', category: '' },
+    } as unknown as NodeTypes;
+    const wf = (sourceMode: number): Workflow => ({
+      last_node_id: 2,
+      last_link_id: 1,
+      nodes: [
+        makeNode(1, 'Sliders', { mode: sourceMode, outputs: [{ name: 'value', type: '*', links: [1] }] }),
+        makeNode(2, 'VAELoader', {
+          inputs: [{ name: 'vae_name', type: 'COMBO', widget: { name: 'vae_name' }, link: 1 }],
+          widgets_values: ['b.safetensors'],
+        }),
+      ],
+      links: [[1, 1, 0, 2, 0, 'COMBO']],
+      groups: [],
+      config: {},
+      version: 1,
+    });
+    const build = (mode: number) => {
+      const workflow = wf(mode);
+      return buildWorkflowPromptInputs(workflow, types, workflow.nodes[1], 'VAELoader', new Set([1, 2]), null);
+    };
+    expect(build(2).vae_name).toBe('b.safetensors');
+    expect(build(0).vae_name).toEqual(['1', 0]);
+  });
+});
+
+describe('a PrimitiveNode feeding a dynamicPrompts widget', () => {
+  it('resolves choices and comments for a DynamicCombo child too', () => {
+    const types = {
+      Prompter: {
+        input: { required: { mode: ['COMFY_DYNAMICCOMBO_V3', { options: [
+          { key: 'custom', inputs: { required: { text: ['STRING', { multiline: true, dynamicPrompts: true }] } } },
+        ] }] } },
+        output: ['STRING'], output_name: ['STRING'], name: 'Prompter', display_name: 'Prompter', description: '', python_module: '', category: '',
+      },
+    } as unknown as NodeTypes;
+    const primitive = makeNode(1, 'PrimitiveNode', { widgets_values: ['a {cat|cat} // note'], outputs: [{ name: 'STRING', type: 'STRING', links: [1] }] });
+    const prompter = makeNode(2, 'Prompter', {
+      widgets_values: ['custom', 'a {cat|cat} // note'],
+      inputs: [{ name: 'mode.text', type: 'STRING', link: 1, widget: { name: 'mode.text' } }],
+    });
+    const workflow = { last_node_id: 2, last_link_id: 1, nodes: [primitive, prompter], links: [[1, 1, 0, 2, 0, 'STRING']], groups: [], config: {}, version: 0.4 } as unknown as Workflow;
+    expect(buildWorkflowPromptInputs(workflow, types, prompter, 'Prompter', new Set([2]), null)['mode.text']).toBe('a cat ');
+  });
 });

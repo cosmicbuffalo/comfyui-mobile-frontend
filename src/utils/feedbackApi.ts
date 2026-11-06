@@ -3,7 +3,7 @@ export interface FeedbackSubmission {
   body: string;
   contact?: string;
   diagnostics?: string;
-  // Ask the service for a secret so this server can follow the issue.
+  // Ask the service for a reply token so this server can follow the issue.
   follow?: boolean;
   // Honeypot field — UI keeps this empty; bots filling all visible fields
   // will set it and the worker will reject.
@@ -19,7 +19,7 @@ interface FeedbackSuccess {
 }
 
 export interface FeedbackFollowGrant {
-  secret: string;
+  replyToken: string;
   /** False when the contact was a GitHub handle mentioned on the issue: they reply there. */
   canReply: boolean;
 }
@@ -102,7 +102,7 @@ export async function submitFeedback(
     return { ok: false, error: 'invalid_response', status: result.status };
   }
   return typeof secret === 'string' && typeof canReply === 'boolean'
-    ? { ok: true, url, number, follow: { secret, canReply } }
+    ? { ok: true, url, number, follow: { replyToken: secret, canReply } }
     : { ok: true, url, number };
 }
 
@@ -137,9 +137,10 @@ export type FeedbackReplyResult = { ok: true; url: string } | FeedbackFailure;
 
 export async function submitFeedbackReply(
   endpoint: string,
-  reply: { number: number; secret: string; body: string; website?: string },
+  reply: { number: number; replyToken: string; body: string; website?: string },
 ): Promise<FeedbackReplyResult> {
-  const result = await postJson(`${endpoint}/reply`, reply);
+  const { replyToken, ...payload } = reply;
+  const result = await postJson(`${endpoint}/reply`, { ...payload, secret: replyToken });
   if (!result.ok) return result;
   const { url } = result.data;
   if (typeof url !== 'string') {
@@ -148,13 +149,12 @@ export async function submitFeedbackReply(
   return { ok: true, url };
 }
 
-/** Tell the service to drop the follow, so the secret stops working. */
+/** Tell the service to drop the follow, so the reply token stops working. */
 export async function forgetFeedback(
   endpoint: string,
-  follow: { number: number; secret: string },
+  follow: { number: number; replyToken: string },
 ): Promise<boolean> {
-  // Callers pass a whole stored follow; only these two fields may leave the browser.
-  const result = await postJson(`${endpoint}/forget`, { number: follow.number, secret: follow.secret });
+  const result = await postJson(`${endpoint}/forget`, { number: follow.number, secret: follow.replyToken });
   // not_following means the service already forgot it.
   return result.ok || result.error === 'not_following';
 }

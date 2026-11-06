@@ -288,11 +288,32 @@ export const MANIFESTS = [
   {
     pack: 'comfyui-frontend',
     repo: 'https://github.com/Comfy-Org/ComfyUI_frontend',
-    verifiedVersion: '1.57.0',
+    verifiedVersion: '1.61.0',
     localDir: false,
     versionFile: 'package.json',
     versionPattern: /"version":\s*"([^"]+)"/,
     assumptions: [
+      {
+        id: 'dynamic-prompts-serialize',
+        why: 'Comfy.DynamicPrompts resolves every widget whose input declares dynamicPrompts in serializeValue, which feeds only the prompt; the embedded workflow keeps the authored text. buildWorkflowPromptInputs() does the same.',
+        ours: 'src/utils/workflowInputs/promptInputs.ts',
+        file: 'src/extensions/core/dynamicPrompts.ts',
+        contains: [
+          /node\.widgets\.filter\(\(w\) => w\.dynamicPrompts\)/,
+          /widget\.serializeValue = \(\) => \{\s*if \(typeof widget\.value !== 'string'\) return widget\.value\s*return processDynamicPrompt\(widget\.value\)/,
+        ],
+      },
+      {
+        id: 'dynamic-prompts-grammar',
+        why: 'src/utils/dynamicPrompts.ts reimplements this grammar (stock is GPL-3, so its code is not copied): comments stripped, {a|b} chosen with Math.random and the pick processed again, backslash escapes kept then unescaped. A change to that grammar changes the text mobile sends.',
+        ours: 'src/utils/dynamicPrompts.ts',
+        file: 'packages/shared-frontend-utils/src/formatUtil.ts',
+        contains: [
+          /str\.replace\(\/\\\/\\\*\[\\s\\S\]\*\?\\\*\\\/\|\\\/\\\/\.\*\/g, ''\)/,
+          /const chosenOption = options\[Math\.floor\(Math\.random\(\) \* options\.length\)\]/,
+          /return result\.replace\(\/\\\\\(\[\{\}\|\]\)\/g, '\$1'\)/,
+        ],
+      },
       // ---------------------------------------------------------------
       // The subgraph rules our stock-compatibility work is built on.
       //
@@ -356,7 +377,7 @@ export const MANIFESTS = [
         id: 'clipspace-layer-filenames',
         why: 'Our four output layers use these exact names. The desktop loader recognises one of its own saves by the clipspace-painted-masked- prefix and recovers the siblings by pattern; a different name means a mask made on mobile loses its paint layer when re-opened on a desktop.',
         ours: 'src/utils/maskEditor/clipspace.ts',
-        file: 'src/composables/maskeditor/useMaskEditorSaver.ts',
+        file: 'src/renderer/extensions/maskEditor/composables/useMaskEditorSaver.ts',
         contains: [
           /clipspace-mask-\$\{timestamp\}\.png/,
           /clipspace-paint-\$\{timestamp\}\.png/,
@@ -368,28 +389,28 @@ export const MANIFESTS = [
         id: 'clipspace-reopen-prefix',
         why: 'layerFilenamesForImage() keys off the same prefix to decide whether an image is a previous edit. If the desktop stops writing it, our re-open path stops restoring paint layers.',
         ours: 'src/utils/maskEditor/clipspace.ts',
-        file: 'src/composables/maskeditor/useMaskEditorLoader.ts',
+        file: 'src/renderer/extensions/maskEditor/composables/useMaskEditorLoader.ts',
         contains: [/paintedMaskedImagePrefix\s*=\s*'clipspace-painted-masked-'/],
       },
       {
         id: 'mask-alpha-inversion',
         why: 'The saved mask is 255 minus the painted alpha. Our applyMaskAlphaInPlace does the same; a change of direction upstream would mean the two frontends write opposite masks for the same strokes.',
         ours: 'src/utils/maskEditor/compose.ts',
-        file: 'src/composables/maskeditor/useMaskEditorSaver.ts',
+        file: 'src/renderer/extensions/maskEditor/composables/useMaskEditorSaver.ts',
         contains: [/255\s*-\s*maskData\.data\[i \+ 3\]/],
       },
       {
         id: 'mask-restore-reads-alpha-channel',
         why: 'prepareMask reads data[i + 3] -- the alpha -- when turning a channel=a render back into mask pixels, then inverts it. Ours does the same; reading any colour channel instead makes every image open fully masked.',
         ours: 'src/utils/maskEditor/compose.ts',
-        file: 'src/composables/maskeditor/useCanvasManager.ts',
+        file: 'packages/mask-editor/src/useCanvasManager.ts',
         contains: [/const alpha = maskData\.data\[i \+ 3\][\s\S]{0,200}maskData\.data\[i \+ 3\] = 255 - alpha/],
       },
       {
         id: 'load-splits-rgb-and-alpha',
         why: 'We load the base pixels and the existing mask from the same file via channel=rgb / channel=a, because that is how the desktop does it and how the mask is stored.',
         ours: 'src/utils/maskEditor/session.ts',
-        file: 'src/composables/maskeditor/useMaskEditorLoader.ts',
+        file: 'src/renderer/extensions/maskEditor/composables/useMaskEditorLoader.ts',
         // Matched on the channel argument rather than the variable holding the
         // url: upstream renamed it (baseImageUrl -> baseUrl) with no change in
         // behaviour, and the literal pattern called that drift.
@@ -399,14 +420,14 @@ export const MANIFESTS = [
         id: 'widget-value-format',
         why: 'After a save we write "subfolder/filename [type]" into the node\'s image widget. The bracketed type is what folder_paths.annotated_filepath reads to pick a root directory, and it is the half of this that is a real contract. Upstream has since stopped prefixing the subfolder and writes the filename alone, so this pins the annotation rather than the whole string. Our format stays valid either way: get_annotated_filepath strips the bracket and os.path.join()s the remainder onto the base directory, so a subfolder-prefixed name resolves and still passes the traversal check. Worth re-reading if it moves again — the two implementations now compose this value differently.',
         ours: 'src/utils/maskEditor/clipspace.ts',
-        file: 'src/composables/maskeditor/useMaskEditorSaver.ts',
+        file: 'src/renderer/extensions/maskEditor/composables/useMaskEditorSaver.ts',
         contains: [/filename \+ \([\s\S]{0,40}\[\$\{[\w.]*type\}\]`\s*:\s*''\)/],
       },
       {
         id: 'tool-set',
         why: 'Our toolbar offers exactly these five tools. A new upstream tool is a feature gap worth knowing about rather than a break.',
         ours: 'src/components/MaskEditor/MaskEditorModal.tsx',
-        file: 'src/extensions/core/maskeditor/types.ts',
+        file: 'packages/mask-editor/src/types.ts',
         contains: [
           /MaskPen\s*=\s*'pen'/,
           /PaintPen\s*=\s*'rgbPaint'/,
@@ -419,28 +440,28 @@ export const MANIFESTS = [
         id: 'brush-softness-scale',
         why: 'getEffectiveBrushSize/Hardness reproduce the 1.5x softness scale that keeps a soft brush\'s hard core at the requested radius. A different scale means the same brush settings paint a different edge on each frontend.',
         ours: 'src/utils/maskEditor/brush.ts',
-        file: 'src/composables/maskeditor/brushUtils.ts',
+        file: 'packages/mask-editor/src/brushUtils.ts',
         contains: [/MAX_SCALE\s*=\s*1\.5/, /\(size \* hardness\) \/ effectiveSize/],
       },
       {
         id: 'color-comparison-methods',
         why: 'Color select offers RGB / HSL / LAB matching, each normalized onto the same 0-255 tolerance scale so one slider means the same thing for all three.',
         ours: 'src/utils/maskEditor/color.ts',
-        file: 'src/extensions/core/maskeditor/types.ts',
+        file: 'packages/mask-editor/src/types.ts',
         contains: [/Simple\s*=\s*'simple'/, /HSL\s*=\s*'hsl'/, /LAB\s*=\s*'lab'/],
       },
       {
         id: 'paint-bucket-operates-on-mask-alpha',
         why: 'Our bucket floods the MASK alpha, not the image colours — tapping a masked pixel clears instead of fills. That distinction (isFillMode) is the whole difference between the bucket and color select.',
         ours: 'src/utils/maskEditor/fill.ts',
-        file: 'src/composables/maskeditor/useCanvasTools.ts',
+        file: 'packages/mask-editor/src/useCanvasTools.ts',
         contains: [/const isFillMode = targetAlpha !== 255/],
       },
       {
         id: 'eraser-targets-active-layer',
         why: 'The eraser rubs out the ACTIVE layer, not both. The active layer follows the last tool that set one, so erasing after painting removes paint and erasing after masking removes mask. Erasing both would silently destroy paint strokes a user only meant to unmask.',
         ours: 'src/components/MaskEditor/maskCanvasEngine.ts',
-        file: 'src/composables/maskeditor/useBrushDrawing.ts',
+        file: 'packages/mask-editor/src/useBrushDrawing.ts',
         contains: [
           /isRgbLayer\s*&&[\s\S]{0,120}Tools\.Eraser\s*\|\|\s*currentTool === Tools\.PaintPen/,
         ],
@@ -449,7 +470,7 @@ export const MANIFESTS = [
         id: 'default-brush-settings',
         why: 'A first-run mobile brush matches a first-run desktop brush. Purely cosmetic drift, but it is what makes the two feel like the same tool.',
         ours: 'src/utils/maskEditor/types.ts',
-        file: 'src/stores/maskEditorStore.ts',
+        file: 'packages/mask-editor/src/maskEditorStore.ts',
         contains: [/size:\s*10/, /opacity:\s*0\.7/, /hardness:\s*1/, /stepSize:\s*10/],
       },
     ],
@@ -463,7 +484,7 @@ export const MANIFESTS = [
   {
     pack: 'cg-use-everywhere',
     repo: 'https://github.com/chrisgoringe/cg-use-everywhere',
-    verifiedVersion: '7.8',
+    verifiedVersion: '8.0.1',
     versionFile: 'pyproject.toml',
     versionPattern: /^version\s*=\s*"([^"]+)"/m,
     assumptions: [
@@ -521,17 +542,23 @@ export const MANIFESTS = [
       },
       {
         id: 'match-rules',
-        why: 'broadcastMatches() reproduces UseEverywhere.matches: self-exclusion, restrict_to, title regex, exact type equality with the string_to_combo escape, then input regex.',
+        why: 'broadcastMatches() reproduces UseEverywhere.matches: self-exclusion, restrict_to, title regex, exact type equality with the string_to_combo escape and (8.0) a match on any one entry of a comma-separated input type, then input regex.',
         ours: 'src/utils/useEverywhere.ts',
         file: 'js/use_everywhere_classes.js',
         contains: [
           /matches\(node,\s*input\)\s*\{/,
           /if\s*\(this\.output\[0\]\s*==\s*node\.id\)\s*return false/,
           /if\s*\(this\.restrict_to\s*&&\s*!this\.restrict_to\.includes\(node\.id\)\)/,
-          // Type equality is an exact `!=` on the raw strings, which is why our
-          // typesEqual() is stricter than the app's usual token-overlap test.
-          /if\s*\(this\.type\s*!=\s*input\.type\)/,
-          /this\.type\s*==\s*["']STRING["'][\s\S]{0,80}input\.type\s*==\s*["']COMBO["']/,
+          // Type matching moved into type_match(input_type) in 8.0. It is an
+          // exact `==` on the raw strings, which is why our typesEqual() is
+          // stricter than the app's usual token-overlap test, plus the
+          // string_to_combo escape.
+          /if\s*\(!this\.type_match\(input\.type\)\)\s*return false/,
+          /if\s*\(this\.type\s*==\s*input_type\)\s*return true/,
+          /this\.type\s*==\s*["']STRING["']\s*&&\s*input_type\s*==\s*["']COMBO["']/,
+          // connect_to_flexible_inputs (default on): an input type lists options
+          // and the broadcast equals one of them. Mobile always applies it.
+          /connect_to_flexible_inputs[\s\S]{0,120}input_type\.split\(['"],['"]\)\)?\.find\(\s*\(?t\)?\s*=>\s*t\s*==\s*this\.type\s*\)/,
           // The input label resolution moved into an `input_name` helper in 7.8;
           // both spellings mean label -> localized_name -> name.
           /input\.label\s*\|\|\s*input\.localized_name\s*\|\|\s*input\.name|input_name\(input\)/,
@@ -543,7 +570,10 @@ export const MANIFESTS = [
         ours: 'src/utils/useEverywhere.ts',
         since: '7.8',
         file: 'js/use_everywhere_classes.js',
-        contains: [/input\.type\s*==\s*["']\*["']\s*&&\s*this\.send_to_any/],
+        contains: [
+          /if\s*\(!this\.type_match\(input\.type\)\)\s*return false/,
+          /input_type\s*==\s*["']\*["']\s*&&\s*this\.send_to_any\)\s*return true/,
+        ],
       },
       {
         id: 'priority-and-ambiguity',

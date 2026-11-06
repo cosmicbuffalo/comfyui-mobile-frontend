@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { NodeTypes, Workflow, WorkflowNode } from '@/api/types';
 import { expandWorkflowSubgraphs } from '@/utils/expandWorkflowSubgraphs';
 import {
+  getInputWidgetDefinitions,
   getWidgetDefinitions,
   getPlaceholderWidgetIndexForInput,
   getSubgraphBoundaryWidgetIndexForSlot,
@@ -14,6 +15,7 @@ import {
   resolveSubgraphBoundaryWidgetDefs,
   resolveSubgraphBoundaryInputWidgetDefs,
 } from '../widgetDefinitions';
+import { buildDefaultWidgetValues, rebuildDynamicComboWidgetValues } from '../workflowInputs';
 
 function makeNode(id: number, type: string, widgetsValues: unknown[]): WorkflowNode {
   return {
@@ -1232,5 +1234,177 @@ describe('renaming a shared type boundary slot', () => {
 
     const [widget] = resolveSubgraphPlaceholderWidgetDefs(placeholder, workflow, nodeTypes);
     expect(widget.name).toBe('just this one');
+  });
+});
+
+describe('a boundary input that feeds a reroute', () => {
+  /**
+   * prompt → Reroute → …   (the reroute's `value` input copies a widget marker)
+   * size   → Switch.switch  (a real widget)
+   * fast   → Switch.switch  (a real widget)
+   *
+   * Stock asks the inner node for the widget (getWidgetFromSlot) and a reroute
+   * has none, so only `size` and `fast` are promoted and the placeholder saves
+   * just their two values. Counting the reroute put `size` one slot late, so a
+   * saved `true` was read as the empty slot after it.
+   */
+  const subgraph = {
+    id: 'sg-reroute',
+    name: 'Reroute boundary',
+    nodes: [
+      { id: 1, type: 'Reroute', inputs: [{ name: '', type: '*', link: 1, widget: { name: 'value' } }], outputs: [], widgets_values: [] },
+      { id: 2, type: 'Switch', inputs: [{ name: 'switch', type: 'BOOLEAN', link: 2, widget: { name: 'switch' } }], outputs: [], widgets_values: [false] },
+      { id: 3, type: 'Switch', inputs: [{ name: 'switch', type: 'BOOLEAN', link: 3, widget: { name: 'switch' } }], outputs: [], widgets_values: [true] },
+    ],
+    inputs: [
+      { name: 'prompt', type: '*', linkIds: [1] },
+      { name: 'size', type: 'BOOLEAN', linkIds: [2] },
+      { name: 'fast', type: 'BOOLEAN', linkIds: [3] },
+    ],
+    outputs: [],
+    links: [
+      { id: 1, origin_id: -10, origin_slot: 0, target_id: 1, target_slot: 0, type: '*' },
+      { id: 2, origin_id: -10, origin_slot: 1, target_id: 2, target_slot: 0, type: 'BOOLEAN' },
+      { id: 3, origin_id: -10, origin_slot: 2, target_id: 3, target_slot: 0, type: 'BOOLEAN' },
+    ],
+  };
+
+  it('promotes nothing for the reroute, so the widgets read their own saved slots', () => {
+    expect(getSubgraphBoundaryWidgetIndexForSlot(subgraph as never, 0)).toBeNull();
+    expect(getSubgraphBoundaryWidgetIndexForSlot(subgraph as never, 1)).toBe(0);
+    expect(getSubgraphBoundaryWidgetIndexForSlot(subgraph as never, 2)).toBe(1);
+  });
+
+  it('queues the saved values into the inner nodes', () => {
+    const switchType = {
+      Switch: {
+        input: { required: { switch: ['BOOLEAN', { default: false }] } },
+        output: [], output_name: [], name: 'Switch', display_name: 'Switch', description: '', python_module: '', category: '',
+      },
+    } as unknown as NodeTypes;
+    const placeholder = {
+      id: 39, type: 'sg-reroute', pos: [0, 0], size: [200, 100], flags: {}, order: 0, mode: 0,
+      inputs: [
+        { name: 'prompt', type: '*', link: null },
+        { name: 'size', type: 'BOOLEAN', link: null, widget: { name: 'size' } },
+        { name: 'fast', type: 'BOOLEAN', link: null, widget: { name: 'fast' } },
+      ],
+      outputs: [], properties: {}, widgets_values: [true, false],
+    } as unknown as WorkflowNode;
+    const wf = {
+      last_node_id: 39, last_link_id: 0, nodes: [placeholder], links: [], groups: [],
+      definitions: { subgraphs: [subgraph] }, version: 0.4,
+    } as unknown as Workflow;
+
+    const { workflow: expanded, promptKeyMap } = expandWorkflowSubgraphs(wf, switchType);
+    const byKey = new Map(expanded.nodes.map((node) => [promptKeyMap.get(node.id), node]));
+    expect(byKey.get('39:2')?.widgets_values).toEqual([true]);
+    expect(byKey.get('39:3')?.widgets_values).toEqual([false]);
+  });
+});
+
+describe('a promoted DynamicCombo child', () => {
+  // A placeholder promotes `sampling_mode.temperature` and `sampling_mode.seed`
+  // from a TextGenerate-style node. Expansion has to find those children by
+  // their qualified names; matching bare names dropped both promoted values.
+  const types = {
+    Gen: {
+      input: { required: {
+        max_length: ['INT', { default: 512 }],
+        sampling_mode: ['COMFY_DYNAMICCOMBO_V3', { options: [
+          { key: 'on', inputs: { required: { temperature: ['FLOAT', { default: 0.7 }], seed: ['INT', { default: 0 }] } } },
+          { key: 'off', inputs: { required: {} } },
+        ] }],
+      } },
+      input_order: { required: ['max_length', 'sampling_mode'] },
+      output: [], output_name: [], name: 'Gen', display_name: 'Gen', description: '', python_module: '', category: '',
+    },
+  } as unknown as NodeTypes;
+  const subgraph = {
+    id: 'sg-gen', name: 'Gen',
+    nodes: [{
+      id: 1, type: 'Gen', outputs: [], widgets_values: [512, 'on', 0.7, 0],
+      inputs: [
+        { name: 'max_length', type: 'INT', link: 1, widget: { name: 'max_length' } },
+        { name: 'sampling_mode.temperature', type: 'FLOAT', link: 2, widget: { name: 'sampling_mode.temperature' } },
+        { name: 'sampling_mode.seed', type: 'INT', link: 3, widget: { name: 'sampling_mode.seed' } },
+      ],
+    }],
+    inputs: [
+      { name: 'max_length', type: 'INT', linkIds: [1] },
+      { name: 'sampling_mode.temperature', type: 'FLOAT', linkIds: [2] },
+      { name: 'sampling_mode.seed', type: 'INT', linkIds: [3] },
+    ],
+    outputs: [],
+    links: [
+      { id: 1, origin_id: -10, origin_slot: 0, target_id: 1, target_slot: 0, type: 'INT' },
+      { id: 2, origin_id: -10, origin_slot: 1, target_id: 1, target_slot: 1, type: 'FLOAT' },
+      { id: 3, origin_id: -10, origin_slot: 2, target_id: 1, target_slot: 2, type: 'INT' },
+    ],
+  };
+
+  it('reaches the inner node when expanded', () => {
+    const placeholder = {
+      id: 605, type: 'sg-gen', pos: [0, 0], size: [200, 100], flags: {}, order: 0, mode: 0, outputs: [], properties: {},
+      inputs: subgraph.inputs.map((input) => ({ name: input.name, type: input.type, link: null, widget: { name: input.name } })),
+      widgets_values: [2560, 0.9, 42],
+    } as unknown as WorkflowNode;
+    const wf = {
+      last_node_id: 605, last_link_id: 0, nodes: [placeholder], links: [], groups: [],
+      definitions: { subgraphs: [subgraph] }, version: 0.4,
+    } as unknown as Workflow;
+    const { workflow: expanded, promptKeyMap } = expandWorkflowSubgraphs(wf, types);
+    const inner = expanded.nodes.find((node) => promptKeyMap.get(node.id) === '605:1');
+    expect(inner?.widgets_values).toEqual([2560, 'on', 0.9, 42]);
+  });
+});
+
+describe('a schema input the saved node predates', () => {
+  // The node was saved before its optional audio_vae socket existed, and its
+  // widgets_values carry a spare trailing entry. A core data socket never takes
+  // a widget slot, so the spare value is not read as audio_vae.
+  const types = {
+    Preview: {
+      input: { required: { quality: ['INT', { default: 80 }] }, optional: { audio_vae: ['VAE', {}], style: ['PREVIEW_STYLE', {}] } },
+      input_order: { required: ['quality'], optional: ['audio_vae', 'style'] },
+      output: [], output_name: [], name: 'Preview', display_name: 'Preview', description: '', python_module: '', category: '',
+    },
+  } as unknown as NodeTypes;
+  const node = {
+    id: 1, type: 'Preview', pos: [0, 0], size: [200, 100], flags: {}, order: 0, mode: 0,
+    inputs: [], outputs: [], properties: {}, widgets_values: [90, 'soft'],
+  } as unknown as WorkflowNode;
+
+  it('holds no widget slot for a core socket, but still does for a custom type', () => {
+    const defs = getWidgetDefinitions(types, node).map((d) => [d.name, d.widgetIndex]);
+    expect(defs).toEqual([['quality', 0], ['style', 1]]);
+  });
+});
+
+describe('an INT that declares control_after_generate under another name', () => {
+  const steps = ['INT', { default: 3, control_after_generate: true }] as [string, Record<string, unknown>];
+  const read = (types: NodeTypes, node: WorkflowNode) =>
+    Object.fromEntries([...getInputWidgetDefinitions(types, node), ...getWidgetDefinitions(types, node)].map((def) => [def.name, def.value]));
+
+  it('reads back aligned on a node built from the defaults', () => {
+    const types = {
+      Counter: { input: { required: { steps, label: ['STRING', { default: 'x' }], count: ['INT', { default: 9 }] } }, input_order: { required: ['steps', 'label', 'count'] }, output: [], name: 'Counter' },
+    } as unknown as NodeTypes;
+    const node = makeNode(1, 'Counter', buildDefaultWidgetValues(types.Counter));
+    expect(node.widgets_values).toEqual([3, 'randomize', 'x', 9]);
+    expect(read(types, node)).toEqual({ steps: 3, label: 'x', count: 9 });
+  });
+
+  it('reads back aligned after switching a DynamicCombo to the branch that holds it', () => {
+    const mode: [string, Record<string, unknown>] = ['COMFY_DYNAMICCOMBO_V3', { options: [
+      { key: 'plain', inputs: {} },
+      { key: 'counted', inputs: { required: { steps, label: ['STRING', { default: 'x' }] } } },
+    ] }];
+    const types = {
+      Picker: { input: { required: { mode, count: ['INT', { default: 9 }] } }, input_order: { required: ['mode', 'count'] }, output: [], name: 'Picker' },
+    } as unknown as NodeTypes;
+    const node = makeNode(1, 'Picker', ['plain', 9]);
+    node.widgets_values = rebuildDynamicComboWidgetValues(node, 'mode', mode, 0, 'counted') ?? undefined;
+    expect(read(types, node)).toEqual({ mode: 'counted', steps: 3, label: 'x', count: 9 });
   });
 });

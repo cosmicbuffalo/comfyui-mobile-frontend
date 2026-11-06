@@ -9,7 +9,6 @@ import {
   isComboType,
   isFileLikeToken,
   optionsAreFileLike,
-  normalizeWidgetValue,
   resolveComboOption,
   orderedInputNames,
 } from "@/utils/workflowInputs";
@@ -82,36 +81,24 @@ function collectWorkflowLoadErrors(
         ? Array.isArray(rawValue) ? rawValue : [rawValue]
         : [rawValue];
       for (const rawEntry of rawValues) {
-        const resolved = resolveComboOption(rawEntry, comboOptions);
-        const normalized = normalizeWidgetValue(rawEntry, comboOptions, {
-          comboIndexToValue: true,
-        });
-        const normalizedString = String(normalized);
-        const normalizedBase =
-          normalizedString.split(/[\\/]/).pop() ?? normalizedString;
+        const value = String(rawEntry);
         // `sub/img.png [input]` names its own directory and is resolved by path
         // on the server -- LoadImage validates it with exists_annotated_filepath,
         // not against its option list, which only ever holds top-level files.
         // The combo control accepts it on the same grounds; reporting it here
         // flagged every file picked out of a folder as missing on load.
-        const hasMatch =
-          isAnnotatedPath(normalizedString) ||
-          resolved !== undefined ||
-          comboOptions.some((opt) => {
-            const optString = String(opt);
-            return optString === normalizedString || optString === normalizedBase;
-          });
+        const hasMatch = isAnnotatedPath(value) || resolveComboOption(rawEntry, comboOptions) !== undefined;
 
         // Closed-enum combos are corrected at queue time. File-picker values
         // stay untouched, so report each missing multi-select member separately.
-        if (!hasMatch && (optionsAreFileLike(comboOptions) || isFileLikeToken(normalizedString))) {
+        if (!hasMatch && (optionsAreFileLike(comboOptions) || isFileLikeToken(value))) {
           const nodeId = String(node.id);
           if (!errors[nodeId]) {
             errors[nodeId] = [];
           }
           errors[nodeId].push({
             type: "workflow_load",
-            message: t('Missing value: {value}', { value: normalizedString }),
+            message: t('Missing value: {value}', { value }),
             details: t("Not found on server."),
             inputName: name,
           });
@@ -144,9 +131,8 @@ function normalizeWorkflowComboValues(
           )
         : resolveComboOption(rawValue, comboOptions);
       // Loading may canonicalize a value that genuinely resolves (basename,
-      // legacy numeric index, Unicode display equivalent), but an unavailable
-      // value must remain intact so the UI can show it as missing. Queue-time
-      // normalization remains responsible for closed-enum fallbacks.
+      // Unicode display equivalent), but an unavailable value must remain
+      // intact so the UI can show it as missing and the server rejects it.
       if (normalized === undefined) continue;
       const unchanged = Array.isArray(rawValue) && Array.isArray(normalized)
         ? rawValue.length === normalized.length && rawValue.every(

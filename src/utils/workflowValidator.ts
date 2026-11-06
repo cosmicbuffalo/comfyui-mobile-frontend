@@ -359,15 +359,20 @@ function repairOneSubgraphLinkIds(
   const inputLinkIds = new Map<number, number[]>();
   const outputLinkIds = new Map<number, number[]>();
 
+  // A boundary link with an out-of-range slot (some saved files carry -1)
+  // stays wherever the saved linkIds put it: stock reads boundaries through
+  // linkIds, so that is where it resolves on desktop.
+  const savedSlot = (slots: Array<{ linkIds?: number[] }>, id: number, slot: number) =>
+    slot >= 0 && slot < slots.length ? slot : slots.findIndex((entry) => entry.linkIds?.includes(id));
   for (const link of links) {
     if (link.origin_id === SUBGRAPH_INPUT_SENTINEL) {
-      const slot = link.origin_slot;
+      const slot = savedSlot(inputs, link.id, link.origin_slot);
       const ids = inputLinkIds.get(slot) ?? [];
       ids.push(link.id);
       inputLinkIds.set(slot, ids);
     }
     if (link.target_id === SUBGRAPH_OUTPUT_SENTINEL) {
-      const slot = link.target_slot;
+      const slot = savedSlot(outputs, link.id, link.target_slot);
       const ids = outputLinkIds.get(slot) ?? [];
       ids.push(link.id);
       outputLinkIds.set(slot, ids);

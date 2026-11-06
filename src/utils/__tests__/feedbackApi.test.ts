@@ -94,10 +94,10 @@ describe('submitFeedback', () => {
 });
 
 describe('following', () => {
-  it('passes the follow secret through when the service returns one', async () => {
+  it('passes the reply token through when the service returns one', async () => {
     const fetchMock = mockFetch({ jsonBody: { url: 'u', number: 12, secret: 'abc', canReply: false } });
     const result = await submitFeedback(ENDPOINT, { ...baseSubmission, follow: true });
-    expect(result).toEqual({ ok: true, url: 'u', number: 12, follow: { secret: 'abc', canReply: false } });
+    expect(result).toEqual({ ok: true, url: 'u', number: 12, follow: { replyToken: 'abc', canReply: false } });
     expect(JSON.parse(fetchMock.mock.calls[0][1].body).follow).toBe(true);
   });
 
@@ -115,7 +115,7 @@ describe('following', () => {
 
   it('posts replies and surfaces worker errors', async () => {
     const fetchMock = mockFetch({ jsonBody: { url: 'comment-url' } });
-    const reply = { number: 3, secret: 's', body: 'a reply long enough' };
+    const reply = { number: 3, replyToken: 's', body: 'a reply long enough' };
     expect(await submitFeedbackReply(ENDPOINT, reply)).toEqual({ ok: true, url: 'comment-url' });
     expect(fetchMock.mock.calls[0][0]).toBe(`${ENDPOINT}/reply`);
 
@@ -125,13 +125,13 @@ describe('following', () => {
 
   it('sends only the issue number and secret to forget', async () => {
     const fetchMock = mockFetch({ jsonBody: { ok: true } });
-    const stored = { number: 3, secret: 's', title: 'private title', canReply: true, followedAt: 1, seenAt: 2 };
+    const stored = { number: 3, replyToken: 's', title: 'private title', canReply: true, followedAt: 1, seenAt: 2 };
     await forgetFeedback(ENDPOINT, stored);
     expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({ number: 3, secret: 's' });
   });
 
   it('treats an already-forgotten follow as forgotten', async () => {
     mockFetch({ ok: false, status: 403, jsonBody: { error: 'not_following' } });
-    expect(await forgetFeedback(ENDPOINT, { number: 3, secret: 's' })).toBe(true);
+    expect(await forgetFeedback(ENDPOINT, { number: 3, replyToken: 's' })).toBe(true);
   });
 });

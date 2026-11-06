@@ -258,10 +258,16 @@ export function ComboControl({
     }
     return result;
   }, [rawChoices]);
+  // The options as the server offers them, numbers included, for matching:
+  // the server rejects a number saved in a list of strings and the reverse.
+  const matchChoices = useMemo(
+    () => Array.from(new Set([...rawChoices.filter((opt) => opt !== null), ...uploadedChoices, ...serverResolvedChoices])),
+    [rawChoices, uploadedChoices, serverResolvedChoices],
+  );
   const rawValueString =
     value === null ? NULL_OPTION_VALUE : String(value ?? "");
   const rawBase = rawValueString.split(/[\\/]/).pop() ?? rawValueString;
-  const resolvedValue = resolveComboOption(value, mergedChoices);
+  const resolvedValue = resolveComboOption(value, matchChoices);
   const resolvedValueString =
     resolvedValue === undefined ? null : String(resolvedValue);
   // A value carrying a `[input]`/`[output]`/`[temp]` annotation is resolved by
@@ -274,8 +280,7 @@ export function ComboControl({
   const hasValueMatch =
     resolvedValueString !== null ||
     isServerResolvedPath ||
-    mergedChoices.includes(rawValueString) ||
-    mergedChoices.includes(rawBase);
+    (typeof value === "string" && matchChoices.some((choice) => choice === rawValueString || choice === rawBase));
   const selectedRawValues = useMemo(
     () => isMultiSelect
       ? Array.isArray(value) ? value : value == null ? [] : [value]
@@ -285,9 +290,9 @@ export function ComboControl({
   const missingValues = useMemo(
     () => selectedRawValues.filter((entry) => {
       if (entry === null || entry === undefined || String(entry) === "") return false;
-      return resolveComboOption(entry, mergedChoices) === undefined;
+      return resolveComboOption(entry, matchChoices) === undefined;
     }),
-    [mergedChoices, selectedRawValues],
+    [matchChoices, selectedRawValues],
   );
   const isMissingValue = isMultiSelect
     ? missingValues.length > 0

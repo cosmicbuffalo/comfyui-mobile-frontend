@@ -255,7 +255,8 @@ describe('materialized widget input', () => {
         .toBe(trueValue);
       expect(prompt[name], `prompt value for "${name}"`).toBe(trueValue);
     }
-    expect(prompt.color).toBeUndefined();
+    // Link 2 leads nowhere, so stock keeps the widget's own value.
+    expect(prompt.color).toBe('#FF0000');
   });
 });
 
@@ -315,5 +316,42 @@ describe('seed randomization targets the real seed widget', () => {
         `${label}: value at the seed index`
       ).toBe((node.widgets_values as unknown[])[seedIndex!]);
     }
+  });
+});
+
+describe('a declared control_after_generate', () => {
+  // Stock adds the control slot when an INT declares control_after_generate,
+  // or for a seed/noise_seed that leaves it unset; an explicit false means none.
+  const types = (seedOptions: Record<string, unknown>, valueOptions: Record<string, unknown>) => ({
+    Refine: {
+      input: { required: {
+        seed: ['INT', seedOptions],
+        scheduler: [['simple', 'karras']],
+        value: ['INT', valueOptions],
+        tail: ['STRING', {}],
+      } },
+      input_order: { required: ['seed', 'scheduler', 'value', 'tail'] },
+      output: [], output_name: [], name: 'Refine', display_name: 'Refine', description: '', python_module: '', category: 'test',
+    },
+  }) as unknown as NodeTypes;
+  const node = (values: unknown[]): WorkflowNode => ({
+    id: 1, type: 'Refine', pos: [0, 0], size: [200, 100], flags: {}, order: 0, mode: 0,
+    inputs: [], outputs: [], properties: {}, widgets_values: values,
+  });
+  const indexes = (nodeTypes: NodeTypes, n: WorkflowNode) => {
+    const workflow = makeWorkflow(n);
+    const defs = [...getWidgetDefinitions(nodeTypes, n), ...getInputWidgetDefinitions(nodeTypes, n)];
+    return ['scheduler', 'value', 'tail'].map((name) => [
+      defs.find((d) => d.name === name)?.widgetIndex,
+      getWidgetIndexForInput(workflow, nodeTypes, n, name),
+    ]);
+  };
+
+  it('takes no slot after a seed that declares false', () => {
+    expect(indexes(types({ control_after_generate: false }, {}), node([7, 'karras', 3, 'x']))).toEqual([[1, 1], [2, 2], [3, 3]]);
+  });
+
+  it('takes one after any INT that declares true', () => {
+    expect(indexes(types({}, { control_after_generate: true }), node([7, 'fixed', 'karras', 3, 'fixed', 'x']))).toEqual([[2, 2], [3, 3], [5, 5]]);
   });
 });

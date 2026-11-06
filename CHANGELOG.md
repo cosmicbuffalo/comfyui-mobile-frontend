@@ -1,5 +1,56 @@
 # Changelog
 
+## 3.4.2 - 2026-11-06
+
+### Fixed
+
+- **Dynamic prompts.** Text boxes that support them (such as **CLIP Text
+  Encode**) now pick one option from each `{a|b|c}` and drop `//` and `/* */`
+  comments when queueing, as on desktop. Before, the text was sent as typed.
+- **Workflows saved with an older version of a node** queue correctly when the
+  node has since gained inputs. A new widget sends the value desktop starts it
+  with instead of being left out, which the server rejected. A new input
+  socket no longer shifts every later widget's value by one slot.
+- **Seed controls.** A number input that declares a control after generate
+  under another name, or a seed that turns it off, no longer shifts the
+  widgets after it. New nodes with such an input (such as **Int**) get the
+  control, as on desktop.
+- **Inputs fed by a muted node** send the widget's own value, as on desktop,
+  instead of being left out.
+- **Bypassed nodes** pass through inputs whose type lists several types
+  (such as `IMAGE,MASK`), instead of dropping them.
+- **Use Everywhere** broadcasts reach inputs that accept several types (an
+  INT broadcast into a `FLOAT,INT` input), as Use Everywhere 8 does by
+  default, instead of leaving them out of the prompt.
+- **KJNodes Get nodes.** A muted or bypassed Get node no longer passes its
+  value on, and a Get node inside a subgraph finds a Set node in an enclosing
+  graph.
+- **Subgraphs** saved with an output link slot of `-1` feed the nodes
+  outside them again.
+- **Subgraph cards** no longer read every value one slot late when an input
+  feeds a Reroute.
+- **Promoted DynamicCombo values** (such as `sampling_mode.seed`) reach the
+  node inside the subgraph when queueing.
+- **Escape** closes the workflow menu's **Hide / Show** dialog.
+
+### Changed
+
+- **Dropdown values the server doesn't offer** are sent as saved, so the
+  server reports them as it does for desktop, instead of mobile quietly
+  running another option. A number saved in a dropdown is sent as that
+  number rather than read as an option's position, and a number or text that
+  only matches an option of the other type (`1` against `"1"`) is shown as
+  missing, as the server rejects it. Impact's wildcard picker still sends its
+  placeholder.
+- **Show Text**, **Display Any** and Easy-Use **showAnything** cards show the
+  text the workflow saved until a run replaces it.
+- **Outputs** keeps a folder's scroll position when you come back to it from
+  a folder inside it.
+- **Followed feedback.** Your server now hands a feedback issue's reply token
+  to the browser only when you reply or stop following, instead of with every
+  list of followed issues. `CUEFORGE_PRIVACY.md` is updated to match.
+- The developer profiling scripts are no longer part of the node package.
+
 ## 3.4.1 - 2026-11-04
 
 ### Fixed

@@ -245,6 +245,23 @@ export const OutputsPanel = memo(function OutputsPanel({ visible }: { visible: b
   const menuButtonRef = useRef<HTMLButtonElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const outputsContentRef = useRef<HTMLDivElement>(null);
+  const folderScrollPositionsRef = useRef(new Map<string, number>());
+  const pendingFolderScrollRef = useRef<number | null>(null);
+  useEffect(() => useOutputsStore.subscribe((next, previous) => {
+    if (next.source === previous.source && next.currentFolder === previous.currentFolder) return;
+    // Capture before loading removes the old listing and clamps its scroll offset.
+    const el = outputsContentRef.current;
+    if (el && !previous.isLoading) {
+      folderScrollPositionsRef.current.set(
+        JSON.stringify([previous.source, previous.currentFolder]), el.scrollTop,
+      );
+    }
+    const returningToAncestor = next.source === previous.source && previous.currentFolder
+      && (next.currentFolder === null || previous.currentFolder.startsWith(`${next.currentFolder}/`));
+    pendingFolderScrollRef.current = returningToAncestor
+      ? folderScrollPositionsRef.current.get(JSON.stringify([next.source, next.currentFolder])) ?? 0
+      : null;
+  }), []);
   const appliedShowHiddenRef = useRef(showHidden);
   usePanelSearchShortcut({
     visible,
@@ -555,13 +572,11 @@ export const OutputsPanel = memo(function OutputsPanel({ visible }: { visible: b
   }, [fileSections, folders, foldersCollapsed]);
 
   // --- Incremental rendering of the file grid ------------------------------
-  // Reset the budget AND scroll position when the user navigates to a different
-  // view (folder / source / sort / search / filter) — otherwise entering a deep
-  // folder while scrolled down lands the user partway into a freshly-truncated
-  // list. Live file additions within the same view do NOT reset, so a websocket
-  // output doesn't yank the user back to the top.
+  // New views start at the top; returning to an ancestor restores after loading.
+  // Live file additions within the same view leave the position alone.
   useEffect(() => {
-    setVisibleCount(OUTPUTS_RENDER_PAGE);
+    setVisibleCount(pendingFolderScrollRef.current
+      ? (prev) => Math.max(prev, OUTPUTS_RENDER_PAGE) : OUTPUTS_RENDER_PAGE);
     outputsContentRef.current?.scrollTo({ top: 0 });
     // Drop the range-select anchor too: after the visible set changes (different
     // folder/source/filter), an anchor from the old view may no longer be in the
@@ -570,6 +585,19 @@ export const OutputsPanel = memo(function OutputsPanel({ visible }: { visible: b
     selectionAnchorRef.current = null;
   }, [currentFolder, source, sortMode, promptSearchActive,
       filter.search, filter.type, filter.favoritesMode, filter.rejectsMode]);
+
+  useEffect(() => {
+    const top = pendingFolderScrollRef.current;
+    const el = outputsContentRef.current;
+    if (top === null || !el || isLoading || !visible) return;
+    // The saved offset may need more than the initial page of cards.
+    if (el.scrollHeight < top + el.clientHeight && visibleCount < nonFolders.length) {
+      setVisibleCount((prev) => Math.min(nonFolders.length, prev + OUTPUTS_RENDER_PAGE));
+      return;
+    }
+    el.scrollTo({ top });
+    pendingFolderScrollRef.current = null;
+  }, [currentFolder, source, isLoading, visible, visibleCount, nonFolders.length]);
 
   // Grow the budget while the rendered content doesn't fill the viewport (e.g.
   // the first page is shorter than the screen), so there's always something to

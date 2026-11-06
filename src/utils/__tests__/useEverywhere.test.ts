@@ -136,6 +136,16 @@ describe('resolveUseEverywhereLinks', () => {
     expect(resolveUseEverywhereLinks(wf).size).toBe(0);
   });
 
+  it('feeds an input whose type lists the broadcast type, as UE 8 does by default', () => {
+    const { wf } = broadcastFixture({ type: 'INT', consumerInputType: 'FLOAT,INT' });
+    expect(resolveUseEverywhereLinks(wf).get(ueSlotKey(3, 0))?.originId).toBe(1);
+  });
+
+  it('does not feed a single-type input from a broadcast that lists several types', () => {
+    const { wf } = broadcastFixture({ type: 'FLOAT,INT', consumerInputType: 'INT' });
+    expect(resolveUseEverywhereLinks(wf).size).toBe(0);
+  });
+
   it('never feeds a node from itself', () => {
     nextId = 1;
     const self = node({

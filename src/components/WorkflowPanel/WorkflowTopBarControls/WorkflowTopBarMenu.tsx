@@ -1,8 +1,9 @@
 import type { RefObject } from 'react';
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import { useWorkflowStore, getInputWidgetDefinitions, getWidgetDefinitions } from '@/hooks/useWorkflow';
 import { useBookmarksStore } from '@/hooks/useBookmarks';
 import { useHistoryStore } from '@/hooks/useHistory';
+import { useModalKeyboard } from '@/hooks/useModalKeyboard';
 import { CaretDownIcon, CaretRightIcon, CheckIcon, ClipboardDownloadIcon, EyeIcon, EyeOffIcon, ArrowRightIcon, FunnelArrowsIcon, ReloadIcon, RedoIcon, SearchIcon, TemplateIcon, TrashIcon, PlusIcon, UndoIcon, WorkflowIcon } from '@/components/icons';
 import { workflowHasSetGetNodes } from '@/utils/collapseSetGetNodes';
 import { useWorkflowClipboardStore } from '@/hooks/useWorkflowClipboard';
@@ -257,6 +258,8 @@ export function WorkflowTopBarMenu({
   }, [manuallyHiddenCount, hiddenItems, allGroupTargets, allSubgraphHierarchicalKeys, hasStableFlag]);
 
   const [visibilityModalOpen, setVisibilityModalOpen] = useState(false);
+  const visibilityModalRef = useRef<HTMLDivElement>(null);
+  useModalKeyboard(visibilityModalOpen, () => setVisibilityModalOpen(false), visibilityModalRef);
   const [typesModalOpen, setTypesModalOpen] = useState(false);
 
   const closeMenu = () => {
@@ -486,7 +489,8 @@ export function WorkflowTopBarMenu({
           aria-modal="true"
         >
           <div
-            className="w-full max-w-sm bg-slate-900 border border-white/10 text-slate-100 rounded-xl shadow-lg overflow-hidden"
+            ref={visibilityModalRef}
+            className="visibility-modal w-full max-w-sm bg-slate-900 border border-white/10 text-slate-100 rounded-xl shadow-lg overflow-hidden"
             onClick={(event) => event.stopPropagation()}
           >
             <div className="px-4 py-3 text-sm font-semibold text-slate-100 border-b border-white/10">

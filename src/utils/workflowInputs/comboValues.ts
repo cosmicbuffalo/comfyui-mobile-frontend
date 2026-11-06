@@ -1,3 +1,5 @@
+import { isWildcardSelectWidget, WILDCARD_SELECT_SENTINEL } from '@/utils/wildcardWidgets';
+
 // ComfyUI's newer DynamicCombo widget type. Every slot/branch check in this
 // package compares against this constant instead of re-spelling the literal.
 export const DYNAMIC_COMBO_V3 = 'COMFY_DYNAMICCOMBO_V3';
@@ -119,16 +121,7 @@ export function getDynamicComboSubInputs(
 export function normalizeWidgetValue(
   value: unknown,
   typeOrOptions: string | unknown[],
-  options?: { comboIndexToValue?: boolean }
 ): unknown {
-  if (Array.isArray(typeOrOptions)) {
-    if (options?.comboIndexToValue && typeof value === 'number' && Number.isFinite(value)) {
-      const idx = Math.trunc(value);
-      return typeOrOptions[idx] ?? value;
-    }
-    return value;
-  }
-
   if (typeOrOptions === 'INT') {
     if (typeof value === 'string' && value.trim() !== '' && !Number.isNaN(Number(value))) {
       return Math.trunc(Number(value));
@@ -149,10 +142,28 @@ export function normalizeWidgetValue(
   return value;
 }
 
+/**
+ * The value a combo serializes into the prompt, as stock does: the matching
+ * option, else the saved value unchanged, so a value the server doesn't offer
+ * is rejected the same way on both frontends. Impact's wildcard picker always
+ * sends its placeholder, whatever it last held, since the server lists no other
+ * option for it.
+ */
+export function sentComboValue(value: unknown, options: unknown[], multiSelect = false): unknown {
+  if (multiSelect) {
+    const values = Array.isArray(value) ? value : value === undefined || value === null ? [] : [value];
+    return values.map((entry) => sentComboValue(entry, options));
+  }
+  if (isWildcardSelectWidget(options)) return WILDCARD_SELECT_SENTINEL;
+  if (options.length === 0) return value;
+  return resolveComboOption(value, options) ?? value;
+}
+
 export function normalizeComboValue(
   value: unknown,
   options: unknown[],
   multiSelect = false,
+  declaredDefault?: unknown,
 ): unknown {
   if (multiSelect) {
     const values = Array.isArray(value)
@@ -160,28 +171,17 @@ export function normalizeComboValue(
       : value === undefined || value === null
         ? []
         : [value];
-    return values.map((entry) => normalizeComboValue(entry, options, false));
+    return values.map((entry) => normalizeComboValue(entry, options, false, declaredDefault));
   }
   if (options.length === 0) return value;
   const resolved = resolveComboOption(value, options);
   if (resolved !== undefined) {
     return resolved;
   }
-  // No exact/basename/extensionless match. How we recover depends on whether the
-  // combo is a file picker or a closed enum:
-  //
-  // - File pickers (loras, checkpoints, images, …) have an inherently incomplete
-  //   option list — uploads and newly-added files never appear in object_info —
-  //   so an unmatched value may still be valid. Keep it as-is and let the server
-  //   decide, rather than swapping in a different (wrong) file.
-  //
-  // - Closed enums (action widgets like "Select to add Wildcard", sampler /
-  //   scheduler names, …) enumerate EVERY valid value, so an unmatched value is
-  //   stale — e.g. a dynamic combo whose placeholder option was captured into
-  //   widgets_values at save time. ComfyUI does not error on an out-of-range
-  //   combo value; it silently EXCLUDES that node (and its whole downstream
-  //   branch) from the run, completing with "success" and no output. To keep the
-  //   prompt executable we fall back to the first option (ComfyUI's default).
+  // No exact/basename/extensionless match. This picks the value a NEW widget
+  // starts with (a declared default that is not an option falls back to the
+  // first option); the prompt uses sentComboValue, which keeps a saved value
+  // the server doesn't offer so it is rejected as stock's is.
   //
   // Only substitute when NEITHER the option list nor the stale value looks
   // file-like. A picker whose options happen to lack a recognizable extension
@@ -189,7 +189,7 @@ export function normalizeComboValue(
   // enum and a genuine file selection clobbered; keeping a file-like value as-is
   // lets the server resolve or clearly reject it instead.
   if (!optionsAreFileLike(options) && !isFileLikeToken(value)) {
-    return options[0];
+    return options.includes(declaredDefault) ? declaredDefault : options[0];
   }
   return value;
 }
@@ -230,50 +230,42 @@ export function resolveComboOption(
 ): unknown | undefined {
   if (!Array.isArray(options) || options.length === 0) return undefined;
 
-  // Numeric combo values are ambiguous: legacy workflows may store an option
-  // index, while V3 COMBO schemas may use numbers as the option values. Prefer
-  // a real value match and only interpret the number as an index when no option
-  // has that value (HitPawGeneralImageEnhance.upscale_factor is [1, 2, 4]).
-  const valueMatch = options.find((opt) => Object.is(opt, value) || String(opt) === String(value));
+  const valueMatch = options.find((opt) => Object.is(opt, value));
   if (valueMatch !== undefined) {
     return valueMatch;
   }
+  // Stock sends a combo's saved value as is, and the server checks it with
+  // Python's `in`, which never equates a number with a string: 1 is not in
+  // ['1', '2'], and '1' is not in [1, 2]. So only a string is matched loosely,
+  // and only against string options. A number is never read as an option index
+  // either, so a value a pack update shifted into the combo is rejected on both.
+  if (typeof value !== 'string') return undefined;
+  const textOptions = options.filter((opt): opt is string => typeof opt === 'string');
 
-  const normalized = normalizeWidgetValue(value, options, { comboIndexToValue: true });
-  const normalizedString = String(normalized);
-  const normalizedBase = getComboBase(normalizedString);
-
-  const directMatch = options.find((opt) => String(opt) === normalizedString);
-  if (directMatch !== undefined) {
-    return directMatch;
-  }
+  const normalizedBase = getComboBase(value);
 
   // U+FE0E/U+FE0F alter emoji presentation without changing the label's
   // meaning. Some custom-node schemas include one in `default` but omit it
   // from the corresponding option. Resolve to the server-advertised option.
-  const displayString = normalizedString.replace(/[\uFE0E\uFE0F]/g, '');
-  const displayMatch = options.find(
-    (opt) => String(opt).replace(/[\uFE0E\uFE0F]/g, '') === displayString,
+  const displayString = value.replace(/[\uFE0E\uFE0F]/g, '');
+  const displayMatch = textOptions.find(
+    (opt) => opt.replace(/[\uFE0E\uFE0F]/g, '') === displayString,
   );
   if (displayMatch !== undefined) {
     return displayMatch;
   }
 
-  const baseMatch = options.find((opt) => String(opt) === normalizedBase);
+  const baseMatch = textOptions.find((opt) => opt === normalizedBase);
   if (baseMatch !== undefined) {
     return baseMatch;
   }
 
   const normalizedNoExt = stripSafetensorsSuffix(normalizedBase);
   const normalizedNoExtLower = normalizedNoExt.toLowerCase();
-  const extensionlessMatch = options.find((opt) => {
-    const optString = String(opt);
-    const optBase = getComboBase(optString);
-    const optNoExt = stripSafetensorsSuffix(optBase);
+  return textOptions.find((opt) => {
+    const optNoExt = stripSafetensorsSuffix(getComboBase(opt));
     return optNoExt.toLowerCase() === normalizedNoExtLower;
   });
-
-  return extensionlessMatch;
 }
 
 export function isValueCompatible(value: unknown, typeOrOptions: string | unknown[]): boolean {

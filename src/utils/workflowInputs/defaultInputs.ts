@@ -170,8 +170,8 @@ export function buildDefaultWidgetValues(
     if (
       emitSeedControl &&
       String(typeOrOptions).toUpperCase() === 'INT' &&
-      (name === 'seed' || name === 'noise_seed') &&
-      seedControl !== false
+      seedControl !== false &&
+      (seedControl !== undefined || name === 'seed' || name === 'noise_seed')
     ) {
       values.push(
         typeof seedControl === 'string' && seedControl.length > 0

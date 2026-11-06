@@ -5,7 +5,6 @@
 export interface FeedbackFollow {
   number: number;
   title: string;
-  secret: string;
   /** False when the submitter's GitHub handle is mentioned on the issue, so they reply there. */
   canReply: boolean;
   /** Epoch ms. */
@@ -25,7 +24,7 @@ export function getFeedbackFollows(): Promise<FeedbackFollow[]> {
 }
 
 export function addFeedbackFollow(
-  follow: { number: number; title: string; secret: string; canReply: boolean },
+  follow: { number: number; title: string; replyToken: string; canReply: boolean },
 ): Promise<FeedbackFollow[]> {
   return followsRequest('', {
     method: 'POST',
@@ -44,4 +43,10 @@ export function markFeedbackFollowSeen(number: number, seenAt: number): Promise<
 
 export function removeFeedbackFollow(number: number): Promise<FeedbackFollow[]> {
   return followsRequest(`/${number}`, { method: 'DELETE' });
+}
+
+export async function getFeedbackReplyToken(number: number): Promise<string> {
+  const response = await fetch(`/mobile/api/feedback/follows/${number}/reply-token`);
+  if (!response.ok) throw new Error('Failed to fetch feedback reply token');
+  return (await response.json()).replyToken;
 }

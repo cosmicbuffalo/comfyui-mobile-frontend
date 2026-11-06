@@ -3,18 +3,23 @@ import { ueSlotKey, type UeLinkMap } from '@/utils/useEverywhere';
 import { extractLoraList, findLoraListIndex, isLoraList, isPowerLoraLoaderNodeType } from '@/utils/loraManager';
 import { isPowerPuterNodeType, readPowerPuterWidgets, toPowerPuterOutputsValue, POWER_PUTER_CODE_WIDGET, POWER_PUTER_OUTPUTS_WIDGET } from '@/utils/powerPuter';
 import { extractTriggerWordList, extractTriggerWordListLoose, isTriggerWordList, extractTriggerWordMessage, findTriggerWordListIndex, findTriggerWordMessageIndex, isTriggerWordToggleNodeType } from '@/utils/triggerWordToggle';
-import { getComboOptions, isComboType, isMultiSelectCombo, normalizeComboValue, normalizeWidgetValue } from './comboValues';
+import { getComboOptions, isComboType, isMultiSelectCombo, normalizeWidgetValue, sentComboValue } from './comboValues';
 import { getActiveNodeInputDefinitions } from './dynamicComboRebuild';
-import { isOmittedFromPrompt, isUnsavedWidgetType, unsavedWidgetInitialValue } from './defaultInputs';
+import { getDefaultWidgetValue, isOmittedFromPrompt, isUnsavedWidgetType, unsavedWidgetInitialValue } from './defaultInputs';
 import { finalizeInputValue } from './textReplacements';
+import { processDynamicPrompt } from '@/utils/dynamicPrompts';
 import { getPrimitiveInlineValue, getWidgetValue, isRecord } from './widgetSlots';
 
-/** ComfyUI treats `*` and the empty type as matching anything. */
+/**
+ * LiteGraph.isValidConnection: `*` and the empty type match anything, and a
+ * comma-separated type connects when any of its members does.
+ */
 function typesConnect(a: string, b: string): boolean {
   const left = a.toUpperCase();
   const right = b.toUpperCase();
   if (left === '' || left === '*' || right === '' || right === '*') return true;
-  return left === right;
+  if (!left.includes(',') && !right.includes(',')) return left === right;
+  return left.split(',').some((l) => right.split(',').some((r) => typesConnect(l, r)));
 }
 
 /**
@@ -96,6 +101,30 @@ export function resolveSource(
 
   if (!sourceNode) return null;
 
+  // A muted node produces no output at all — ComfyUI's ExecutableNodeDTO
+  // .resolveOutput returns early on LGraphEventMode.NEVER, and the consuming
+  // input is simply left out of the prompt.
+  if (sourceNode.mode === 2) return null;
+
+  // Stock checks modes before virtual links: a bypassed getter can only
+  // forward a physical input, so an inputless getter supplies nothing.
+  if (sourceNode.mode === 4 || sourceNode.type === 'Reroute') {
+    const outputDef = sourceNode.outputs[sourceSlotIndex];
+    if (!outputDef) return null;
+
+    const bypassSlot = findBypassInputSlot(
+      sourceNode,
+      sourceSlotIndex,
+      String(outputDef.type),
+      String(link[5] ?? ''),
+    );
+    const bypassLink = bypassSlot === null ? null : sourceNode.inputs[bypassSlot]?.link;
+    if (bypassLink != null) {
+      return resolveSource(workflow, bypassLink, visitedLinkIds, promptKeyMap);
+    }
+    return null;
+  }
+
   if (sourceNode.type === 'GetNode') {
     const getterName = getKJSetGetNodeName(sourceNode);
     if (!getterName) return null;
@@ -112,28 +141,6 @@ export function resolveSource(
     if (setterInputLink == null) return null;
 
     return resolveSource(workflow, setterInputLink, visitedLinkIds, promptKeyMap);
-  }
-
-  // A muted node produces no output at all — ComfyUI's ExecutableNodeDTO
-  // .resolveOutput returns early on LGraphEventMode.NEVER, and the consuming
-  // input is simply left out of the prompt.
-  if (sourceNode.mode === 2) return null;
-
-  if (sourceNode.mode === 4 || sourceNode.type === 'Reroute') {
-    const outputDef = sourceNode.outputs[sourceSlotIndex];
-    if (!outputDef) return null;
-
-    const bypassSlot = findBypassInputSlot(
-      sourceNode,
-      sourceSlotIndex,
-      String(outputDef.type),
-      String(link[5] ?? ''),
-    );
-    const bypassLink = bypassSlot === null ? null : sourceNode.inputs[bypassSlot]?.link;
-    if (bypassLink != null) {
-      return resolveSource(workflow, bypassLink, visitedLinkIds, promptKeyMap);
-    }
-    return null;
   }
 
   return { nodeId: sourceNodeId, slotIndex: sourceSlotIndex };
@@ -158,6 +165,17 @@ function getPromptScope(promptKey: string | undefined): string | null {
   return scopeEnd === -1 ? '' : promptKey.slice(0, scopeEnd);
 }
 
+/** The scopes enclosing `scope`, nearest first, ending at the root (''). */
+function ancestorScopes(scope: string): string[] {
+  const ancestors: string[] = [];
+  while (scope !== '') {
+    const cut = scope.lastIndexOf(':');
+    scope = cut === -1 ? '' : scope.slice(0, cut);
+    ancestors.push(scope);
+  }
+  return ancestors;
+}
+
 function findKJSetterNode(
   workflow: Workflow,
   getterNode: WorkflowNode,
@@ -170,10 +188,18 @@ function findKJSetterNode(
 
   const getterScope = getPromptScope(promptKeyMap?.get(getterNode.id));
   if (getterScope === null) return candidates[0];
+  const scopeOf = (node: WorkflowNode) => getPromptScope(promptKeyMap?.get(node.id));
 
-  return candidates.find(
-    (node) => getPromptScope(promptKeyMap?.get(node.id)) === getterScope
-  );
+  const own = candidates.find((node) => scopeOf(node) === getterScope);
+  if (own) return own;
+  // resolveVirtualOutput: a Set in an enclosing graph, but none at all when
+  // more than one of that name is in reach.
+  const ancestors = ancestorScopes(getterScope);
+  const inReach = candidates.filter((node) => {
+    const scope = scopeOf(node);
+    return scope !== null && ancestors.includes(scope);
+  });
+  return inReach.length === 1 ? inReach[0] : undefined;
 }
 
 /**
@@ -201,6 +227,10 @@ export function buildWorkflowPromptInputs(
 ): Record<string, unknown> {
   const inputs: Record<string, unknown> = {};
   const linkKeys = new Set<string>();
+  // Stock serializes every widget first and overwrites it only where the link
+  // resolves, so a widget whose link leads nowhere (a muted source) keeps its
+  // own value.
+  const deadLinks = new Set<string>();
 
   for (const [slotIndex, input] of node.inputs.entries()) {
     // An input with no link may still be fed by a Use Everywhere broadcast. UE
@@ -216,7 +246,10 @@ export function buildWorkflowPromptInputs(
       continue;
     }
     const resolved = resolveSource(workflow, input.link, new Set(), promptKeyMap);
-    if (!resolved) continue;
+    if (!resolved) {
+      deadLinks.add(input.name);
+      continue;
+    }
     if (allowedNodeIds.has(resolved.nodeId)) {
       const nodeKey = promptKeyMap?.get(resolved.nodeId) ?? String(resolved.nodeId);
       inputs[input.name] = [nodeKey, resolved.slotIndex];
@@ -227,7 +260,17 @@ export function buildWorkflowPromptInputs(
     if (!sourceNode) continue;
     const value = getPrimitiveInlineValue(sourceNode);
     if (value !== undefined) {
-      inputs[input.name] = value;
+      // Stock copies a PrimitiveNode's value into the target widget before
+      // serializing it, so the target's dynamicPrompts applies to it too. The
+      // target may be a DynamicCombo child, named by its qualified name.
+      const typeDef = nodeTypes[classType];
+      const targetOptions = typeDef
+        ? getActiveNodeInputDefinitions(typeDef, node, widgetIndexMap)
+          .find((definition) => definition.qualifiedName === input.name)?.inputDef[1]
+        : undefined;
+      inputs[input.name] = targetOptions?.dynamicPrompts === true && typeof value === 'string'
+        ? processDynamicPrompt(value)
+        : value;
     } else {
       console.warn(
         `[workflowInputs] Missing source node for input '${input.name}' on node ${node.id} (${node.type}).`,
@@ -258,13 +301,14 @@ export function buildWorkflowPromptInputs(
       const [typeOrOptions, inputOptions] = inputDef;
       if (isOmittedFromPrompt(typeOrOptions, inputOptions)) continue;
       // No widgets_values slot to read, but stock still sends its value.
+      const linked = connected && !deadLinks.has(qualifiedName);
       if (isUnsavedWidgetType(typeOrOptions)) {
-        if (!connected && !(qualifiedName in inputs)) {
+        if (!linked && !(qualifiedName in inputs)) {
           inputs[qualifiedName] = unsavedWidgetInitialValue(typeOrOptions);
         }
         continue;
       }
-      if (widgetIndex === null || connected || qualifiedName in inputs) continue;
+      if (widgetIndex === null || linked || qualifiedName in inputs) continue;
 
       // Apply the seed override for either conventional seed name. Dynamic seed
       // children submit under their qualified key just like every other child.
@@ -277,22 +321,20 @@ export function buildWorkflowPromptInputs(
       }
 
       let promptValue = value;
-      if (
-        promptValue === undefined &&
-        Object.prototype.hasOwnProperty.call(inputOptions ?? {}, 'default')
-      ) {
-        promptValue = inputOptions?.default;
+      // A widget with no saved slot (the node is older than the input) still
+      // serializes the value stock creates it with.
+      if (promptValue === undefined) {
+        promptValue = getDefaultWidgetValue(typeOrOptions, inputOptions);
       }
       if (promptValue === undefined) continue;
 
       if (isComboType(typeOrOptions)) {
-        promptValue = normalizeComboValue(
-          promptValue,
-          getComboOptions(typeOrOptions, inputOptions),
-          isMultiSelectCombo(inputOptions),
-        );
+        promptValue = sentComboValue(promptValue, getComboOptions(typeOrOptions, inputOptions), isMultiSelectCombo(inputOptions));
       } else {
         promptValue = normalizeWidgetValue(promptValue, typeOrOptions);
+      }
+      if (inputOptions?.dynamicPrompts === true && typeof promptValue === 'string') {
+        promptValue = processDynamicPrompt(promptValue);
       }
       inputs[qualifiedName] = finalizeInputValue(workflow, qualifiedName, promptValue);
     } catch (e) {

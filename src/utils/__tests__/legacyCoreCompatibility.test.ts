@@ -75,8 +75,10 @@ describe.each(VERSIONS)('ComfyUI core %s', version => {
       return;
     }
     const original = readGzipJson(path.join(FIXTURES, `legacyCore-${version}.baseline.json.gz`));
-    // 3.4 repairs authoring of existing Autogrow and Webcam nodes too. Keep
-    // the released baseline intact and snapshot only those intentional fixes.
+    // 3.4 repairs authoring of existing Autogrow and Webcam nodes too, and
+    // 3.4.2 gives an INT that declares control_after_generate under another
+    // name (PrimitiveInt's value) its control slot, as stock does. Keep the
+    // released baseline intact and snapshot only those intentional fixes.
     const correctionDir = process.env.LEGACY_CORE_CORRECTIONS_DIR;
     if (correctionDir) {
       const corrections = Object.fromEntries(Object.keys(original).filter(type => JSON.stringify(digest[type]) !== JSON.stringify(original[type])).map(type => [type, digest[type]]));
@@ -84,7 +86,10 @@ describe.each(VERSIONS)('ComfyUI core %s', version => {
       return;
     }
     const corrections = readGzipJson(path.join(FIXTURES, `legacyCore-${version}.authoring.json.gz`));
-    for (const type of Object.keys(corrections)) expect(type === 'WebcamCapture' || JSON.stringify(objectInfo[type].input).includes('COMFY_AUTOGROW_V3')).toBe(true);
+    for (const type of Object.keys(corrections)) {
+      const spec = JSON.stringify(objectInfo[type].input);
+      expect(type === 'WebcamCapture' || spec.includes('COMFY_AUTOGROW_V3') || /"control_after_generate":(true|")/.test(spec)).toBe(true);
+    }
     const baseline = { ...original, ...corrections };
     expect(Object.keys(digest)).toEqual(Object.keys(baseline));
     const changed = Object.keys(baseline).filter(type => JSON.stringify(digest[type]) !== JSON.stringify(baseline[type]));

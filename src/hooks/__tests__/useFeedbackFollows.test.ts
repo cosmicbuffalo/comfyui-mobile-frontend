@@ -7,7 +7,7 @@ const DAY = 24 * 60 * 60_000;
 const T0 = Date.parse('2026-10-01T00:00:00Z');
 
 function follow(overrides: Partial<FeedbackFollow> = {}): FeedbackFollow {
-  return { number: 7, title: 't', secret: 's', canReply: true, followedAt: T0, seenAt: T0, ...overrides };
+  return { number: 7, title: 't', canReply: true, followedAt: T0, seenAt: T0, ...overrides };
 }
 
 function status(overrides: Partial<FeedbackIssueStatus> = {}): FeedbackIssueStatus {
@@ -135,6 +135,7 @@ describe('refresh', () => {
     const oldStatus = status({ number: 7, updatedAt: new Date(Date.now() - 100 * DAY).toISOString() });
     fetchMock.mockImplementation((url: string) => {
       if (url.includes('/status?')) return respond({ issues: [oldStatus], unknown: [] });
+      if (url.endsWith('/reply-token')) return respond({ replyToken: 's' });
       if (url.endsWith('/forget')) return Promise.reject(new Error('offline'));
       return respond({ follows: [old] });
     });
@@ -152,6 +153,59 @@ describe('refresh', () => {
 
     await expect(useFeedbackFollowsStore.getState().unfollow(7)).rejects.toThrow();
     expect(useFeedbackFollowsStore.getState().follows).toEqual([kept]);
+  });
+
+  it('fetches a fresh token for each stop-following action without keeping it in the list', async () => {
+    const kept = follow();
+    useFeedbackFollowsStore.setState({ follows: [kept] });
+    let token = 0;
+    fetchMock.mockImplementation((url: string) => {
+      if (url.endsWith('/reply-token')) return respond({ replyToken: `token-${++token}` });
+      if (url.endsWith('/forget')) return respond({ ok: true });
+      return respond({ follows: [] });
+    });
+    for (let i = 1; i <= 2; i++) {
+      useFeedbackFollowsStore.setState({ follows: [kept] });
+      await useFeedbackFollowsStore.getState().unfollow(7);
+    }
+    expect(token).toBe(2);
+    const bodies = fetchMock.mock.calls.filter(([url]) => url.endsWith('/forget')).map(([, init]) => JSON.parse(init.body));
+    expect(bodies).toEqual([{ number: 7, secret: 'token-1' }, { number: 7, secret: 'token-2' }]);
+    expect(useFeedbackFollowsStore.getState().follows).toEqual([]);
+    expect(kept).not.toHaveProperty('replyToken');
+    expect(kept).not.toHaveProperty('secret');
+  });
+
+  it('fetches only the expired issue token during the expiry sweep', async () => {
+    const old = follow({ followedAt: Date.now() - 100 * DAY });
+    const fresh = follow({ number: 8, followedAt: Date.now() });
+    fetchMock.mockImplementation((url: string, init?: RequestInit) => {
+      if (url.includes('/status?')) return respond({ issues: [status({ updatedAt: new Date(Date.now() - 100 * DAY).toISOString() }), status({ number: 8, updatedAt: new Date().toISOString() })], unknown: [] });
+      if (url.endsWith('/reply-token')) return respond({ replyToken: 'expired-token' });
+      if (url.endsWith('/forget')) return respond({ ok: true });
+      return respond({ follows: init?.method === 'DELETE' ? [fresh] : [old, fresh] });
+    });
+    await useFeedbackFollowsStore.getState().refresh();
+    expect(fetchMock.mock.calls.filter(([url]) => url.endsWith('/reply-token')).map(([url]) => url)).toEqual(['/mobile/api/feedback/follows/7/reply-token']);
+    expect(JSON.parse(fetchMock.mock.calls.find(([url]) => url.endsWith('/forget'))![1].body)).toEqual({ number: 7, secret: 'expired-token' });
+    expect(useFeedbackFollowsStore.getState().follows).toEqual([fresh]);
+  });
+
+  it('still forgets later expired follows when one token cannot be read', async () => {
+    const broken = follow({ number: 7, followedAt: Date.now() - 100 * DAY });
+    const later = follow({ number: 8, followedAt: Date.now() - 100 * DAY });
+    const old = new Date(Date.now() - 100 * DAY).toISOString();
+    fetchMock.mockImplementation((url: string, init?: RequestInit) => {
+      if (url.includes('/status?')) return respond({ issues: [status({ number: 7, updatedAt: old }), status({ number: 8, updatedAt: old })], unknown: [] });
+      if (url.endsWith('/7/reply-token')) return Promise.resolve({ ok: false, status: 404, json: async () => ({ error: 'not_found' }) } as Response);
+      if (url.endsWith('/reply-token')) return respond({ replyToken: 'later-token' });
+      if (url.endsWith('/forget')) return respond({ ok: true });
+      return respond({ follows: init?.method === 'DELETE' ? [broken] : [broken, later] });
+    });
+    await useFeedbackFollowsStore.getState().refresh();
+    const forgotten = fetchMock.mock.calls.filter(([url]) => url.endsWith('/forget')).map(([, init]) => JSON.parse(init.body));
+    expect(forgotten).toEqual([{ number: 8, secret: 'later-token' }]);
+    expect(useFeedbackFollowsStore.getState().follows).toEqual([broken]);
   });
 
   it('stores statuses and drops follows the service no longer knows', async () => {

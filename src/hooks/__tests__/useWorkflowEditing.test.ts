@@ -2751,6 +2751,44 @@ describe('useWorkflow editing actions', () => {
     expect(sg?.nodes.some((node) => node.id === 7)).toBe(true);
   });
 
+  it('resolves dynamic prompts at queue time and embeds the text as authored', async () => {
+    vi.spyOn(Math, 'random').mockReturnValue(0);
+    const promptTypes: NodeTypes = {
+      ...queueNodeTypes,
+      Encode: {
+        input: { required: { text: ['STRING', { multiline: true, dynamicPrompts: true }] } },
+        output: ['CONDITIONING'], output_name: ['CONDITIONING'],
+        name: 'Encode', display_name: 'Encode', description: '', python_module: '', category: 'test',
+      },
+      Caption: {
+        input: { required: { text: ['STRING', { multiline: true, dynamicPrompts: false }] } },
+        output: ['STRING'], output_name: ['STRING'],
+        name: 'Caption', display_name: 'Caption', description: '', python_module: '', category: 'test',
+      },
+    };
+    const authored = 'a {cat|dog} // note';
+    useWorkflowStore.setState({
+      workflow: makeWorkflow([
+        makeNode(1, { type: 'Encode', widgets_values: [authored] }),
+        makeNode(2, { type: 'Caption', widgets_values: [authored] }),
+      ], []),
+      nodeTypes: promptTypes,
+      ...rootNodeStableRegistry([1, 2]),
+    });
+
+    const body = await queueAndGetPromptRequest() as {
+      prompt: Record<string, { inputs: Record<string, unknown> }>;
+      extra_data: { extra_pnginfo: { workflow: Workflow } };
+    };
+
+    expect(body.prompt['1'].inputs.text).toBe('a cat ');
+    expect(body.prompt['2'].inputs.text).toBe(authored);
+    const embedded = body.extra_data.extra_pnginfo.workflow;
+    expect(embedded.nodes.find((n) => n.id === 1)?.widgets_values).toEqual([authored]);
+    expect(embedded.nodes.find((n) => n.id === 2)?.widgets_values).toEqual([authored]);
+    expect(useWorkflowStore.getState().workflow?.nodes.find((n) => n.id === 1)?.widgets_values).toEqual([authored]);
+  });
+
   it('queues updated embed workflow after bypassAllInContainer', async () => {
     const groupPointer = makeLocationPointer({ type: 'group', groupId: 10, subgraphId: null });
     const groupHierarchicalKey = makeLocationPointer({ type: 'group', groupId: 10, subgraphId: null });

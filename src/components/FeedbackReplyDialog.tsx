@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import type { FeedbackFollow } from '@/api/client';
+import { getFeedbackReplyToken, type FeedbackFollow } from '@/api/client';
 import { Dialog } from '@/components/modals/Dialog';
 import { Z_LAYERS } from '@/components/zLayers';
 import { feedbackInputClassName } from '@/components/AppMenu/menuStyles';
@@ -57,17 +57,22 @@ export function FeedbackReplyDialog({
   const handleSend = async () => {
     if (!canSend) return;
     setReply({ kind: 'sending' });
-    const result = await submitFeedbackReply(FEEDBACK_ENDPOINT, {
-      number: follow.number,
-      secret: follow.secret,
-      body: body.trim(),
-      website: website || undefined,
-    });
-    if (result.ok) {
-      setReply({ kind: 'sent', url: result.url });
-      onSent();
-    } else {
-      setReply({ kind: 'error', message: replyErrorMessage(result.error, result.status) });
+    try {
+      const replyToken = await getFeedbackReplyToken(follow.number);
+      const result = await submitFeedbackReply(FEEDBACK_ENDPOINT, {
+        number: follow.number,
+        replyToken,
+        body: body.trim(),
+        website: website || undefined,
+      });
+      if (result.ok) {
+        setReply({ kind: 'sent', url: result.url });
+        onSent();
+      } else {
+        setReply({ kind: 'error', message: replyErrorMessage(result.error, result.status) });
+      }
+    } catch {
+      setReply({ kind: 'error', message: replyErrorMessage('reply_token_failed') });
     }
   };
 
