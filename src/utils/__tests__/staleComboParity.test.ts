@@ -16,16 +16,17 @@ describe('combo values the server does not offer', () => {
     expect(prompt['1'].inputs.root).toBe('[time(%Y-%m-%d)]');
   });
 
-  it('except an Easy-Use picker, which always sends its placeholder', () => {
+  it('except the wildcard picker, which always sends its placeholder', () => {
+    const sentinel = 'Select the Wildcard to add to the text';
     const types = {
-      'easy prompt': {
-        input: { required: { text: ['STRING', { multiline: true }], prefix: [['Select the prefix add to the text', 'Detailed photo of'], { default: 'Select the prefix add to the text' }] } },
-        output: ['STRING'], output_node: true, name: 'easy prompt',
+      ImpactWildcardProcessor: {
+        input: { required: { wildcard_text: ['STRING', { multiline: true }], 'Select to add Wildcard': [[sentinel]] } },
+        output: ['STRING'], output_node: true, name: 'ImpactWildcardProcessor',
       },
     } as unknown as NodeTypes;
-    for (const saved of ['Select the prefix to add to the text', 'Detailed photo of']) {
-      const prompt = buildPromptFromWorkflow(workflow(node(1, 'easy prompt', ['a cat', saved])), types) as Record<string, { inputs: Record<string, unknown> }>;
-      expect(prompt['1'].inputs.prefix).toBe('Select the prefix add to the text');
+    for (const saved of [sentinel, '__animals__']) {
+      const prompt = buildPromptFromWorkflow(workflow(node(1, 'ImpactWildcardProcessor', ['a cat', saved])), types) as Record<string, { inputs: Record<string, unknown> }>;
+      expect(prompt['1'].inputs['Select to add Wildcard']).toBe(sentinel);
     }
   });
 });

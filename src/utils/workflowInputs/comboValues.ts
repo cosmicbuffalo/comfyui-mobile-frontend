@@ -1,4 +1,4 @@
-import { insertPickerFor } from '@/utils/wildcardWidgets';
+import { isWildcardSelectWidget, WILDCARD_SELECT_SENTINEL } from '@/utils/wildcardWidgets';
 
 // ComfyUI's newer DynamicCombo widget type. Every slot/branch check in this
 // package compares against this constant instead of re-spelling the literal.
@@ -145,17 +145,16 @@ export function normalizeWidgetValue(
 /**
  * The value a combo serializes into the prompt, as stock does: the matching
  * option, else the saved value unchanged, so a value the server doesn't offer
- * is rejected the same way on both frontends. An Easy-Use or Impact
- * "Select … to add to the text" picker always sends its placeholder (Easy-Use's
- * serializeValue), whatever it last held.
+ * is rejected the same way on both frontends. Impact's wildcard picker always
+ * sends its placeholder, whatever it last held, since the server lists no other
+ * option for it.
  */
 export function sentComboValue(value: unknown, options: unknown[], multiSelect = false): unknown {
   if (multiSelect) {
     const values = Array.isArray(value) ? value : value === undefined || value === null ? [] : [value];
     return values.map((entry) => sentComboValue(entry, options));
   }
-  const picker = insertPickerFor(options);
-  if (picker) return picker.placeholder;
+  if (isWildcardSelectWidget(options)) return WILDCARD_SELECT_SENTINEL;
   if (options.length === 0) return value;
   return resolveComboOption(value, options) ?? value;
 }
