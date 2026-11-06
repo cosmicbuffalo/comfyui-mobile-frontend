@@ -13,7 +13,8 @@
   socket no longer shifts every later widget's value by one slot.
 - **Seed controls.** A number input that declares a control after generate
   under another name, or a seed that turns it off, no longer shifts the
-  widgets after it.
+  widgets after it. New nodes with such an input (such as **Int**) get the
+  control, as on desktop.
 - **Inputs fed by a muted node** send the widget's own value, as on desktop,
   instead of being left out.
 - **Bypassed nodes** pass through inputs whose type lists several types
