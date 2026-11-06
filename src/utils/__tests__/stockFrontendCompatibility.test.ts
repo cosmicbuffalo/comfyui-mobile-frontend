@@ -15,7 +15,7 @@
  *
  *   Subgraph._configureSubgraph   this.inputNode.configure(data.inputNode)
  *   SubgraphIONodeBase.configure  this._boundingRect.set(data.bounding)
- *   LGraphNode.connect            graph.state.lastLinkId + 1
+ *   LGraphNode.connect            mintLinkId(state, root-wide reservations)
  *
  * If the corpus is not installed the suite skips rather than fails: it is a
  * property of the dev machine, not of this repo.
@@ -182,10 +182,16 @@ function schemaComplaints(graph: Json): string[] {
 }
 
 /**
- * Stock allocates the next link id as `state.lastLinkId + 1`, and a subgraph
- * has no counter of its own — `Subgraph.state` returns the root graph's. So an
- * interior link numbered past the root counter means the next connection drawn
- * inside that subgraph reuses a live id.
+ * Stock before 1.57 allocates the next link id as `state.lastLinkId + 1`, and a
+ * subgraph has no counter of its own — `Subgraph.state` returns the root
+ * graph's. So an interior link numbered past the root counter means the next
+ * connection drawn there reuses a live id.
+ *
+ * Current stock accepts such a file: LGraph.configure restores links through
+ * _addLink, which observes their ids, and LGraphNode.connect mints against
+ * root-wide linkIdReservations. So this is not a reason stock rejects a
+ * template (image_moss_image_edit.json ships last_link_id 9069 with link 9070),
+ * but a workflow we save must still keep the counter ahead for older frontends.
  */
 function allocatorComplaints(graph: Json): string[] {
   let maxLink = 0;
@@ -212,14 +218,18 @@ function allocatorComplaints(graph: Json): string[] {
     : [];
 }
 
-/** Every complaint stock could raise about a workflow, in one list. */
+/** Every complaint current stock raises when loading a workflow, in one list. */
 function stockComplaints(graph: Json): string[] {
   const fatal = stockLoadSubgraphs(graph);
   return [
     ...(fatal ? [`loadSubgraphs throws: ${fatal}`] : []),
     ...schemaComplaints(graph),
-    ...allocatorComplaints(graph),
   ];
+}
+
+/** What a workflow we saved must also avoid: stock's complaints plus a stale link counter. */
+function savedComplaints(graph: Json): string[] {
+  return [...stockComplaints(graph), ...allocatorComplaints(graph)];
 }
 
 /**
@@ -240,7 +250,7 @@ function auditEdit(edit: (template: Template) => Workflow | null): string[] {
       failures.push(`${template.file}: the edit itself threw — ${(error as Error).message}`);
       continue;
     }
-    for (const complaint of stockComplaints(saved)) failures.push(`${template.file}: ${complaint}`);
+    for (const complaint of savedComplaints(saved)) failures.push(`${template.file}: ${complaint}`);
   }
   return failures;
 }
@@ -371,6 +381,31 @@ function describeCorpusDrift(drift: CorpusDrift): string {
   list('no longer rejected by stock', drift.noLongerRejected);
   return lines.join('\n  ');
 }
+
+describe('current stock load rules', () => {
+  it('accept stale link counters at root and inside subgraphs', () => {
+    const definition = {
+      id: 'a', name: 'Inner', version: 1, revision: 0,
+      state: { lastGroupId: 0, lastNodeId: 0, lastLinkId: 0, lastRerouteId: 0 },
+      inputNode: { bounding: [0, 0, 0, 0] },
+      outputNode: { bounding: [0, 0, 0, 0] },
+      links: [{ id: 9071 }],
+    };
+    const graph = {
+      last_link_id: 9069,
+      links: [[9070, 1, 0, 2, 0, 'IMAGE']],
+      definitions: { subgraphs: [definition] },
+    };
+    expect(stockComplaints(graph)).toEqual([]);
+    // Ours must still leave the counter ahead, for frontends before 1.57.
+    expect(savedComplaints(graph)).toEqual(['lastLinkId is 9069 but link 9071 is already in use']);
+    // The relaxed counter rule must still enforce the fatal IO envelope rule.
+    expect(stockComplaints({
+      ...graph,
+      definitions: { subgraphs: [{ ...definition, inputNode: undefined }] },
+    })).toEqual([expect.stringContaining('loadSubgraphs throws:')]);
+  });
+});
 
 describe('the stock-frontend template corpus', () => {
   // The suite below skips when the corpus is not installed, which is right on
@@ -964,7 +999,7 @@ describe.skipIf(!CORPUS)('workflows we edit still load in the stock frontend', (
           drifted.push(`${template.file} ${key}: ${value} became ${after.get(key)}`);
         }
       }
-      for (const complaint of stockComplaints(save(reconciled))) {
+      for (const complaint of savedComplaints(save(reconciled))) {
         drifted.push(`${template.file}: ${complaint}`);
       }
     }
