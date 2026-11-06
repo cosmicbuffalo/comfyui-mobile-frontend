@@ -261,9 +261,13 @@ export function buildWorkflowPromptInputs(
     const value = getPrimitiveInlineValue(sourceNode);
     if (value !== undefined) {
       // Stock copies a PrimitiveNode's value into the target widget before
-      // serializing it, so the target's dynamicPrompts applies to it too.
-      const targetOptions = nodeTypes[classType]?.input?.required?.[input.name]?.[1]
-        ?? nodeTypes[classType]?.input?.optional?.[input.name]?.[1];
+      // serializing it, so the target's dynamicPrompts applies to it too. The
+      // target may be a DynamicCombo child, named by its qualified name.
+      const typeDef = nodeTypes[classType];
+      const targetOptions = typeDef
+        ? getActiveNodeInputDefinitions(typeDef, node, widgetIndexMap)
+          .find((definition) => definition.qualifiedName === input.name)?.inputDef[1]
+        : undefined;
       inputs[input.name] = targetOptions?.dynamicPrompts === true && typeof value === 'string'
         ? processDynamicPrompt(value)
         : value;

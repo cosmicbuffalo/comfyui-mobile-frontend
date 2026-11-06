@@ -1617,3 +1617,23 @@ describe('a widget input fed by a muted node', () => {
     expect(build(0).vae_name).toEqual(['1', 0]);
   });
 });
+
+describe('a PrimitiveNode feeding a dynamicPrompts widget', () => {
+  it('resolves choices and comments for a DynamicCombo child too', () => {
+    const types = {
+      Prompter: {
+        input: { required: { mode: ['COMFY_DYNAMICCOMBO_V3', { options: [
+          { key: 'custom', inputs: { required: { text: ['STRING', { multiline: true, dynamicPrompts: true }] } } },
+        ] }] } },
+        output: ['STRING'], output_name: ['STRING'], name: 'Prompter', display_name: 'Prompter', description: '', python_module: '', category: '',
+      },
+    } as unknown as NodeTypes;
+    const primitive = makeNode(1, 'PrimitiveNode', { widgets_values: ['a {cat|cat} // note'], outputs: [{ name: 'STRING', type: 'STRING', links: [1] }] });
+    const prompter = makeNode(2, 'Prompter', {
+      widgets_values: ['custom', 'a {cat|cat} // note'],
+      inputs: [{ name: 'mode.text', type: 'STRING', link: 1, widget: { name: 'mode.text' } }],
+    });
+    const workflow = { last_node_id: 2, last_link_id: 1, nodes: [primitive, prompter], links: [[1, 1, 0, 2, 0, 'STRING']], groups: [], config: {}, version: 0.4 } as unknown as Workflow;
+    expect(buildWorkflowPromptInputs(workflow, types, prompter, 'Prompter', new Set([2]), null)['mode.text']).toBe('a cat ');
+  });
+});
