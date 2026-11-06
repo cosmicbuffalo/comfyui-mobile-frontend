@@ -175,6 +175,20 @@ async def api_feedback_follows_get(request):
     except Exception as e:
         return web.json_response({"error": str(e)}, status=500)
 
+async def api_feedback_follows_reply_token(request):
+    # Issued by the feedback service for one issue, only ever sent back there
+    # to post an anonymous reply to or unfollow that issue.
+    user_key = _feedback_user_key()
+    if user_key is None:
+        return web.json_response({"error": "Access denied"}, status=403)
+    try:
+        reply_token = _mobile_feedback_follows.get_reply_token(user_key, int(request.match_info['number']))
+        if reply_token is None:
+            return web.json_response({"error": "not_found"}, status=404)
+        return web.json_response({"replyToken": reply_token})
+    except Exception as e:
+        return web.json_response({"error": str(e)}, status=500)
+
 async def api_feedback_follows_add(request):
     user_key = _feedback_user_key()
     if user_key is None:
@@ -182,7 +196,7 @@ async def api_feedback_follows_add(request):
     try:
         data = await request.json()
         if not isinstance(data, dict) or not _mobile_feedback_follows.add_follow(
-                user_key, data.get('number'), data.get('title'), data.get('secret'), data.get('canReply')):
+                user_key, data.get('number'), data.get('title'), data.get('replyToken'), data.get('canReply')):
             return web.json_response({"error": "invalid_follow"}, status=400)
         return web.json_response({"follows": _mobile_feedback_follows.list_follows(user_key)})
     except Exception as e:
@@ -222,6 +236,7 @@ def register_routes(mobile_app):
     mobile_app.router.add_post('/api/queue-metadata/remap', api_queue_metadata_remap)
     mobile_app.router.add_post('/api/restart', api_restart_server)
     mobile_app.router.add_get('/api/feedback/follows', api_feedback_follows_get)
+    mobile_app.router.add_get(r'/api/feedback/follows/{number:\d+}/reply-token', api_feedback_follows_reply_token)
     mobile_app.router.add_post('/api/feedback/follows', api_feedback_follows_add)
     mobile_app.router.add_post(r'/api/feedback/follows/{number:\d+}/seen', api_feedback_follows_seen)
     mobile_app.router.add_delete(r'/api/feedback/follows/{number:\d+}', api_feedback_follows_delete)

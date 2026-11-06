@@ -190,24 +190,25 @@ own new-issue page instead and send nothing themselves.
 
 "Show replies to this feedback in the app" is ticked by default and can be
 unticked before you send the form. When it's ticked, the feedback service returns
-a random secret with the issue number and keeps only a hash of that secret. Your
-server stores the number, the title you typed, the secret and whether you can
+a random reply token with the issue number and keeps only its hash. Your server
+stores the number, the title you typed, the reply token and whether you can
 reply from the app in `user/default/mobile/feedback_follows.json` (per user when
-the multiuser node is on). No requests go out from the server itself. When the
-app opens, and every 10 minutes while it's open and visible, your **browser**
+the multiuser node is on). The server hands the reply token to your browser
+only when you reply or stop following. No requests go out from the server itself.
+When the app opens, and every 10 minutes while it's open and visible, your **browser**
 sends the followed issue numbers to the feedback service, to see whether anyone
 other than you has commented or the issue was closed. The service uses your IP
 address only to rate-limit these checks and does not store it.
 
 From the activity banner or **App menu → About → Feedback History** you can
-reply. Your browser sends the reply text, the issue number and the secret, and
+reply. Your browser sends the reply text, the issue number and the reply token, and
 the service posts the reply on the public issue without your name. If your
 contact was a GitHub handle that got mentioned on the issue, replying from the
 app is off and you reply on GitHub instead. An email contact is never used for
 replies; it is only forwarded once, when the issue is filed.
 
 Stop following in Feedback History tells the service to delete its hash, so the
-secret no longer works. The app also stops following on its own once a closed
+reply token no longer works. The app also stops following on its own once a closed
 issue has had no new comments, including your own replies, for two weeks and
 you've seen its last activity, or once nothing at all has happened for 90 days.
 

@@ -78,8 +78,8 @@ export function FeedbackDialog({ systemStats, workflow, onClose }: FeedbackDialo
           followed = true;
         } catch {
           // The issue exists either way; only the banner is lost. Drop the
-          // grant too, so its hash doesn't outlive the secret.
-          void forgetFeedback(FEEDBACK_ENDPOINT, { number: result.number, secret: result.follow.secret });
+          // grant too, so its hash doesn't outlive the reply token.
+          void forgetFeedback(FEEDBACK_ENDPOINT, { number: result.number, replyToken: result.follow.replyToken });
         }
       }
       setSubmit({ kind: 'success', url: result.url, followed, canReply: result.follow?.canReply ?? false });

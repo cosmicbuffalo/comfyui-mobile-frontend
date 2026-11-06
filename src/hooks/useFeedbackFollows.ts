@@ -3,6 +3,7 @@ import { create } from 'zustand';
 import {
   addFeedbackFollow,
   getFeedbackFollows,
+  getFeedbackReplyToken,
   markFeedbackFollowSeen,
   removeFeedbackFollow,
   type FeedbackFollow,
@@ -46,9 +47,14 @@ interface FeedbackFollowsState {
   follows: FeedbackFollow[];
   statuses: Record<number, FeedbackIssueStatus>;
   refresh: () => Promise<void>;
-  follow: (follow: { number: number; title: string; secret: string; canReply: boolean }) => Promise<void>;
+  follow: (follow: { number: number; title: string; replyToken: string; canReply: boolean }) => Promise<void>;
   markSeen: (number: number) => Promise<void>;
   unfollow: (number: number) => Promise<void>;
+}
+
+/** Tell the service to drop a follow, reading its reply token from the server only now. */
+async function forgetOnService(number: number): Promise<boolean> {
+  return forgetFeedback(FEEDBACK_ENDPOINT, { number, replyToken: await getFeedbackReplyToken(number) });
 }
 
 export const useFeedbackFollowsStore = create<FeedbackFollowsState>((set, get) => ({
@@ -77,8 +83,9 @@ export const useFeedbackFollowsStore = create<FeedbackFollowsState>((set, get) =
       const status = statuses[follow.number];
       const gone = result.unknown.includes(follow.number) && now - follow.followedAt > UNKNOWN_GRACE_MS;
       // An expired follow stays until the service has forgotten it, so the
-      // secret is never dropped while its hash still works.
-      const expired = status && isFollowExpired(follow, status, now) && (await forgetFeedback(FEEDBACK_ENDPOINT, follow));
+      // reply token is never dropped while its hash still works.
+      // A follow whose token can't be read stays too, without holding up the rest.
+      const expired = status && isFollowExpired(follow, status, now) && (await forgetOnService(follow.number).catch(() => false));
       if (gone || expired) {
         set({ follows: await removeFeedbackFollow(follow.number) });
       }
@@ -97,7 +104,7 @@ export const useFeedbackFollowsStore = create<FeedbackFollowsState>((set, get) =
 
   unfollow: async (number) => {
     const follow = get().follows.find((f) => f.number === number);
-    if (!follow || !(await forgetFeedback(FEEDBACK_ENDPOINT, follow))) {
+    if (!follow || !(await forgetOnService(follow.number))) {
       throw new Error('Failed to stop following feedback');
     }
     set({ follows: await removeFeedbackFollow(number) });
