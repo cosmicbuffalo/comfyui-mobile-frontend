@@ -1,5 +1,12 @@
 # Changelog
 
+## 3.4.3 - 2026-11-06
+
+### Fixed
+
+- **Bypassed nodes** pass nothing when the input desktop would pass through
+  is empty, as on desktop, instead of the next connected input.
+
 ## 3.4.2 - 2026-11-06
 
 ### Fixed
