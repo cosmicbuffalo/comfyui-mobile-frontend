@@ -17,6 +17,7 @@ import {
   resolveSource,
 } from '../workflowInputs';
 import type { NodeTypes, Workflow, WorkflowNode } from '@/api/types';
+import { buildPromptFromWorkflow } from '../buildPromptFromWorkflow';
 import { sentComboValue } from '../workflowInputs/comboValues';
 
 // ComfyUI seed inputs declare max = 2^64; computed (not a literal) because a
@@ -611,6 +612,102 @@ describe('resolveSource', () => {
     });
     expect(resolveSource(wf('H3_COND,CONDITIONING'), 2)).toEqual({ nodeId: 1, slotIndex: 0 });
     expect(resolveSource(wf('H3_COND,LATENT'), 2)).toBeNull();
+  });
+
+  describe('a bypassed node whose chosen input slot is empty', () => {
+    const wf: Workflow = {
+      last_node_id: 4,
+      last_link_id: 4,
+      nodes: [
+        makeNode(1, 'Source', {
+          outputs: [
+            { name: 'first', type: 'INT', links: [1] },
+            { name: 'second', type: 'INT', links: [2] },
+          ],
+        }),
+        makeNode(2, 'Bypassed', {
+          mode: 4,
+          inputs: [
+            { name: 'a', type: 'INT,FLOAT,IMAGE,LATENT', link: null },
+            { name: 'b', type: 'INT,FLOAT,IMAGE,LATENT', link: 1 },
+            { name: 'c', type: 'INT,FLOAT,IMAGE,LATENT', link: 2 },
+          ],
+          outputs: [
+            { name: 'INT', type: 'INT', links: [3] },
+            { name: 'FLOAT', type: 'FLOAT', links: [] },
+          ],
+        }),
+        makeNode(3, 'Fallback', {
+          outputs: [{ name: 'value', type: 'INT', links: [4] }],
+        }),
+        makeNode(4, 'Consumer', {
+          inputs: [
+            { name: 'first', type: 'INT', link: 3 },
+            { name: 'second', type: 'INT', link: 4 },
+          ],
+        }),
+      ],
+      links: [
+        [1, 1, 0, 2, 1, 'INT'],
+        [2, 1, 1, 2, 2, 'INT'],
+        [3, 2, 0, 4, 0, 'INT'],
+        [4, 3, 0, 4, 1, 'INT'],
+      ],
+      groups: [],
+      config: {},
+      version: 1,
+    };
+
+    it('returns null instead of forwarding a connected later input', () => {
+      expect(resolveSource(wf, 3)).toBeNull();
+    });
+
+    it('leaves the input out of the API prompt and keeps the other connected input', () => {
+      const nodeTypes: NodeTypes = {
+        Source: {
+          name: 'Source', display_name: 'Source', description: '', python_module: '', category: '',
+          input: { required: {} }, output: ['INT', 'INT'],
+        },
+        Fallback: {
+          name: 'Fallback', display_name: 'Fallback', description: '', python_module: '', category: '',
+          input: { required: {} }, output: ['INT'],
+        },
+        Consumer: {
+          name: 'Consumer', display_name: 'Consumer', description: '', python_module: '', category: '',
+          input: { optional: { first: ['*'], second: ['*'] } },
+          output: ['INT'],
+        },
+      };
+      const prompt = buildPromptFromWorkflow(wf, nodeTypes) as Record<
+        string, { inputs: Record<string, unknown> }
+      >;
+      expect(prompt['4'].inputs).toEqual({ second: ['3', 0] });
+      expect(prompt).not.toHaveProperty('2');
+    });
+  });
+
+  it.each(['*', ''])('forwards the same slot to a %j consumer regardless of output compatibility', (targetType) => {
+    const wf: Workflow = {
+      last_node_id: 3,
+      last_link_id: 2,
+      nodes: [
+        makeNode(1, 'Sampler'),
+        makeNode(2, 'VAEDecode', {
+          mode: 4,
+          inputs: [{ name: 'samples', type: 'LATENT', link: 1 }],
+          outputs: [{ name: 'IMAGE', type: 'IMAGE', links: [2] }],
+        }),
+        makeNode(3, 'Consumer', { inputs: [{ name: 'value', type: targetType, link: 2 }] }),
+      ],
+      links: [
+        [1, 1, 0, 2, 0, 'LATENT'],
+        [2, 2, 0, 3, 0, targetType],
+      ],
+      groups: [],
+      config: {},
+      version: 1,
+    };
+    expect(resolveSource(wf, 2)).toEqual({ nodeId: 1, slotIndex: 0 });
   });
 
   it('returns null for non-existent link', () => {
