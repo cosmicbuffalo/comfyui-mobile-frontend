@@ -31,9 +31,8 @@ function typesConnect(a: string, b: string): boolean {
  * multi-slot node (an image/latent switch, a two-image batcher) back to input
  * 0 when it is bypassed.
  *
- * Unlike stock we still require the chosen input to be connected: stock resolves
- * the slot first and yields nothing if it is empty, whereas returning null here
- * would drop an input that today resolves fine.
+ * Choose the slot independently of its connection; resolving an empty chosen
+ * slot yields nothing, as stock does.
  */
 function findBypassInputSlot(
   sourceNode: WorkflowNode,
@@ -42,26 +41,13 @@ function findBypassInputSlot(
   targetType: string,
 ): number | null {
   const inputs = sourceNode.inputs ?? [];
-  const connected = (index: number) => inputs[index]?.link != null;
-
-  // Any-type short circuit: match slot index, else fall back to the first
-  // slot. The consumer not declaring a type does not make the forwarded
-  // value shapeless — the input still has to carry what the bypassed
-  // node's output would have produced (a LATENT must not ride through a
-  // bypassed VAEDecode into a `*` socket as if it were the IMAGE).
   if (targetType === '' || targetType === '*') {
-    const compatibleWithOutput = (index: number) =>
-      typesConnect(String(inputs[index]?.type ?? ''), outputType);
-    if (connected(outputSlotIndex) && compatibleWithOutput(outputSlotIndex)) {
-      return outputSlotIndex;
-    }
-    if (connected(0) && compatibleWithOutput(0)) return 0;
+    return inputs.length > outputSlotIndex ? outputSlotIndex : 0;
   }
 
   const sameSlot = inputs[outputSlotIndex];
   if (
     sameSlot &&
-    connected(outputSlotIndex) &&
     typesConnect(String(sameSlot.type), outputType) &&
     typesConnect(String(sameSlot.type), targetType)
   ) {
@@ -69,14 +55,12 @@ function findBypassInputSlot(
   }
 
   const exact = inputs.findIndex(
-    (input, index) =>
-      connected(index) && String(input.type).toUpperCase() === targetType.toUpperCase(),
+    (input) => input.type === targetType,
   );
   if (exact !== -1) return exact;
 
   const compatible = inputs.findIndex(
-    (input, index) =>
-      connected(index) &&
+    (input) =>
       typesConnect(String(input.type), outputType) &&
       typesConnect(String(input.type), targetType),
   );
