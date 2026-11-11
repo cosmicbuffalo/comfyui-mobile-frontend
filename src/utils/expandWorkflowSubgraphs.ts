@@ -456,9 +456,31 @@ function expandWorkflowSubgraphsOnce(
       };
       const value = resolvePromotedInlineValue(node, valueInput, widgetIndex);
       if (value === undefined) return;
+      let inlineSource: WorkflowNode | undefined;
       for (const target of inputTargets.get(boundarySlot) ?? []) {
+        const innerNode = clonedById.get(target.target_id);
+        const targetInput = innerNode?.inputs?.[target.target_slot];
+        if (innerNode && targetInput && !targetInput.widget && !subgraphMap.has(innerNode.type)) {
+          // Socket-only inputs (e.g. Switch.on_false) have no widget to write.
+          // Keep a virtual primitive so prompt serialization inlines the value.
+          if (!inlineSource) {
+            inlineSource = {
+              id: nextNodeId++, type: 'PrimitiveNode', pos: [0, 0], size: [0, 0],
+              flags: {}, order: 0, mode: 0, inputs: [],
+              outputs: [{ name: boundaryInput.name, type: String(boundaryInput.type ?? ''), links: [] }],
+              properties: {}, widgets_values: [value],
+            };
+            newNodes.push(inlineSource);
+          }
+          internalLinks.push({
+            origin_id: inlineSource.id, origin_slot: 0,
+            target_id: target.target_id, target_slot: target.target_slot,
+            type: target.type,
+          });
+          continue;
+        }
         applyPromotedValueToTarget(
-          clonedById.get(target.target_id),
+          innerNode,
           target.target_slot,
           parentInput?.widget?.name ?? boundaryInput.name,
           value,

@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { buildWorkflowPromptInputs } from '@/utils/workflowInputs';
 import { buildSlotMap, expandWorkflowSubgraphs } from '../expandWorkflowSubgraphs';
 import type { NodeTypes, Workflow, WorkflowNode, WorkflowSubgraphDefinition } from '@/api/types';
 
@@ -528,5 +529,46 @@ describe('expandWorkflowSubgraphs — nested promotion', () => {
     );
 
     expect(leafNode?.widgets_values).toEqual([8]);
+  });
+});
+
+
+describe('subgraph inline values feeding socket-only inputs', () => {
+  it.each(['red cube', '', false, 0])('serializes %j into a Switch socket alongside a widget target', (value) => {
+    const id = 'socket-values';
+    const switchNode = makeNode(10, 'ComfySwitchNode', {
+      inputs: [{ name: 'on_false', type: 'STRING', link: 1 }],
+      widgets_values: [false],
+    });
+    const textNode = makeNode(11, 'TextGenerate', {
+      inputs: [{ name: 'prompt', type: 'STRING', widget: { name: 'prompt' }, link: 2 }],
+      widgets_values: ['old'],
+    });
+    const def: WorkflowSubgraphDefinition = {
+      ...makeSubgraphDef(id, 'Prompt', [switchNode, textNode]),
+      inputs: [{ name: 'prompt', type: 'STRING', linkIds: [1, 2] }],
+      links: [
+        { id: 1, origin_id: -10, origin_slot: 0, target_id: 10, target_slot: 0, type: 'STRING' },
+        { id: 2, origin_id: -10, origin_slot: 0, target_id: 11, target_slot: 0, type: 'STRING' },
+      ],
+    };
+    const placeholder = makeNode(50, id, {
+      inputs: [{ name: 'prompt', type: 'STRING', link: null }],
+      widgets_values: [value],
+    });
+    const types = {
+      ComfySwitchNode: { input: { required: { switch: ['BOOLEAN', {}] }, optional: { on_false: ['COMFY_MATCHTYPE_V3', {}] } } },
+      TextGenerate: { input: { required: { prompt: ['STRING', {}] } } },
+    } as unknown as NodeTypes;
+    const original = makeWorkflow([placeholder], [def]);
+    const before = JSON.stringify(original);
+    const { workflow, promptKeyMap } = expandWorkflowSubgraphs(original, types);
+    const target = workflow.nodes.find(n => promptKeyMap.get(n.id) === '50:10')!;
+    const allowed = new Set(workflow.nodes.filter(n => types[n.type]).map(n => n.id));
+    const inputs = buildWorkflowPromptInputs(workflow, types, target, target.type, allowed, null, undefined, promptKeyMap);
+    expect(inputs.on_false).toBe(value);
+    expect(target.widgets_values).toEqual([false]);
+    expect(workflow.nodes.find(n => promptKeyMap.get(n.id) === '50:11')?.widgets_values).toEqual([value]);
+    expect(JSON.stringify(original)).toBe(before);
   });
 });
