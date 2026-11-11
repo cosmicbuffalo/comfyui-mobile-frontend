@@ -1,6 +1,6 @@
 name: Release
 
-# A version bump on main drafts the GitHub release and publishes to the Comfy
+# A version bump on main publishes the GitHub release and publishes to the Comfy
 # registry, but only once the frontend and backend test suites have passed on
 # that exact commit. These used to be two independent workflows triggered by
 # the same push, so both finished well before the tests did and a release
@@ -24,8 +24,8 @@ jobs:
     name: Backend tests
     uses: ./.github/workflows/test_backend.yml
 
-  draft-release:
-    name: Create Draft Release
+  github-release:
+    name: Publish GitHub Release
     needs: [tests, backend-tests]
     runs-on: ubuntu-latest
     if: ${{ github.repository_owner == 'cosmicbuffalo' && github.event_name == 'push' }}
@@ -55,13 +55,14 @@ jobs:
           git tag "${TAG}" "${GITHUB_SHA}"
           git push origin "refs/tags/${TAG}"
 
-      - name: Create or update draft release
+      - name: Create and publish the release
         uses: ncipollo/release-action@v1
         with:
           tag: ${{ steps.version.outputs.tag }}
           name: ${{ steps.version.outputs.tag }}
           commit: ${{ github.sha }}
-          draft: true
+          draft: false
+          makeLatest: true
           generateReleaseNotes: true
           allowUpdates: true
           updateOnlyUnreleased: true
