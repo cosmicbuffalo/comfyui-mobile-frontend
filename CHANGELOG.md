@@ -1,5 +1,15 @@
 # Changelog
 
+## 3.4.4 - 2026-11-11
+
+### Fixed
+
+- **Subgraph inputs** send the value typed on the subgraph to an inner input
+  that has no widget of its own (such as **Switch**'s `on_false`), as on
+  desktop. Before, that input was left out of the queued prompt
+  ([#127](https://github.com/cosmicbuffalo/comfyui-mobile-frontend/pull/127),
+  thanks @AsakiRain!).
+
 ## 3.4.3 - 2026-11-07
 
 ### Fixed
